@@ -5,165 +5,75 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         db071733bf3bf95e275d6d1314c31b277a5441dd
-:LIVENESS_AT:      [2026-07-26 Sun]
-:UPDATED_AT:       [2026-07-26 Sun]
+:LIVENESS:         f434e7d5d21abc008acfd2219da785254601441c
+:LIVENESS_AT:      [2026-07-29 Wed]
+:UPDATED_AT:       [2026-07-29 Wed]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-07-28 (manager-direct + twenty-one dispatches). Eleven rounds
-merged, every one verified by an injection the manager ran personally, not by
-reading the worker's account of having run it.
+Session 2026-07-29 (post-reboot rescue + operator direction change). A macOS
+reboot killed three live implementer dispatches mid-flight. All three were
+rescued, verified and merged; nothing was lost.
 
 THE ONE THING TO KNOW
-A green suite is not evidence on this project. TASK-Q07Y5 shipped with every
-gate green — CLI, daemon, and the manager's own — and killed the operator's
-daemon 10.00s after every boot, because no test anywhere ran a daemon longer
-than ten seconds. The standard that came out of it and now holds for every
-round: reinject the defect, show the test red with its output, restore, show it
-green. Ask a worker what its test would do if the fix were reverted and expect
-an answer with an exit code in it. **Re-run the injection yourself before
-merging.** Four times today a worker's fix was correct and my own re-injection
-was what confirmed it; once (JQARS) my injection was malformed and I nearly
-filed a defect against a working gate — check your probe before blaming the code.
+A dead worker is not lost work. All three worktrees survived the reboot with
+their commits intact, and the most valuable single piece — TASK-FZB6T's
+RunCatalog async->sync refactor — was sitting UNCOMMITTED in a worktree and
+passed its own injection proof once committed. Check =git -C <worktree> status=
+and =git log main..HEAD= on every orphaned dispatch before writing anything off.
+=orgasmic verify <TASK>= needs a clean tree, so committing salvaged work on the
+task branch is the way to put it through the gate; the proof accepts it, not the
+fact that it compiles.
 
-STATE OF THE INSTALL — CURRENT AND VERIFIED
-`~/.orgasmic/bin/orgasmic` is 0.0.15-dev.1 built from `dc6db85`, containing
-R74E8, S0QRM, H0TYV, ATAXN, JQARS, GT91X and KKBTP. Signed with
-`ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign'`; designated requirement
-byte-identical to the incumbent's (certificate root a70531007c…), so TCC grants
-carried. **ExitTimeOut is the derived 50.** Daemon holds one pid and one boot
-across the whole post-reinstall window, 0 parse errors.
+WHAT LANDED, all three manager-verified by replayed injection proof (never by
+reading the worker's account), each replayed TWICE — once on the task branch
+and again on fully-merged main, because all three touched overlapping files:
+- TASK-95SGV (bf555ae) — dispatch-cleanup reservations release by a minted
+  opaque guard id instead of a worktree key recomputed after cleanup deleted
+  the directory. Clean tree, had reported.
+- TASK-JQ8AV (4fc57fe) — the stall clock gains a third evidence channel: the
+  pane's open-turn statusline, read at the deadline when cpu is below
+  threshold. This is the fix for the morning's three false-positive kills.
+  Worker never reported; its report.md stops mid-sentence at "results below".
+- TASK-FZB6T (1b726f6) — compact run catalog + bounded session retention, plus
+  the rescued uncommitted refactor (bf1f8cb) removing a
+  =Handle::current().block_on= re-entry from inside =spawn_blocking=. THREE
+  verify artifacts, all PASS.
 
-Reinstall recipe, in order: set the codesign identity or `package-runtime.sh`
-silently ships unsigned; verify the DR matches the incumbent; copy to
-`orgasmic.new`, `codesign -v`, `mv -f`; `rsync` the `shipped/` payload; restart
-from the INSTALLED binary. **Only ever with zero workers running** — a restart
-cycles the rmux LaunchAgent and destroys every live session. That is exactly how
-the morning's outage killed three dispatches.
+Gates on merged main: fmt clean, clippy -D warnings clean, all five injection
+proofs PASS. =cargo test -p orgasmic-daemon --lib= was 617 passed / 7 failed
+under a 4-job concurrent load (1m avg 18.8); ALL SEVEN pass in isolation in
+under 0.4s each. The known-flake set has grown from the handoff's five to
+seven — the two new ones are
+=explicit_reattach_{rmux,tmux}_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+which sit in TASK-95SGV's blast radius and were checked deliberately for that
+reason. Still TASK-STWVB's territory, and still a suite that trains readers to
+discount red.
 
-WHAT LANDED TODAY
-- R2HDN (5d4651a) — a live test now fails when acquisition degrades to inert.
-- 1T3FZ (68f3ed6) — destructive close holds a daemon-owned worktree reservation
-  installed under the supervisor lock BEFORE the verdict, so the verdict is
-  monotone. Under review now.
-- 69CW6 (03f4d05) — the self-satisfying reap surrogate replaced by
-  StallableRmuxEndpoint driving the real RmuxControl.
-- R74E8 (e1b94b2) — the Q07Y5 redo. The drain budget starts at a oneshot fired
-  from inside `with_graceful_shutdown` instead of wrapping the server's whole
-  life. Verified three ways: injection (dies at 402ms), real release binary at
-  the production 10s budget (81s, one pid), and the real LaunchAgent after
-  reinstall (181s, one pid). The suite now has
-  `daemon_serves_far_beyond_its_connection_drain_budget` — the only thing
-  watching that class of defect.
-- S0QRM (e1b94b2) — claude credential tier detected, not guessed. A detected
-  native login beats an ambient ANTHROPIC_API_KEY.
-- H0TYV — dec_Y5MPK item 6: orgasmic-attribution of a vendor transcript is
-  *minted* (a NativeRuntime record naming the session id), never inferred from
-  path shape or file age.
-- ATAXN (688fd7b) — a departing daemon publishes `$ORGASMIC_HOME/daemon.shutdown`
-  with its own `budget_ms`; a replacement waits on that budget instead of the
-  125ms transient budget. `LockHolder` now says by what the lock is held and
-  whether that thing is leaving.
-- JQARS — `orgasmic manager drivers` exists, and `cli_parity` now resolves every
-  `orgasmic ...` invocation quoted in shipped entry prose against clap.
-- GT91X — tmux/rmux stamp `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=orgasmic`, so
-  codex reviewer transcripts are findable. **Verified live after the reinstall.**
-- KKBTP — the credential decision is resolved once before ownership and pinned
-  through acquire, composition and RunMeta. `auth status` is observed once per
-  dispatch instead of three times; no subprocess is reachable from
-  `compose_request` at all. dec_7P79C records the `Unknown` policy.
+THE MODEL WAS NEVER WHAT ANYONE THOUGHT
+All three ran on claude-fable-5, not the intended claude-opus-5, because no
+=--model= was passed and the harness default won. The ONLY surviving proof is
+the =Co-Authored-By: Claude Fable 5= commit trailer — an accident of the
+harness, not a record orgasmic kept. The standing matrix in manager-dispatch.org
+already said opus-5/high; nothing enforced it. TASK-A55J7 is promoted to P1 and
+widened from reporting to ENFORCEMENT: refuse to dispatch when no model
+resolves. The operator explicitly ruled out a project-level default model
+(models and preferences both move faster than a checked-in key), so resolution
+is exactly --model > task drawer > REFUSE, and the session-start ask
+(TASK-0JY7M) is the ergonomic half.
 
-THE FINDER WAS BLIND TO ITS OWN REVIEWS
-The Z8WEJ reviewer produced a substantial BLOCK and `orgasmic run
-native-transcript` said the transcript did not exist. I read it by hand-parsing
-`~/.codex/sessions/**` in Python. Cause: the finder required
-`session_meta.originator == "orgasmic"`, a value **nothing in the codebase set** —
-it appeared only in the finder and its own test fixtures, which is why its unit
-tests passed against a production match of nothing. Fixed by GT91X, whose
-fixtures now read the value back out of `harness_launch_env("codex")`, so
-fixture and launch path cannot diverge again. If a worker's report is missing,
-check `orgasmic run native-transcript` first, then the worker's scratchpad
-`summary.md`/`report.md`, then the harness store directly.
-
-TWO CLAIMS OF MINE THAT WORKERS DISPROVED — BOTH WORTH THE PATTERN
-1. I filed GT91X saying the historical `originator: orgasmic` rollouts were
-   editor sessions and that the mechanism had "stopped". Both false. Codex labels
-   JSON-RPC app-server clients `source: vscode`; those were orgasmic's own acp-ws
-   driver, via `clientInfo.name`, which never stopped and never covered the TUI.
-   The gate was never satisfiable on the mux path rather than having regressed.
-2. Earlier I reported that workers inherit the daemon's `$TMUX`. False — the pid
-   I measured was a claude worker, because `pgrep -f "orgasmic.*daemon"` matches
-   its *prompt text*. Get the daemon pid from `orgasmic status`.
-Both corrections are recorded on the tasks. A wrong history sends the next
-reader hunting a regression that never happened.
-
-KNOWN LOAD FLAKES — CONFIRM, DO NOT ASSUME
-Under concurrent load a full `cargo test -p orgasmic-daemon --lib` shows up to
-five failures; all pass in isolation:
-`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
-`recovery_reattaches_tmux_session_when_handle_exists`,
-`recovery_inventory_waits_for_atomic_claim_commit`,
-`production_resume_native_fork_uses_pinned_claude_not_path_shim`,
-`git_resolves_quoted_included_origin_from_linked_worktree`.
-Four of the five are on the recovery path — TASK-STWVB's strongest structural
-clue, and not a "slow machine" story. TASK-5HBST (in flight) is fixing the
-PATH-mutation one. **A suite with standing known flakes trains everyone to
-discount red**, which is how a real regression gets waved through.
-
-IN FLIGHT
-- TASK-1T3FZ (reviewer, codex) — the destructive close path, merged without an
-  independent review. Brief asks about reservation leaks on early return,
-  `close_guard_id` reuse across daemon restarts, the `owner_pid` sweep under pid
-  reuse, and whether a reservation can outlive the daemon that owns it now that
-  ATAXN's marker exists.
-- TASK-5HBST (implementer) — `PrependPathGuard` mutates process-global PATH with
-  no shared lock.
-- TASK-QRB8S (implementer) — `START_TIMEOUT` is a literal 20s while ATAXN made a
-  40s start legitimate, so the CLI can report a failed start for a daemon that
-  comes up fine.
-
-NOT YET DISPATCHED
-TASK-4DTBZ and TASK-QSX56 (both high), TASK-0RCRY (P1), TASK-95SGV (P1),
-TASK-XPYRR (P1), TASK-BCYMM, TASK-37TAF, TASK-KPMFK, TASK-4PPPE, and five filed
-by H0TYV: TASK-F9VEZ, TASK-B6D8W, TASK-2B215 (codex/cursor/hermes record no
-NativeRuntime), TASK-ZY259, TASK-E3K1B.
-
-A TASK TITLE CANNOT BE CORRECTED (TASK-XPYRR)
-`task update` rejects `--title`; `node body set` only touches prose and named
-sections. So TASK-0RCRY's heading still asserts the `$TMUX` diagnosis I retracted
-this morning, and hand-editing `.orgasmic` is forbidden. Its body opens with the
-correction, so anyone who opens it is set straight — but the board is wrong until
-XPYRR lands.
-
-WRITING TASK BODIES: `**` HEADINGS
-`node body set` replaces free prose *between the drawer and the first nested
-heading*. A body containing `** Section` headings is rejected or truncated —
-ATAXN was filed with 300 of its 3959 characters for this reason. Use `===` for
-sub-headings in a body you set through the CLI. Existing `**` sections created by
-other paths are fine and are NOT returned in the JSON `description` field; read
-the raw org node if you think content is missing.
-
-RUN MANAGER COMMANDS FROM THE REPO ROOT
-Bash cwd persists. From inside a dispatch worktree, `orgasmic manager ...`
-resolves that worktree's frozen `.orgasmic` snapshot and reports stale state
-confidently — `dispatch-status` returned **empty** once today and I briefly read
-it as all three workers dying. `task update --property` from there returns a tx
-id and silently does not apply. Daemon-routed writes with `--project orgasmic`
-are safe; anything reading local files or the tx log is not.
-
-CAPACITY, MEASURED
-Three concurrent rmux workers is comfortable, four is the ceiling. The
-LiveSessionGuard flock is shared across every test binary, so concurrent suites
-serialize their live sections — a daemon suite that normally takes ~180s took
-517s under three workers plus two parallel gates. It is not hung; check the
-output file's mtime before concluding it is.
-
-THE INSTALL, unchanged and still true
-Locally built 0.0.15-dev.1. install.json names the stable channel and the
-installer is equality-based, so `orgasmic update` would see stable advertising
-0.0.14, treat it as a change, and revert the machine. Do not run it. Publishing
-0.0.15 needs operator approval.
+TMUX IS THE NEW DEFAULT, AND IT IS NOT YET SAFE
+Operator directive: ship tmux as the default pane mode, because a first-time
+user may have only tmux, and dogfooding is the only thing that hardens it. The
+standing matrix moved rmux -> tmux (f434e7d). But measurement at integration
+found tmux is where rmux was BEFORE TASK-RWCRN: =pane_activity= is emitted by
+=modes/rmux.rs= and by nothing else, and TASK-JQ8AV's new rescue is gated on
+=transport == "rmux"=. So on tmux BOTH pane channels are blind and a
+provider-bound think at ~0% cpu is released at 600s — the original incident,
+reproduced on the new default. TASK-4CSMY (P1) covers both gaps and is a SHIP
+BLOCKER for the default flip. Until it lands, every long-thinking tmux dispatch
+MUST carry =--governance-json '{"stall_timeout_secs":3600}'=; the convention
+now says so.
 
 ** Done so far
 Session 2026-07-26, in order.
@@ -213,54 +123,70 @@ that works. `task create` has no --priority flag at all, which is how all seven
 tasks filed today came out priority None. Tracked on TASK-HXSW0.
 
 ** Next likely actions
-1. Read each worker's report. There is no dispatch-report command: try
-   `orgasmic run native-transcript <run_id>` first, then the worker's
-   scratchpad summary.md/report.md, then the harness store directly.
-2. **Re-run each injection yourself before merging.** Check your probe is
-   well-formed before concluding a gate is broken — one of mine was not today.
-3. On the 1T3FZ review: SHIP closes it; BLOCK means file the fix round and leave
-   it open with BLOCKED_BY set. Do not close a task before deciding whether it
-   needs a review round — the state machine refuses a reviewer dispatch from
-   done, which cost a retarget today.
-4. Keep three workers saturated. Remaining: 4DTBZ and QSX56 (high), then 0RCRY,
-   95SGV, XPYRR, 4PPPE, and H0TYV's five NativeRuntime tasks.
-5. Reinstall the runtime only in a zero-worker window. It is current as of
-   dc6db85; there is no pending reason to reinstall until something merges.
+1. Decide the review posture on the three merged-but-unreviewed tasks
+   (TASK-95SGV, TASK-JQ8AV, TASK-FZB6T). Dispatching reviewers over them is the
+   efficient move because it also serves item 2 — it puts real work on tmux.
+2. TASK-4CSMY (P1) — give tmux a coalesced =pane_activity= and generalise
+   TASK-JQ8AV's open-turn consult beyond rmux. SHIP BLOCKER for the tmux
+   default flip; until it lands every long tmux dispatch needs the stall
+   override.
+3. TASK-A55J7 (P1, widened) — refuse to dispatch with an unresolved model, and
+   persist resolved model/effort on RunMeta, the dispatch tx, run list and
+   dispatch-status.
+4. TASK-0JY7M (P1) — ask once per session for agent selection. The operator now
+   wants this asked at session start every run, and wants driver/harness/model/
+   effort stated back after every dispatch.
+5. The runtime on disk is still 0.0.15-dev.1 from dc6db85 and does NOT contain
+   any of today's merges. TASK-JQ8AV's stall fix is therefore NOT live for the
+   operator's own daemon yet — the governance override remains necessary on
+   rmux too until a reinstall. Reinstall only in a zero-worker window.
+6. Unrelated and unowned: TASK-1SVST, an app crash to the top-level error
+   boundary (=undefined is not an object (evaluating 't.sections.map')=),
+   filed through the daemon during this session. TASK-F9A34 was cancelled as its
+   duplicate.
 
 ** In flight
-Three workers, dispatched 2026-07-28 17:18-17:20Z.
+Nothing running. All three dispatches closed done, all three worktrees removed,
+=dispatch-status= is empty and =git worktree list= shows only the repo root.
 
-- TASK-1T3FZ — reviewer, codex/gpt-5.6-sol/high, tx-20260728-orgasmic-3371.
-  The destructive close path (dispatch-close can remove a worktree and a branch)
-  was merged and manager-verified but never independently reviewed. The brief
-  asks it to attack reservation leaks on early return, close_guard_id reuse
-  across daemon restarts, the owner_pid sweep under pid reuse, whether
-  'undetermined refuses' can wedge an operator with no way out that is not
-  hand-editing state, and whether a reservation can outlive its daemon now that
-  ATAXN publishes a shutdown marker.
-- TASK-5HBST — implementer, claude/opus-5/high, tx-20260728-orgasmic-3379.
-  PrependPathGuard mutates process-global PATH with no shared lock. Acceptance
-  is 10 consecutive clean full runs, reported as a count.
-- TASK-QRB8S — implementer, claude/opus-5/high, tx-20260728-orgasmic-3382.
-  START_TIMEOUT is the last literal on the shutdown-budget axis.
+Three tasks sit in IN_REVIEW, having been merged on manager verification alone:
+TASK-95SGV, TASK-JQ8AV, TASK-FZB6T. Each carries an Evidence section saying
+plainly "NOT independently reviewed: manager integration review + injection
+replay only." Two of them reached main with their author never having reported
+at all. That is the open decision for the next session: either dispatch
+reviewers over them, or review-close them deliberately — but do not let them sit
+in review by default and later read as reviewed.
 
 ** Divergence / Risks
-The destructive-path precaution recorded earlier today is RETIRED: TASK-AK6EM
-landed and TASK-1T3FZ is closed. Closing a dispatch no longer depends on the
-manager remembering to check [run-gone] first, and a daemon replacement mid-close
-now inherits the guard. Both are enforced in code, and the lease barrier is
-compiler-enforced.
+THE RUNTIME IS BEHIND THE REPO. =~/.orgasmic/bin/orgasmic= is 0.0.15-dev.1 from
+dc6db85 and carries none of today's merges. Everything below about the stall
+clock is true of the repo, not of the daemon the operator is running.
 
-REMAINING RISK ON THIS PATH, NAMED BY THE IMPLEMENTER RATHER THAN HIDDEN
-A future path could still insert a `RunRecord` with no lease. It would break
-unrelated invariants immediately (release removes the lease by record;
-`blocking_run_for_close` treats a lease with no record as blocking), so it is
-not silent — but it is not type-enforced the way the lease itself now is. Worth a
-task if anyone adds a third run constructor.
+THE STALL FIX IS NOT LIVE, ON EITHER TRANSPORT. On rmux it is merged but not
+installed; on tmux it does not apply at all (TASK-4CSMY). Treat
+=--governance-json '{"stall_timeout_secs":3600}'= as required on every
+long-thinking dispatch of any pane mode until BOTH a reinstall and TASK-4CSMY
+have happened. The reinstall recipe and its zero-worker precondition are
+unchanged from the previous handoff.
 
-WINDOWS RECLAMATION IS IMPLEMENTED BUT ONE BRANCH IS UNEXERCISED HERE
-Non-Unix guards are lease-governed and the reclamation logic is tested directly
-on this host; what could not be exercised is the `cfg!(unix)` selection itself
-on a Windows daemon. The implementer said so plainly instead of faking a test.
+TWO SUBSTANTIAL CHANGES REACHED MAIN WITH NO WORKER REPORT AND NO INDEPENDENT
+REVIEW. TASK-JQ8AV and TASK-FZB6T were accepted on replayed injection proofs and
+green gates alone. The proofs are strong evidence about the specific defect each
+one names; they are not evidence about anything else those diffs touch. FZB6T's
+rescued refactor is the sharpest case — it changes the run-catalog concurrency
+model and its author never described it. If anything in run enumeration, boot
+reattach or the session writer misbehaves, start there.
+
+THE KNOWN-FLAKE SET GREW FROM FIVE TO SEVEN. All seven pass in isolation, so the
+merges are not implicated, but the standing warning holds and is now worse: a
+suite with seven standing flakes trains everyone to discount red, which is how a
+real regression gets waved through. TASK-STWVB owns this and is in_progress.
+
+THE PREVIOUS HANDOFF WAS STALE AND ITS LIVENESS IS SUPERSEDED. It described
+TASK-1T3FZ, TASK-5HBST and TASK-QRB8S as in flight; none were, and the three
+tasks that actually were in flight went unmentioned. Its =:LIVENESS:= pointed at
+db071733 while HEAD had moved well past it. Both are corrected here. If a
+handoff ever again names workers that =dispatch-status= does not, trust
+=dispatch-status=.
 ** Description
 (superseded — this section was created in error; the handoff is the free prose above)
