@@ -1666,6 +1666,8 @@ From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both w
 
 Two clippy warnings on merged main make cargo clippy --workspace --all-targets -D warnings fail for every worker, forcing per-worker allow-flag workarounds (TASK-KPMFK's report documents the incantation): clippy::single_match at crates/orgasmic-daemon/src/lib.rs:748 (landed with TASK-TZKAC 5c97409) and clippy::doc_lazy_continuation at crates/orgasmic-drivers/src/adapters/claude.rs:2877. Fix both (trivial), then run the workspace lint clean to confirm nothing else hides behind the early abort (-D warnings stops at the first crate, so the full surface has not been linted end-to-end since these landed). Coordinate with TASK-WKJX4 (the fmt window) — one no-live-worker hygiene window can land both.
 
+LINE SHIFT [2026-07-29, TASK-5P60H]: the single_match finding moved from lib.rs:748 to lib.rs:767 (5P60H's additions above it). Re-locate before fixing.
+
 * BACKLOG TASK-EDPFN Abandon has no --reason: the tombstone names the judgment but cannot carry the operator's evidence
 :PROPERTIES:
 :ID: TASK-EDPFN
@@ -1689,3 +1691,11 @@ From TASK-2GS7V (2026-07-29): the diagnostic 0RCRY added says 'the default share
 :END:
 
 From TASK-QRTT8's audit (2026-07-29): Lifecycle::NativeRuntime has no credential_mode field (session.rs:422-431), so recovery_claim.rs:1730 and :2043 hard-code None when rebuilding NativeRuntimeMeta from a session, and api.rs:8303 hard-codes the same None into planned_native_runtime. The two sides of the claim-verification != agree BY COINCIDENCE of matching literals, with no test pinning that they must. If either side ever starts carrying the real mode (the claude adapter already writes Some into the meta at launch), claim verification silently starts rejecting valid claims. Ask: either persist the mode in Lifecycle::NativeRuntime so both sides carry the truth, or pin the current both-None normalization with a test naming the invariant and a comment at each literal pointing at the other. Small; the value is that the coincidence stops being silent.
+
+* BACKLOG TASK-7A5GH Cross-process slow-start matrix: two real orgasmic serve processes racing one temp home
+:PROPERTIES:
+:ID: TASK-7A5GH
+:PRIORITY: P2
+:END:
+
+From TASK-5P60H (2026-07-29): its in-process concurrent-start matrix proves one lock owner / one listener / classify-not-refuse, but its actors share one process, so pid divergence cannot be reproduced — single ownership is asserted where recorded (lock file, boot record, incumbent status, one bound socket) rather than by pid inequality. A spawned-binary version (two real orgasmic serve processes on a temp home, compressed budgets via env seams) closes that stated limitation. Bigger, slower harness — worth doing when the boot protocol is next touched, or as the integration half of the boot-audit program. Also fold in 5P60H candidate 4: a nightly macOS launchd smoke proving ThrottleInterval against real launchd (not its documentation) belongs with the WE0Q7/nightly infra once the operator pushes the workflows.
