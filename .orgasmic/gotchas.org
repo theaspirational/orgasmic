@@ -545,3 +545,13 @@ reinstalled, brief every worker: no single quiet command may exceed ~8 minutes
 punctuate long gates with output. Managers: a session that dies =[unreported]=
 with a complete-looking report.md died here; salvage = replay its artifact, run
 its missing gate yourself, merge, close with a tx noting the salvage.
+
+** Suites run from inside an rmux worker pane need ORGASMIC_ALLOW_MISSING_TOOLS=tmux
+Post-JGHNC the tmux sentinel is strict: the worker PATH's =tmux= is the rmux
+shim and counts as ABSENT, so =required_test_tooling_is_present= fails hard in
+every worker-run suite (=required test tooling is missing: tmux (gates 9
+tests)=). That red is the honesty mechanism, not a defect. Workers running
+gates: =ORGASMIC_ALLOW_MISSING_TOOLS=tmux scripts/run-tests.sh …= and let the
+NOT RUN manifest say what was waived. A genuine tmux arm needs the real binary
+resolved ahead of the shim (K4G1D's scratch-symlink recipe) — =tmux -V=
+through the shim lies.

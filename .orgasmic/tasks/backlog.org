@@ -924,6 +924,8 @@ TASK-Z3093. That task made `LiveSessionGuard` reap rmux *sessions* on the panic
 path. It does not own *spawned child processes*, so tests whose fixture forks a
 process tree still leak it exactly as before.
 
+SIGHTING [2026-07-29, TASK-TZKAC harness round 8]: after ~50 minutes of 4x64-thread daemon-suite load, the machine held 31 leaked /bin/bash driver-shim children accumulating zero CPU, and the round wedged at 552-560 of 566 tests per copy with no further output (killed by hand). Distinct from the tmux sentinel gate; makes long loaded rounds unreliable as evidence. Same class as this task's premise: fixtures leak process trees the session-level guard does not reap.
+
 ** Measured
 
 Three orphaned `cursor-worker-sibling` fixture trees, all reparented to PPID 1,
@@ -1996,3 +1998,11 @@ From TASK-Z7VQK (2026-07-29): the test installs a codex stub it never puts on th
 :END:
 
 From TASK-Z7VQK (2026-07-29): src/test_fixtures.rs keys its shared fixture by the test binary's name assuming the name carries a build hash; measured false (dispatch_endpoint-1edf7bef84349123 survived source edits). Z7VQK's own shared file is keyed by content with an assert that caught a stale fixture in flight; give test_fixtures.rs the same content-keying or content-assert so a stale fixture fails loudly instead of silently.
+
+* BACKLOG TASK-1MEW6 live_rebuild git probe retry can exhaust under extreme load: 'every attempt returned without writing a URL' — 5FEN5's fix has a ceiling
+:PROPERTIES:
+:ID: TASK-1MEW6
+:PRIORITY: P2
+:END:
+
+From TASK-TZKAC's harness rounds (2026-07-29): index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh went red with a NEW panic — TASK-5FEN5's fix (drive the probe until the URL lands, 60s bound) EXHAUSTED rather than bypassed: 'the live Git probe for project never resolved ssh://git@example.com/org/project.git: every attempt returned without writing a URL' (index.rs:2154 at TZKAC's HEAD). 4 of 4 copies in the single slowest post-fix round (201s/copy vs 102s baseline), 0 of 24 in every other round — an extreme-starvation profile (4x64 threads on 10 cores), possibly not gate-realistic (the J1XCB caveat applies). Cannot be registered: 5FEN5 is closed and the registry forbids ownerless excuses. Related: TASK-5CCZM owns the give-up-path OBSERVER class for the same refresh_repo_url behaviour — consider folding this in there or coordinating; the underlying production behaviour (a 3s-bounded probe that returns without writing under starvation) is the shared root. Diagnose whether the gate-realistic fix is observer-side (5CCZM's ask) or the probe's bound/retry policy itself (derived, not guessed).
