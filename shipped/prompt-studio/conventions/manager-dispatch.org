@@ -36,23 +36,39 @@ yourself writing "the implementer reported", name the worker id, driver, harness
 model and effort instead.
 
 ** The standing worker matrix
-Operator-set 2026-07-26. Use these unless the task gives you a reason to
-deviate, and state the reason in `--reason` when you do. "Choose explicitly"
-above still governs — this is the default you are choosing, not a licence to
-stop passing the flags.
+Operator-set 2026-07-26; mode changed to tmux 2026-07-29. Use these unless the
+task gives you a reason to deviate, and state the reason in `--reason` when you
+do. "Choose explicitly" above still governs — this is the default you are
+choosing, not a licence to stop passing the flags.
 
 | stage       | --kind      | --mode | --harness | --model         | --effort |
 |-------------+-------------+--------+-----------+-----------------+----------|
-| implementer | implementer | rmux   | claude    | claude-opus-5   | high     |
-| reviewer    | reviewer    | rmux   | codex     | gpt-5.6-sol     | high     |
-| fixer       | implementer | rmux   | claude    | claude-opus-5   | medium   |
+| implementer | implementer | tmux   | claude    | claude-opus-5   | high     |
+| reviewer    | reviewer    | tmux   | codex     | gpt-5.6-sol     | high     |
+| fixer       | implementer | tmux   | claude    | claude-opus-5   | medium   |
 
-Three things this encodes deliberately:
+Four things this encodes deliberately:
 
-*Every dispatch runs in an rmux TUI pane.* Not acp-stdio. A pane is attachable,
-so the operator can watch a live worker and intervene; an acp-stdio worker is a
-black box until it writes its report. `--mode rmux` with `--kind reviewer` still
+*Every dispatch runs in a TUI pane.* Not acp-stdio. A pane is attachable, so the
+operator can watch a live worker and intervene; an acp-stdio worker is a black
+box until it writes its report. `--mode tmux` with `--kind reviewer` still
 selects the reviewer persona; there is no `--worker` flag.
+
+*The pane runtime is tmux, not rmux.* Operator directive 2026-07-29: a
+first-time user is likely to have only tmux installed, so tmux is the transport
+that has to be trustworthy, and the only way it becomes trustworthy is by
+carrying our own work. Dogfooding on the transport the author does not use is
+how rmux got hardened and tmux did not.
+
+*Until TASK-4CSMY lands, every long-thinking tmux dispatch carries*
+`--governance-json '{"stall_timeout_secs":3600}'`. This is not optional and it
+is not the retired TASK-RWCRN workaround below. `pane_activity` is emitted by
+the rmux driver and by nothing else, and TASK-JQ8AV's open-turn-statusline
+rescue is gated on `transport == "rmux"`, so on tmux BOTH pane channels are
+blind: a provider-bound think at ~0% cpu with no tool calls is released at
+600 s exactly as in the original incident. `max_run_duration` still bounds the
+run. Drop the override the moment TASK-4CSMY ships tmux `pane_activity`, and
+not before.
 
 *The reviewer is a different vendor from the implementer.* Adversarial review by
 the same model that wrote the code shares its blind spots. Keeping claude on the
@@ -63,11 +79,12 @@ implement side and codex on the review side is the point of the split, so do not
 file, the line and the direction — the expensive reasoning was spent producing
 them. Reserve high effort for the passes that have to discover something.
 
-Before dispatching in rmux mode, confirm `rmux ls` responds and that the daemon's
-launchd PATH reaches the rmux binary; a dispatch that cannot find it fails at
-spawn rather than reporting a missing tool. Note also that rmux sessions are not
-currently reaped — check `rmux ls` for accumulation and kill stale
-`orgasmic-rmux-run-*` sessions during housekeeping.
+Before dispatching in a pane mode, confirm the pane runtime responds (`tmux ls`,
+or `rmux ls` when deviating to rmux) and that the daemon's launchd PATH reaches
+that binary; a dispatch that cannot find it fails at spawn rather than reporting
+a missing tool. Note also that pane sessions are not currently reaped — check
+`tmux ls` / `rmux ls` for accumulation and kill stale `orgasmic-*-run-*`
+sessions during housekeeping.
 
 *Do not pass `--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches
 any more.* It was the interim workaround for TASK-RWCRN, where a pane emitted no
