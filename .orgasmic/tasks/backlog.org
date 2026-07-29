@@ -1554,3 +1554,19 @@ From TASK-NYF7Z (2026-07-29), a controlled negative result, not a closure: codex
 :END:
 
 From TASK-NYF7Z (2026-07-29): the acp claude path (NativeLogin arm, adapters/claude.rs:515-527) pushes --safe-mode --strict-mcp-config; the rmux path now pushes only --strict-mcp-config, deliberately (safe-mode's hooks/plugins/CLAUDE.md suppression was in-scope-refused, and CLAUDE.md discovery is actively wanted for TUI workers). That leaves an UNDOCUMENTED difference between two paths running the same personas. Either argue rmux should take --safe-mode too, or record at both push sites why the TUI path wants what the acp path suppresses. Documentation-plus-decision task; tiny code delta if any.
+
+* BACKLOG TASK-SZJ2B Artifact-generation tests create production-named sessions on the LIVE default rmux endpoint; an Err or cancellation leaks one
+:PROPERTIES:
+:ID: TASK-SZJ2B
+:PRIORITY: P2
+:END:
+
+From TASK-BCYMM's §5 verdict (2026-07-29), the confirmed source of the orphan orgasmic-rmux-run-* session the manager reaped: 12 tests in api.rs (seed_test_artifactor_harness / seed_busy_artifactor_harness, mode rmux, 4 ungated) drive real Supervisor::acquire on the rmux driver against RmuxEndpoint::Default — the server hosting live dispatch panes. All 12 register live_guard.owns(&run_id), but only AFTER the awaited call that already created the session returns — so a handler Err (the .expect panics with the id unknown to the guard) or a cancelled/timed-out future leaks one production-named session onto the live server. The run-id shape (make_run_id output) is what proved the class. Fix: the owned-endpoint treatment — move the family onto a per-test/private RmuxEndpoint so nothing it creates can land on the default server (the 0RCRY-for-rmux move; check what RmuxEndpoint variants exist and what the rmux SDK needs for a private socket — the shim measurement says -L works for rmux). DO NOT take the snapshot-and-reap-the-difference shortcut: reap_owned_sessions_blocking's standing warning applies — a real dispatch's session is live on the same endpoint. Injection per TCTTD standard (natural red: a session appearing on the default endpoint during the family's run).
+
+* BACKLOG TASK-KVRZ9 worker-server survives a group TERM: measure whether production's reap grace can return early with descendants still up
+:PROPERTIES:
+:ID: TASK-KVRZ9
+:PRIORITY: P3
+:END:
+
+From TASK-BCYMM (2026-07-29): the pre-suite sighting showed the exec -a worker-server child OUTLIVING a group TERM that took its siblings — BCYMM's fixture reap is immune (unconditional KILL), but production's subprocess_stream_json::reap_process_group TERMs a group containing exactly this process shape (cursor-agent's node worker-server) and waits on the LEADER as its liveness proxy. Measure whether the 2s grace can return early while a worker-server descendant is still alive; if yes, the wait should cover the group (poll the pgid member count, or KILL unconditionally after grace like the test twin). Small, measurement-first.
