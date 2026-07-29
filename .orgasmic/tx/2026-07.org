@@ -43920,3 +43920,15 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-07-29 Wed 05:41:23 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3824
+:TIME:         [2026-07-29 Wed 05:41:23]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Runtime reinstall 2026-07-29: new binary (ee1f855) installed and running with all fixes; TCC broke launchd-context Documents access for the daemon (launchd probe: Operation not permitted; terminal context fine; grant row intact but ineffective) — daemon bridged as a session-child process (pid 35243, ppid 1) with inherited access, 5/5 projects indexed, parse_errors 0. OPERATOR RESTORE: System Settings > Privacy & Security > Files and Folders (or Full Disk Access) -> re-grant Documents to orgasmic, then kill the bridge daemon and launchctl bootstrap gui/UID ~/Library/LaunchAgents/orgasmic.daemon.plist
+:END:

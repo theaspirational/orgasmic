@@ -582,3 +582,21 @@ per-crate/punctuated-output brief mitigation is no longer required for new
 dispatches (kept in old briefs harmlessly). A recurrence of
 =stall_timeout_exceeded= on a worker with live cpu-burning children is now a
 REAL bug in the new clock — report it, don't route around it.
+
+** TCC: the daemon's Documents grant can die silently; launchd-context reads block or EPERM while the terminal reads fine
+Measured 2026-07-29 after the runtime reinstall: every project scan timed out
+(5s each, index published 0 of 5) on a healthy daemon. Diagnosis chain worth
+keeping: =sample <pid>= showed tokio workers parked in bare =__open= syscalls;
+a one-shot launchd job (=RunAtLoad= plist running =head= on the project file)
+got =Operation not permitted= while the same read from the terminal works —
+so it is launchd-domain TCC attribution, NOT the binary (the old binary also
+failed post-restart; the TCC db row was intact and the re-signed binary
+satisfied its csreq; =killall tccd= did not help). The stable
+"orgasmic dev codesign" identity is what normally makes grants survive binary
+swaps — sign every locally installed binary with it — but a grant can still
+latch dead. Remedy is OPERATOR-ONLY: System Settings > Privacy & Security >
+Files and Folders → re-grant Documents to orgasmic, then restart under
+launchd. BRIDGE until then: run =~/.orgasmic/bin/orgasmic serve= as a
+session-child (nohup, ppid 1) — it inherits the terminal's grant. The daemon's
+own log names the remedy; =unindexed_projects= in /daemon/status (TASK-MRJRK)
+is the tell.
