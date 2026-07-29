@@ -1068,15 +1068,21 @@ enum RunCmd {
     },
     /// Recover an interrupted worker run with an explicit recovery action.
     ///
-    /// `--action` is one of `reattach_tmux`, `resume_native_fork`, or
-    /// `start_recovery_run`. Omit it to let the daemon execute the sole valid
-    /// action or report the available choices.
+    /// `--action` is one of `reattach_tmux`, `resume_native_fork`,
+    /// `start_recovery_run`, or `abandon`. Omit it to let the daemon execute
+    /// the sole valid action or report the available choices.
+    ///
+    /// `abandon` is the fourth manager rescue judgment (see the rescue-policy
+    /// convention): it ends a LIVE run the manager has decided not to rescue,
+    /// releasing it with a tombstone that names the judgment. It is the way out
+    /// when `orgasmic update` refuses on a run whose worker is gone. It is
+    /// never auto-picked — you must ask for it.
     Recover {
         /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
-        /// Recovery action to take: `reattach_tmux`, `resume_native_fork` or
-        /// `start_recovery_run`. Omitted → the daemon runs the sole valid
-        /// action or reports the available choices.
+        /// Recovery action to take: `reattach_tmux`, `resume_native_fork`,
+        /// `start_recovery_run` or `abandon`. Omitted → the daemon runs the
+        /// sole valid action or reports the available choices.
         #[arg(long)]
         action: Option<String>,
         /// Registered project containing the origin run.

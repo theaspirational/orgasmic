@@ -1,0 +1,28 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection is the pre-fix state in two places: `post_run_recover` loses its
+# abandon branch and falls through to the inventory lookup, and the update
+# fence's refusal goes back to the sentence that names no verb.
+
+# The CLI half runs last, so the compound's status is its status.
+exit: 101
+
+# THE DEAD END, verbatim. `run recover --action abandon` on a run that is live
+# in `/runs/live` answers `404 recoverable run <id>` — the inventory's buckets
+# never contain a live run, so the fence's subject and the rescue surface's
+# subject are disjoint sets. This is the string the 2026-07-26 session hit.
+contains: a run the fence refuses on must be clearable by a recover judgment: ApiError { status: 404, message: "recoverable run
+
+# Same string for a run that is not live either. Pre-fix there is no answer
+# that distinguishes "this run is over" from "this daemon has never heard of
+# it", which is why the incident could not be read from its own error text.
+contains: the refusal must say the run is not live and why that ends it: recoverable run run-gone
+
+# Both daemon tests, and only those two. A binary that collapses wholesale is a
+# different failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 2 failed
+
+# WHAT THE OPERATOR READS. The old refusal, whole: it names the runs, then
+# offers "close them" and a "force path" without naming either.
+contains: the refusal must print the runnable escape, not describe it: refusing runtime update while live run(s) exist: run-stranded, run-anonymous. Close them or use the existing force path deliberately.
+contains: test result: FAILED. 0 passed; 1 failed

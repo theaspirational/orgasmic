@@ -7526,9 +7526,14 @@ async fn release_run_and_record_tx(
 
 #[derive(Debug, Deserialize)]
 pub struct RunRecoverRequest {
-    /// Explicit recovery action: `reattach_tmux`, `resume_native_fork`, or
-    /// `start_recovery_run`. When omitted, the backend executes the run's sole
-    /// valid action or returns a 409 conflict listing the choices.
+    /// Explicit recovery action: `reattach_tmux`, `resume_native_fork`,
+    /// `start_recovery_run`, or `abandon`. When omitted, the backend executes
+    /// the run's sole valid action or returns a 409 conflict listing the
+    /// choices.
+    ///
+    /// orgasmic:task_VSWZT — `abandon` is never auto-picked and never appears
+    /// in a run's `recovery_actions`: it is a manager judgment about a live
+    /// run, not a rescue the daemon can infer from the run's own state.
     #[serde(default)]
     pub action: Option<String>,
     #[serde(default)]
@@ -7986,11 +7991,153 @@ async fn recovery_origin_authority(
     })
 }
 
+/// The fourth manager rescue judgment from
+/// `shipped/prompt-studio/conventions/rescue-policy.org`: end a run the manager
+/// has decided not to rescue.
+///
+/// orgasmic:task_VSWZT — the other three judgments answer "how do we keep this
+/// attempt going"; this one answers "this attempt is over". It is deliberately
+/// a recovery action rather than a bare release verb: release stays the
+/// daemon's act, and what the manager performs is a judgment that *results* in
+/// a release carrying a tombstone that names the judgment.
+pub(crate) const RECOVERY_ACTION_ABANDON: &str = "abandon";
+
+/// The `Lifecycle::Release` reason an abandon writes. It names the judgment, so
+/// a later reader of the session JSONL can tell a manager's decision from a
+/// worker's finalize or a timeout sweep.
+pub(crate) const ABANDON_RELEASE_REASON: &str = "manager rescue judgment: abandon";
+
+/// What `abandon` says about a run the supervisor is not holding.
+///
+/// Deliberately not "run not found": the caller named a run, and the answer to
+/// "is it live" is no. A run that already ended carries its own release
+/// tombstone, so there is nothing mechanical left for abandon to do.
+fn abandon_not_live_message(id: &str) -> String {
+    format!(
+        "run {id} is not live, so there is nothing to abandon — a run that has \
+         already ended carries its own release tombstone. Record the abandon \
+         judgment in tx instead."
+    )
+}
+
+/// `POST /runs/:id/recover {"action":"abandon"}`.
+///
+/// orgasmic:task_VSWZT — the abandon judgment, and the only recovery action
+/// whose subject is a **live** run. The other three resolve their subject out
+/// of the crash-recovery inventory's `interrupted / reattached /
+/// failed_recoverable / ambiguous` buckets, which by construction exclude
+/// everything `GET /runs/live` reports; that is why a run the update fence
+/// refused on had no recover action able to clear it. This one reads the same
+/// supervisor the fence reads.
+///
+/// It creates no replacement run, so it takes no recovery claim and needs no
+/// origin authority: there is no second run for a crash to strand.
+///
+/// It does not bypass the release path either. Abandon calls the same
+/// `release_with_finalization` a worker finalize does, so a run whose drain is
+/// wedged rides TASK-HAREX's `DrainGate` — bounded by `RELEASE_DRAIN_BUDGET` —
+/// rather than being ripped out from under it.
+async fn abandon_live_run(
+    state: &ApiState,
+    id: &str,
+    req: &RunRecoverRequest,
+) -> Result<Json<RunRecoverResponse>, ApiError> {
+    let project_id = req
+        .project
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
+    let run = state
+        .supervisor
+        .snapshot()
+        .await
+        .runs
+        .iter()
+        .find(|run| run.run_id == id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(abandon_not_live_message(id)))?;
+    // A recovery action is scoped to one registered project. A live run that
+    // declares no project (manager/artifactor shapes) is not fenced out by a
+    // project it never claimed.
+    if let Some(owner) = run.project_id.as_deref() {
+        if owner != project_id {
+            return Err(ApiError::bad_request(format!(
+                "run {id} belongs to project {owner}, not {project_id}"
+            )));
+        }
+    }
+    match state
+        .supervisor
+        .release_with_finalization(
+            id,
+            ABANDON_RELEASE_REASON,
+            // Never Completed: rescue-policy's hard rule is that an abandoned
+            // attempt is never recorded as success.
+            ReleaseOutcome::Cancelled,
+            false,
+            None,
+        )
+        .await
+    {
+        Ok(()) => {}
+        // orgasmic:TASK-ARZGD — an artifactor writer/regenerate ack owns the
+        // record until it returns; the cancel is recorded now and the release
+        // follows it. Same reading `post_run_release` gives this error.
+        Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_)) => {}
+        Err(crate::supervisor::SupervisorError::RunNotFound(_)) => {
+            // `release_one` answers `RunNotFound` for two opposite states: the
+            // record is gone from `runs`, and the record is present with a
+            // release already running (supervisor.rs, the
+            // `explicit_release_in_progress || early_exit_release_taken` guard).
+            // Collapsing both into 404 is precisely the disagreement this task
+            // was filed for — `GET /runs/live` reporting a run the release
+            // surface claims does not exist. Re-read liveness and answer the
+            // question the caller actually asked.
+            if state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == id)
+            {
+                return Err(ApiError::conflict_json(json!({
+                    "error": "release already in progress",
+                    "run_id": id,
+                    "detail": format!(
+                        "run {id} is live and a release is already running for it, \
+                         so abandon has nothing to add. TASK-HAREX bounds that \
+                         drain at {}s; retry after it.",
+                        RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
+                    ),
+                })));
+            }
+            return Err(ApiError::not_found(abandon_not_live_message(id)));
+        }
+        Err(other) => return Err(supervisor_recover_error(other)),
+    }
+    Ok(Json(RunRecoverResponse {
+        run_id: id.to_string(),
+        runtime_id: run.identity.runtime_id.clone(),
+        boot_id: run.identity.boot_id.clone(),
+        session_path: run.session_path.clone(),
+        action: RECOVERY_ACTION_ABANDON.to_string(),
+        // Abandon opens no surface. The run it names is over.
+        target: "none".to_string(),
+        draft_prompt: None,
+    }))
+}
+
 async fn post_run_recover(
     State(state): State<ApiState>,
     Path(id): Path<String>,
     Json(req): Json<RunRecoverRequest>,
 ) -> Result<Json<RunRecoverResponse>, ApiError> {
+    // orgasmic:task_VSWZT — abandon is resolved before the inventory lookup
+    // below, because its subject is a live run and the inventory's recoverable
+    // buckets never contain one.
+    if req.action.as_deref() == Some(RECOVERY_ACTION_ABANDON) {
+        return abandon_live_run(&state, &id, &req).await;
+    }
     let project_id = req
         .project
         .clone()
@@ -19698,6 +19845,177 @@ pub(crate) mod tests {
             "explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
         )
         .await;
+    }
+
+    /// Acquire a run whose driver reaches `Ready` and then never says anything
+    /// again, holding a sender clone the whole time.
+    ///
+    /// orgasmic:task_VSWZT — this is run-20260726T080801 after its harness took
+    /// the SIGTERM: the supervisor still holds the record, so `/runs/live`
+    /// reports it and `refuse_if_live_runs` refuses the runtime update on it,
+    /// while nothing is ever going to arrive on its stream. The parked sender
+    /// also makes its drain the wedged kind TASK-HAREX bounded, which is the
+    /// composition abandon has to survive rather than bypass.
+    async fn acquire_a_run_nothing_will_ever_end(
+        state: &ApiState,
+        project_root: &FsPath,
+        task_id: &str,
+    ) -> (String, PathBuf) {
+        // The production budget is 20s. Compress it the way TASK-HAREX's own
+        // replay does — the same seam `ShutdownBudgets::release_drain` uses —
+        // so this drives the real bounded path instead of a parallel one.
+        state
+            .supervisor
+            .set_release_drain_budget(Duration::from_millis(300));
+        let driver = ApiHoldingDriver {
+            gate: std::sync::Arc::new(tokio::sync::Notify::new()),
+        };
+        let session_path = project_sessions_dir(project_root).join(format!("{task_id}.jsonl"));
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: task_id.into(),
+                    kind: RunKind::Worker,
+                    worker_id: "implementer-claude".into(),
+                    role: "implementer".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.to_path_buf()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: session_path.clone(),
+                    driver_config: DriverConfig::from_value(json!({})),
+                    babysitter_target: None,
+                    // Every sweep off: the incident's run was invisible to all
+                    // of them, and the point is that a *manager* can end it.
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: Some(0),
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .expect("acquire the stranded run");
+        (acquire.run_id, session_path)
+    }
+
+    async fn live_run_ids(state: &ApiState) -> Vec<String> {
+        get_live_runs(State(state.clone()))
+            .await
+            .0
+            .get("live")
+            .and_then(|live| live.as_array())
+            .map(|runs| {
+                runs.iter()
+                    .filter_map(|run| run["run_id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// orgasmic:task_VSWZT — the fourth rescue judgment, executable.
+    ///
+    /// The 2026-07-26 dead end was that every surface disclaimed the run: the
+    /// update fence refused on it because `/runs/live` reported it, and
+    /// `run recover` answered `404 recoverable run` because the crash-recovery
+    /// inventory's buckets never contain a live one. `abandon` is the action
+    /// that reads the same supervisor the fence reads.
+    #[tokio::test]
+    async fn a_live_run_no_rescue_can_reach_is_cleared_by_the_abandon_judgment() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let (run_id, session_path) =
+            acquire_a_run_nothing_will_ever_end(&state, &project_root, "TASK-ABANDONED").await;
+
+        assert_eq!(
+            live_run_ids(&state).await,
+            vec![run_id.clone()],
+            "precondition: the update fence's own source reports this run, so \
+             `orgasmic update` refuses on it"
+        );
+
+        let response = post_run_recover(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some(RECOVERY_ACTION_ABANDON.into()),
+                project: Some("proj".into()),
+                request_id: None,
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect("a run the fence refuses on must be clearable by a recover judgment")
+        .0;
+        assert_eq!(response.run_id, run_id);
+        assert_eq!(response.action, RECOVERY_ACTION_ABANDON);
+
+        assert!(
+            live_run_ids(&state).await.is_empty(),
+            "the two views must agree after the judgment: abandon returned 200 \
+             while `/runs/live` still reports the run"
+        );
+
+        // The judgment leaves a tombstone that names itself. A later reader
+        // must be able to tell a manager's decision from a worker finalize or
+        // a timeout sweep — rescue-policy's hard rule is that an abandoned
+        // attempt is never recorded as success.
+        assert!(
+            wait_session_reason(&session_path, ABANDON_RELEASE_REASON).await,
+            "abandon must write a release tombstone naming the judgment: {}",
+            std::fs::read_to_string(&session_path).unwrap_or_default()
+        );
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            body.contains("\"outcome\":\"cancelled\""),
+            "an abandoned attempt is never Completed: {body}"
+        );
+    }
+
+    /// orgasmic:task_VSWZT — abandon on a run that is not live.
+    ///
+    /// It must not answer `active run <id>` / `recoverable run <id>`, the two
+    /// strings that made the incident unreadable. There is exactly one honest
+    /// answer here and it names why there is nothing to do.
+    #[tokio::test]
+    async fn abandon_on_a_run_that_is_not_live_says_so_instead_of_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        let error = post_run_recover(
+            State(state.clone()),
+            Path("run-gone".to_string()),
+            Json(RunRecoverRequest {
+                action: Some(RECOVERY_ACTION_ABANDON.into()),
+                project: Some("proj".into()),
+                request_id: None,
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("nothing live to abandon");
+        assert!(
+            error.message.contains("is not live") && error.message.contains("release tombstone"),
+            "the refusal must say the run is not live and why that ends it: {}",
+            error.message
+        );
     }
 
     /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the
