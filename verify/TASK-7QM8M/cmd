@@ -1,0 +1,23 @@
+# One line. Run from the repo root by `orgasmic verify TASK-7QM8M`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build boards and drive the boot scan that must see neither.
+#
+# Three tests, one per claim the bounded read has to keep:
+#
+# 1. the bound itself — the boot pass must not read the middle of a session
+#    file. Stated as something a whole-file read cannot pass rather than as a
+#    timing: the live run's transcript carries a torn line deep in its middle
+#    (a partial append, what `kill -9` mid-write leaves), so `read_session_file`
+#    fails on it and drops the run, while the bounded scan never touches those
+#    bytes. The byte assertion in the same test states the claim as a number;
+#    the candidate assertion is what makes it a gate;
+# 2. the truncation guard — a prefix window holding one run's acquire and a tail
+#    window holding a LATER run's file end are two runs, and the unread middle
+#    between them holds the first one's release. Reattaching it rehydrates a
+#    dead run under a stale identity while the run that owns the end of the file
+#    is not reattached at all;
+# 3. the same guard's other half — `latest_run_segment` segments on `run_id`
+#    alone, so two runtimes appended under one run id (the second-granularity
+#    manager-file residue this function already guards against) are
+#    indistinguishable once the gap hides the boundary.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- the_boot_scan_never_reads_the_middle_of_a_session_file a_truncated_scan_never_reattaches_a_run_the_unread_middle_already_ended a_truncated_scan_never_combines_two_runtimes_under_one_run_id

@@ -621,6 +621,17 @@ pub struct SessionLifecycleScan {
     /// envelope is NOT the last event of the run, so terminal decisions that
     /// depend on "the last envelope" must not be made from it.
     pub final_envelope_retained: bool,
+    /// `run_id` of the file's final line, read from that line's bounded
+    /// envelope header even when the line itself was dropped as transcript.
+    /// `None` only when there was no complete line to probe.
+    ///
+    /// This is the one fact a truncated scan can still state about the unread
+    /// middle: whichever runs the gap holds, the run that owns the END of the
+    /// file is this one. A caller pairing a retained prefix segment with the
+    /// file's end (boot reattach does exactly that) must check it — the newest
+    /// RETAINED segment is not provably the newest segment on disk, because the
+    /// gap can hold a release and a later acquire (orgasmic:TASK-7QM8M).
+    pub final_line_run_id: Option<String>,
     /// Lines dropped by the transcript filter, never parsed.
     pub skipped_transcript_lines: u64,
 }
@@ -652,6 +663,20 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// `run_id` of the last non-blank line in `window`.
+///
+/// Every line carries the envelope header, transcript included, so this answers
+/// "which run owns the end of this window" for the price of one bounded probe —
+/// no parse, and no dependence on the line having been retained.
+fn window_final_line_run_id(window: &[u8]) -> Option<String> {
+    let line = window
+        .split(|byte| *byte == b'\n')
+        .rfind(|line| !line.iter().all(u8::is_ascii_whitespace))?;
+    let header = &line[..line.len().min(ENVELOPE_HEADER_PROBE_BYTES)];
+    let value = probe_string_value(header, b"\"run_id\":\"")?;
+    std::str::from_utf8(value).ok().map(str::to_string)
 }
 
 /// Read the JSON string value following `key` inside `probe`.
@@ -768,6 +793,10 @@ pub fn scan_session_lifecycle_reader<R: std::io::Read + std::io::Seek>(
         (prefix, tail)
     };
 
+    // Probed from the raw window, so a transcript last line — the normal shape
+    // for a run that is still writing — still names its run.
+    scan.final_line_run_id = window_final_line_run_id(if scan.truncated { &tail } else { &prefix });
+
     let mut final_line_retained = false;
     for window in [prefix.as_slice(), tail.as_slice()] {
         for line in window.split(|byte| *byte == b'\n') {
@@ -851,7 +880,14 @@ mod tests {
                 &mut out,
             );
         }
-        std::fs::write(path, out).unwrap();
+        // Appends, so a caller can lay two run segments into one file the way
+        // an older build's second-granularity manager file really did.
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        std::io::Write::write_all(&mut file, out.as_bytes()).unwrap();
     }
 
     #[test]
@@ -929,6 +965,44 @@ mod tests {
             .map(|e| e.seq)
             .collect();
         assert_eq!(retained, expected);
+    }
+
+    /// orgasmic:TASK-7QM8M — a truncated scan cannot read the middle of a file,
+    /// but it can still name the run that owns the END of it: `run_id` is read
+    /// off the final line's bounded header even when that line was dropped as
+    /// transcript, which is the normal shape for a run that is still writing.
+    /// A caller pairing a retained prefix segment with the file's end needs
+    /// exactly this to know the two belong to the same run.
+    #[test]
+    fn lifecycle_scan_names_the_run_that_owns_the_end_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manager-two-runs.jsonl");
+        write_bulky_session(&path, "run-first", 4 * 1024 * 1024, true);
+        write_bulky_session(&path, "run-second", 4 * 1024 * 1024, false);
+
+        let scan = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).unwrap();
+        assert!(scan.truncated);
+        assert!(
+            !scan.final_envelope_retained,
+            "the file ends in the second run's transcript"
+        );
+        assert!(
+            !scan.envelopes.iter().any(|e| e.run_id == "run-second"),
+            "nothing of the second run is retained: its acquire is in the unread \
+             middle and its tail is transcript"
+        );
+        assert_eq!(
+            scan.final_line_run_id.as_deref(),
+            Some("run-second"),
+            "the end of the file belongs to the second run, and saying so costs \
+             one bounded header probe"
+        );
+
+        let small = dir.path().join("run-small.jsonl");
+        write_bulky_session(&small, "run-small", 4096, true);
+        let whole = scan_session_lifecycle(&small, SessionScanBudget::DEFAULT).unwrap();
+        assert!(!whole.truncated);
+        assert_eq!(whole.final_line_run_id.as_deref(), Some("run-small"));
     }
 
     #[test]

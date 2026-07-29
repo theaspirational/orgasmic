@@ -34,8 +34,9 @@ use orgasmic_core::{
     lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
     scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
     Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
-    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
-    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
+    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionLifecycleScan,
+    SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -9222,22 +9223,86 @@ type RunMetaFields = (
     serde_json::Value,
 );
 
-/// Extract a [`BootReattachCandidate`] from a session JSONL if the run is
-/// non-terminal and carries both an `Acquire` and a `RunMeta` lifecycle event.
-/// Returns `None` for terminal runs, babysitters (derived, not reattached), or
-/// runs missing the metadata (pre-`RunMeta` sessions).
+/// Extract a [`BootReattachCandidate`] from a bounded lifecycle scan of a
+/// session JSONL if the run is non-terminal and carries both an `Acquire` and a
+/// `RunMeta` lifecycle event. Returns `None` for terminal runs, babysitters
+/// (derived, not reattached), runs missing the metadata (pre-`RunMeta`
+/// sessions), and scans whose unread middle makes the answer unprovable.
+///
+/// orgasmic:TASK-7QM8M — the input is a [`SessionLifecycleScan`], not whole-file
+/// envelopes, so the boot pass costs bounded bytes per session file instead of
+/// transcript size. Everything this function consumes (`Acquire`, `RunMeta`,
+/// `StageMeta`, `Release`, the terminal driver events, and the external
+/// registration marker) is in the scanner's retained set: it keeps every
+/// non-`driver_event` line and the four lifecycle driver event types.
 fn boot_reattach_candidate(
-    envelopes: &[SessionEnvelope],
+    scan: &SessionLifecycleScan,
     session_path: &FsPath,
 ) -> Option<BootReattachCandidate> {
     // Older builds could append End-external then app-launch identities to the
     // same second-granularity manager file. Recover the latest contiguous run
     // segment instead of combining its metadata with the first run's identity.
-    let envelopes = latest_run_segment(envelopes);
+    let envelopes = latest_run_segment(&scan.envelopes);
     let first = envelopes.first()?;
     let last = envelopes.last().unwrap_or(first);
+    // orgasmic:TASK-7QM8M — a truncated scan read a prefix and a tail with an
+    // unread gap between them, and two rules keep that gap from inventing a
+    // candidate. Both are no-ops on a whole-file scan.
+    if scan.truncated {
+        // 1. The gap can hold this run's release AND a later run's acquire, so
+        //    the newest RETAINED segment is not provably the newest segment on
+        //    disk: pairing a prefix run's `Acquire`/`RunMeta` with the file's
+        //    end would reattach a run that already released, and would do it
+        //    under the wrong identity. The final line names the run that owns
+        //    the end of the file even when that line was dropped as transcript
+        //    — which is the normal shape for a live TUI run — so require it to
+        //    be this segment's run. When it is not, the live run's own metadata
+        //    sits in the gap and no candidate is provable from this file.
+        if scan.final_line_run_id.as_deref() != Some(first.run_id.as_str()) {
+            tracing::info!(
+                session_path = %session_path.display(),
+                segment_run_id = %first.run_id,
+                final_line_run_id = ?scan.final_line_run_id,
+                "boot reattach: truncated scan's newest retained segment does not \
+                 own the end of the file; skipped rather than combined"
+            );
+            return None;
+        }
+        // 2. `latest_run_segment` segments on `run_id` alone, which cannot see
+        //    a boundary the gap hides: a second-granularity manager file could
+        //    append two runtimes under one run id, and combining the prefix
+        //    runtime's acquire with the tail runtime's end is exactly the
+        //    misattribution this scan must not introduce. `boot_id` is
+        //    deliberately not part of this — a run reattached across daemon
+        //    restarts keeps its runtime, and refusing on boot id would decline
+        //    live runs for no evidence.
+        if let Some(other) = envelopes
+            .iter()
+            .find(|envelope| envelope.runtime_id != first.runtime_id)
+        {
+            tracing::info!(
+                session_path = %session_path.display(),
+                run_id = %first.run_id,
+                runtime_id = %first.runtime_id,
+                other_runtime_id = %other.runtime_id,
+                "boot reattach: truncated scan retained two runtimes under one run \
+                 id; skipped rather than combined"
+            );
+            return None;
+        }
+    }
     // Skip terminal runs (mirrors the recovery classifier).
-    let terminal = match release_outcome(last) {
+    //
+    // orgasmic:TASK-7QM8M — only the file's genuine final envelope can prove a
+    // terminal release, the same rule `classify_session_dir` applies. When the
+    // scan dropped that line as transcript, the newest retained lifecycle line
+    // is not the end of the run, and treating it as terminal would refuse to
+    // reattach a run that is still writing.
+    let release = scan
+        .final_envelope_retained
+        .then(|| release_outcome(last))
+        .flatten();
+    let terminal = match release {
         Some(ReleaseOutcome::Completed)
         | Some(ReleaseOutcome::Failed)
         | Some(ReleaseOutcome::Cancelled) => true,
@@ -9396,9 +9461,19 @@ fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Res
 /// written on release. Runs missing either path (manager, recovery, stage
 /// launch, or pre-upgrade session JSONL) are reattached with no watcher, same
 /// as before this fix.
-/// Read every session file under `dirs` and keep the runs worth reattaching.
+/// Scan every session file under `dirs` and keep the runs worth reattaching.
 /// Blocking by nature; callers must keep it off the async runtime's threads.
+///
+/// orgasmic:TASK-7QM8M — bounded per file. This read used to be
+/// `read_session_file` (`fs::read_to_string`), so a board's whole transcript
+/// volume was paid at every daemon start; a live TUI run alone can persist
+/// hundreds of megabytes that say nothing about whether it is reattachable.
+/// The lifecycle scanner reads a prefix and a tail window instead, the same
+/// substitution TASK-KWSTJ made on `GET /api/runs`.
 fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandidate> {
+    let started = std::time::Instant::now();
+    let (mut session_files, mut session_file_bytes, mut bytes_inspected, mut truncated_scans) =
+        (0_u64, 0_u64, 0_u64, 0_u64);
     let mut candidates = Vec::new();
     for dir in dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -9423,14 +9498,31 @@ fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandida
                 );
                 continue;
             }
-            let Ok(envelopes) = read_session_file(&path) else {
+            let Ok(scan) = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) else {
                 continue;
             };
-            if let Some(candidate) = boot_reattach_candidate(&envelopes, &path) {
+            session_files += 1;
+            session_file_bytes += scan.file_bytes;
+            bytes_inspected += scan.bytes_inspected;
+            if scan.truncated {
+                truncated_scans += 1;
+            }
+            if let Some(candidate) = boot_reattach_candidate(&scan, &path) {
                 candidates.push(candidate);
             }
         }
     }
+    // The point of the bounded read, stated where an operator can see it:
+    // `bytes_inspected` stays flat as `session_file_bytes` grows.
+    tracing::info!(
+        session_files,
+        session_file_bytes,
+        bytes_inspected,
+        truncated_scans,
+        candidates = candidates.len(),
+        duration_ms = started.elapsed().as_millis() as u64,
+        "boot reattach scan complete"
+    );
     candidates
 }
 
@@ -19430,6 +19522,24 @@ pub(crate) mod tests {
         );
     }
 
+    /// The scan an in-memory boot-reattach fixture stands for: a whole-file
+    /// read, nothing dropped and nothing truncated. orgasmic:TASK-7QM8M — the
+    /// function takes a [`SessionLifecycleScan`] now, and a fixture that is a
+    /// list of envelopes is exactly the untruncated case.
+    fn whole_file_scan(envelopes: &[SessionEnvelope]) -> SessionLifecycleScan {
+        SessionLifecycleScan {
+            final_line_run_id: envelopes.last().map(|env| env.run_id.clone()),
+            final_envelope_retained: !envelopes.is_empty(),
+            envelopes: envelopes.to_vec(),
+            ..SessionLifecycleScan::default()
+        }
+    }
+
+    /// The bounded scan the boot pass really performs over a file on disk.
+    fn boot_scan(path: &FsPath) -> SessionLifecycleScan {
+        scan_session_lifecycle(path, SessionScanBudget::DEFAULT).expect("scan session file")
+    }
+
     #[test]
     fn boot_reattach_candidate_requires_nonterminal_acquire_and_run_meta() {
         let env = |kind: SessionEventKind, event: serde_json::Value| SessionEnvelope {
@@ -19480,7 +19590,8 @@ pub(crate) mod tests {
 
         // Acquire + RunMeta, non-terminal → a full candidate.
         let candidate =
-            boot_reattach_candidate(&[acquire.clone(), meta.clone()], &path).expect("candidate");
+            boot_reattach_candidate(&whole_file_scan(&[acquire.clone(), meta.clone()]), &path)
+                .expect("candidate");
         assert_eq!(candidate.run_id, "run-reattach");
         assert_eq!(candidate.task_id, "manager.launch:orgasmic");
         assert_eq!(candidate.transport, "rmux");
@@ -19508,19 +19619,24 @@ pub(crate) mod tests {
             })
             .unwrap(),
         );
-        let invalid_argv = boot_reattach_candidate(&[acquire.clone(), invalid_argv_meta], &path)
-            .expect("invalid argv candidate");
+        let invalid_argv = boot_reattach_candidate(
+            &whole_file_scan(&[acquire.clone(), invalid_argv_meta]),
+            &path,
+        )
+        .expect("invalid argv candidate");
         assert!(
             validate_boot_reattach_harness_args(&invalid_argv).is_err(),
             "boot reattach must use the shared custom-only argv validator"
         );
 
         // Terminal release → not a candidate.
-        assert!(
-            boot_reattach_candidate(&[acquire.clone(), meta.clone(), release], &path).is_none()
-        );
+        assert!(boot_reattach_candidate(
+            &whole_file_scan(&[acquire.clone(), meta.clone(), release]),
+            &path
+        )
+        .is_none());
         // Missing RunMeta (pre-upgrade session) → not a candidate.
-        assert!(boot_reattach_candidate(&[acquire], &path).is_none());
+        assert!(boot_reattach_candidate(&whole_file_scan(&[acquire]), &path).is_none());
     }
 
     /// TASK-QRTT8: the `RunMeta` pattern must BIND `credential_mode`, never
@@ -19576,14 +19692,15 @@ pub(crate) mod tests {
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap());
-            let candidate = boot_reattach_candidate(&[acquire.clone(), meta], &path)
-                .unwrap_or_else(|| {
-                    panic!(
+            let candidate =
+                boot_reattach_candidate(&whole_file_scan(&[acquire.clone(), meta]), &path)
+                    .unwrap_or_else(|| {
+                        panic!(
                         "a live run whose harness resolved credential_mode={credential_mode:?} \
                          must be a boot-reattach candidate; a refutable pattern on this field \
                          drops the whole run and it is never rehydrated after a daemon restart"
                     )
-                });
+                    });
             // The reattach material survives intact, not just the `Some`.
             assert_eq!(candidate.run_id, "run-qrtt8");
             assert_eq!(candidate.task_id, "TASK-QRTT8");
@@ -19658,8 +19775,7 @@ pub(crate) mod tests {
             .unwrap();
         drop(writer);
 
-        let envelopes = read_session_file(&session_path).expect("read session");
-        let candidate = boot_reattach_candidate(&envelopes, &session_path)
+        let candidate = boot_reattach_candidate(&boot_scan(&session_path), &session_path)
             .expect("a credential-resolving stdio run is now a candidate");
         assert_eq!(candidate.transport, "acp-stdio");
 
@@ -19795,12 +19911,8 @@ pub(crate) mod tests {
             false,
         );
 
-        assert!(boot_reattach_candidate(
-            &read_session_file(&external_path).unwrap(),
-            &external_path
-        )
-        .is_none());
-        let app = boot_reattach_candidate(&read_session_file(&app_path).unwrap(), &app_path)
+        assert!(boot_reattach_candidate(&boot_scan(&external_path), &external_path).is_none());
+        let app = boot_reattach_candidate(&boot_scan(&app_path), &app_path)
             .expect("app manager remains a clean recovery candidate");
         assert_eq!(app.run_id, "run-app");
         assert_eq!(app.runtime_id, "rt-app");
@@ -19831,14 +19943,550 @@ pub(crate) mod tests {
             "tmux",
             false,
         );
-        let recovered = boot_reattach_candidate(
-            &read_session_file(&legacy_collision_path).unwrap(),
-            &legacy_collision_path,
-        )
-        .expect("legacy collision recovers the app segment");
+        let recovered =
+            boot_reattach_candidate(&boot_scan(&legacy_collision_path), &legacy_collision_path)
+                .expect("legacy collision recovers the app segment");
         assert_eq!(recovered.run_id, "run-legacy-app");
         assert_eq!(recovered.runtime_id, "rt-legacy-app");
         assert_eq!(recovered.transport, "tmux");
+    }
+
+    // orgasmic:TASK-7QM8M
+    // ---------------------------------------------------------------------
+    // Boot reattach reads a bounded prefix + tail per session file instead of
+    // the whole transcript. These pin the two things that substitution can get
+    // wrong: what the unread middle is allowed to imply, and whether a live run
+    // whose acquire is far from the file's end is still rehydrated.
+    // ---------------------------------------------------------------------
+
+    /// Append one production-shaped run segment to `path`: `Acquire`,
+    /// `RunMeta`, a `ready`, `transcript_bytes` of `text_chunk` driver events,
+    /// and optionally the terminal `Release` that ends it.
+    ///
+    /// Written straight to the file rather than through `SessionWriter`, whose
+    /// per-append `sync_all` makes a megabyte fixture take tens of seconds.
+    /// `seq` restarts at 0 per segment, which is what `SessionWriter::open`
+    /// really does when a second run appends to an existing file.
+    fn append_bulky_run_segment(
+        path: &FsPath,
+        identity: &RuntimeIdentity,
+        task_id: &str,
+        transport: &str,
+        transcript_bytes: usize,
+        released: bool,
+    ) {
+        use std::io::Write as _;
+
+        let mut seq = 0_u64;
+        let mut out = String::new();
+        let mut push = |kind: SessionEventKind, event: serde_json::Value, out: &mut String| {
+            let envelope = SessionEnvelope {
+                seq,
+                time: chrono::Utc::now(),
+                run_id: identity.run_id.clone(),
+                runtime_id: identity.runtime_id.clone(),
+                boot_id: identity.boot_id.clone(),
+                kind,
+                event,
+            };
+            out.push_str(&serde_json::to_string(&envelope).unwrap());
+            out.push('\n');
+            seq += 1;
+        };
+
+        push(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::Acquire {
+                task_id: task_id.into(),
+                kind: "worker".into(),
+                worker_id: "manager".into(),
+            })
+            .unwrap(),
+            &mut out,
+        );
+        push(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::RunMeta {
+                transport: transport.into(),
+                harness: Some("claude".into()),
+                project_id: Some("proj".into()),
+                worktree: Some(PathBuf::from("/tmp/proj")),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                role: Some("terminal".into()),
+                requires_worker_finalize: Some(false),
+                credential_mode: None,
+                driver_config: json!({"system_wide": true}),
+            })
+            .unwrap(),
+            &mut out,
+        );
+        push(
+            SessionEventKind::DriverEvent,
+            json!({"type": "ready", "protocol_version": "tmux-tui/1"}),
+            &mut out,
+        );
+        let chunk = "x".repeat(4096);
+        let mut written = 0;
+        while written < transcript_bytes {
+            push(
+                SessionEventKind::DriverEvent,
+                json!({"type": "text_chunk", "stream": "stdout", "text": chunk}),
+                &mut out,
+            );
+            written += chunk.len();
+        }
+        if released {
+            push(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "done".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+                &mut out,
+            );
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open fixture session file");
+        file.write_all(out.as_bytes()).expect("write fixture");
+    }
+
+    /// TASK-7QM8M: the unread middle of a bounded scan may not be read as
+    /// "nothing happened".
+    ///
+    /// A file holding two run segments, each with a transcript larger than the
+    /// scan budget: the prefix window carries the FIRST run's `Acquire` /
+    /// `RunMeta`, the tail window carries the SECOND run's transcript, and the
+    /// gap between them holds the first run's `Release` and the second run's
+    /// own metadata. `latest_run_segment` can only segment what was retained,
+    /// so the newest retained segment is the first run — a run the file itself
+    /// says is over. Reattaching it would rehydrate a dead run under a stale
+    /// identity while the run that owns the end of the file is not reattached
+    /// at all.
+    #[test]
+    fn a_truncated_scan_never_reattaches_a_run_the_unread_middle_already_ended() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("manager-proj-two-segments.jsonl");
+        append_bulky_run_segment(
+            &path,
+            &RuntimeIdentity {
+                run_id: "run-first".into(),
+                runtime_id: "rt-first".into(),
+                boot_id: "boot-old".into(),
+            },
+            "manager.launch:proj",
+            "tmux",
+            1024 * 1024,
+            true,
+        );
+        append_bulky_run_segment(
+            &path,
+            &RuntimeIdentity {
+                run_id: "run-second".into(),
+                runtime_id: "rt-second".into(),
+                boot_id: "boot-old".into(),
+            },
+            "manager.launch:proj",
+            "rmux",
+            1024 * 1024,
+            false,
+        );
+
+        let scan = boot_scan(&path);
+        assert!(scan.truncated, "the fixture must exceed the scan budget");
+        assert!(
+            scan.envelopes.iter().any(|env| env.run_id == "run-first")
+                && !scan.envelopes.iter().any(|env| env.run_id == "run-second"),
+            "the hazard is exactly this shape: the first run's metadata retained \
+             from the prefix, nothing of the second run retained at all"
+        );
+
+        // The whole-file read — what boot reattach did before the bounded scan —
+        // answers with the second run. That is the ground truth the bounded scan
+        // must not contradict.
+        let whole_file = read_session_file(&path).expect("read whole file");
+        let unbounded = boot_reattach_candidate(&whole_file_scan(&whole_file), &path)
+            .expect("the whole-file read still sees the live second run");
+        assert_eq!(unbounded.run_id, "run-second");
+
+        assert_ne!(
+            boot_reattach_candidate(&scan, &path)
+                .map(|candidate| candidate.run_id)
+                .as_deref(),
+            Some("run-first"),
+            "a truncated scan must not combine the prefix run's acquire with the \
+             file's end: run-first released inside the unread middle, and \
+             reattaching it would rehydrate a dead run under a stale identity"
+        );
+    }
+
+    /// TASK-7QM8M, the other half of the same rule: `latest_run_segment`
+    /// segments on `run_id` alone, so two runtimes appended under one run id —
+    /// the second-granularity manager-file residue this function already
+    /// guards against — are indistinguishable once the gap hides the boundary.
+    /// Constructed as a scan rather than a file because the shape is legacy
+    /// residue, not something a current build can write.
+    #[test]
+    fn a_truncated_scan_never_combines_two_runtimes_under_one_run_id() {
+        let env = |runtime_id: &str, event: serde_json::Value| SessionEnvelope {
+            seq: 0,
+            time: chrono::Utc::now(),
+            run_id: "run-collided".into(),
+            runtime_id: runtime_id.into(),
+            boot_id: "boot-old".into(),
+            kind: SessionEventKind::Lifecycle,
+            event,
+        };
+        let envelopes = vec![
+            env(
+                "rt-first",
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "manager.launch:proj".into(),
+                    kind: "worker".into(),
+                    worker_id: "manager".into(),
+                })
+                .unwrap(),
+            ),
+            env(
+                "rt-first",
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: "tmux".into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("proj".into()),
+                    worktree: Some(PathBuf::from("/tmp/proj")),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("terminal".into()),
+                    requires_worker_finalize: Some(false),
+                    credential_mode: None,
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            ),
+            // Retained from the tail window: a different runtime entirely, whose
+            // own acquire and metadata sit in the unread middle.
+            env(
+                "rt-second",
+                serde_json::to_value(Lifecycle::StageMeta {
+                    stage: "grill".into(),
+                })
+                .unwrap(),
+            ),
+        ];
+        let path = PathBuf::from("/tmp/manager-proj-collided.jsonl");
+        let scan = SessionLifecycleScan {
+            envelopes,
+            file_bytes: 4 * 1024 * 1024,
+            bytes_inspected: 192 * 1024,
+            truncated: true,
+            final_envelope_retained: true,
+            final_line_run_id: Some("run-collided".into()),
+            skipped_transcript_lines: 900,
+        };
+        assert!(
+            boot_reattach_candidate(&scan, &path).is_none(),
+            "one run id spanning two runtimes across an unread gap is two runs, \
+             not one: reattaching rt-first's metadata against rt-second's end \
+             is the silent misattribution the bounded read must not introduce"
+        );
+    }
+
+    /// TASK-7QM8M: the bound must not cost a live run its reattachment.
+    ///
+    /// The production shape of a multi-segment file — a tiny external
+    /// registration segment, then the app launch that is still running with a
+    /// transcript far larger than the scan budget. The live run's `Acquire` and
+    /// `RunMeta` are in the prefix window, its transcript fills the tail, and
+    /// nothing of it is retained from the end of the file. Driven through
+    /// `collect_boot_reattach_candidates`, the function the boot pass calls.
+    #[test]
+    fn a_live_run_in_a_multi_segment_file_is_still_reattached_from_a_bounded_scan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manager-proj-20260729T101010.jsonl");
+        append_bulky_run_segment(
+            &path,
+            &RuntimeIdentity {
+                run_id: "run-external".into(),
+                runtime_id: "rt-external".into(),
+                boot_id: "boot-old".into(),
+            },
+            "manager.launch:proj",
+            "external",
+            0,
+            true,
+        );
+        append_bulky_run_segment(
+            &path,
+            &RuntimeIdentity {
+                run_id: "run-live-app".into(),
+                runtime_id: "rt-live-app".into(),
+                boot_id: "boot-old".into(),
+            },
+            "manager.launch:proj",
+            "rmux",
+            4 * 1024 * 1024,
+            false,
+        );
+
+        let scan = boot_scan(&path);
+        assert!(scan.truncated);
+        assert!(
+            scan.bytes_inspected <= 192 * 1024 && scan.file_bytes > 4 * 1024 * 1024,
+            "boot reattach must inspect bounded bytes, not file size: inspected \
+             {} of {} bytes",
+            scan.bytes_inspected,
+            scan.file_bytes
+        );
+
+        let candidates = collect_boot_reattach_candidates(&[dir]);
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.run_id == "run-live-app")
+            .expect(
+                "the live segment of a multi-segment file must still be a boot-reattach \
+                 candidate; its acquire is in the prefix window and its transcript owns \
+                 the end of the file",
+            );
+        assert_eq!(candidate.runtime_id, "rt-live-app");
+        assert_eq!(candidate.transport, "rmux");
+        assert_eq!(candidate.task_id, "manager.launch:proj");
+        assert_eq!(
+            candidates.len(),
+            1,
+            "the released external segment is not a candidate"
+        );
+    }
+
+    /// TASK-7QM8M: the boot pass must inspect bounded bytes per session file,
+    /// not file size.
+    ///
+    /// Stated as something an implementation that reads the whole file cannot
+    /// pass, rather than as a timing: the live run's transcript carries a torn
+    /// line deep in its middle — a partial append, what a `kill -9` mid-write
+    /// leaves behind. `read_session_file` parses every line and fails on it, so
+    /// the whole-file read this task replaced dropped such a run entirely; the
+    /// bounded scan never reads those bytes and rehydrates the run. The byte
+    /// assertion states the same claim as a number.
+    #[test]
+    fn the_boot_scan_never_reads_the_middle_of_a_session_file() {
+        use std::io::Write as _;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manager-proj-torn-middle.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-torn-middle".into(),
+            runtime_id: "rt-torn-middle".into(),
+            boot_id: "boot-old".into(),
+        };
+        append_bulky_run_segment(
+            &path,
+            &identity,
+            "manager.launch:proj",
+            "rmux",
+            1024 * 1024,
+            false,
+        );
+        {
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            file.write_all(
+                b"{\"seq\":9999,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chu\n",
+            )
+            .unwrap();
+        }
+        append_bulky_run_segment(
+            &path,
+            &identity,
+            "manager.launch:proj",
+            "rmux",
+            1024 * 1024,
+            false,
+        );
+
+        assert!(
+            read_session_file(&path).is_err(),
+            "the fixture must be a whole-file trap, or this test proves nothing"
+        );
+        let scan = boot_scan(&path);
+        assert!(
+            scan.truncated
+                && scan.bytes_inspected <= 192 * 1024
+                && scan.file_bytes > 2 * 1024 * 1024,
+            "bounded bytes, not file size: inspected {} of {} bytes",
+            scan.bytes_inspected,
+            scan.file_bytes
+        );
+
+        let candidates = collect_boot_reattach_candidates(&[dir]);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run-torn-middle"],
+            "boot reattach must not read — or trip over — the transcript bytes \
+             between the lifecycle head and the file's end"
+        );
+    }
+
+    /// TASK-7QM8M measurement, the twin of TASK-KWSTJ's
+    /// `real_session_shape_scan_is_bounded` but on the BOOT path and against a
+    /// synthetic board, so it never reads an operator's real home:
+    ///
+    /// ```sh
+    /// ORGASMIC_MEASURE_BOARD_GIB=2.4 cargo test -p orgasmic-daemon --lib \
+    ///   measure_boot_reattach -- --ignored --nocapture
+    /// ```
+    ///
+    /// Builds a production-shaped sessions directory in a temp dir — many small
+    /// worker sessions plus a few huge live TUI transcripts — then times the
+    /// whole-file read this task replaced against the bounded scan that
+    /// replaced it. Ignored: it writes gigabytes and is a measurement, not a
+    /// gate.
+    #[test]
+    #[ignore = "writes a multi-GiB synthetic board; measurement, not a gate"]
+    fn measure_boot_reattach_on_a_production_shaped_board() {
+        use std::io::Write as _;
+
+        let target_gib: f64 = std::env::var("ORGASMIC_MEASURE_BOARD_GIB")
+            .ok()
+            .and_then(|raw| raw.parse().ok())
+            .unwrap_or(2.4);
+        const SMALL_SESSIONS: usize = 190;
+        const HUGE_SESSIONS: usize = 4;
+        let huge_bytes = ((target_gib * 1024.0 * 1024.0 * 1024.0) as usize) / HUGE_SESSIONS;
+
+        // One preformatted transcript block per live session, written
+        // repeatedly. The scanner drops these lines without parsing and the
+        // whole-file read parses every one of them, which is the entire
+        // difference being measured; identical seq/time across them costs
+        // neither side anything, but the run identity must be the session's own
+        // or the file would not look like one run still writing.
+        let transcript_block = |identity: &RuntimeIdentity| {
+            let line = serde_json::to_string(&SessionEnvelope {
+                seq: 3,
+                time: chrono::Utc::now(),
+                run_id: identity.run_id.clone(),
+                runtime_id: identity.runtime_id.clone(),
+                boot_id: identity.boot_id.clone(),
+                kind: SessionEventKind::DriverEvent,
+                event: json!({"type": "text_chunk", "stream": "stdout", "text": "x".repeat(4096)}),
+            })
+            .unwrap();
+            let mut block = String::with_capacity(4 * 1024 * 1024 + line.len());
+            while block.len() < 4 * 1024 * 1024 {
+                block.push_str(&line);
+                block.push('\n');
+            }
+            block
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 0..SMALL_SESSIONS {
+            append_bulky_run_segment(
+                &dir.join(format!("run-worker-{index:03}.jsonl")),
+                &RuntimeIdentity {
+                    run_id: format!("run-worker-{index:03}"),
+                    runtime_id: format!("rt-worker-{index:03}"),
+                    boot_id: "boot-old".into(),
+                },
+                &format!("TASK-M{index:04}"),
+                "rmux",
+                32 * 1024,
+                index + 1 < SMALL_SESSIONS,
+            );
+        }
+        for index in 0..HUGE_SESSIONS {
+            let path = dir.join(format!("manager-proj-huge-{index}.jsonl"));
+            let identity = RuntimeIdentity {
+                run_id: format!("run-huge-{index}"),
+                runtime_id: format!("rt-huge-{index}"),
+                boot_id: "boot-old".into(),
+            };
+            append_bulky_run_segment(&path, &identity, "manager.launch:proj", "rmux", 0, false);
+            let block = transcript_block(&identity);
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            let mut written = 0;
+            while written < huge_bytes {
+                file.write_all(block.as_bytes()).unwrap();
+                written += block.len();
+            }
+        }
+
+        let paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        let on_disk: u64 = paths
+            .iter()
+            .map(|path| std::fs::metadata(path).unwrap().len())
+            .sum();
+
+        // BEFORE: what boot reattach did — `read_session_file` per session file,
+        // i.e. `fs::read_to_string` plus a parse of every transcript line.
+        let started = std::time::Instant::now();
+        let mut before_candidates = 0;
+        for path in &paths {
+            let Ok(envelopes) = read_session_file(path) else {
+                continue;
+            };
+            if boot_reattach_candidate(&whole_file_scan(&envelopes), path).is_some() {
+                before_candidates += 1;
+            }
+        }
+        let before = started.elapsed();
+
+        // AFTER: the production function, bounded per file.
+        let started = std::time::Instant::now();
+        let after_candidates = collect_boot_reattach_candidates(std::slice::from_ref(&dir)).len();
+        let after = started.elapsed();
+        let inspected: u64 = paths
+            .iter()
+            .map(|path| {
+                scan_session_lifecycle(path, SessionScanBudget::DEFAULT)
+                    .map(|scan| scan.bytes_inspected)
+                    .unwrap_or(0)
+            })
+            .sum();
+
+        println!(
+            "board: {} files, {:.2} GiB on disk\n\
+             before (read_session_file): {:?}, {:.2} GiB read, {before_candidates} candidates\n\
+             after  (scan_session_lifecycle): {:?}, {:.2} MiB inspected, {after_candidates} candidates",
+            paths.len(),
+            on_disk as f64 / (1024.0 * 1024.0 * 1024.0),
+            before,
+            on_disk as f64 / (1024.0 * 1024.0 * 1024.0),
+            after,
+            inspected as f64 / (1024.0 * 1024.0),
+        );
+        assert_eq!(
+            before_candidates, after_candidates,
+            "the bounded scan must find the same candidates as the whole-file read"
+        );
+        assert!(
+            inspected * 20 < on_disk,
+            "boot reattach must inspect a small fraction of transcript bytes"
+        );
     }
 
     // orgasmic:TASK-AK6EM
@@ -20937,7 +21585,7 @@ pub(crate) mod tests {
         // this the restart tests would only prove that a hand-written session is
         // recoverable, and a launch that persisted the marker somewhere boot
         // recovery does not look would still pass everything.
-        let candidate = boot_reattach_candidate(&envelopes, &session_path)
+        let candidate = boot_reattach_candidate(&boot_scan(&session_path), &session_path)
             .expect("a live stage launch is a boot-reattach candidate");
         assert_eq!(
             candidate.stage.as_deref(),
@@ -20997,7 +21645,7 @@ pub(crate) mod tests {
         );
         let external_envelopes = read_session_file(&session_path).unwrap();
         assert!(
-            boot_reattach_candidate(&external_envelopes, &session_path).is_none(),
+            boot_reattach_candidate(&boot_scan(&session_path), &session_path).is_none(),
             "external residue must not enter the no-driver reattach/log path"
         );
         let (recovered, _inventory) = classify_session_files(
