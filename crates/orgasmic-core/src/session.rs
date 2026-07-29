@@ -361,6 +361,25 @@ pub enum Lifecycle {
         credential_mode: Option<String>,
         driver_config: Value,
     },
+    /// The stage (`grill` / `plan` / `architect`) this run was launched as,
+    /// written immediately after `RunMeta` by the stage launch path.
+    ///
+    /// A stage's completion ownership used to live only in the daemon's
+    /// in-process watcher task, which dies with the daemon process. `RunMeta`
+    /// cannot stand in for it: a stage run carries a `last_path` and never a
+    /// `stdout_path`, so boot recovery read it as a half-recorded dispatch and
+    /// respawned nothing at all — a stage live across a restart then emitted no
+    /// terminal tx, ever (TASK-KPMFK).
+    ///
+    /// Only the stage name is durable. `target` is a static property of the
+    /// stage (`api::stage_spec`), so persisting it would freeze a copy that can
+    /// go stale against the one the live daemon uses; project and task are
+    /// already on `Acquire`/`RunMeta`. A separate variant, rather than a
+    /// `RunMeta` field, keeps every existing session JSONL and every existing
+    /// `RunMeta` writer untouched.
+    StageMeta {
+        stage: String,
+    },
     Attach,
     Release {
         reason: String,
