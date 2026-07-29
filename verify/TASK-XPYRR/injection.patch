@@ -1,9 +1,9 @@
 diff --git a/crates/orgasmic-cli/src/main.rs b/crates/orgasmic-cli/src/main.rs
-index 8d44646..832a410 100644
+index ea3c87c..b90d283 100644
 --- a/crates/orgasmic-cli/src/main.rs
 +++ b/crates/orgasmic-cli/src/main.rs
-@@ -460,16 +460,6 @@ enum TaskCmd {
-         project: Option<String>,
+@@ -540,16 +540,6 @@ enum TaskCmd {
+         /// and cannot be combined with `--priority`/`--property`.
          #[arg(long)]
          state: Option<String>,
 -        /// Rewrite the heading's title prose (TASK-XPYRR). The lifecycle
@@ -16,10 +16,10 @@ index 8d44646..832a410 100644
 -        /// `orgasmic node`/the org-node editor; fetched when omitted.
 -        #[arg(long = "base-version")]
 -        base_version: Option<String>,
+         /// Task priority (e.g. `P1`), written as the `:PRIORITY:` drawer
+         /// property.
          #[arg(long)]
-         priority: Option<String>,
-         #[arg(long)]
-@@ -2267,68 +2257,12 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
+@@ -2700,68 +2690,12 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                  id,
                  project,
                  state,
