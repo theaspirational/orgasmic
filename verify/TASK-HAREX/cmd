@@ -1,0 +1,13 @@
+# One line. Run from the repo root by `orgasmic verify TASK-HAREX`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor that must see neither.
+#
+# Two tests, because the wedge has two entrances and the defect is the same
+# under both: the PID watcher observing a dead worker (the acceptance this task
+# names) and `orgasmic dispatch finalize` (the route the 2026-07-26 incident
+# actually took). Neither sits through the production 20s window — both compress
+# it to 300ms through `set_release_drain_budget`, which is the same seam
+# `ShutdownBudgets::release_drain` uses. The production number is asserted
+# separately, on the real constant, by
+# `the_drain_gate_bounds_only_after_a_release_is_requested` under paused time.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_dead_worker_whose_stream_never_ends_is_still_released_as_orphaned a_worker_finalize_completes_even_when_the_drain_never_ends

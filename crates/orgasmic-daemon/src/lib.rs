@@ -762,6 +762,12 @@ impl Daemon {
             boot.clone(),
             supervisor::CloseGuardStore::at(home.close_guards()),
         );
+        // orgasmic:TASK-HAREX — the drain's release bound and the shutdown
+        // path's release-drain budget are the same number by construction, so
+        // a test that shortens one to watch a real release cannot leave the
+        // other at twenty seconds.
+        supervisor
+            .set_release_drain_budget(opts.shutdown_budgets.unwrap_or_default().release_drain);
         supervisor.begin_boot_reattach();
         let manager_registry = manager_registration::ManagerRegistry::new();
         manager_registration::spawn_liveness_loop(manager_registry.clone(), supervisor.clone());
