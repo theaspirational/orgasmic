@@ -132,7 +132,9 @@ fn competing_start(home: Home, wait: Duration) -> Result<Refusal, String> {
                 let addr = running.addr;
                 let _ = running.shutdown.send(());
                 let _ = running.join.await;
-                Err(format!("a competing start bound a second listener at {addr}"))
+                Err(format!(
+                    "a competing start bound a second listener at {addr}"
+                ))
             }
             Err(error) => Ok(Refusal {
                 message: format!("{error:#}"),
@@ -171,7 +173,10 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
 
     // Process-global by construction (the daemon reads them where it uses
     // them), which is why this file holds exactly one test.
-    std::env::set_var("ORGASMIC_TEST_SCAN_HOLD_MS", SCAN_HOLD.as_millis().to_string());
+    std::env::set_var(
+        "ORGASMIC_TEST_SCAN_HOLD_MS",
+        SCAN_HOLD.as_millis().to_string(),
+    );
     std::env::set_var("ORGASMIC_TEST_BOOT_REFRESH_MS", REFRESH_MS);
 
     // ---- the winner: holds the lock and stays inside the scan --------------
@@ -222,8 +227,8 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     assert_eq!(first.pid, std::process::id());
 
     // ---- the impatient competitor, refusing inside the slow scan -----------
-    let refusal = competing_start(home.clone(), IMPATIENT_BUDGET)
-        .unwrap_or_else(|bound| panic!("{bound}"));
+    let refusal =
+        competing_start(home.clone(), IMPATIENT_BUDGET).unwrap_or_else(|bound| panic!("{bound}"));
     let impatient = refusal.message.clone();
     match refusal.lock_held {
         Some(LockHolder::NotDeparting { waited }) => assert!(
@@ -310,7 +315,10 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
         .expect("the winner never became ready");
     let ready = winner_result.unwrap_or_else(|error| panic!("the winner failed to boot: {error}"));
     assert_eq!(ready.addr.port(), port);
-    assert_eq!(ready.pid, first.pid, "a different process finished the boot");
+    assert_eq!(
+        ready.pid, first.pid,
+        "a different process finished the boot"
+    );
 
     let patient = patient
         .join()
@@ -373,8 +381,11 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
             report.summary()
         );
     }
-    assert_eq!(report.projects, 3, "phase durations without the board size \
-         they were spent on are not a measurement");
+    assert_eq!(
+        report.projects, 3,
+        "phase durations without the board size \
+         they were spent on are not a measurement"
+    );
     assert!(
         report.phase_millis("scanning projects").unwrap() >= SCAN_HOLD.as_millis() as u64,
         "the slow scan did not show up in its own phase: {}",
@@ -420,7 +431,11 @@ fn get_json(addr: std::net::SocketAddr, home: &Home, path: &str) -> String {
             .send()
             .await
             .unwrap_or_else(|error| panic!("GET {path}: {error}"));
-        assert!(response.status().is_success(), "GET {path}: {}", response.status());
+        assert!(
+            response.status().is_success(),
+            "GET {path}: {}",
+            response.status()
+        );
         response.text().await.expect("body")
     })
 }

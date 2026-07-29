@@ -621,7 +621,12 @@ mod tests {
         assert!(!boot_state_path(&home).exists());
     }
 
-    fn state_at(pid: u32, phase: &str, started_at: DateTime<Utc>, refreshed_at: DateTime<Utc>) -> DaemonBootState {
+    fn state_at(
+        pid: u32,
+        phase: &str,
+        started_at: DateTime<Utc>,
+        refreshed_at: DateTime<Utc>,
+    ) -> DaemonBootState {
         DaemonBootState {
             pid,
             phase: phase.to_string(),
@@ -679,7 +684,10 @@ mod tests {
             verdict,
             BootOwnerVerdict::StaleFrozenHeartbeat { .. }
         ));
-        assert!(verdict.to_string().contains("alive but stalled"), "{verdict}");
+        assert!(
+            verdict.to_string().contains("alive but stalled"),
+            "{verdict}"
+        );
 
         // One missed refresh is not a stall: the boundary belongs to the owner's
         // own publish cadence, not to a reader's patience.

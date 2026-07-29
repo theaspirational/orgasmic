@@ -1338,7 +1338,9 @@ mod tests {
     #[test]
     fn writing_the_plist_creates_a_missing_launch_agents_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let plist = tmp.path().join("Library/LaunchAgents/orgasmic.daemon.plist");
+        let plist = tmp
+            .path()
+            .join("Library/LaunchAgents/orgasmic.daemon.plist");
         write_macos_launch_agent(&plist, &spec()).expect("first install");
         assert!(std::fs::read_to_string(&plist)
             .unwrap()

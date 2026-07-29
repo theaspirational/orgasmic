@@ -1411,9 +1411,8 @@ mod tests {
         let _env = env_guard();
         let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
         let tmp = tempfile::tempdir().unwrap();
-        let daemon = RecordingDaemon::start(|_| {
-            Some((500, r#"{"error":"index not rebuilt"}"#.to_string()))
-        });
+        let daemon =
+            RecordingDaemon::start(|_| Some((500, r#"{"error":"index not rebuilt"}"#.to_string())));
         let home = home_pointing_at(tmp.path(), &daemon);
 
         let mut lock = OpenOptions::new()
