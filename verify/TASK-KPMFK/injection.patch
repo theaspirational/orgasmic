@@ -1,0 +1,34 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -9173,6 +9173,13 @@
+         _ => RunKind::Worker,
+     };
+ 
++    // TASK-KPMFK injection: the pre-fix boot scan. Nothing durable told boot
++    // recovery that a run was a `grill`/`plan`/`architect` launch, so the stage
++    // identity is dropped right here — exactly the pre-fix state. The candidate
++    // then reaches the respawn rules carrying only dispatch artifact paths, is
++    // read as a half-recorded dispatch (a stage has a `last_path` and never a
++    // `stdout_path`), and no stage completion watcher is ever recreated.
++    let stage: Option<String> = None;
+     Some(BootReattachCandidate {
+         run_id: first.run_id.clone(),
+         runtime_id: first.runtime_id.clone(),
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -2254,6 +2254,13 @@
+         identity: &RuntimeIdentity,
+         stage: &str,
+     ) -> Result<(), SupervisorError> {
++        // TASK-KPMFK injection: the pre-fix launch path. `post_stage` kept the
++        // stage, its target and completion ownership only in the in-process
++        // `StageCompletion` task, which dies with the daemon process. Nothing
++        // about the stage was ever persisted.
++        if true {
++            return Ok(());
++        }
+         let evt = Lifecycle::StageMeta {
+             stage: stage.to_string(),
+         };

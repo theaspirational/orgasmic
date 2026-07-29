@@ -2108,6 +2108,10 @@ pub fn pending_session_prefix_matches_claim(
             | Lifecycle::Continuation { .. }
             | Lifecycle::BabysitterSpawned { .. }
             | Lifecycle::Reattach { .. }
+            // orgasmic:TASK-KPMFK — only `post_stage` writes a stage identity,
+            // and a planned recovery replacement is never a stage launch, so a
+            // session carrying one is not this claim's session.
+            | Lifecycle::StageMeta { .. }
             | Lifecycle::ComposerSend { .. } => return false,
         }
     }

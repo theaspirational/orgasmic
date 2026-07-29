@@ -35,8 +35,7 @@ use orgasmic_core::{
     scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
     Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
     RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
-    SlotValues, WorkerKind,
-    DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
+    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -3229,6 +3228,13 @@ fn stage_spec(stage: &str) -> StageSpec {
     }
 }
 
+/// [`stage_spec`] for a stage name that came off disk rather than out of a
+/// route (TASK-KPMFK boot recovery). Unknown names answer `None` instead of
+/// panicking: a session file is untrusted input to this process.
+fn stage_spec_for(stage: &str) -> Option<StageSpec> {
+    matches!(stage, "grill" | "architect" | "plan").then(|| stage_spec(stage))
+}
+
 async fn post_stage(
     state: &ApiState,
     spec: StageSpec,
@@ -3361,6 +3367,31 @@ async fn post_stage(
         )
         .await
         .map_err(|e| supervisor_acquire_error(spec.stage, e))?;
+
+    // orgasmic:TASK-KPMFK — the completion watcher spawned below is an
+    // in-process task and dies with the daemon. Persist which stage this run is
+    // so a restart can rebuild it; awaited, so it is on disk before the request
+    // returns. A failure here is not fatal to the launch — the stage is already
+    // running — but it does cost this run its cross-restart terminal tx, so it
+    // is logged loudly rather than swallowed.
+    if let Err(error) = state
+        .supervisor
+        .append_stage_meta(
+            &acquire.run_id,
+            &session_path,
+            &acquire.identity,
+            spec.stage,
+        )
+        .await
+    {
+        tracing::warn!(
+            run_id = %acquire.run_id,
+            stage = %spec.stage,
+            error = ?error,
+            "stage identity not persisted; this run will lose its completion \
+             watcher if the daemon restarts"
+        );
+    }
 
     let mut extra = vec![
         ("RUN_ID".to_string(), acquire.run_id.clone()),
@@ -9019,6 +9050,11 @@ struct BootReattachCandidate {
     dispatch_attempt_token: Option<String>,
     role: Option<String>,
     requires_worker_finalize: Option<bool>,
+    /// The stage this run was launched as, when it was a `grill`/`plan`/
+    /// `architect` launch — enables respawning its stage completion watcher
+    /// (TASK-KPMFK). `None` for every non-stage run and for session JSONL
+    /// written before the stage identity was durable.
+    stage: Option<String>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
@@ -9073,6 +9109,7 @@ fn boot_reattach_candidate(
 
     let mut acquire: Option<(String, String, String)> = None;
     let mut meta: Option<RunMetaFields> = None;
+    let mut stage: Option<String> = None;
     for env in envelopes {
         if env.kind != SessionEventKind::Lifecycle {
             continue;
@@ -9110,6 +9147,8 @@ fn boot_reattach_candidate(
                     driver_config,
                 ))
             }
+            // orgasmic:TASK-KPMFK
+            Ok(Lifecycle::StageMeta { stage: launched }) => stage = Some(launched),
             _ => {}
         }
     }
@@ -9149,6 +9188,7 @@ fn boot_reattach_candidate(
         dispatch_attempt_token,
         role: meta_role,
         requires_worker_finalize: meta_requires,
+        stage,
         driver_config,
         session_path: session_path.to_path_buf(),
     })
@@ -9355,6 +9395,54 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                         .restore_terminal_contract(&c.run_id, role, requires_worker_finalize)
                         .await;
                 }
+                // orgasmic:TASK-KPMFK — a stage run is answered here and never
+                // reaches the dispatch rule below. It is not dispatch-shaped:
+                // `post_stage` gives it a `last_path` and never a
+                // `stdout_path`, so the dispatch rule read it as a
+                // half-recorded dispatch, warned, and respawned nothing — and
+                // the stage then completed with no terminal tx at all, because
+                // stage completion lived only in the watcher that died with the
+                // old daemon process.
+                if let Some(stage) = c.stage.clone() {
+                    match (stage_spec_for(&stage), c.project_id.clone()) {
+                        (Some(spec), Some(project_id)) => {
+                            tracing::info!(
+                                run_id = %c.run_id,
+                                task_id = %c.task_id,
+                                stage = %spec.stage,
+                                "boot reattach: respawning stage completion watcher"
+                            );
+                            spawn_stage_completion_watcher(
+                                state.clone(),
+                                StageCompletion {
+                                    stage: spec.stage.to_string(),
+                                    project_id,
+                                    task_id: c.task_id.clone(),
+                                    target: spec.target.to_string(),
+                                    run_id: c.run_id.clone(),
+                                    session_path: c.session_path.clone(),
+                                },
+                            );
+                        }
+                        (Some(_), None) => {
+                            tracing::warn!(
+                                run_id = %c.run_id,
+                                stage = %stage,
+                                "boot reattach: stage run without a persisted project; \
+                                 skipping stage completion watcher"
+                            );
+                        }
+                        (None, _) => {
+                            tracing::warn!(
+                                run_id = %c.run_id,
+                                stage = %stage,
+                                "boot reattach: unrecognized persisted stage; \
+                                 skipping stage completion watcher"
+                            );
+                        }
+                    }
+                    continue;
+                }
                 match (
                     c.last_path.clone(),
                     c.stdout_path.clone(),
@@ -9396,10 +9484,19 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                         // pre-upgrade RunMeta: no watcher, as before this fix.
                     }
                     _ => {
+                        // Reached by a partially-recorded dispatch, and by a
+                        // stage run launched before its stage identity was
+                        // durable (TASK-KPMFK) — the pre-upgrade case, which
+                        // this daemon cannot tell from the former and so
+                        // cannot recover. Name what is actually missing.
                         tracing::warn!(
                             run_id = %c.run_id,
                             task_id = %c.task_id,
-                            "boot reattach: dispatch artifact paths present without project_id/worktree; skipping completion watcher"
+                            has_last_path = c.last_path.is_some(),
+                            has_stdout_path = c.stdout_path.is_some(),
+                            has_project_id = c.project_id.is_some(),
+                            has_worktree = c.worktree.is_some(),
+                            "boot reattach: incomplete dispatch metadata; skipping completion watcher"
                         );
                     }
                 }
@@ -11960,7 +12057,10 @@ fn reject_body_with_nested_headings(verb: &str, body: &str) -> Result<(), ApiErr
     let quoted: String = if first.chars().count() > REFUSAL_HEADING_MAX_CHARS {
         format!(
             "{}…",
-            first.chars().take(REFUSAL_HEADING_MAX_CHARS).collect::<String>()
+            first
+                .chars()
+                .take(REFUSAL_HEADING_MAX_CHARS)
+                .collect::<String>()
         )
     } else {
         first.clone()
@@ -12108,7 +12208,6 @@ fn node_heading_line_edit(
         tags: new_tags.map(<[String]>::to_vec),
     }
 }
-
 
 // orgasmic:task_ZYWZD
 /// Map nested headings to [`NodeSection`]s, recursively, so no depth of the
@@ -19943,6 +20042,340 @@ pub(crate) mod tests {
             "boot_reattach_rmux_respawns_dispatch_completion_watcher_without_artifacts",
         )
         .await;
+    }
+
+    /// Every tx this test could possibly care about, from both ledgers a
+    /// recorded tx can land in (the home ledger and the project's own), so the
+    /// assertion never passes or fails on ledger routing.
+    fn all_recorded_tx_text(home: &Home, project_root: &FsPath) -> String {
+        let mut text = String::new();
+        for dir in [home.tx(), project_root.join(".orgasmic").join("tx")] {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Ok(body) = std::fs::read_to_string(entry.path()) {
+                    text.push_str(&body);
+                }
+            }
+        }
+        text
+    }
+
+    /// TASK-KPMFK: a live STAGE must keep its completion watcher across a
+    /// daemon restart.
+    ///
+    /// `post_stage` holds `stage`/`target` and completion ownership ONLY in the
+    /// in-process `StageCompletion` task, which dies with the daemon process.
+    /// Boot reattach respawns only `DispatchCompletion`, and only when both
+    /// `last_path` and `stdout_path` were persisted. A stage run carries
+    /// `last_path: Some` and `stdout_path: None` (`post_stage`), so it lands in
+    /// the partial-artifact warning branch and no stage watcher is recreated:
+    /// a later worker finalize is persisted but no `<stage>.completed` or
+    /// `<stage>.failed` tx is ever emitted, and `stage_outcome_from_session` is
+    /// never called at all.
+    ///
+    /// Drives the real `reattach_live_runs_on_boot` path against a genuinely
+    /// live mux session, with a second, independent `ApiState`/`Supervisor`
+    /// standing in for the post-restart daemon boot — then finalizes the run
+    /// the way its worker would and REQUIRES the terminal tx.
+    ///
+    /// The stage identity is read from the session JSONL as raw JSON on
+    /// purpose: this test states the durable on-disk contract boot recovery
+    /// must honour, and stays readable by a daemon that predates the typed
+    /// event.
+    async fn assert_boot_reattach_respawns_stage_completion_watcher(
+        mode: MuxMode,
+        stage: &str,
+        role: &str,
+        test_name: &str,
+    ) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-kpmfk-{stage}-{}-{suffix}", mode.id()),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
+
+        let session_path =
+            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
+        // The exact shape `post_stage` persists: a stage last_path under
+        // `.orgasmic/tmp/stage/`, and NEVER a stdout_path.
+        let last_path = project_root
+            .join(".orgasmic")
+            .join("tmp")
+            .join("stage")
+            .join(format!("{stage}-20260729T000000-last.txt"));
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-KPMFK-STAGE".into(),
+                    kind: "worker".into(),
+                    worker_id: format!("{role}-codex-rmux"),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: mode.id().into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: Some(last_path.clone()),
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some(role.into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({ "phase": "stage_meta", "stage": stage }),
+            )
+            .unwrap();
+        drop(writer);
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in
+        // for the post-restart daemon boot.
+        let state = direct_stage_test_state(home.clone()).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "{test_name}: stage run should be rehydrated into the post-restart \
+             supervisor [{}]",
+            mode.diagnostic()
+        );
+
+        // What `orgasmic dispatch finalize` does on the stage path: an
+        // authoritative worker-declared release.
+        state
+            .supervisor
+            .release_with_finalization(
+                &identity.run_id,
+                "worker finalize for TASK-KPMFK-STAGE",
+                orgasmic_core::ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("worker finalize release of the reattached stage run");
+
+        let completed_tx = format!("{stage}.completed");
+        let failed_tx = format!("{stage}.failed");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            let ledger = all_recorded_tx_text(&home, &project_root);
+            if ledger.contains(&completed_tx) || ledger.contains(&failed_tx) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        state.writer.shutdown().await;
+
+        let ledger = all_recorded_tx_text(&home, &project_root);
+        assert!(
+            ledger.contains(&completed_tx),
+            "{test_name}: a {stage} stage that is live across a daemon restart \
+             must still emit its terminal tx ({completed_tx}) once its worker \
+             finalizes [{}]; ledger:\n{ledger}",
+            mode.diagnostic()
+        );
+        assert!(
+            !ledger.contains(&failed_tx),
+            "{test_name}: a worker-finalized {stage} stage must not be recorded \
+             as {failed_tx} [{}]; ledger:\n{ledger}",
+            mode.diagnostic()
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_grill_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "grill",
+            "griller",
+            "boot_reattach_respawns_grill_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_plan_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "plan",
+            "planner",
+            "boot_reattach_respawns_plan_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    /// The `architect` case specifically (TASK-KPMFK acceptance): `architect`
+    /// is a STAGE kind whose worker finalize emits `architector.reported`
+    /// rather than `architector.done` (TASK-6AYEJ.1), so a watcher keyed on a
+    /// `.done` tx would pass grill/plan and still miss this one. The session
+    /// below carries NO terminal tx of any kind — only the finalize tombstone —
+    /// and `architect.completed` must still be emitted after the restart.
+    #[tokio::test]
+    async fn boot_reattach_respawns_architect_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "architect",
+            "architector",
+            "boot_reattach_respawns_architect_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_rmux_respawns_grill_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Rmux,
+            "grill",
+            "griller",
+            "boot_reattach_rmux_respawns_grill_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_rmux_respawns_plan_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Rmux,
+            "plan",
+            "planner",
+            "boot_reattach_rmux_respawns_plan_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_rmux_respawns_architect_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Rmux,
+            "architect",
+            "architector",
+            "boot_reattach_rmux_respawns_architect_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    /// TASK-KPMFK, production half: the stage identity boot recovery needs must
+    /// actually be on disk after a REAL `POST /api/grill`. Without this, the
+    /// recovery tests above would prove only that a hand-written session is
+    /// recoverable. Reads the session as raw JSON — the assertion is about the
+    /// durable on-disk contract, not about a Rust type.
+    #[tokio::test]
+    async fn a_launched_stage_persists_its_stage_identity_for_boot_recovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        seed_minimal_graph(&project_root);
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .post(format!("http://{}/api/grill", running.addr))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "task_id": "TASK-KPMFK-LAUNCH",
+                "mode": "acp-stdio",
+                "harness": "codex",
+                "request_id": "kpmfk-stage-identity-test",
+                "reason": "stage identity persistence"
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "grill stage: {status} {body}");
+
+        let session_path = PathBuf::from(body["session_path"].as_str().expect("session_path"));
+        let envelopes = read_session_file(&session_path).expect("read launched stage session");
+
+        let run_meta = envelopes
+            .iter()
+            .find(|env| env.kind == SessionEventKind::Lifecycle && env.event["phase"] == "run_meta")
+            .expect("a launched stage persists run_meta");
+        assert!(
+            run_meta.event.get("last_path").is_some(),
+            "a stage run persists a last_path: {run_meta:?}"
+        );
+        assert!(
+            run_meta.event.get("stdout_path").is_none(),
+            "a stage run never has a stdout_path — this is exactly why the \
+             dispatch-shaped respawn rule skipped it: {run_meta:?}"
+        );
+
+        let stage_meta = envelopes
+            .iter()
+            .find(|env| {
+                env.kind == SessionEventKind::Lifecycle && env.event["phase"] == "stage_meta"
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "a launched stage must persist its stage identity so boot \
+                     recovery can respawn the completion watcher; session had: {:?}",
+                    envelopes
+                        .iter()
+                        .map(|env| env.event["phase"].clone())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(stage_meta.event["stage"], "grill");
+
+        // The seam: what the launch wrote is what boot recovery reads. Without
+        // this the restart tests would only prove that a hand-written session is
+        // recoverable, and a launch that persisted the marker somewhere boot
+        // recovery does not look would still pass everything.
+        let candidate = boot_reattach_candidate(&envelopes, &session_path)
+            .expect("a live stage launch is a boot-reattach candidate");
+        assert_eq!(
+            candidate.stage.as_deref(),
+            Some("grill"),
+            "boot recovery must read back the stage identity the launch wrote"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     #[tokio::test]

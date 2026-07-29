@@ -1892,8 +1892,7 @@ impl Supervisor {
                     }
                 }
                 if let Some(release) = terminal_release {
-                    finish_driver_terminal_release(&writer, release, driver_release_timeout)
-                        .await;
+                    finish_driver_terminal_release(&writer, release, driver_release_timeout).await;
                 }
             }
             // Stream end: driver dropped its sender without an explicit
@@ -2242,6 +2241,35 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Append the stage identity of a `grill`/`plan`/`architect` launch to its
+    /// session JSONL, so a daemon that restarts while the stage is live can
+    /// rebuild the stage completion watcher it lost with the old process
+    /// (TASK-KPMFK). Boot recovery reads this back in
+    /// `api::boot_reattach_candidate`.
+    pub async fn append_stage_meta(
+        &self,
+        run_id: &str,
+        session_path: &Path,
+        identity: &RuntimeIdentity,
+        stage: &str,
+    ) -> Result<(), SupervisorError> {
+        let evt = Lifecycle::StageMeta {
+            stage: stage.to_string(),
+        };
+        self.writer
+            .append_session(SessionAppend {
+                run_id: run_id.to_string(),
+                session_path: session_path.to_path_buf(),
+                identity: identity.clone(),
+                authority: None,
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::to_value(&evt).map_err(into_anyhow)?,
+            })
+            .await
+            .map_err(SupervisorError::Session)?;
+        Ok(())
+    }
+
     /// Append a pending recovery prompt draft to a run's session JSONL
     /// (dec_052). The operator must send it manually from the UI.
     pub async fn append_prompt_draft(
@@ -2540,8 +2568,7 @@ impl Supervisor {
                     }
                 };
                 if let Some(release) = terminal_release {
-                    finish_driver_terminal_release(&writer, release, driver_release_timeout)
-                        .await;
+                    finish_driver_terminal_release(&writer, release, driver_release_timeout).await;
                 }
             }
             finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
