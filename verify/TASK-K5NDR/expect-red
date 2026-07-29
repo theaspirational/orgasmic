@@ -1,0 +1,27 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The natural red came first, on UNMODIFIED code, from inside this dispatch —
+# the premise reproduced by the worker simply existing:
+#
+#   Error: no live run run-20260729T032421-3731a4fbb09f4aa78b6f43db04e70d63;
+#   already released? (daemon returned 404 Not Found: ...)
+#
+# That is the worker's own ambient run id reaching `dispatch finalize` through
+# an unscrubbed `Command`, so the CLI resolved the OPERATOR's run instead of the
+# one the fixture had just created. The injection reproduces exactly that shape
+# with an id the command supplies itself, so the red is deterministic anywhere.
+
+exit: 101
+
+# The mechanism, named exactly: the id the fixture never set reached the child
+# and was resolved as a run. If the leak is closed, the test's own run id is
+# used and nothing addresses this value at all.
+contains: no live run run-20200101T000000-k5ndrverifynotalive0000000000000
+
+# It fails as a failed CLI call inside the fixture's assert, not as a panic
+# somewhere else in the test body.
+contains: orgasmic ["dispatch", "finalize"
+
+# One test, and it is this one. A collapse of the whole binary is a different
+# failure and would mean this proof has not reproduced the defect it claims to.
+contains: test result: FAILED. 0 passed; 1 failed

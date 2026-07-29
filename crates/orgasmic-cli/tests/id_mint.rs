@@ -1,12 +1,15 @@
 //! Daemon-free `orgasmic id mint` and minted-format smoke checks.
 
-use std::process::Command;
-
 use orgasmic_core::{is_minted_stem, mint_node_id, NodeIdClass, CROCKFORD};
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 #[test]
 fn id_mint_prints_conforming_task_id_without_daemon() {
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .args(["id", "mint", "--class", "task"])
         .output()
         .expect("run orgasmic id mint");
@@ -34,7 +37,7 @@ fn id_mint_all_classes_use_crockford_alphabet() {
         (NodeIdClass::Term, "term_"),
         (NodeIdClass::Artifact, "ART-"),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+        let output = orgasmic_command()
             .args([
                 "id",
                 "mint",

@@ -5,10 +5,15 @@
 //! relies on.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 fn test_options() -> DaemonOptions {
     DaemonOptions {
@@ -73,15 +78,6 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
     );
 }
 
-fn orgasmic_exe() -> PathBuf {
-    let exe = PathBuf::from(env!("CARGO_BIN_EXE_orgasmic"));
-    if exe.is_absolute() {
-        exe
-    } else {
-        std::env::current_dir().unwrap().join(exe)
-    }
-}
-
 fn run_orgasmic(
     home: &Home,
     running: &RunningDaemon,
@@ -89,7 +85,7 @@ fn run_orgasmic(
     args: &[&str],
     extra_env: &[(&str, &str)],
 ) -> Output {
-    let mut command = Command::new(orgasmic_exe());
+    let mut command = orgasmic_command();
     command
         .args(args)
         .current_dir(cwd)
@@ -112,7 +108,7 @@ fn orgasmic_run_id_env_set_is_noop_exit_0() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
 
-    let mut command = Command::new(orgasmic_exe());
+    let mut command = orgasmic_command();
     command
         .args(["manager", "register", "--project", "does-not-matter"])
         .current_dir(tmp.path())

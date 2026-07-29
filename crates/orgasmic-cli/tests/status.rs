@@ -1,4 +1,4 @@
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use orgasmic_core::Home;
@@ -7,12 +7,12 @@ use orgasmic_daemon::Daemon;
 mod common;
 
 use common::{
-    init_git_repo, orgasmic_exe, run_git, seed_required_shipped, test_options, unused_port, write,
-    write_config_port,
+    init_git_repo, orgasmic_command, run_git, seed_required_shipped, test_options, unused_port,
+    write, write_config_port,
 };
 
 fn run_status(home: &Home, daemon_url: Option<String>) -> Output {
-    let mut command = Command::new(orgasmic_exe());
+    let mut command = orgasmic_command();
     command.arg("status").env("ORGASMIC_HOME", &home.root);
     if let Some(url) = daemon_url {
         command.env("ORGASMIC_DAEMON_URL", url);

@@ -1,12 +1,12 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use orgasmic_core::Home;
 use orgasmic_daemon::Daemon;
 
 mod common;
 
-use common::{orgasmic_exe, test_options, write};
+use common::{orgasmic_command, test_options, write};
 
 fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
     write(
@@ -29,7 +29,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
 }
 
 fn run_orgasmic(home: &Home, daemon_url: &str, args: &[&str]) -> Output {
-    Command::new(orgasmic_exe())
+    orgasmic_command()
         .args(args)
         .env("ORGASMIC_HOME", &home.root)
         .env("ORGASMIC_DAEMON_URL", daemon_url)

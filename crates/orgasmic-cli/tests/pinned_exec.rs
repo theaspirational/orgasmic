@@ -5,6 +5,11 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::{orgasmic_command, scrub_ambient_orgasmic_env};
+
 fn orgasmic() -> &'static str {
     env!("CARGO_BIN_EXE_orgasmic")
 }
@@ -39,7 +44,7 @@ fn pinned_exec_binds_execution_to_open_file_identity() {
         "#!/bin/sh\necho trusted-start > \"$TRUSTED_LOG\"\nwhile [ ! -f \"$GATE\" ]; do sleep 0.01; done\necho \"trusted-complete $*\" >> \"$TRUSTED_LOG\"\n",
     );
     let metadata = std::fs::metadata(&target).unwrap();
-    let mut child = Command::new(orgasmic())
+    let mut child = orgasmic_command()
         .args([
             "__exec-pinned",
             target.to_str().unwrap(),
@@ -82,7 +87,7 @@ fn pinned_exec_rejects_identity_changed_before_open() {
     std::fs::remove_file(&target).unwrap();
     executable(&target, "#!/bin/sh\necho malicious > \"$MALICIOUS_LOG\"\n");
 
-    let output = Command::new(orgasmic())
+    let output = orgasmic_command()
         .args([
             "__exec-pinned",
             target.to_str().unwrap(),
@@ -128,7 +133,12 @@ fn retained_wrapper_alias_runs_real_verifier_after_public_replacement() {
         "#!/bin/sh\necho malicious > \"$MALICIOUS_LOG\"\n",
     );
 
-    let status = Command::new(&retained_wrapper)
+    // orgasmic:task_K5NDR
+    // Not built by `orgasmic_command` — the point of this test is to run a
+    // *copy* of the binary through a retained alias — so scrub explicitly.
+    let mut retained = Command::new(&retained_wrapper);
+    scrub_ambient_orgasmic_env(&mut retained);
+    let status = retained
         .args([
             "__exec-pinned",
             target.to_str().unwrap(),
@@ -166,7 +176,7 @@ fn pinned_exec_scavenges_private_alias_after_parent_sigkill() {
     );
     executable(&cleaner, "#!/bin/sh\nexit 0\n");
     let metadata = std::fs::metadata(&target).unwrap();
-    let mut parent = Command::new(orgasmic())
+    let mut parent = orgasmic_command()
         .args([
             "__exec-pinned",
             target.to_str().unwrap(),
@@ -193,7 +203,7 @@ fn pinned_exec_scavenges_private_alias_after_parent_sigkill() {
     unsafe { libc::kill(parent.id() as libc::pid_t, libc::SIGKILL) };
     let _ = parent.wait();
     let cleaner_meta = std::fs::metadata(&cleaner).unwrap();
-    let live_cleanup = Command::new(orgasmic())
+    let live_cleanup = orgasmic_command()
         .args([
             "__exec-pinned",
             cleaner.to_str().unwrap(),
@@ -218,7 +228,7 @@ fn pinned_exec_scavenges_private_alias_after_parent_sigkill() {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let stale_cleanup = Command::new(orgasmic())
+    let stale_cleanup = orgasmic_command()
         .args([
             "__exec-pinned",
             cleaner.to_str().unwrap(),
@@ -234,7 +244,7 @@ fn pinned_exec_scavenges_private_alias_after_parent_sigkill() {
 
 #[test]
 fn run_recover_requires_project_at_cli_boundary() {
-    let output = Command::new(orgasmic())
+    let output = orgasmic_command()
         .args(["run", "recover", "run-origin"])
         .output()
         .unwrap();

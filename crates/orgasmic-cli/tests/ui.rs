@@ -1,7 +1,10 @@
-use std::process::Command;
-
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions};
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ui_print_url_creates_daemon_launch_url() {
@@ -12,7 +15,7 @@ async fn ui_print_url_creates_daemon_launch_url() {
         .expect("boot daemon");
     let addr = running.addr;
 
-    let output = Command::new(orgasmic_exe())
+    let output = orgasmic_command()
         .args(["ui", "--print-url"])
         .env("ORGASMIC_HOME", &home.root)
         .env("ORGASMIC_DAEMON_URL", format!("http://{addr}/"))
@@ -41,14 +44,5 @@ fn test_options() -> DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
         port_override: Some(0),
         ..DaemonOptions::default()
-    }
-}
-
-fn orgasmic_exe() -> std::path::PathBuf {
-    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_orgasmic"));
-    if exe.is_absolute() {
-        exe
-    } else {
-        std::env::current_dir().unwrap().join(exe)
     }
 }

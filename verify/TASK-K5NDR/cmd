@@ -1,0 +1,24 @@
+# One line. Run from the repo root by `orgasmic verify TASK-K5NDR`.
+#
+# WHY THIS COMMAND SETS THE VARIABLE INSTEAD OF UNSETTING IT
+#
+# Every other artifact here prefixes with `env -u ORGASMIC_RUN_ID -u
+# ORGASMIC_HOME` because run identity leaking into a test subprocess breaks the
+# suite. This task IS that leak, so the proof needs the leak present: `verify`
+# scrubs both variables from the child (`SCRUBBED_ENV` in `src/verify.rs`), and
+# a replay with nothing set could never reproduce the defect. The command
+# re-exports a run id of its own instead.
+#
+# The value is deliberately a well-formed run id that no daemon can be holding,
+# so the red is the same on the operator's laptop, in a dispatch pane, and on a
+# machine with no daemon at all. The natural red used the worker's REAL ambient
+# id (`run-20260729T032421-3731a4fbb09f4aa78b6f43db04e70d63`) and produced the
+# identical signature; pinning a live id would make the proof depend on that run
+# still existing.
+#
+# ONE test, and the one TASK-6AYEJ measured. `dispatch finalize` is where
+# `manager.rs` reads `ORGASMIC_RUN_ID` and resolves a run by it, so this is the
+# shortest path from the leak to a failure. The whole `dispatch` binary would
+# also go red under the injection, but a proof that fails broadly cannot show it
+# reproduced the defect it names.
+env ORGASMIC_RUN_ID=run-20200101T000000-k5ndrverifynotalive0000000000000 cargo test -p orgasmic-cli --test dispatch dispatch_finalize_commit_flag_leaves_clean_committed_worktree

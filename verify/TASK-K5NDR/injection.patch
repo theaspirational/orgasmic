@@ -1,0 +1,17 @@
+--- a/crates/orgasmic-cli/tests/common/env_isolation.rs
++++ b/crates/orgasmic-cli/tests/common/env_isolation.rs
+@@ -56,12 +56,8 @@
+ /// Exposed separately for the few commands that are not the orgasmic binary
+ /// but still resolve through the same variables.
+ pub fn scrub_ambient_orgasmic_env(command: &mut Command) -> &mut Command {
+-    for (key, _) in std::env::vars_os() {
+-        let Some(key) = key.to_str() else { continue };
+-        if key.starts_with("ORGASMIC_") && !INHERITED_ORGASMIC_ENV.contains(&key) {
+-            command.env_remove(key);
+-        }
+-    }
++    // TASK-K5NDR injection: the fixture stops isolating, so every spawned CLI
++    // inherits the operator's `ORGASMIC_*` again — the pre-fix behaviour.
+     command
+ }
+ 
