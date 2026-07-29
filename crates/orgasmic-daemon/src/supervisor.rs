@@ -331,12 +331,60 @@ pub enum SupervisorError {
     ArtifactorLifecycleBusy(String),
     #[error("sub-state is not allowed by run governance: {0}")]
     DisallowedSubState(String),
-    #[error("dispatch cleanup in progress for task={task_id} kind={kind:?} worktree={worktree}")]
+    #[error(
+        "dispatch cleanup in progress for task={task_id} kind={kind:?} worktree={worktree} held by {holder}"
+    )]
     CleanupInProgress {
         task_id: String,
         kind: RunKind,
         worktree: String,
+        holder: CleanupHolderDiagnostic,
     },
+}
+
+/// Who holds the reservation an acquire was refused on, as far as the daemon
+/// can tell (TASK-95SGV ask 3). Without this the operator sees a refusal with
+/// no way to distinguish a live cleanup from a stale leaked entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanupHolderDiagnostic {
+    /// The opaque guard handle the reservation is released by, when it has one.
+    pub guard_id: Option<String>,
+    pub owner_pid: Option<u32>,
+    /// `None` when the pid is missing or the platform cannot probe one.
+    pub owner_alive: Option<bool>,
+}
+
+impl CleanupHolderDiagnostic {
+    fn observed(holder: Option<&CloseGuardHolder>) -> Self {
+        let owner_pid = holder.and_then(|h| h.owner_pid);
+        Self {
+            guard_id: holder.map(|h| h.close_guard_id.clone()),
+            owner_pid,
+            // `subprocess_exited` cannot answer on non-Unix targets (it always
+            // reports "not exited"), so only Unix gets a liveness claim.
+            owner_alive: owner_pid
+                .filter(|_| cfg!(unix))
+                .map(|pid| !subprocess_exited(pid)),
+        }
+    }
+}
+
+impl std::fmt::Display for CleanupHolderDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.guard_id {
+            Some(guard_id) => write!(f, "guard={guard_id}")?,
+            None => write!(f, "guard=unknown")?,
+        }
+        match self.owner_pid {
+            Some(pid) => write!(f, " owner_pid={pid}")?,
+            None => write!(f, " owner_pid=unknown")?,
+        }
+        match self.owner_alive {
+            Some(true) => write!(f, " (owner alive)"),
+            Some(false) => write!(f, " (owner dead)"),
+            None => write!(f, " (owner liveness unknown)"),
+        }
+    }
 }
 
 /// Canonical supervisor lease identity (TASK-QPKCD / TASK-EMY0M).
@@ -531,15 +579,17 @@ mod admission {
             if let Some(worktree) = req.worktree {
                 let worktree_key = normalize_cleanup_worktree(worktree);
                 super::drop_abandoned_cleanup_reservations(self);
-                if self
+                if let Some(reservation) = self
                     .cleanup_reservations
-                    .keys()
-                    .any(|reservation| reservation.worktree_key == worktree_key)
+                    .iter()
+                    .find(|(key, _)| key.worktree_key == worktree_key)
+                    .map(|(_, reservation)| reservation)
                 {
                     return Err(SupervisorError::CleanupInProgress {
                         task_id: req.task_id.to_string(),
                         kind: req.kind,
                         worktree: worktree.display().to_string(),
+                        holder: CleanupHolderDiagnostic::observed(reservation.holder.as_ref()),
                     });
                 }
             }
@@ -577,10 +627,13 @@ struct DispatchCleanupReservation {
     dispatch_attempt_token: Option<String>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
-    /// The out-of-process holder, for a reservation the daemon installs on
-    /// someone else's behalf (`dispatch-close`, TASK-1T3FZ). Daemon-owned
-    /// reservations leave this `None`: they are held across the daemon's own
-    /// await points, so they are never swept and never persisted.
+    /// Who holds this reservation and how it is released. `dispatch-close`
+    /// installs an out-of-process CLI holder (TASK-1T3FZ); the daemon's own
+    /// rollback path installs itself with [`HolderIdentity::DaemonCleanup`]
+    /// (TASK-95SGV), so its release is also by opaque handle rather than by a
+    /// worktree key recomputed from a path cleanup may already have deleted.
+    /// `None` survives only for legacy in-memory entries; such a reservation
+    /// is never swept.
     holder: Option<CloseGuardHolder>,
 }
 
@@ -632,6 +685,13 @@ enum HolderIdentity {
     /// a target with no portable `kill(pid, 0)` (Windows). The holder proves it
     /// is alive by renewing; a holder that stops is reclaimed one TTL later.
     RenewalLease,
+    /// The daemon's own rollback handler holds the reservation across its
+    /// filesystem mutation (`prepare_dispatch_cleanup` →
+    /// `finish_dispatch_cleanup`, TASK-95SGV). There is no renewal loop, so the
+    /// lease must not govern it: where a pid can be probed a dead recorded
+    /// owner is swept, and everywhere else the reservation is retained —
+    /// exactly the pre-TASK-95SGV daemon-owned behavior.
+    DaemonCleanup,
 }
 
 impl CloseGuardHolder {
@@ -650,7 +710,9 @@ impl CloseGuardHolder {
     /// Whether this holder is provably gone.
     fn is_abandoned(&self, now: DateTime<Utc>) -> bool {
         match self.governed_by {
-            HolderIdentity::ProbeablePid => self.owner_pid.is_some_and(subprocess_exited),
+            HolderIdentity::ProbeablePid | HolderIdentity::DaemonCleanup => {
+                self.owner_pid.is_some_and(subprocess_exited)
+            }
             HolderIdentity::RenewalLease => now > self.lease_expires_at,
         }
     }
@@ -3686,13 +3748,23 @@ impl Supervisor {
             kind: params.kind,
             worktree_key: worktree_key.clone(),
         };
+        // Minted at install time, and the only thing release needs (TASK-95SGV):
+        // cleanup deletes the directory, so by the time the release runs the
+        // worktree key can no longer be recomputed from the path — on macOS
+        // `/var/...` canonicalizes only while it exists.
+        let cleanup_guard_id = format!("cleanup-guard-{}", Uuid::new_v4());
         let reservation = DispatchCleanupReservation {
             branch: params.branch.clone(),
             worktree_path: params.worktree_path.clone(),
             dispatch_attempt_token: params.dispatch_attempt_token.clone(),
             last_path: params.last_path.clone(),
             stdout_path: params.stdout_path.clone(),
-            holder: None,
+            holder: Some(CloseGuardHolder {
+                close_guard_id: cleanup_guard_id.clone(),
+                owner_pid: Some(std::process::id()),
+                governed_by: HolderIdentity::DaemonCleanup,
+                lease_expires_at: Utc::now() + close_guard_lease_ttl(),
+            }),
         };
 
         if params.worktree_path.is_dir() {
@@ -3760,13 +3832,7 @@ impl Supervisor {
             match scan_durable_dispatch_owner(sessions_dir, &params.task_id, &worktree_key) {
                 Ok(owner) => owner,
                 Err(_) => {
-                    self.clear_dispatch_cleanup_reservation(
-                        &params.project_id,
-                        &params.task_id,
-                        params.kind,
-                        &params.worktree_path,
-                    )
-                    .await;
+                    self.finish_dispatch_cleanup(&cleanup_guard_id).await;
                     return Ok(DispatchCleanupOutcome::Conflict);
                 }
             };
@@ -3778,13 +3844,7 @@ impl Supervisor {
             durable_owner.as_ref(),
         ) {
             CleanupIdentityAuth::IdentityMismatch => {
-                self.clear_dispatch_cleanup_reservation(
-                    &params.project_id,
-                    &params.task_id,
-                    params.kind,
-                    &params.worktree_path,
-                )
-                .await;
+                self.finish_dispatch_cleanup(&cleanup_guard_id).await;
                 return Ok(DispatchCleanupOutcome::Conflict);
             }
             CleanupIdentityAuth::NoOwner | CleanupIdentityAuth::ExactOwner => {}
@@ -3792,60 +3852,27 @@ impl Supervisor {
 
         let released_run_id = self.release_dispatch_worker_for_cleanup(params).await?;
 
-        Ok(DispatchCleanupOutcome::Proceed { released_run_id })
+        Ok(DispatchCleanupOutcome::Proceed {
+            released_run_id,
+            cleanup_guard_id,
+        })
     }
 
-    async fn clear_dispatch_cleanup_reservation(
-        &self,
-        project_id: &str,
-        task_id: &str,
-        kind: RunKind,
-        worktree_path: &Path,
-    ) {
-        let worktree_key = normalize_cleanup_worktree(worktree_path);
-        let reservation_key = CleanupReservationKey {
-            project_id: project_id.to_string(),
-            task_id: task_id.to_string(),
-            kind,
-            worktree_key,
-        };
-        self.inner
-            .lock()
-            .await
-            .cleanup_reservations
-            .remove(&reservation_key);
-    }
-
-    /// Release a dispatch cleanup reservation after filesystem mutation finishes.
-    pub async fn finish_dispatch_cleanup(&self, params: &DispatchCleanupParams) {
-        let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
-        let reservation_key = CleanupReservationKey {
-            project_id: params.project_id.clone(),
-            task_id: params.task_id.clone(),
-            kind: params.kind,
-            worktree_key,
-        };
+    /// Release a dispatch cleanup reservation after filesystem mutation
+    /// finishes. Release is by the opaque handle minted in
+    /// [`Supervisor::prepare_dispatch_cleanup`], never by a key recomputed from
+    /// the worktree path: cleanup has usually deleted that directory, and a
+    /// path that no longer exists does not canonicalize to the key it was
+    /// installed under (TASK-95SGV). Unknown ids are a no-op, mirroring
+    /// [`Supervisor::finish_dispatch_close`].
+    pub async fn finish_dispatch_cleanup(&self, cleanup_guard_id: &str) {
         let mut g = self.inner.lock().await;
-        let Some(reservation) = g.cleanup_reservations.get(&reservation_key) else {
-            return;
-        };
-        if reservation.branch != params.branch {
-            return;
-        }
-        if reservation.dispatch_attempt_token.as_deref() != params.dispatch_attempt_token.as_deref()
-        {
-            return;
-        }
-        if reservation.worktree_path != params.worktree_path {
-            return;
-        }
-        if reservation.last_path.as_deref() != params.last_path.as_deref() {
-            return;
-        }
-        if reservation.stdout_path.as_deref() != params.stdout_path.as_deref() {
-            return;
-        }
-        g.cleanup_reservations.remove(&reservation_key);
+        g.cleanup_reservations.retain(|_, reservation| {
+            reservation
+                .holder
+                .as_ref()
+                .is_none_or(|holder| holder.close_guard_id != cleanup_guard_id)
+        });
     }
 
     /// Reserve a worktree for a destructive `dispatch-close`, and decide, under
@@ -3989,6 +4016,22 @@ impl Supervisor {
         }
     }
 
+    /// Rewrite a held reservation's recorded owner pid, as if the process that
+    /// installed it had died and its pid were observed stale. Tests only: it
+    /// simulates the dead holder, while the reclamation decision still runs for
+    /// real.
+    #[cfg(test)]
+    pub(crate) async fn set_cleanup_owner_pid_for_test(&self, guard_id: &str, owner_pid: u32) {
+        let mut g = self.inner.lock().await;
+        for reservation in g.cleanup_reservations.values_mut() {
+            if let Some(holder) = reservation.holder.as_mut() {
+                if holder.close_guard_id == guard_id {
+                    holder.owner_pid = Some(owner_pid);
+                }
+            }
+        }
+    }
+
     /// Release a `dispatch-close` guard once worktree and branch cleanup has
     /// finished (or failed). Unknown ids are a no-op — the sweep in
     /// [`drop_abandoned_cleanup_reservations`] is the backstop for a holder
@@ -4031,8 +4074,14 @@ impl Supervisor {
 /// Whether a dispatch cleanup request may proceed with filesystem mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchCleanupOutcome {
-    /// Identity matches; optional released run id when a live worker was stopped.
-    Proceed { released_run_id: Option<String> },
+    /// Identity matches; optional released run id when a live worker was
+    /// stopped. `cleanup_guard_id` is the opaque handle the caller must pass to
+    /// [`Supervisor::finish_dispatch_cleanup`] once filesystem mutation is done
+    /// (TASK-95SGV).
+    Proceed {
+        released_run_id: Option<String>,
+        cleanup_guard_id: String,
+    },
     /// A live or newer tokened attempt owns the same worktree/artifacts.
     Conflict,
 }
@@ -5194,7 +5243,7 @@ fn drop_abandoned_cleanup_reservations(inner: &mut Inner) {
     for guard_id in reclaimed {
         tracing::warn!(
             guard_id = %guard_id,
-            "reclaiming a dispatch-close guard whose holder is gone"
+            "reclaiming a dispatch cleanup reservation whose holder is gone"
         );
         inner.close_guards.remove(&guard_id);
     }
@@ -11915,12 +11964,15 @@ mod tests {
             last_path: Some(dir.path().join("owner-last.txt")),
             stdout_path: Some(dir.path().join("owner-stdout.log")),
         };
-        assert!(matches!(
-            sup.prepare_dispatch_cleanup(&sessions, &params)
-                .await
-                .unwrap(),
-            DispatchCleanupOutcome::Proceed { .. }
-        ));
+        let DispatchCleanupOutcome::Proceed {
+            cleanup_guard_id, ..
+        } = sup
+            .prepare_dispatch_cleanup(&sessions, &params)
+            .await
+            .unwrap()
+        else {
+            panic!("expected the cleanup to proceed");
+        };
 
         let mut acquire = dispatch_impl_req("TASK-CLEANUP-OTHER", dir.path());
         acquire.project_id = Some("project-a".into());
@@ -11936,7 +11988,7 @@ mod tests {
                 .unwrap(),
             DispatchCleanupOutcome::Conflict
         );
-        sup.finish_dispatch_cleanup(&params).await;
+        sup.finish_dispatch_cleanup(&cleanup_guard_id).await;
     }
 
     #[tokio::test]
@@ -11967,6 +12019,136 @@ mod tests {
                 .unwrap(),
             DispatchCleanupOutcome::Conflict
         );
+    }
+
+    /// TASK-95SGV: the release must not depend on recomputing the worktree key
+    /// from a path that no longer exists. On macOS every temp path lives under
+    /// the `/var` → `/private/var` symlink; canonicalization resolves it only
+    /// while the directory is present, so a key recomputed after removal
+    /// differs from the installed one, the lookup misses, and the reservation
+    /// leaks — refusing the task's deterministic worktree path forever.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn finish_dispatch_cleanup_releases_even_after_the_worktree_is_removed() {
+        let (sup, dir, _w) = make_supervisor();
+        // A worktree reached through a symlinked prefix, the macOS layout.
+        let real_parent = dir.path().join("real");
+        std::fs::create_dir_all(real_parent.join("wt-95sgv")).unwrap();
+        std::os::unix::fs::symlink(&real_parent, dir.path().join("link")).unwrap();
+        let worktree = dir.path().join("link/wt-95sgv");
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let params = DispatchCleanupParams {
+            project_id: "project-a".into(),
+            task_id: "TASK-95SGV-REPRO".into(),
+            kind: RunKind::Worker,
+            branch: "task-95sgv-repro-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some("cccc1111dddd2222eeee3333ffff4444".into()),
+            last_path: None,
+            stdout_path: None,
+        };
+        let DispatchCleanupOutcome::Proceed {
+            cleanup_guard_id, ..
+        } = sup
+            .prepare_dispatch_cleanup(&sessions, &params)
+            .await
+            .unwrap()
+        else {
+            panic!("expected the cleanup to proceed");
+        };
+
+        // Cleanup removes the directory before the release runs.
+        std::fs::remove_dir_all(real_parent.join("wt-95sgv")).unwrap();
+        sup.finish_dispatch_cleanup(&cleanup_guard_id).await;
+
+        assert!(
+            sup.inner.lock().await.cleanup_reservations.is_empty(),
+            "the reservation must be released even though the worktree directory is gone"
+        );
+
+        // The leak is not inert: dispatch recreates the deterministic worktree
+        // path, and from then on every acquire is refused.
+        std::fs::create_dir_all(real_parent.join("wt-95sgv")).unwrap();
+        sup.acquire(
+            &AlwaysAttachableDriver,
+            worktree_req("TASK-95SGV-REPRO", dir.path(), &worktree),
+        )
+        .await
+        .expect("the worktree must be acquirable again after cleanup finished");
+    }
+
+    /// TASK-95SGV asks 2 and 3: a reservation whose recorded owner is dead is
+    /// swept on the next admission instead of refusing forever, and while the
+    /// owner is alive the refusal names the reservation, its owner pid, and
+    /// that the pid is alive.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dead_owner_cleanup_reservation_is_swept_and_a_refusal_names_its_holder() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt-95sgv-owner");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let params = DispatchCleanupParams {
+            project_id: "project-a".into(),
+            task_id: "TASK-95SGV-OWNER".into(),
+            kind: RunKind::Worker,
+            branch: "task-95sgv-owner-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some("dddd1111eeee2222ffff3333aaaa4444".into()),
+            last_path: None,
+            stdout_path: None,
+        };
+        let DispatchCleanupOutcome::Proceed {
+            cleanup_guard_id, ..
+        } = sup
+            .prepare_dispatch_cleanup(&sessions, &params)
+            .await
+            .unwrap()
+        else {
+            panic!("expected the cleanup to proceed");
+        };
+
+        // While the owner (this daemon process) is alive, the refusal is
+        // diagnosable: it names the guard, the pid, and that the pid is alive.
+        let refused = sup
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-95SGV-OWNER", dir.path(), &worktree),
+            )
+            .await
+            .expect_err("a held reservation with a live owner must refuse the acquire");
+        let SupervisorError::CleanupInProgress { holder, .. } = &refused else {
+            panic!("expected CleanupInProgress, got {refused:?}");
+        };
+        assert_eq!(holder.guard_id.as_deref(), Some(cleanup_guard_id.as_str()));
+        assert_eq!(holder.owner_pid, Some(std::process::id()));
+        assert_eq!(holder.owner_alive, Some(true));
+        let message = refused.to_string();
+        assert!(
+            message.contains(&cleanup_guard_id)
+                && message.contains(&format!("owner_pid={}", std::process::id()))
+                && message.contains("(owner alive)"),
+            "the refusal must name the reservation and its owner, got: {message}"
+        );
+
+        // The owner dies (simulated by rewriting the recorded pid to a reaped
+        // child's); the next admission sweeps the reservation instead of
+        // refusing forever.
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn a throwaway owner");
+        let dead_pid = child.id();
+        child.wait().expect("reap the throwaway owner");
+        sup.set_cleanup_owner_pid_for_test(&cleanup_guard_id, dead_pid)
+            .await;
+        sup.acquire(
+            &AlwaysAttachableDriver,
+            worktree_req("TASK-95SGV-OWNER", dir.path(), &worktree),
+        )
+        .await
+        .expect("a reservation whose owner is dead must be swept, not refused");
     }
 
     #[tokio::test]

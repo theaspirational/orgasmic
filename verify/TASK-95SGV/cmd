@@ -1,0 +1,12 @@
+# One line. Run from the repo root by `orgasmic verify TASK-95SGV`.
+#
+# The natural red from the task's ask 1, replayed exactly: a cleanup
+# reservation installed against a worktree reached through a symlinked prefix
+# (the macOS /var → /private/var layout, built explicitly so the repro is
+# deterministic on every Unix), the directory removed between install and
+# release, and the release then asked to find its reservation. Under the
+# injection the release recomputes the worktree key from the now-deleted path,
+# the lookup misses, and the leaked reservation refuses the recreated
+# deterministic worktree path forever. Hermetic: supervisor unit test, no tmux
+# server, no daemon.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib finish_dispatch_cleanup_releases_even_after_the_worktree_is_removed
