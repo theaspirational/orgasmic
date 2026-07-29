@@ -1731,3 +1731,57 @@ The dual-key write is itself questionable — one value under two names is what
 made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
 once every adapter reads that key.
 
+* IN_REVIEW TASK-D1Z87 Probe-timeout mechanism in the remaining stub-then-probe test families (claude.rs adapter, dispatch_credential_plan) needs an un-recorded warm-up
+:PROPERTIES:
+:ID: TASK-D1Z87
+:PRIORITY: P2
+:END:
+
+From TASK-GEZHQ (2026-07-29). The probe-timeout mechanism GEZHQ fixed in
+dispatch_preflight.rs (first exec of a freshly written stub pays macOS's
+one-time evaluation under load, eating the 5s STATUS_TIMEOUT; probe answers
+Unknown; dispatch admitted per dec_7P79C) has UNFIXED siblings that share the
+stub-then-probe shape:
+
+1. `crates/orgasmic-drivers/src/adapters/claude.rs` — the auth-stub family via
+   `make_auth_status_stub` (:2564 at GEZHQ's HEAD):
+   - `the_launch_uses_the_credential_the_preflight_admitted` (:2943) — FIRED in
+     GEZHQ's gate run 2 of 5: `left: "native_login" / right: "bare_api_key"`.
+     Reads as a credential-precedence bug; is actually a probe timeout (rule 5
+     taken instead of rule 4). This mask cost is the point: without the WARN
+     the diagnosis is expensive.
+   - Same shape, not yet observed red:
+     `acp_stdio_rejects_a_dispatch_for_a_logged_out_claude` (:2231),
+     `an_empty_endpoint_still_gets_a_verdict_because_it_still_spawns_claude`
+     (:2263), `acp_stdio_accepts_a_dispatch_for_a_logged_in_claude` (:2290).
+2. `crates/orgasmic-daemon/tests/dispatch_credential_plan.rs` — same shape;
+   breaks at `plan["native_login"] == "present"` and a timeout still yields
+   200, so it fails LATER and reads as a plan-pinning defect.
+
+WHY GEZHQ's warm-up does not transplant naively (its stated reason for not
+fixing these): `make_recording_stub` (:2838) logs EVERY invocation to a file
+the test then counts ("one auth status per dispatch" is an asserted property),
+and its `--version` arm sleeps 60s — a naive warm-up corrupts the count and
+hangs. The family needs a warm-up that execs without being recorded (separate
+warm-up entrypoint in the stub script, or exec of a sibling binary written from
+the same bytes, or count-exempt marker) — a design decision for whoever owns
+those assertions.
+
+=== Ask
+
+1. Design the un-recorded warm-up (state the chosen mechanism and why it
+   cannot mask the one-probe-per-dispatch property the recording stub guards).
+2. Apply to both files' stub families.
+3. Keep GEZHQ's rule intact: warm-up failures must fail AS STUB failures, not
+   surface as downstream verdict mysteries.
+
+=== Acceptance
+
+- The named tests survive >=5 consecutive loaded runs (GEZHQ's load harness
+  recipe: 18-19 sibling test binaries looping at --test-threads 16), pre-fix
+  red counts pinned where reproducible.
+- The one-auth-status-per-dispatch count property still proven.
+- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
+  before reporting (GEZHQ-retry's deterministic slow-once stub is the
+  template).
+

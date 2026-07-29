@@ -1994,3 +1994,11 @@ From TASK-J1XCB (2026-07-29): crates/orgasmic-cli/tests/dispatch.rs:6038 ('run_i
 :END:
 
 From TASK-J1XCB (2026-07-29), one 4x64-thread round, one sighting each, all green in isolation: supervisor::tests::implementer_release_cascades_to_auto_spawned_babysitter and implementer_release_twice_is_idempotent_for_cascade (RunNotFound unwraps at supervisor.rs:10425/10614) and babysitter_release_before_implementer_release_is_idempotent ('implementer remains live after babysitter release', :10519). Looks like one cascade-release family racing under starvation harsher than a real gate — J1XCB flagged its harness (4 copies x 64 threads on 10 cores) as possibly not gate-realistic. Diagnose with that caveat: reproduce at gate-realistic concurrency first; if only the extreme harness bites, say so and bound the scope accordingly. Fix at the synchronization if real (R74E8).
+
+* BACKLOG TASK-S9GYG Restate the one-probe-per-dispatch property: STATUS_ATTEMPTS means a late harness is legitimately asked twice
+:PROPERTIES:
+:ID: TASK-S9GYG
+:PRIORITY: P3
+:END:
+
+From TASK-D1Z87 (2026-07-29): GEZHQ's STATUS_ATTEMPTS=2 means a genuinely late harness is asked auth status TWICE in production, both invocations real — while the count assertions in claude.rs and dispatch_credential_plan.rs say 'exactly one'. In tests the warm-up removes the lateness so 1 is honest, but the property AS WORDED is now narrower than production: it holds for re-probing after admission (what it was written for), not for retrying before it. Decide the semantics: restate as 'one probe DECISION per dispatch, before ownership' and let the count admit STATUS_ATTEMPTS, or pin the current wording with a rationale. Product-semantics decision — record it where the assertions live. Related residual (same report): the __orgasmic_warm_up argv exemption rests on it never becoming a real claude subcommand; the ledger split catches it if it does — note that invariant wherever the decision lands.
