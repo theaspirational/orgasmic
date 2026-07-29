@@ -1,0 +1,32 @@
+diff --git a/crates/orgasmic-daemon/tests/dispatch_credential_plan.rs b/crates/orgasmic-daemon/tests/dispatch_credential_plan.rs
+index 1e28a3a..db4c7c3 100644
+--- a/crates/orgasmic-daemon/tests/dispatch_credential_plan.rs
++++ b/crates/orgasmic-daemon/tests/dispatch_credential_plan.rs
+@@ -142,7 +142,6 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
+     let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+     perms.set_mode(0o755);
+     std::fs::set_permissions(&stub, perms).unwrap();
+-    warm_up_stub(&stub, &log, &warmups);
+     log
+ }
+ 
+diff --git a/crates/orgasmic-drivers/src/adapters/claude.rs b/crates/orgasmic-drivers/src/adapters/claude.rs
+index c59a214..68ba171 100644
+--- a/crates/orgasmic-drivers/src/adapters/claude.rs
++++ b/crates/orgasmic-drivers/src/adapters/claude.rs
+@@ -2592,7 +2592,6 @@ exit 3
+             perms.set_mode(0o755);
+             std::fs::set_permissions(&stub, perms).unwrap();
+         }
+-        warm_up_auth_status_stub(dir, logged_in);
+     }
+ 
+     /// TASK-GEZHQ's `warm_up_stub`, transplanted verbatim in substance: pay the
+@@ -2983,7 +2982,6 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
+             perms.set_mode(0o755);
+             std::fs::set_permissions(&stub, perms).unwrap();
+         }
+-        warm_up_recording_stub(&stub, &log, &warmups);
+         log
+     }
+ 

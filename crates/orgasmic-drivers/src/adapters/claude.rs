@@ -2592,6 +2592,42 @@ exit 3
             perms.set_mode(0o755);
             std::fs::set_permissions(&stub, perms).unwrap();
         }
+        warm_up_auth_status_stub(dir, logged_in);
+    }
+
+    /// TASK-GEZHQ's `warm_up_stub`, transplanted verbatim in substance: pay the
+    /// first-exec cost of a file written a millisecond ago here, where there is
+    /// no deadline to blow.
+    ///
+    /// The preflight gives a harness [`STATUS_TIMEOUT`] to answer and treats
+    /// silence as "could not ask", which is not a rejection — so every second
+    /// this stub spends being *started* is a second of the test's own premise
+    /// draining away. Measured 2026-07-29 under a loaded workspace run: a
+    /// freshly written stub's first invocation never reached the first line of
+    /// its own script inside the bound, while the identical file exec'd
+    /// normally moments later in the same process.
+    ///
+    /// It transplants without modification here because this stub keeps no
+    /// state: it has no ledger to corrupt and no scripted answer to consume, so
+    /// asking it the real question one extra time changes nothing any test
+    /// reads. [`make_recording_stub`] is the one that could not take this, and
+    /// [`warm_up_recording_stub`] says why.
+    ///
+    /// The answer is asserted rather than discarded, so a stub that cannot
+    /// answer at all fails *as a stub*, here, instead of surfacing as a
+    /// mystified verdict much further down.
+    fn warm_up_auth_status_stub(dir: &std::path::Path, logged_in: bool) {
+        let output = std::process::Command::new(dir.join("claude"))
+            .args(["auth", "status"])
+            .output()
+            .expect("the auth status stub must be executable");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let expected = format!("\"loggedIn\":{logged_in}");
+        assert!(
+            stdout.contains(&expected),
+            "the stub must answer {expected} before a preflight is asked to \
+             believe it: {stdout:?}"
+        );
     }
 
     fn make_claude_stub(dir: &std::path::Path) {
@@ -2838,9 +2874,59 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
     /// - **It records what it was asked.** "How many times does one dispatch
     ///   ask `claude auth status`?" is a question about production call counts,
     ///   and a count is the only honest way to answer it.
+    /// The argv the recording stub answers a warm-up on.
+    ///
+    /// Nothing in the adapter can mint it — it is not a `claude` subcommand,
+    /// not a flag the composer emits, and appears in no production string. That
+    /// is the whole basis on which the stub is allowed to keep warm-ups out of
+    /// the ledger the one-probe-per-dispatch count is read from.
+    const WARM_UP_ARGV: &str = "__orgasmic_warm_up";
+
+    /// What the warm-up arm prints, so a stub that execs but cannot run its own
+    /// script fails as a stub rather than as silence.
+    const WARM_UP_ACK: &str = "orgasmic-warm-up ok";
+
     fn make_recording_stub(dir: &std::path::Path, answers: &[bool]) -> std::path::PathBuf {
+        recording_stub(dir, answers, false)
+    }
+
+    /// The same stub, made deterministically late on its very first exec.
+    ///
+    /// This is what the load did, done to the stub — no load replay. Measured
+    /// 2026-07-29 (TASK-GEZHQ): under a loaded workspace run the first exec of a
+    /// freshly written stub arrived so late that the probe's bound expired while
+    /// the child was mid-flight — *after* it had reached its own first lines and
+    /// advanced the ledger this test counts, and before it had printed an
+    /// answer. So the delay is placed where the child actually died, not at the
+    /// top of the script: `read_status_output` kills a timed-out child
+    /// (`kill_on_drop`), so a delay before the first line leaves no trace and
+    /// TASK-GEZHQ-retry's second attempt survives it completely. A stub that
+    /// *remembers* is the one that cannot be saved by asking again — the retry
+    /// then reaches a stub whose scripted answers have already moved on, and the
+    /// dispatch is admitted on a credential nobody chose.
+    ///
+    /// Only the first exec is late; the marker is consumed by whoever gets there
+    /// first. With the warm-up in place that is the warm-up, unbounded, and the
+    /// probe meets a stub that has already paid. Without it, the probe pays.
+    fn make_recording_stub_that_starts_late(
+        dir: &std::path::Path,
+        answers: &[bool],
+    ) -> std::path::PathBuf {
+        recording_stub(dir, answers, true)
+    }
+
+    fn recording_stub(
+        dir: &std::path::Path,
+        answers: &[bool],
+        late_first_exec: bool,
+    ) -> std::path::PathBuf {
         let log = dir.join("invocations.log");
+        let warmups = dir.join("warmups.log");
         let counter = dir.join("calls.count");
+        let late = dir.join("late-first-exec");
+        if late_first_exec {
+            std::fs::write(&late, "").expect("arm the late first exec");
+        }
         let mut arms = String::new();
         for (index, logged_in) in answers.iter().enumerate() {
             arms.push_str(&format!(
@@ -2857,10 +2943,19 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
             &stub,
             format!(
                 r#"#!/bin/sh
+late=""
+if [ -f "{late}" ]; then rm -f "{late}"; late="1"; fi
+if [ "$1" = "{warm_up_argv}" ]; then
+  if [ -n "$late" ]; then sleep 6; fi
+  printf '%s\n' "$*" >> "{warmups}"
+  printf '%s\n' '{warm_up_ack}'
+  exit 0
+fi
 printf '%s\n' "$*" >> "{log}"
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
   n=$(( $(cat "{counter}" 2>/dev/null || echo 0) + 1 ))
   printf '%s' "$n" > "{counter}"
+  if [ -n "$late" ]; then sleep 6; fi
 {arms}  sleep 60
   exit 3
 fi
@@ -2871,6 +2966,10 @@ fi
 printf '%s\n' '{{"type":"system","subtype":"init","session_id":"stub-session","model":"stub-model","claude_code_version":"stub"}}'
 printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
 "#,
+                late = late.display(),
+                warm_up_argv = WARM_UP_ARGV,
+                warm_up_ack = WARM_UP_ACK,
+                warmups = warmups.display(),
                 log = log.display(),
                 counter = counter.display(),
                 arms = arms,
@@ -2884,7 +2983,69 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
             perms.set_mode(0o755);
             std::fs::set_permissions(&stub, perms).unwrap();
         }
+        warm_up_recording_stub(&stub, &log, &warmups);
         log
+    }
+
+    /// The warm-up TASK-GEZHQ's could not be, and the argument that it does not
+    /// buy its safety with the property it protects.
+    ///
+    /// [`warm_up_auth_status_stub`] simply asks the real question one extra
+    /// time. This stub cannot be warmed that way, for two reasons that are the
+    /// same reason: it remembers. `auth status` appends to the ledger the tests
+    /// count ("one auth status per dispatch" is the asserted property) and
+    /// advances the scripted-answer index, so an extra real question would
+    /// inflate the count and hand the dispatch the *next* stub's answer.
+    /// `--version` is worse: that arm sleeps 60 s on purpose, to catch a
+    /// composition that spawns the harness.
+    ///
+    /// So the warm-up is a third argv, [`WARM_UP_ARGV`], answered above the
+    /// ledger — and the exemption cannot hide a double probe:
+    ///
+    /// - It is keyed to an argv **production cannot produce**. `__orgasmic_warm_up`
+    ///   is not a `claude` subcommand and appears in no non-test string in this
+    ///   crate; every argv the adapter can compose still falls through to the
+    ///   `printf … >> log` line untouched.
+    /// - Nothing is actually un-recorded. Warm-ups are written to their own
+    ///   ledger, and this function asserts, before the test starts, that the
+    ///   warm-up landed there and that the counted ledger is still *empty*. A
+    ///   warm-up that leaked into the probe ledger fails here rather than
+    ///   quietly paying for one of the invocations a test is about to count.
+    /// - The scripted-answer counter is untouched by the warm-up arm, so the
+    ///   answer the probe gets is the answer the test scripted for it.
+    ///
+    /// The stub's own answer is asserted for TASK-GEZHQ's rule: a warm-up
+    /// failure must fail as a stub failure, here and loudly, not as a downstream
+    /// verdict mystery.
+    fn warm_up_recording_stub(
+        stub: &std::path::Path,
+        log: &std::path::Path,
+        warmups: &std::path::Path,
+    ) {
+        let output = std::process::Command::new(stub)
+            .arg(WARM_UP_ARGV)
+            .output()
+            .expect("the recording stub must be executable");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(WARM_UP_ACK),
+            "the recording stub must run its own script before a preflight is \
+             asked to believe it: status {:?}, stdout {stdout:?}",
+            output.status.code()
+        );
+        assert_eq!(
+            stub_invocations(warmups).len(),
+            1,
+            "the warm-up must be recorded, in its own ledger — an un-recorded \
+             exec is one a double-probe regression could hide behind"
+        );
+        assert_eq!(
+            stub_invocations(log),
+            Vec::<String>::new(),
+            "the warm-up must not enter the ledger the one-auth-status-per-\
+             dispatch count is read from; if it does, that count is no longer \
+             a measurement of production"
+        );
     }
 
     fn stub_invocations(log: &std::path::Path) -> Vec<String> {
@@ -2908,10 +3069,21 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
     /// spawned argv, the spawned env and the NativeRuntime record the supervisor
     /// writes to RunMeta must all describe the same decision. And the count is
     /// named, not described: **one** `auth status` per dispatch.
+    ///
+    /// The stub is deliberately late on its first exec
+    /// ([`make_recording_stub_that_starts_late`]), because that is the shape
+    /// that made this test fail under load on 2026-07-29 wearing a
+    /// credential-precedence mask — `left: "native_login" / right:
+    /// "bare_api_key"`, which reads as a broken precedence rule and is really a
+    /// probe whose first attempt was killed after it had already consumed the
+    /// stub's first answer. What holds the assertion up is
+    /// [`warm_up_recording_stub`] paying that first exec where nothing is timing
+    /// it; delete the warm-up and this test goes red every run rather than two
+    /// runs in five (TASK-D1Z87).
     #[tokio::test]
     async fn the_launch_uses_the_credential_the_preflight_admitted() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let log = make_recording_stub(dir.path(), &[false, true]);
+        let log = make_recording_stub_that_starts_late(dir.path(), &[false, true]);
         let settings = tempfile::tempdir().expect("settings dir");
 
         let _guard = env_lock().lock().await;
