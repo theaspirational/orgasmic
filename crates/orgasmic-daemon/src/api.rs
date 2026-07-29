@@ -20362,6 +20362,18 @@ pub(crate) mod tests {
             });
         assert_eq!(stage_meta.event["stage"], "grill");
 
+        // The seam: what the launch wrote is what boot recovery reads. Without
+        // this the restart tests would only prove that a hand-written session is
+        // recoverable, and a launch that persisted the marker somewhere boot
+        // recovery does not look would still pass everything.
+        let candidate = boot_reattach_candidate(&envelopes, &session_path)
+            .expect("a live stage launch is a boot-reattach candidate");
+        assert_eq!(
+            candidate.stage.as_deref(),
+            Some("grill"),
+            "boot recovery must read back the stage identity the launch wrote"
+        );
+
         let _ = running.shutdown.send(());
         let _ = running.join.await;
     }
