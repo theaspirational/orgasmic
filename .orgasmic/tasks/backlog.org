@@ -1677,14 +1677,6 @@ From TASK-MRJRK (2026-07-29): rebuild_with_timeout (index.rs:495-514 at MRJRK's 
 
 From TASK-4YC8E (2026-07-29): runtime_options.rs:12 declares #[serde(default, alias = "effort")] on RuntimeOptionsRequest — the exact shape that killed hermes dispatches, safe today only because no client sends both key names (UI sends reasoning_effort only, RuntimeOptionsBar.tsx:52). No test holds it. Either pin 'both names in one body is rejected loudly' with a test, or drop the alias once no client sends effort (client-facing API change — check external consumers first). Also from the same report, P4-grade: TmuxConfig.effort / RmuxConfig.effort are now write-only-by-history (no live writer emits effort; kept for driver configs persisted by older daemons) — remove after the dual-key-writing runtime ages out; fold into this task when touched.
 
-* BACKLOG TASK-2GS7V app_manager_release_via_cli_orgasmic_run_id is deterministically red on merged HEAD in real-tmux environments
-:PROPERTIES:
-:ID: TASK-2GS7V
-:PRIORITY: P2
-:END:
-
-From TASK-J1XCB (2026-07-29): crates/orgasmic-cli/tests/dispatch.rs:6038 ('run_id' unwrap) fails 3/3 workspace gates AND in isolation, confirmed pre-existing at HEAD~1 by revert-and-rebuild. Invisible to shim-environment runs (tmux-gated → NOT RUN under ORGASMIC_ALLOW_MISSING_TOOLS=tmux), so manager-environment gates with real tmux are the ones it blocks. Nobody owns it. Diagnose whether the test's premise rotted (a recent merge changed run-id minting/release surfaces — EP3H1/HAREX/6HJYT all touched adjacent ground this week) or the product broke; fix accordingly. Injection per TCTTD standard.
-
 * BACKLOG TASK-22ED4 Babysitter cascade-release family fails under extreme concurrency (RunNotFound unwraps + implementer-remains-live)
 :PROPERTIES:
 :ID: TASK-22ED4
