@@ -1,0 +1,10 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RB1ZN`.
+#
+# One binary, two tests, because the defect is one collapsed error with two
+# faces: the supervisor answering `RunNotFound` for a record it is holding, and
+# the release routes rendering that as a 404 for a run `GET /runs/live` reports
+# in the same breath. Neither alone is the incident.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor and a Home that must see neither.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_run_wedged_mid_release_says_so_instead_of_run_not_found a_run_wedged_mid_release_is_a_conflict_at_both_release_surfaces

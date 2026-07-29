@@ -5563,7 +5563,16 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     let stderr = String::from_utf8_lossy(&finalize_output.stderr);
     assert!(
         stderr.contains("protocol before finalize")
-            || stderr.contains("no worker-finalize tombstone"),
+            || stderr.contains("no worker-finalize tombstone")
+            // orgasmic:TASK-RB1ZN — the third legitimate answer, and the one
+            // this race gets whenever the racer's release is still running when
+            // finalize's own release lands. The daemon used to answer that with
+            // the same 404 it gives a run that is gone, which sent finalize into
+            // the already-released rescue to read a tombstone nobody had written
+            // yet. It answers 409 now, and finalize refuses in terms of the
+            // release that IS running. Same contract either way: nonzero exit,
+            // no completion tx (asserted below).
+            || stderr.contains("released nothing"),
         "expected protocol-end refusal on stderr: {stderr}"
     );
 

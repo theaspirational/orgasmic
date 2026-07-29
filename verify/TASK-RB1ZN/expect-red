@@ -1,0 +1,24 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection is one hunk: `release_one`'s in-progress guard answers
+# `RunNotFound` again. Nothing else changes — the 409 renderer and both surface
+# arms stay exactly where the fix put them, and become unreachable. That is the
+# defect stated precisely: a surface cannot distinguish what the supervisor
+# collapsed before it.
+
+exit: 101
+
+# THE SUPERVISOR HALF. A record that is present in `runs` with
+# `explicit_release_in_progress` set answers the same error as a record that is
+# gone. Run ids are minted per run, so the pin stops at the variant name.
+contains: a record that is present with a release running is the opposite of absent, got RunNotFound(
+
+# THE INCIDENT VERBATIM, on the wire. `POST /runs/:id/release` answers
+# `404 active run <id>` while `/runs/live` — the same snapshot `orgasmic
+# update`'s fence reads, asserted live later in this very test — reports it.
+# 404 says "over, nothing to do", which is the one thing that was not true.
+contains: the release route answered 404 Not Found for a run it can see is live: active run run-
+
+# Both tests, and only those two. A binary that collapses wholesale is a
+# different failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 2 failed

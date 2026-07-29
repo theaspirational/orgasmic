@@ -1479,6 +1479,24 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     )) {
         Ok(response) => Some(response),
         Err(e) => {
+            // orgasmic:TASK-RB1ZN — checked BEFORE the already-released rescue,
+            // because it is the state that rescue cannot read. Another authority
+            // (a stall sweep, a protocol-end release, a manager's abandon) holds
+            // this run's release; it owns the tombstone, and it has not written
+            // one yet. Refuse the terminal tx rather than claim a completion
+            // this call did not perform — the commit and last.txt above are
+            // already durable, so re-running finalize once that release lands is
+            // safe and lands on whichever answer its tombstone justifies.
+            if is_release_in_progress_error(&e) {
+                return Err(e).with_context(|| {
+                    format!(
+                        "refusing to emit {tx_type} for {task}: the release that IS \
+                         running owns run {}'s tombstone. Re-run this same `orgasmic \
+                         dispatch finalize` once it lands",
+                        run.run_id
+                    )
+                });
+            }
             if is_release_run_not_found_error(&e) {
                 let session_path = run.session_path.as_deref().ok_or_else(|| {
                     anyhow::anyhow!(
@@ -2569,6 +2587,21 @@ async fn release_dispatch_run_with_reason(
     client
         .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
         .await
+        .map_err(|error| {
+            // orgasmic:TASK-RB1ZN — the daemon answers 409 for a run that is
+            // live with a release already running, and the client's generic 409
+            // sentence ("node changed on disk; reload base_version and retry")
+            // is about node writes: it names the wrong subject and offers advice
+            // that does nothing here. The daemon's own body — which names the
+            // HAREX drain budget — rides along behind this context.
+            if is_release_in_progress_error(&error) {
+                return error.context(format!(
+                    "run {run_id} is live and another authority is already releasing \
+                     it, so this call released nothing"
+                ));
+            }
+            error
+        })
 }
 
 /// Refuse to release the lease unless the daemon has proven, BEFORE the
@@ -2628,6 +2661,24 @@ async fn require_daemon_writes_terminal_tx(client: &DaemonClient, task: &str) ->
 /// reclaimed this run_id), which must still hard-error (TASK-DWJVH item B).
 fn is_release_run_not_found_error(err: &anyhow::Error) -> bool {
     err.to_string().contains("daemon returned 404")
+}
+
+/// Whether `err` is the daemon's 409 for a run that is LIVE with a release
+/// already running for it (`SupervisorError::ReleaseInProgress`, TASK-RB1ZN).
+///
+/// The opposite state from [`is_release_run_not_found_error`], and the reason
+/// the two must not share a branch: the already-released rescue works by reading
+/// the run's release tombstone off its session, and a run whose release is still
+/// running has not written one yet. Routing this here would either miss the
+/// tombstone (and refuse with a sentence that names the wrong reason) or, worse,
+/// read a stale one and let a finalize claim completion for a release that was
+/// never its own.
+///
+/// Matched against the whole cause chain (`{:#}`), not just the outermost
+/// message: the release helper adds its own context on this error, and
+/// `Error::to_string` shows only the top of the chain.
+fn is_release_in_progress_error(err: &anyhow::Error) -> bool {
+    format!("{err:#}").contains("release already in progress")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5232,6 +5283,27 @@ mod tests {
             "conflict — node changed on disk; reload base_version and retry: {{\"error\":\"runtime ownership mismatch\"}}"
         );
         assert!(!is_release_run_not_found_error(&ownership_conflict));
+
+        // orgasmic:TASK-RB1ZN — the daemon used to answer this same 404 for a
+        // run that was live with a release already running for it. It answers
+        // 409 now, and that must NOT take the rescue branch: the branch's whole
+        // premise is that the run is already released and its tombstone is on
+        // disk to be read (TASK-37TAF's ordering note). A wedged run has no
+        // tombstone yet, so treating it as "already released" would either read
+        // an absent tombstone or emit a terminal tx for a run whose release
+        // never happened. Hard-erroring hands the operator the daemon's own
+        // detail, which names the drain budget and says to retry after it.
+        let release_in_progress = anyhow::anyhow!(
+            "daemon returned 409 Conflict: {{\"error\":\"release already in progress\",\"run_id\":\"run-x\",\"detail\":\"run run-x is live and a release is already running for it, so this call has nothing to add. TASK-HAREX bounds that drain at 20s; retry after it.\"}}"
+        );
+        assert!(!is_release_run_not_found_error(&release_in_progress));
+        assert!(
+            is_release_in_progress_error(&release_in_progress),
+            "the live-but-releasing conflict needs its own branch, not the \
+             already-released one"
+        );
+        assert!(!is_release_in_progress_error(&not_found));
+        assert!(!is_release_in_progress_error(&ownership_conflict));
 
         let unreachable =
             anyhow::anyhow!("daemon request failed: connection refused — is the daemon reachable?");
