@@ -600,3 +600,14 @@ launchd. BRIDGE until then: run =~/.orgasmic/bin/orgasmic serve= as a
 session-child (nohup, ppid 1) — it inherits the terminal's grant. The daemon's
 own log names the remedy; =unindexed_projects= in /daemon/status (TASK-MRJRK)
 is the tell.
+
+** The evidence stall clock kills provider-bound turns: dispatch high-effort workers with a governance stall override
+Measured 2026-07-29 (TASK-JQ8AV): a claude-opus-5 high-effort turn thinking
+server-side for minutes produces ~0% cpu, zero pane repaints, no events — the
+JK66P clock reads it as the VZMZE wedge and releases at 600s (three healthy
+workers killed in one morning; the live capture showed
+=Quantumizing… ↓13.1k tokens=). Until JQ8AV lands a provider-wait evidence
+channel, dispatch long-thinking workers with
+=--governance-json '{"stall_timeout_secs":3600}'= (max_run_duration still
+bounds the run). A live worker about to be hit can be nudged with
+=rmux resize-window= (forces a TUI repaint → pane bytes → fresh window).

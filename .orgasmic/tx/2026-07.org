@@ -44499,3 +44499,46 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-29 Wed 06:27:51 manager.dispatch_orphaned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3854
+:TIME:         [2026-07-29 Wed 06:27:51]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-FZB6T-implementer-20260729T060632.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260729T060632-496181434f6c417093cb088f1e9f5ef9
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t/worktree
+:END:
+
+* TX 2026-07-29 Wed 06:27:55 manager.dispatch_orphaned TASK-SZJ2B
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3855
+:TIME:         [2026-07-29 Wed 06:27:55]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SZJ2B
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-SZJ2B-implementer-20260729T060635.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260729T060635-2dee2ff3dacd40d19c9f3b049ef49ffe
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-szj2b/worktree
+:END:
+
+* TX 2026-07-29 Wed 06:30:56 task.created TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3856
+:TIME:         [2026-07-29 Wed 06:30:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-JQ8AV
+:END:
