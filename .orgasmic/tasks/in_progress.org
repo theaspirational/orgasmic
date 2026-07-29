@@ -798,14 +798,6 @@ SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tes
 
 LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
 
-* IN_PROGRESS TASK-2GS7V app_manager_release_via_cli_orgasmic_run_id is deterministically red on merged HEAD in real-tmux environments
-:PROPERTIES:
-:ID: TASK-2GS7V
-:PRIORITY: P2
-:END:
-
-From TASK-J1XCB (2026-07-29): crates/orgasmic-cli/tests/dispatch.rs:6038 ('run_id' unwrap) fails 3/3 workspace gates AND in isolation, confirmed pre-existing at HEAD~1 by revert-and-rebuild. Invisible to shim-environment runs (tmux-gated → NOT RUN under ORGASMIC_ALLOW_MISSING_TOOLS=tmux), so manager-environment gates with real tmux are the ones it blocks. Nobody owns it. Diagnose whether the test's premise rotted (a recent merge changed run-id minting/release surfaces — EP3H1/HAREX/6HJYT all touched adjacent ground this week) or the product broke; fix accordingly. Injection per TCTTD standard.
-
 * IN_PROGRESS TASK-QRTT8 boot_reattach_candidate refutably matches credential_mode: None — any run with a resolved credential mode is never rehydrated after restart
 :PROPERTIES:
 :ID: TASK-QRTT8
