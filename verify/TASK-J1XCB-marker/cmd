@@ -1,0 +1,8 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-J1XCB --artifact verify/TASK-J1XCB-marker`.
+#
+# A second artifact rather than a third hunk in verify/TASK-J1XCB: this is the
+# other failure mode of the SAME test, and it panics earlier in the test body
+# than the lock refusal that artifact pins. Both cannot be red in one run, so
+# an artifact that tried to hold both would only ever prove the first.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact tests::replacement_start_waits_out_a_shutting_down_predecessor --test-threads=1
