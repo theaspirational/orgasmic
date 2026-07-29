@@ -531,3 +531,17 @@ owns and holds open with a keepalive session. =-L= alone does not fix this —
 isolation stops a run reaching *someone else's* server, but only the keepalive
 stops the run racing *itself*. Test binaries now claim both via
 =orgasmic_drivers::modes::tmux::own_tmux_server_for_tests()=. Durable invariant.
+
+** The installed daemon stall-kills a dispatched worker after 10 quiet pane minutes
+Measured twice on 2026-07-29 (TASK-MRJRK 00:41→00:51, TASK-4YC8E 00:47→00:57):
+=run_complete stall_timeout_exceeded= lands exactly 10 minutes after the last
+=pane_activity= byte. A worker running its final full-suite gate is silent that
+long by design — =scripts/run-tests.sh= redirects cargo to files — so the
+detector kills healthy workers at precisely their last step, after the report
+is mostly written and before =dispatch finalize=. Owned by TASK-JK66P (one
+design with TASK-VZMZE's inverse defect); until that lands AND the runtime is
+reinstalled, brief every worker: no single quiet command may exceed ~8 minutes
+— run the suite per-crate (=run-tests.sh -p <crate>= in sequence) or otherwise
+punctuate long gates with output. Managers: a session that dies =[unreported]=
+with a complete-looking report.md died here; salvage = replay its artifact, run
+its missing gate yourself, merge, close with a tx noting the salvage.
