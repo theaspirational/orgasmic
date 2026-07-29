@@ -905,3 +905,55 @@ mux routing, not that.
 - Injection per TCTTD standard (natural red: an invocation argv without -L, the
   K4G1D/0RCRY template), self-tested with `orgasmic verify --artifact`.
 
+* IN_PROGRESS TASK-J1XCB Three unowned load flakes from 5FEN5's runs: dead-pid release wait, port-0 instance lock, shutdown-budget replacement wait
+:PROPERTIES:
+:ID: TASK-J1XCB
+:PRIORITY: P1
+:END:
+
+Successor to TASK-5FEN5 (which fixed its three owned flakes and closed).
+These load flakes were seen red during 5FEN5's 2026-07-29 load runs, panics
+captured VERBATIM per the DJ1WV rule, and are currently unowned — so the flake
+registry rightly classifies any recurrence as REAL and a loaded full-suite run
+exits nonzero. This task exists to own them.
+
+1. `supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases`
+   — 3 sightings (both pre- and post-fix binaries):
+   `run <id> did not release within 12s` at supervisor.rs:8077 (8065 in older
+   trees). First flagged by the TASK-XPYRR worker's gate, confirmed by 5FEN5.
+2. `api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post` —
+   api.rs:24818: `called Result::unwrap() on an Err value: daemon instance
+   lock … the configured port is 0, so the incumbent address cannot be probed`.
+3. `tests::replacement_start_waits_out_a_shutting_down_predecessor` —
+   lib.rs:1796, one sighting: `waited 1.50062225s, its own whole shutdown
+   budget`.
+
+NOT in scope: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree`
+(registry names it a TASK-STWVB flake; its first captured panic is now recorded
+on STWVB). NOT in scope: the dispatch_endpoint.rs Gatekeeper family (owned by
+its own fixture-rework task).
+
+=== Ask
+
+Per the 5FEN5 standard: reproduce each under the DJ1WV load recipe (10-12 cpu
+hogs + --test-threads=64; add suite-concurrent binaries if hogs alone don't
+bite), then FIX at the synchronization rather than the budget size
+(R74E8/ATAXN). Registering with this task as owner is the fallback, fixing is
+the goal; on fix, no registry entry may remain owned by this task.
+
+Note from 5FEN5's diagnosis style: (1) looks like a fixed-budget wait on
+background release work; (2) looks like environment/config bleed (port 0)
+rather than timing — diagnose before assuming it's the same class.
+
+=== Acceptance
+
+- Either each test survives >=5 consecutive loaded runs post-fix (with pre-fix
+  red counts pinned for A/B), or it is registered with its measured signature
+  and the diagnosis documented here.
+- Injection per TCTTD standard where patch-expressible; deterministic trigger
+  preferred over load replay, per the 5FEN5 artifact's precedent.
+- No production behaviour change without naming it; test-side-only fixes state
+  so explicitly.
+
+FOURTH ENTRY [2026-07-29, from TASK-EP3H1's gate run]: `recovery_faults_kill_real_daemon_and_preserve_original_pane` (crates/orgasmic-daemon/tests/recovery_fault_restart.rs:308) — `called Result::unwrap() on an Err value: AddrParseError(Socket)`. The test harness reads the child daemon's address file and parse().unwrap()s it; under load it reads mid-write and parses a truncated address. Fix is in the harness (retry on parse failure inside the existing 20s deadline loop), not product code. Green in isolation.
+
