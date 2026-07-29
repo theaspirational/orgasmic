@@ -1,0 +1,36 @@
+# Pinned from the injected red run of 2026-07-29 (see README.md in this
+# directory for what this proof does and does not replay).
+#
+# The defect: `acquire_daemon_lock` retried the lock for
+# DAEMON_LOCK_RETRY_BUDGET (125ms) and then, finding no shutdown marker, stopped
+# trying it entirely and refused on whatever the incumbent probe could not
+# establish. The injection removes the fix by stating that rule exactly —
+# `undeclared_holder_budget` returns zero — so a holder that lets go at 126ms is
+# refused as hard as one that never lets go.
+exit: 101
+
+# The transient holder, made deterministic: alive, in-process, mid-probe, and
+# releasing 1.2s later. Pre-fix this refuses every time.
+contains: a start refused a lock holder that let go 1.2s later
+
+# The refusal reproduced VERBATIM, and this is the load-bearing line. It is the
+# panic TASK-J1XCB measured under four concurrent copies of this binary at
+# --test-threads=64 (`tests::daemon_lock_retries_a_transient_probe_hold`,
+# lib.rs:1665 at that HEAD). A green replay that came from some other lock
+# failure would not produce it.
+contains: the incumbent has not created an auth token yet (it may still be booting)
+
+# The class must still be the undeclared-holder one, not a departing
+# predecessor: pinning this keeps the red from being bought by the OTHER holder
+# class, whose handling this task did not change.
+contains: so the holder is not a departing predecessor
+
+# The second test: the ceiling has to be DERIVED from this daemon's own
+# `ShutdownBudgets`, not a constant. With the fix removed the wait collapses to
+# the 125ms transient budget and the injected 300ms budget buys nothing.
+contains: inside the budget an undeclared holder is owed
+
+# Both, not one. The first red proves a transient holder is outwaited; the
+# second proves the ceiling that bounds the waiting is the derived one. Either
+# alone would leave half the change unproven.
+contains: 2 failed

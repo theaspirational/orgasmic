@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-TZKAC`.
+#
+# Only the two tests that pin the ceiling, serially. Both are deterministic
+# under the injection — one holder lets go, one never does — so the proof must
+# not depend on the 564-test suite or on the ambient load that originally
+# exposed the defect. `--test-threads=1` also keeps one test's 1.2s hold from
+# being paid concurrently with the other's 300ms ceiling.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact tests::daemon_lock_outwaits_a_holder_that_outlives_the_transient_budget tests::daemon_lock_continuously_held_fails_closed --test-threads=1

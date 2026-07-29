@@ -1,0 +1,20 @@
+diff --git a/crates/orgasmic-daemon/src/lib.rs b/crates/orgasmic-daemon/src/lib.rs
+index 4d4a55d..f602254 100644
+--- a/crates/orgasmic-daemon/src/lib.rs
++++ b/crates/orgasmic-daemon/src/lib.rs
+@@ -693,8 +693,13 @@ async fn classify_lock_holder(home: &Home, opts: &DaemonOptions) -> Result<Holde
+ /// [`DaemonShutdownMarker::budget`] already applies to a marker that overstates
+ /// its own budget. One number, one derivation, and it moves when
+ /// [`ShutdownBudgets`] moves.
+-fn undeclared_holder_budget(opts: &DaemonOptions) -> std::time::Duration {
+-    opts.shutdown_budgets.unwrap_or_default().total()
++fn undeclared_holder_budget(_opts: &DaemonOptions) -> std::time::Duration {
++    // INJECTED (TASK-TZKAC): the fix removed, and the pre-fix rule stated
++    // exactly. Zero means that once DAEMON_LOCK_RETRY_BUDGET expires with no
++    // shutdown marker on disk, the lock is never attempted again and the first
++    // thing the incumbent probe cannot establish becomes a permanent refusal.
++    // See verify/TASK-TZKAC/README.md.
++    std::time::Duration::ZERO
+ }
+ 
+ /// No faster than a probe is allowed to take to answer, so the polling below
