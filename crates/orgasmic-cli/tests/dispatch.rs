@@ -7,6 +7,7 @@ use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::modes::rmux::test_tooling::{
     assert_required_test_tooling, live_session_guard, skip_test_if_missing, ToolRequirement,
 };
+use orgasmic_drivers::modes::tmux::{own_tmux_server_for_tests, real_tmux_on_path};
 use reqwest::header::AUTHORIZATION;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -20,11 +21,40 @@ use std::os::unix::process::ExitStatusExt;
 mod env_isolation;
 use env_isolation::orgasmic_command;
 
+// orgasmic:task_2GS7V
+/// Is this host's `tmux` really tmux, and does this process own the server the
+/// tmux-gated test below will reach?
+///
+/// Two questions, one gate, in this order — the shape
+/// `crates/orgasmic-daemon/tests/recovery_fault_restart.rs` already uses
+/// (TASK-FJCE9), and this binary is the live-tmux test binary that TASK-K4G1D
+/// and TASK-0RCRY both missed.
+///
+/// 1. Strictness (TASK-K4G1D/TASK-JGHNC). This used to ask `tmux -V`, which
+///    inside an orgasmic worker is answered by rmux's PATH shim — `tmux 3.4`
+///    while the real binary is 3.6a. So the gate said "tmux" and the test ran,
+///    driving `new-session` against `/private/tmp/rmux-501/default`: the rmux
+///    server hosting live dispatched worker panes.
+///
+/// 2. Claiming an owned server (TASK-0RCRY), deliberately *after* the
+///    strictness check, because claiming starts a keepalive session and
+///    claiming through the shim would start it on the rmux server — the thing
+///    step 1 exists to prevent.
+///
+/// Step 2 is what made TASK-2GS7V deterministic rather than merely dangerous.
+/// With no `-L`, tmux takes its socket from `$TMUX`, which in any environment
+/// that launched this suite from a multiplexer pane names a server this process
+/// did not create — an *rmux* socket inside a worker, which does not speak
+/// tmux's protocol. The manager launch below then fails at
+/// `tmux new-session`, `/api/manager/launch` answers an error carrying no
+/// `run_id`, and the test panics unwrapping it. The daemon runs in *this*
+/// process, so the in-process claim reaches it.
 fn tmux_available_for_test() -> bool {
-    Command::new("tmux")
-        .arg("-V")
-        .output()
-        .is_ok_and(|output| output.status.success())
+    if !real_tmux_on_path() {
+        return false;
+    }
+    own_tmux_server_for_tests();
+    true
 }
 
 #[test]

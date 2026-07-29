@@ -1,0 +1,26 @@
+diff --git a/crates/orgasmic-cli/tests/dispatch.rs b/crates/orgasmic-cli/tests/dispatch.rs
+index 8f687ea..114739f 100644
+--- a/crates/orgasmic-cli/tests/dispatch.rs
++++ b/crates/orgasmic-cli/tests/dispatch.rs
+@@ -50,11 +50,16 @@ use env_isolation::orgasmic_command;
+ /// `run_id`, and the test panics unwrapping it. The daemon runs in *this*
+ /// process, so the in-process claim reaches it.
+ fn tmux_available_for_test() -> bool {
+-    if !real_tmux_on_path() {
+-        return false;
+-    }
+-    own_tmux_server_for_tests();
+-    true
++    // TASK-2GS7V injection: the pre-fix gate, verbatim. Two defects in five
++    // lines. `tmux -V` never contacts a server, so the rmux PATH shim answers
++    // it and this binary's live-tmux test runs inside a worker; and nothing
++    // claims an owned `-L` server, so every tmux invocation the daemon makes
++    // below is aimed by `$TMUX` at a server this process did not create.
++    let _ = (real_tmux_on_path, own_tmux_server_for_tests);
++    Command::new("tmux")
++        .arg("-V")
++        .output()
++        .is_ok_and(|output| output.status.success())
+ }
+ 
+ #[test]
