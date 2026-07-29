@@ -9267,6 +9267,14 @@ fn boot_reattach_candidate(
                 kind,
                 worker_id,
             }) => acquire = Some((task_id, kind, worker_id)),
+            // orgasmic:TASK-QRTT8 — every field is named and none is matched
+            // against a literal. A literal here is REFUTABLE: `credential_mode:
+            // None` silently dropped every run whose harness had resolved a
+            // mode (claude's `native_login` / `bare_api_key`), so those runs
+            // were not boot-reattach candidates at all. The `..` that used to
+            // absorb this field is gone on purpose — a field added to
+            // `Lifecycle::RunMeta` must now be a compile error here, decided,
+            // rather than silently dropped from the reattach material.
             Ok(Lifecycle::RunMeta {
                 transport,
                 harness,
@@ -9277,9 +9285,10 @@ fn boot_reattach_candidate(
                 dispatch_attempt_token,
                 role,
                 requires_worker_finalize,
-                credential_mode: None,
+                // Read back by the operator from the session JSONL; not input
+                // to the reattach call. Bound, never tested.
+                credential_mode: _,
                 driver_config,
-                ..
             }) => {
                 meta = Some((
                     transport,
@@ -19514,6 +19523,198 @@ pub(crate) mod tests {
         assert!(boot_reattach_candidate(&[acquire], &path).is_none());
     }
 
+    /// TASK-QRTT8: the `RunMeta` pattern must BIND `credential_mode`, never
+    /// test it against a literal.
+    ///
+    /// `boot_reattach_candidate` destructured `credential_mode: None` — a
+    /// refutable pattern, not a binding. A `RunMeta` carrying `Some(mode)`
+    /// therefore fell to the `_ => {}` arm, `meta` stayed `None`, and
+    /// `let (…) = meta?` returned `None`: the run was not a boot-reattach
+    /// candidate AT ALL. Production writes `Some` — `adapters/claude.rs`
+    /// resolves the mode into `NativeRuntimeMeta` and `Supervisor::acquire`
+    /// lifts it into `RunMeta` (TASK-S0QRM) — so a claude run that had
+    /// resolved `native_login` or `bare_api_key` was silently never rehydrated
+    /// after a daemon restart. Every pre-existing boot-reattach test passed
+    /// `credential_mode: None`, which is exactly why nothing caught it.
+    ///
+    /// The assertion is stated over every value the field can hold, so it
+    /// fails the moment the pattern narrows to any one of them again.
+    #[test]
+    fn boot_reattach_candidate_binds_every_resolved_credential_mode() {
+        let env = |event: serde_json::Value| SessionEnvelope {
+            seq: 0,
+            time: chrono::Utc::now(),
+            run_id: "run-qrtt8".into(),
+            runtime_id: "rt-qrtt8".into(),
+            boot_id: "boot-old".into(),
+            kind: SessionEventKind::Lifecycle,
+            event,
+        };
+        let acquire = env(serde_json::to_value(Lifecycle::Acquire {
+            task_id: "TASK-QRTT8".into(),
+            kind: "implementer".into(),
+            worker_id: "implementer-claude-rmux".into(),
+        })
+        .unwrap());
+        let path = PathBuf::from("/tmp/run-qrtt8.jsonl");
+
+        // The two modes `adapters/claude.rs` actually resolves, plus the `None`
+        // every other harness writes. All three are the same run to boot
+        // reattach: the mode is recorded evidence, not an input to `reattach`.
+        for credential_mode in [None, Some("native_login"), Some("bare_api_key")] {
+            let meta = env(serde_json::to_value(Lifecycle::RunMeta {
+                transport: "rmux".into(),
+                harness: Some("claude".into()),
+                project_id: Some("orgasmic".into()),
+                worktree: Some(PathBuf::from("/tmp/orgasmic")),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                role: Some("implementer".into()),
+                requires_worker_finalize: Some(true),
+                credential_mode: credential_mode.map(str::to_string),
+                driver_config: json!({"system_wide": true}),
+            })
+            .unwrap());
+            let candidate = boot_reattach_candidate(&[acquire.clone(), meta], &path)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "a live run whose harness resolved credential_mode={credential_mode:?} \
+                         must be a boot-reattach candidate; a refutable pattern on this field \
+                         drops the whole run and it is never rehydrated after a daemon restart"
+                    )
+                });
+            // The reattach material survives intact, not just the `Some`.
+            assert_eq!(candidate.run_id, "run-qrtt8");
+            assert_eq!(candidate.task_id, "TASK-QRTT8");
+            assert_eq!(candidate.transport, "rmux");
+            assert_eq!(candidate.harness.as_deref(), Some("claude"));
+            assert_eq!(candidate.role.as_deref(), Some("implementer"));
+            assert_eq!(candidate.requires_worker_finalize, Some(true));
+            assert_eq!(candidate.driver_config["system_wide"], json!(true));
+        }
+    }
+
+    /// TASK-QRTT8, blast radius: the fix makes a whole class of runs candidates
+    /// that never reached `Supervisor::reattach` before. The class that exists
+    /// in production TODAY is `acp-stdio`/`claude` — the one path that writes
+    /// `credential_mode: Some(_)` (the mux drivers all write `None`; see
+    /// `modes/tmux.rs` and `modes/rmux.rs`). Its runtime is a child of the
+    /// daemon process, so after a restart there is nothing to attach to.
+    ///
+    /// This asserts the newly-reachable path declines SAFELY: the candidate is
+    /// produced, `AcpStdioDriver::attach` answers `NotReattachable`, and the
+    /// lease `Supervisor::reattach` admits before attaching is released again —
+    /// so the dead run neither enters the supervisor as live nor wedges the
+    /// task's lease for the rest of the daemon's life.
+    #[tokio::test]
+    async fn a_credential_resolving_stdio_run_is_declined_without_holding_its_lease() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let identity = RuntimeIdentity {
+            run_id: "run-qrtt8-stdio".into(),
+            runtime_id: "rt-qrtt8-stdio".into(),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_path =
+            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-QRTT8-STDIO".into(),
+                    kind: "worker".into(),
+                    worker_id: "implementer-claude-acp".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: "acp-stdio".into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    // What `adapters/claude.rs` really persists for this pair.
+                    credential_mode: Some("native_login".into()),
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let envelopes = read_session_file(&session_path).expect("read session");
+        let candidate = boot_reattach_candidate(&envelopes, &session_path)
+            .expect("a credential-resolving stdio run is now a candidate");
+        assert_eq!(candidate.transport, "acp-stdio");
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in for
+        // the post-restart daemon boot.
+        let state = direct_stage_test_state(home.clone()).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.run_id != identity.run_id),
+            "a stdio run whose process died with the old daemon must not be \
+             rehydrated as live: its driver cannot prove a runtime handle"
+        );
+
+        // The lease is free: `Supervisor::reattach` admits the lease BEFORE it
+        // calls `attach`, so a decline that leaked the reservation would block
+        // this task from ever acquiring again. A fresh reattach of the same
+        // run reaching `NotReattachable` (rather than a lease conflict) is what
+        // proves the reservation was released.
+        let driver = driver_for_mode_harness("acp-stdio", "claude").expect("acp-stdio/claude");
+        let error = state
+            .supervisor
+            .reattach(
+                driver.as_ref(),
+                identity.clone(),
+                RunKind::Worker,
+                candidate.task_id.clone(),
+                candidate.worker_id.clone(),
+                "implementer".to_string(),
+                true,
+                candidate.project_id.clone(),
+                candidate.worktree.clone(),
+                session_path.clone(),
+                DriverConfig::from_value(candidate.driver_config.clone()),
+                true,
+                None,
+            )
+            .await
+            .expect_err("a dead stdio runtime cannot be reattached");
+        assert!(
+            matches!(
+                error,
+                crate::supervisor::SupervisorError::NotReattachable { .. }
+            ),
+            "the boot pass must leave the lease free; a second reattach has to \
+             reach the driver's own verdict, not a lease conflict, got: {error}"
+        );
+        state.writer.shutdown().await;
+    }
+
     #[test]
     fn same_second_external_end_then_app_launch_preserves_app_recovery_identity() {
         let tmp = tempfile::tempdir().unwrap();
@@ -20402,10 +20603,18 @@ pub(crate) mod tests {
     /// purpose: this test states the durable on-disk contract boot recovery
     /// must honour, and stays readable by a daemon that predates the typed
     /// event.
+    ///
+    /// `credential_mode` is the run's persisted credential mode (TASK-QRTT8).
+    /// It is inert to everything this helper drives — but only once
+    /// `boot_reattach_candidate` binds the field instead of matching it
+    /// against `None`. Before that fix a `Some(_)` here dropped the run before
+    /// it was ever a candidate, so the stage watcher KPMFK respawns was
+    /// unreachable for the whole class.
     async fn assert_boot_reattach_respawns_stage_completion_watcher(
         mode: MuxMode,
         stage: &str,
         role: &str,
+        credential_mode: Option<&str>,
         test_name: &str,
     ) {
         let live_guard = live_session_guard();
@@ -20463,7 +20672,7 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     role: Some(role.into()),
                     requires_worker_finalize: Some(true),
-                    credential_mode: None,
+                    credential_mode: credential_mode.map(str::to_string),
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -20542,6 +20751,7 @@ pub(crate) mod tests {
             MuxMode::Tmux,
             "grill",
             "griller",
+            None,
             "boot_reattach_respawns_grill_stage_completion_watcher",
         )
         .await;
@@ -20553,6 +20763,7 @@ pub(crate) mod tests {
             MuxMode::Tmux,
             "plan",
             "planner",
+            None,
             "boot_reattach_respawns_plan_stage_completion_watcher",
         )
         .await;
@@ -20570,6 +20781,7 @@ pub(crate) mod tests {
             MuxMode::Tmux,
             "architect",
             "architector",
+            None,
             "boot_reattach_respawns_architect_stage_completion_watcher",
         )
         .await;
@@ -20581,6 +20793,7 @@ pub(crate) mod tests {
             MuxMode::Rmux,
             "grill",
             "griller",
+            None,
             "boot_reattach_rmux_respawns_grill_stage_completion_watcher",
         )
         .await;
@@ -20592,6 +20805,7 @@ pub(crate) mod tests {
             MuxMode::Rmux,
             "plan",
             "planner",
+            None,
             "boot_reattach_rmux_respawns_plan_stage_completion_watcher",
         )
         .await;
@@ -20603,7 +20817,46 @@ pub(crate) mod tests {
             MuxMode::Rmux,
             "architect",
             "architector",
+            None,
             "boot_reattach_rmux_respawns_architect_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    /// TASK-QRTT8 × TASK-KPMFK: the stage-watcher respawn is only as reachable
+    /// as `boot_reattach_candidate`. A stage run whose `RunMeta` carries a
+    /// resolved `credential_mode` was dropped by the refutable pattern before
+    /// any of KPMFK's work could run — same session, same live mux, same
+    /// worker finalize, and no terminal tx ever, because the run was not a
+    /// candidate at all.
+    ///
+    /// Identical to the `grill` case above in every respect but the one field.
+    /// Nothing on this path reads the mode; the assertion is that the mode's
+    /// mere presence no longer decides whether the run exists to boot
+    /// recovery. That is what makes this a regression test for the pattern
+    /// shape rather than for any credential behaviour.
+    #[tokio::test]
+    async fn boot_reattach_rmux_respawns_stage_watcher_for_a_credential_resolving_run() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Rmux,
+            "grill",
+            "griller",
+            Some("native_login"),
+            "boot_reattach_rmux_respawns_stage_watcher_for_a_credential_resolving_run",
+        )
+        .await;
+    }
+
+    /// The tmux twin of the case above. Skips inside an orgasmic worker, where
+    /// `tmux` on PATH is a symlink to `rmux` (`MuxMode::availability`).
+    #[tokio::test]
+    async fn boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "grill",
+            "griller",
+            Some("bare_api_key"),
+            "boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run",
         )
         .await;
     }
