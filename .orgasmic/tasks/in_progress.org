@@ -794,57 +794,6 @@ RE-READING FLAGS [2026-07-29, TASK-JGHNC, merged 724dd6b] — four recorded comp
 3. The D0GA3 worker's '508 passed, 0 failed' anomaly has a third explanation: in a worker, seven tests ran a different multiplexer than the manager's run of the same names — never a like-for-like comparison.
 4. THE DIFFERENTIAL NOW READS BOTH WAYS: JGHNC's worker run caught recovery_reattaches_RMUX_session_when_handle_exists red with the IDENTICAL sentence K4G1D measured on the tmux arm ('driver rmux/claude attach proof exceeded inventory deadline', api.rs:24464). Red under BOTH multiplexers = the defect is ours (the inventory deadline / attach-proof path), NOT rmux. Any future worker-vs-manager comparison on this family needs the real-tmux PATH recipe (K4G1D report §2); the five new rmux arms are the worker's honest column.
 
-* IN_PROGRESS TASK-FJCE9 recovery_fault_restart.rs drives the LIVE rmux server via unpinned tmux calls with kill-session — one name collision from killing a worker
-:PROPERTIES:
-:ID: TASK-FJCE9
-:PRIORITY: P1
-:END:
-
-From TASK-JGHNC (2026-07-29), same defect class as JGHNC/0RCRY, different
-binary, and this one is a LIVE-WORKER SAFETY issue:
-
-`crates/orgasmic-daemon/tests/recovery_fault_restart.rs` drives an unpinned
-PATH tmux — i.e. in a worker environment, the LIVE rmux server — in every
-worker-run suite:
-
-- It gates on `Command::new("tmux").arg("-V")` (the rmux shim answers, and
-  lies about being tmux 3.4).
-- Every call site is a raw `Command::new("tmux")` — no -L/-S, never routed
-  through `tmux_command()`, so the 0RCRY owned-server mechanism does not cover
-  it.
-- Measured in JGHNC's workspace suite (3 passed): it created and
-  `kill-session`-ed sessions on /private/tmp/rmux-501/default — the server
-  hosting live dispatched workers. Nothing was lost (its session names are
-  orgasmic-run-…), but the mechanism is ONE NAME COLLISION away from killing a
-  live worker's pane.
-
-Related, same file, already owned elsewhere: the harness's addr-file
-`parse().unwrap()` race is TASK-J1XCB's fourth entry. This task is about the
-mux routing, not that.
-
-=== Ask
-
-1. Route every tmux invocation in this file through `tmux_command()` /
-   `tmux_socket_args_for` onto an owned per-test server (0RCRY mechanism), and
-   gate on the strict rule (`tmux_mode_availability_for` — a shimmed tmux is
-   ABSENT; JGHNC's follow-up P2 may have promoted the canonical copy to
-   orgasmic_drivers by the time this runs — use whatever the canonical location
-   is then).
-2. If the test's subject genuinely requires the real tmux (fault-restart
-   semantics), strict-gate it and let it appear as NOT RUN in workers — the
-   honesty manifest is the intended surface.
-3. Audit the same file for any other raw `Command::new("tmux"|"rmux")` and fix
-   the class, not the instance.
-
-=== Acceptance
-
-- No invocation in the file can reach a server the test did not create; proven
-  the 0RCRY way (socket listing brackets the run; default servers unchanged).
-- kill-session is scoped to the owned server (or replaced by guard-based
-  reaping).
-- Injection per TCTTD standard (natural red: an invocation argv without -L, the
-  K4G1D/0RCRY template), self-tested with `orgasmic verify --artifact`.
-
 * IN_PROGRESS TASK-J1XCB Three unowned load flakes from 5FEN5's runs: dead-pid release wait, port-0 instance lock, shutdown-budget replacement wait
 :PROPERTIES:
 :ID: TASK-J1XCB

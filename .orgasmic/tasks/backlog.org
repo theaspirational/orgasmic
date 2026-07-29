@@ -2040,3 +2040,19 @@ From TASK-6HJYT (2026-07-29): the CLI filters manager runs with a literal starts
 :END:
 
 From TASK-6HJYT (2026-07-29): StatusView reads GET /recovery/status for the recovery panel — legitimate consumer — but the endpoint performs a second whole-board scan with no bounded-scan metrics surfaced (GET /runs got InventoryStageMetrics under KWSTJ; this endpoint did not). Now that /runs is split (6HJYT: /runs/live supervisor-local, /runs the inventory), give /recovery/status the same treatment: either consume the inventory's metrics/serialization (recovery_status_lock) explicitly, or document why its scan is bounded. Look only after 6HJYT's shape settles.
+
+* BACKLOG TASK-5NBTZ api.rs real_tmux_on_path claims the owned server BEFORE the strictness check — worker suites start a keepalive through the rmux shim
+:PROPERTIES:
+:ID: TASK-5NBTZ
+:PRIORITY: P2
+:END:
+
+From TASK-FJCE9 (2026-07-29), same class as FJCE9/JGHNC, one line above JGHNC's fix: in crates/orgasmic-daemon/src/api.rs tests, real_tmux_on_path calls own_tmux_server_for_tests() AHEAD of tmux_mode_availability_for(...), so inside a worker the daemon lib suite still claims an owned server THROUGH THE RMUX SHIM. Observed directly at 2026-07-29 03:01:49: /private/tmp/rmux-501/ gained orgasmic-test-56699 + .startup-lock (own_tmux_server_for_tests's name format, rmux's server), gone by 03:04. The claim-order attribution is a code reading, not a captured pid — verify at HEAD first. Nothing is killed (smaller than FJCE9's defect) but the class is identical: a tmux-labelled mechanism operating on the rmux server. Fix: check strictness first, claim second — supervisor.rs already has the correct order; recovery_fault_restart.rs (FJCE9) is the third example of the right shape. Injection per TCTTD standard (natural red: in a shim environment the claim happens — assert the rmux socket dir gains no orgasmic-test-* entry when availability fails).
+
+* BACKLOG TASK-15TMP /private/tmp/tmux-501 accumulates dead orgasmic-test-<pid> socket inodes, one per suite run
+:PROPERTIES:
+:ID: TASK-15TMP
+:PRIORITY: P3
+:END:
+
+From TASK-FJCE9 (2026-07-29): the 0RCRY owned-server mechanism leaves the socket INODE behind after tmux tears the server down (24 present, none with a live server, oldest 01:39). Harmless but unbounded, and it makes 'did this run create a server?' harder to read from a listing. Options: the keepalive's exit path unlinks its own socket after the server dies (careful: only its own, by exact name, never a sweep of the directory — a sweep could race a live run); or a claim-time cleanup of sockets whose server is provably dead AND whose pid-embedded owner is gone. State the chosen rule and why it cannot remove a live run's socket. Small; verify artifact optional if covered by a direct test.
