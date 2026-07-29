@@ -114,9 +114,17 @@ impl error::Error for DaemonAlreadyRunning {}
 /// the other is "nothing is shutting down here; something else owns this home".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LockHolder {
-    /// No daemon has published a shutdown marker for this home, so whatever
-    /// holds the lock is not a predecessor on its way out.
-    NotDeparting,
+    /// No daemon published a shutdown marker for this home, and the holder
+    /// never became a health-probeable incumbent either, for the whole time
+    /// this replacement kept trying the lock.
+    ///
+    /// orgasmic:TASK-TZKAC — `waited` is part of the class, not decoration.
+    /// This variant used to be reachable 125ms after a start began, which made
+    /// it indistinguishable from "something held the lock for an instant"; it
+    /// is now only reachable after a holder has failed to declare itself for
+    /// as long as a whole shutdown may take, which is the evidence that makes
+    /// "refusing to start a competing daemon" the right answer.
+    NotDeparting { waited: std::time::Duration },
     /// A predecessor published a shutdown marker, was waited out for its own
     /// whole shutdown budget, and still holds the lock.
     StuckPredecessor {
@@ -136,9 +144,9 @@ pub struct DaemonInstanceLockHeld {
 impl fmt::Display for DaemonInstanceLockHeld {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.holder {
-            LockHolder::NotDeparting => write!(
+            LockHolder::NotDeparting { waited } => write!(
                 f,
-                "daemon instance lock {} is held, but the incumbent is not healthy and no daemon has recorded a shutdown for this home, so the holder is not a departing predecessor: {}. Refusing to start a competing daemon",
+                "daemon instance lock {} is held, but the incumbent is not healthy and no daemon has recorded a shutdown for this home, so the holder is not a departing predecessor: retried the lock for {waited:?} and {}. Refusing to start a competing daemon",
                 self.path.display(),
                 self.detail
             ),
@@ -485,6 +493,59 @@ async fn wait_out_departing_predecessor(
     }
 }
 
+/// The pid the lock file names, if it names one.
+///
+/// orgasmic:TASK-TZKAC — [`open_and_try_lock_daemon`] truncates the file and
+/// writes the acquiring pid on every successful acquisition, so any holder that
+/// took the lock through the daemon protocol names itself here. A holder that
+/// took it some other way — a bare `flock` in a test, a foreign process —
+/// leaves whatever was there before, and that is why this is evidence to be
+/// reported rather than a fact to branch on: the pid is the *last acquirer*,
+/// not provably the current holder.
+fn lock_file_recorded_pid(home: &Home) -> Option<u32> {
+    std::fs::read_to_string(daemon_lock_path(home))
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()
+}
+
+/// Everything this home says about whoever holds the lock right now, phrased
+/// for an operator reading a refusal.
+///
+/// orgasmic:TASK-TZKAC — the refusal used to name only what the *probe* could
+/// not do ("the configured port is 0…"). That describes the observer, not the
+/// holder. These three records are what the lock protocol actually publishes
+/// about a holder, and the answer "none of them, and the recorded pid is gone"
+/// is exactly the shape of the wedged holder the refusal is for.
+fn describe_lock_holder(home: &Home) -> String {
+    let mut parts = Vec::new();
+    match lock_file_recorded_pid(home) {
+        Some(pid) if process_is_alive(pid) => {
+            parts.push(format!("the lock file records pid {pid}, which is alive"))
+        }
+        Some(pid) => parts.push(format!(
+            "the lock file records pid {pid}, which is no longer running"
+        )),
+        None => parts.push("the lock file records no pid".to_string()),
+    }
+    match read_boot_state(home) {
+        Some(state) => parts.push(format!(
+            "a boot record names pid {} in phase {:?} (seq {})",
+            state.pid, state.phase, state.seq
+        )),
+        None => parts.push("no boot record".to_string()),
+    }
+    match read_shutdown_marker(home) {
+        Some(marker) => parts.push(format!(
+            "a shutdown marker names pid {} (budget {}ms)",
+            marker.pid, marker.budget_ms
+        )),
+        None => parts.push("no shutdown marker".to_string()),
+    }
+    parts.join("; ")
+}
+
 fn open_and_try_lock_daemon(home: &Home) -> Result<std::result::Result<File, PathBuf>> {
     std::fs::create_dir_all(&home.root)
         .with_context(|| format!("create {}", home.root.display()))?;
@@ -513,54 +574,34 @@ fn open_and_try_lock_daemon(home: &Home) -> Result<std::result::Result<File, Pat
     }
 }
 
-async fn acquire_daemon_lock(
-    home: &Home,
-    opts: &DaemonOptions,
-) -> Result<std::result::Result<File, DaemonAlreadyRunning>> {
-    let deadline = std::time::Instant::now() + DAEMON_LOCK_RETRY_BUDGET;
-    let lock_path = loop {
-        match open_and_try_lock_daemon(home)? {
-            Ok(file) => {
-                discard_stale_shutdown_marker(home);
-                return Ok(Ok(file));
-            }
-            Err(path) if std::time::Instant::now() >= deadline => break path,
-            Err(_) => tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await,
+/// What asking the incumbent directly established about the lock's holder.
+///
+/// orgasmic:TASK-TZKAC — the two answers are not "healthy" and "unhealthy".
+/// They are "the holder answered, and it is a running daemon for this home",
+/// and "nothing was established" — because every other outcome the probe can
+/// produce (no auth token yet, no probeable address, connection refused, a
+/// non-success status) is equally the signature of a daemon that is *still
+/// booting* and of one that is wedged. Treating "I could not observe" as
+/// "there is a competing daemon" is how a start comes to refuse on the absence
+/// of evidence, which is the defect this task is about.
+enum HolderVerdict {
+    /// The holder answered its health probe as a live daemon for this home.
+    Healthy(DaemonAlreadyRunning),
+    /// Nothing was established. The string says what stopped the probe, and
+    /// becomes the refusal's evidence if the wait runs out.
+    Inconclusive(String),
+}
+
+/// Ask whoever holds the lock whether it is a healthy incumbent for this home.
+async fn classify_lock_holder(home: &Home, opts: &DaemonOptions) -> Result<HolderVerdict> {
+    let mut cfg = match DaemonConfig::load(home) {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return Ok(HolderVerdict::Inconclusive(format!(
+                "cannot load incumbent address from config: {error}"
+            )))
         }
     };
-
-    // orgasmic:TASK-ATAXN — the transient budget above is sized for a CLI probe
-    // that holds the lock for microseconds (TASK-870YX), and it is correct for
-    // that holder. Before classifying this one from the outside, ask whether it
-    // left a record of itself: a predecessor in graceful shutdown holds the lock
-    // for its whole shutdown budget with its listener already closed, so the
-    // probe below can only ever call it unhealthy.
-    let departed_after = match read_shutdown_marker(home) {
-        Some(marker) => match wait_out_departing_predecessor(home, &marker).await? {
-            Ok(file) => return Ok(Ok(file)),
-            Err(waited) => Some((marker, waited)),
-        },
-        None => None,
-    };
-    let holder = match &departed_after {
-        Some((marker, waited)) => LockHolder::StuckPredecessor {
-            pid: marker.pid,
-            boot_id: marker.boot_id.clone(),
-            waited: *waited,
-        },
-        None => LockHolder::NotDeparting,
-    };
-    let lock_held = |detail: String| DaemonInstanceLockHeld {
-        path: lock_path.clone(),
-        detail,
-        holder: holder.clone(),
-    };
-
-    let mut cfg = DaemonConfig::load(home).map_err(|error| {
-        lock_held(format!(
-            "cannot load incumbent address from config: {error}"
-        ))
-    })?;
     if let Some(bind) = opts.bind_override {
         cfg = cfg.with_bind(bind);
     }
@@ -582,16 +623,14 @@ async fn acquire_daemon_lock(
         .map(|token| token.trim().to_string())
         .filter(|token| !token.is_empty());
     let Some(token) = token else {
-        return Err(lock_held(
+        return Ok(HolderVerdict::Inconclusive(
             "the incumbent has not created an auth token yet (it may still be booting)".to_string(),
-        )
-        .into());
+        ));
     };
     if cfg.port == 0 {
-        return Err(lock_held(
+        return Ok(HolderVerdict::Inconclusive(
             "the configured port is 0, so the incumbent address cannot be probed".to_string(),
-        )
-        .into());
+        ));
     }
     let client = reqwest::Client::builder()
         .timeout(INCUMBENT_PROBE_TIMEOUT)
@@ -605,36 +644,183 @@ async fn acquire_daemon_lock(
     let response = match response {
         Ok(response) => response,
         Err(error) => {
-            return Err(lock_held(format!(
+            return Ok(HolderVerdict::Inconclusive(format!(
                 "HTTP health probe at http://{addr} failed: {error}"
-            ))
-            .into())
+            )))
         }
     };
     if !response.status().is_success() {
-        return Err(lock_held(format!(
+        return Ok(HolderVerdict::Inconclusive(format!(
             "HTTP health probe at http://{addr} returned {}",
             response.status()
-        ))
-        .into());
+        )));
     }
     let status: IncumbentStatus = response
         .json()
         .await
         .context("parse incumbent daemon status")?;
     if status.home != home.root {
-        return Err(lock_held(format!(
+        return Ok(HolderVerdict::Inconclusive(format!(
             "HTTP health probe reached a daemon for {}, not {}",
             status.home.display(),
             home.root.display()
-        ))
-        .into());
+        )));
     }
-    Ok(Err(DaemonAlreadyRunning {
+    Ok(HolderVerdict::Healthy(DaemonAlreadyRunning {
         addr,
         boot_id: status.boot_id,
         pid: status.pid,
     }))
+}
+
+/// How long a replacement keeps trying the lock against a holder that has
+/// declared nothing.
+///
+/// orgasmic:TASK-TZKAC — derived, not chosen. It is *this* daemon's own
+/// [`ShutdownBudgets::total`]: the interval this very process would hold the
+/// lock, with its listener already closed and answering nothing, if it were the
+/// one departing.
+///
+/// A holder that has published no marker is not a different kind of holder from
+/// one that has — it is the same holder before it has said anything. A daemon
+/// entering shutdown holds the lock from the moment its drain begins and only
+/// publishes its marker once `drain_started_rx` resolves; a daemon booting holds
+/// it from [`acquire_daemon_lock`] returning until its listener answers. Both of
+/// those windows are undeclared, and both end. So giving the undeclared case the
+/// same ceiling as the declared one makes a single statement true of the whole
+/// protocol: **no holder, declared or not, can cost a replacement more wall
+/// clock than a real shutdown can** — which is exactly the rule
+/// [`DaemonShutdownMarker::budget`] already applies to a marker that overstates
+/// its own budget. One number, one derivation, and it moves when
+/// [`ShutdownBudgets`] moves.
+fn undeclared_holder_budget(opts: &DaemonOptions) -> std::time::Duration {
+    opts.shutdown_budgets.unwrap_or_default().total()
+}
+
+/// No faster than a probe is allowed to take to answer, so the polling below
+/// can never queue probes behind each other.
+const INCUMBENT_PROBE_INTERVAL: std::time::Duration = INCUMBENT_PROBE_TIMEOUT;
+
+async fn acquire_daemon_lock(
+    home: &Home,
+    opts: &DaemonOptions,
+) -> Result<std::result::Result<File, DaemonAlreadyRunning>> {
+    let started = std::time::Instant::now();
+    let transient_deadline = started + DAEMON_LOCK_RETRY_BUDGET;
+    loop {
+        match open_and_try_lock_daemon(home)? {
+            Ok(file) => {
+                discard_stale_shutdown_marker(home);
+                return Ok(Ok(file));
+            }
+            Err(_) if std::time::Instant::now() >= transient_deadline => break,
+            Err(_) => tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await,
+        }
+    }
+    let lock_path = daemon_lock_path(home);
+
+    // orgasmic:TASK-ATAXN — the transient budget above is sized for a CLI probe
+    // that holds the lock for microseconds (TASK-870YX), and it is correct for
+    // that holder. Before classifying this one from the outside, ask whether it
+    // left a record of itself: a predecessor in graceful shutdown holds the lock
+    // for its whole shutdown budget with its listener already closed, so the
+    // probe below can only ever call it unhealthy.
+    //
+    // orgasmic:TASK-TZKAC — and when it left no record, the code used to stop
+    // trying the lock *for good* right here, 125ms into a start, and spend the
+    // rest of its life classifying a holder it would never race again. Every
+    // answer that classification can give short of "a healthy daemon is already
+    // running" is an observation the holder could grow out of a millisecond
+    // later, so that made a permanent refusal out of a transient condition —
+    // measured twice, in two different tests, on hosts merely running four
+    // copies of one test binary. What follows keeps trying the lock, and keeps
+    // asking who holds it, until one of them concludes something or the derived
+    // ceiling below runs out.
+    let undeclared_deadline = std::time::Instant::now() + undeclared_holder_budget(opts);
+    let mut last_probe = None::<std::time::Instant>;
+    let mut last_detail =
+        "the holder was never reachable for a health probe at all".to_string();
+    let mut announced = false;
+
+    loop {
+        // The lock itself. This is the step the old code never took again, and
+        // it is the only outcome anyone actually wants.
+        match open_and_try_lock_daemon(home)? {
+            Ok(file) => {
+                discard_stale_shutdown_marker(home);
+                if announced {
+                    info!(
+                        waited_ms = started.elapsed().as_millis() as u64,
+                        "the undeclared lock holder released; took the daemon instance lock"
+                    );
+                }
+                return Ok(Ok(file));
+            }
+            Err(_) => {}
+        }
+
+        // A departure record beats every other kind of evidence: the holder
+        // named itself and published the budget that bounds it. It can appear
+        // while this loop runs — a predecessor holds the lock from the start of
+        // its drain but publishes the marker only once the drain has begun.
+        if let Some(marker) = read_shutdown_marker(home) {
+            let waited = match wait_out_departing_predecessor(home, &marker).await? {
+                Ok(file) => return Ok(Ok(file)),
+                Err(waited) => waited,
+            };
+            // Conclusive, and therefore terminal: a holder that named itself,
+            // said it was leaving, and then outlived its own whole budget is
+            // stuck, and no further waiting is owed to it.
+            let detail = match classify_lock_holder(home, opts).await? {
+                HolderVerdict::Healthy(incumbent) => return Ok(Err(incumbent)),
+                HolderVerdict::Inconclusive(detail) => detail,
+            };
+            return Err(DaemonInstanceLockHeld {
+                path: lock_path.clone(),
+                detail: format!("{detail} [holder: {}]", describe_lock_holder(home)),
+                holder: LockHolder::StuckPredecessor {
+                    pid: marker.pid,
+                    boot_id: marker.boot_id,
+                    waited,
+                },
+            }
+            .into());
+        }
+
+        // Ask the holder directly, no faster than a probe may take to answer.
+        let now = std::time::Instant::now();
+        if last_probe.is_none_or(|at| now.duration_since(at) >= INCUMBENT_PROBE_INTERVAL) {
+            last_probe = Some(now);
+            match classify_lock_holder(home, opts).await? {
+                HolderVerdict::Healthy(incumbent) => return Ok(Err(incumbent)),
+                HolderVerdict::Inconclusive(detail) => last_detail = detail,
+            }
+        }
+
+        if std::time::Instant::now() >= undeclared_deadline {
+            break;
+        }
+        if !announced {
+            announced = true;
+            info!(
+                budget_ms = undeclared_holder_budget(opts).as_millis() as u64,
+                holder = %describe_lock_holder(home),
+                "daemon instance lock is held by something that has recorded no \
+                 shutdown and does not answer a health probe; retrying the lock \
+                 for as long as a shutdown may take before refusing to start"
+            );
+        }
+        tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await;
+    }
+
+    Err(DaemonInstanceLockHeld {
+        path: lock_path,
+        detail: format!("{last_detail} [holder: {}]", describe_lock_holder(home)),
+        holder: LockHolder::NotDeparting {
+            waited: started.elapsed(),
+        },
+    }
+    .into())
 }
 
 fn bind_delay_for_tests() -> Option<std::time::Duration> {
@@ -1668,8 +1854,87 @@ mod tests {
         fs2::FileExt::unlock(&acquired).unwrap();
     }
 
+    /// orgasmic:TASK-TZKAC — the reproduction, made deterministic.
+    ///
+    /// `daemon_lock_retries_a_transient_probe_hold` above holds the lock for
+    /// 25ms, comfortably inside `DAEMON_LOCK_RETRY_BUDGET`, and only goes red
+    /// when a loaded host fires that 25ms timer five times late. This is the
+    /// same holder — alive, in this process, mid-probe, releasing on its own —
+    /// with the load written into the code instead of hoped for: it holds for
+    /// several multiples of the transient budget, which is what four copies of
+    /// this binary did to a `tokio::time::sleep` on 2026-07-29.
+    ///
+    /// Pre-fix this fails every time, because `acquire_daemon_lock` stopped
+    /// trying the lock the moment the transient budget expired and refused on
+    /// whatever the incumbent probe could not establish. The holder is not a
+    /// daemon and publishes nothing, so there is no marker to find and no
+    /// address to probe — which is precisely the position a real
+    /// `orgasmic daemon start` is in when it meets one.
+    #[tokio::test]
+    async fn daemon_lock_outwaits_a_holder_that_outlives_the_transient_budget() {
+        /// Far enough past `DAEMON_LOCK_RETRY_BUDGET` that no scheduling luck
+        /// can put the release inside it, and far enough inside the derived
+        /// ceiling that the test proves the wait rather than the ceiling.
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(1200);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let held_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(daemon_lock_path(&home))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&held_lock).unwrap();
+
+        let release = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(HOLD);
+            fs2::FileExt::unlock(&held_lock).unwrap();
+        });
+
+        let started = std::time::Instant::now();
+        let acquired = acquire_daemon_lock(&home, &DaemonOptions::default())
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "a start refused a lock holder that let go {HOLD:?} later, \
+                     leaving the machine with no daemon: {error:#}"
+                )
+            })
+            .unwrap_or_else(|incumbent| {
+                panic!("a transient holder was classified as a running daemon: {incumbent}")
+            });
+        let waited = started.elapsed();
+
+        release.await.unwrap();
+        assert!(
+            waited >= HOLD,
+            "acquired in {waited:?}, before the holder let go — this test is not \
+             producing the overlap it is about"
+        );
+        assert!(
+            waited > DAEMON_LOCK_RETRY_BUDGET,
+            "the hold has to outlive the transient budget for this to be a regression"
+        );
+        fs2::FileExt::unlock(&acquired).unwrap();
+    }
+
+    /// orgasmic:TASK-TZKAC — the other end of the retry this task widened: a
+    /// holder that never lets go must still lose the lock's ceiling, and the
+    /// refusal must still say how long it looked and what it saw.
+    ///
+    /// The budgets are injected for the same reason
+    /// `a_predecessor_that_never_finishes_shutting_down_…` injects a 300ms
+    /// marker budget: this test is about *failing closed at the ceiling*, not
+    /// about the ceiling's production value, and `undeclared_holder_budget`
+    /// reads the same `ShutdownBudgets` a real daemon would spend. Waiting out
+    /// production's 40s here would be testing `ShutdownBudgets::default`.
     #[tokio::test]
     async fn daemon_lock_continuously_held_fails_closed() {
+        const BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
+
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         std::fs::create_dir_all(&home.root).unwrap();
@@ -1683,18 +1948,43 @@ mod tests {
             .unwrap();
         fs2::FileExt::lock_exclusive(&held_lock).unwrap();
 
+        let options = DaemonOptions {
+            shutdown_budgets: Some(ShutdownBudgets {
+                connection_drain: BUDGET,
+                release_drain: std::time::Duration::ZERO,
+                writer_shutdown: std::time::Duration::ZERO,
+            }),
+            ..DaemonOptions::default()
+        };
         let started = std::time::Instant::now();
-        let error = acquire_daemon_lock(&home, &DaemonOptions::default())
+        let error = acquire_daemon_lock(&home, &options)
             .await
             .expect_err("continuously held lock must not be bypassed");
+        let elapsed = started.elapsed();
 
+        let held = error
+            .downcast_ref::<DaemonInstanceLockHeld>()
+            .unwrap_or_else(|| {
+                panic!("continuously held lock must retain incumbent handling: {error:#}")
+            });
+        match &held.holder {
+            LockHolder::NotDeparting { waited } => assert!(
+                *waited >= BUDGET,
+                "gave up after {waited:?}, inside the budget an undeclared holder is owed"
+            ),
+            other => panic!("an undeclared holder was classified as {other:?}: {held}"),
+        }
         assert!(
-            started.elapsed() >= DAEMON_LOCK_RETRY_BUDGET,
-            "lock acquisition must retry before failing closed"
+            elapsed >= BUDGET,
+            "lock acquisition gave up in {elapsed:?}, before spending the budget it \
+             derives from this daemon's own shutdown cost"
         );
+        // The refusal has to keep naming the evidence it refused on.
+        let message = held.to_string();
         assert!(
-            error.downcast_ref::<DaemonInstanceLockHeld>().is_some(),
-            "continuously held lock must retain incumbent handling: {error:#}"
+            message.contains("the lock file records no pid")
+                && message.contains("no shutdown marker"),
+            "the refusal does not say what it observed about the holder: {message}"
         );
         fs2::FileExt::unlock(&held_lock).unwrap();
     }
