@@ -4593,18 +4593,13 @@ pub(crate) trait WorkEvidenceProbe: Send + Sync {
 /// idle for tens of minutes — the socket-channel analog of the heartbeat
 /// trap), and traffic-rate thresholds cannot separate a slow think from the
 /// bridge-session streaming that rides the same api-host sockets.
+#[derive(Default)]
 pub(crate) struct ProcessSubtreeCpuProbe {
     /// Explicit rmux socket for the pane lookups. `None` — production — is
     /// the default endpoint, where every dispatch session lives. Tests pin
     /// their owned server's socket so the probe reads panes the test created
     /// instead of live dispatch panes.
     rmux_socket: Option<std::path::PathBuf>,
-}
-
-impl Default for ProcessSubtreeCpuProbe {
-    fn default() -> Self {
-        Self { rmux_socket: None }
-    }
 }
 
 #[cfg(test)]
