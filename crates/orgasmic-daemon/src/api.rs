@@ -6846,7 +6846,18 @@ pub struct StatusResponse {
     pub bind_port: u16,
     pub local_only: bool,
     pub ui_asset_hash: String,
+    /// Projects the index actually loaded, and can therefore answer for.
     pub projects: usize,
+    // orgasmic:task_MRJRK
+    /// Projects the board registers. Equal to `projects` on a healthy daemon;
+    /// the pair is the decisive datum when a route 404s an id that `orgasmic
+    /// project list` (which reads the board file on disk) still shows.
+    pub registered_projects: usize,
+    /// Registered ids the current index snapshot is missing — the condition
+    /// that otherwise only surfaces as a 404 blaming registration. Non-empty
+    /// means those ids 404 on every id-addressed route until a successful
+    /// `orgasmic reindex`; the daemon does not retry on its own.
+    pub unindexed_projects: Vec<String>,
     pub parse_errors: usize,
     pub tx_count: usize,
     pub rebuilt_at: Option<String>,
@@ -6868,6 +6879,8 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         bind_port: state.bind_port,
         ui_asset_hash: state.ui_asset_hash,
         projects: snap.projects.len(),
+        registered_projects: snap.board.len(),
+        unindexed_projects: snap.unindexed_board_projects(),
         parse_errors: snap.parse_errors.len(),
         tx_count: snap.tx.len(),
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
@@ -12846,20 +12859,29 @@ fn reject_glossary_implementation_detail(req: &GraphCreateRequest) -> Result<(),
     Ok(())
 }
 
-/// 404 for a project id absent from the loaded index. Distinguishes the
-/// residual window right after a project appears on the board (registered
-/// but not yet loaded/watched) from a genuinely unknown id, so operators
-/// don't chase a stale-daemon hypothesis on the former (TASK-GERBB).
+/// 404 for a project id absent from the loaded index. Distinguishes a project
+/// the board carries but the index snapshot does not from a genuinely unknown
+/// id, so operators don't chase a registration hypothesis on the former
+/// (TASK-GERBB, TASK-MRJRK).
+///
+/// The message names the index and the remedy, and deliberately asserts no
+/// cause: TASK-GERBB introduced this for the residual window right after
+/// `project init`, but the same state has since been observed ten minutes into
+/// a settled daemon, and what produces it there is still open. What is certain
+/// either way is that registration is not the thing to check — `orgasmic
+/// project list` reads the board file on disk, so it keeps listing the project
+/// while every id-addressed route 404s.
 fn project_not_found_error(snap: &IndexSnapshot, project_id: &str) -> ApiError {
     if snap.board.iter().any(|entry| entry.id == project_id) {
         tracing::warn!(
             project_id = %project_id,
-            "project registered on board but not yet loaded"
+            "project registered on board but missing from the index snapshot"
         );
         return ApiError::not_found(format!(
-            "project {project_id} is registered on the board but not yet loaded \
-             (registered after daemon boot); it will load on the next reindex, \
-             or run `orgasmic restart`"
+            "project {project_id} is registered on the board but missing from the \
+             current index snapshot; registration is not the problem, the index is \
+             — run `orgasmic reindex` to reload it (`orgasmic status` lists this \
+             condition under `unindexed_projects`)"
         ));
     }
     tracing::warn!(project_id = %project_id, "project not found");
@@ -12878,10 +12900,13 @@ fn select_project<'a>(
     project: Option<&str>,
 ) -> Result<&'a crate::index::ProjectIndex, ApiError> {
     if let Some(id) = project {
+        // orgasmic:task_MRJRK — every id-addressed graph/node route lands
+        // here, so this is where the undifferentiated `project {id}` 404 was
+        // reaching operators.
         return snap
             .projects
             .get(id)
-            .ok_or_else(|| ApiError::not_found(format!("project {id}")));
+            .ok_or_else(|| project_not_found_error(snap, id));
     }
     if snap.projects.len() == 1 {
         return snap.projects.values().next().ok_or_else(|| {
@@ -22018,12 +22043,16 @@ pub(crate) mod tests {
         assert_eq!(err.status, StatusCode::NOT_FOUND);
         assert!(
             err.message
-                .contains("registered on the board but not yet loaded"),
-            "message should name the cause: {}",
+                .contains("registered on the board but missing from the current index snapshot"),
+            "message should name what is actually wrong: {}",
             err.message
         );
+        // TASK-MRJRK retargeted the remedy: `orgasmic reindex` is the one
+        // that was observed to fix this live, and unlike the old `orgasmic
+        // restart` it does not assert a boot-time cause that the evidence
+        // has since ruled out.
         assert!(
-            err.message.contains("orgasmic restart"),
+            err.message.contains("orgasmic reindex"),
             "message should name the fix: {}",
             err.message
         );
@@ -22037,6 +22066,83 @@ pub(crate) mod tests {
 
         assert_eq!(err.status, StatusCode::NOT_FOUND);
         assert_eq!(err.message, "project not found");
+    }
+
+    /// TASK-MRJRK: `select_project` is the lookup every id-addressed route
+    /// funnels through, and it answered a registered-but-unindexed project
+    /// with the same undifferentiated `project {id}` as a genuinely unknown
+    /// id — which sends the reader to check registration, the one thing that
+    /// is definitely fine (`orgasmic project list` reads the board file on
+    /// disk, so it keeps listing the project either way).
+    ///
+    /// The state is constructed directly, not provoked: what produced it on
+    /// the operator's daemon is still open, and the diagnosis must not wait
+    /// on that.
+    #[test]
+    fn select_project_names_the_index_snapshot_when_a_registered_project_is_missing() {
+        let mut snap = IndexSnapshot::default();
+        snap.board.push(BoardEntry {
+            id: "orgasmic".to_string(),
+            path: PathBuf::from("/tmp/orgasmic"),
+            branch: "main".to_string(),
+            status: "active".to_string(),
+        });
+        assert!(snap.projects.is_empty(), "registered, not indexed");
+
+        let registered = select_project(&snap, Some("orgasmic")).unwrap_err();
+        let unknown = select_project(&snap, Some("no-such-project")).unwrap_err();
+
+        assert_eq!(registered.status, StatusCode::NOT_FOUND);
+        assert_eq!(unknown.status, StatusCode::NOT_FOUND);
+        assert!(
+            registered.message.contains("registered on the board"),
+            "a registered id must not be reported as unregistered: {}",
+            registered.message
+        );
+        assert!(
+            registered.message.contains("orgasmic reindex"),
+            "the registered-but-unindexed 404 must name the remedy: {}",
+            registered.message
+        );
+        assert_ne!(
+            registered.message, unknown.message,
+            "the two cases must be distinguishable from the error text alone"
+        );
+        assert!(
+            !unknown.message.contains("orgasmic reindex"),
+            "an unknown id must not send the reader to the index: {}",
+            unknown.message
+        );
+    }
+
+    /// TASK-MRJRK: the condition has to be visible without provoking it. The
+    /// state is built directly through the board/index split — the board
+    /// carries the project, the snapshot does not — because the cause of that
+    /// divergence is still open.
+    #[tokio::test]
+    async fn status_reports_a_registered_project_missing_from_the_index_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        // Index built over an empty board first, so the project below is
+        // registered without ever being loaded.
+        let state = direct_stage_test_state(home.clone()).await;
+        seed_project(&home, &tmp.path().join("proj"), "orgasmic");
+        state.index.refresh_board().await;
+
+        let Json(status) = get_status(State(state)).await;
+        let status = serde_json::to_value(&status).unwrap();
+
+        assert_eq!(status["projects"], 0, "{status}");
+        assert_eq!(
+            status["registered_projects"], 1,
+            "status must report what the board carries, not only what loaded: {status}"
+        );
+        assert_eq!(
+            status["unindexed_projects"],
+            serde_json::json!(["orgasmic"]),
+            "status must name the registered project the index is missing: {status}"
+        );
     }
 
     struct TmuxSessionGuard(String);

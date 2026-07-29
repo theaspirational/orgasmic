@@ -1,0 +1,22 @@
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -6879,8 +6879,8 @@
+         bind_port: state.bind_port,
+         ui_asset_hash: state.ui_asset_hash,
+         projects: snap.projects.len(),
+-        registered_projects: snap.board.len(),
+-        unindexed_projects: snap.unindexed_board_projects(),
++        registered_projects: snap.projects.len(),
++        unindexed_projects: Vec::new(),
+         parse_errors: snap.parse_errors.len(),
+         tx_count: snap.tx.len(),
+         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
+@@ -12906,7 +12906,7 @@
+         return snap
+             .projects
+             .get(id)
+-            .ok_or_else(|| project_not_found_error(snap, id));
++            .ok_or_else(|| ApiError::not_found(format!("project {id}")));
+     }
+     if snap.projects.len() == 1 {
+         return snap.projects.values().next().ok_or_else(|| {

@@ -50,6 +50,15 @@ export function StatusView() {
             />
             <KeyValue label="UI hash" value={status.data?.ui_asset_hash?.slice(0, 16)} />
             <KeyValue label="Projects" value={status.data?.projects} />
+            {/* TASK-MRJRK: a registered project the index is missing 404s on
+                every id-addressed route. Shown only when it happens, so the
+                panel stops reading as "3 projects, all fine". */}
+            {status.data?.unindexed_projects?.length ? (
+              <KeyValue
+                label="Registered but unindexed"
+                value={`${status.data.unindexed_projects.join(', ')} — run \`orgasmic reindex\``}
+              />
+            ) : null}
             <KeyValue label="Tx entries" value={status.data?.tx_count} />
             <KeyValue label="Parse errors (count)" value={status.data?.parse_errors} />
             <KeyValue label="Index rebuilt" value={status.data?.rebuilt_at} />
