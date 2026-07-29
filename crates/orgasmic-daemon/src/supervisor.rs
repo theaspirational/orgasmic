@@ -3852,7 +3852,24 @@ impl Supervisor {
             CleanupIdentityAuth::NoOwner | CleanupIdentityAuth::ExactOwner => {}
         }
 
-        let released_run_id = self.release_dispatch_worker_for_cleanup(params).await?;
+        let released_run_id = match self.release_dispatch_worker_for_cleanup(params).await {
+            Ok(released_run_id) => released_run_id,
+            Err(err) => {
+                // TASK-95SGV.1 — never strand the reservation we just
+                // installed. `release_dispatch_worker_for_cleanup` can refuse
+                // with `ReleaseInProgress` (another authority is already
+                // releasing this run) or `DeferredWhileInFlight` /
+                // `RunNotFound`; every such edge used to propagate straight
+                // through the `?` and leave the daemon-owned cleanup
+                // reservation held until restart, so the task's deterministic
+                // worktree path became permanently undispatchable. Release
+                // it by its minted handle — never by a key recomputed from a
+                // path cleanup may already have deleted (TASK-95SGV) — before
+                // propagating, so the refusal does not strand.
+                self.finish_dispatch_cleanup(&cleanup_guard_id).await;
+                return Err(err);
+            }
+        };
 
         Ok(DispatchCleanupOutcome::Proceed {
             released_run_id,
@@ -12525,6 +12542,116 @@ mod tests {
         )
         .await
         .expect("a reservation whose owner is dead must be swept, not refused");
+    }
+
+    /// TASK-95SGV.1 reviewer gap 1: `prepare_dispatch_cleanup` installs a
+    /// cleanup reservation, then calls `release_dispatch_worker_for_cleanup`.
+    /// When the matching live run is already being released by another
+    /// authority (`ReleaseInProgress` — a production-reachable edge, since a
+    /// concurrent release/early-exit can land between cleanup's liveness check
+    /// and its `release` call), the `?` used to propagate that error without
+    /// calling `finish_dispatch_cleanup`, stranding the daemon-owned
+    /// reservation until restart and refusing the task's deterministic
+    /// worktree path forever.
+    ///
+    /// This reproduces the bounded mid-release state the way TASK-RB1ZN's
+    /// wedge test does — `StraySenderDriver` parks its producer so the release
+    /// sits in the drain — then invokes cleanup against the wedged run and
+    /// proves the reservation is cleared on the refusal, the first release
+    /// still finishes, and the worktree is acquirable again.
+    #[tokio::test]
+    async fn a_mid_release_cleanup_refusal_releases_the_reservation_without_stranding() {
+        let (sup, dir, _w) = make_supervisor();
+        sup.set_release_drain_budget(Duration::from_secs(5));
+        sup.set_driver_release_timeout(Duration::from_millis(150));
+        let worktree = dir.path().join("wt-95sgv-midrelease");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        let task_id = "TASK-95SGV-MIDRELEASE";
+        let last_path = dir.path().join("midrelease-last.txt");
+        let stdout_path = dir.path().join("midrelease-stdout.log");
+        std::fs::write(&last_path, "unfinished\n").unwrap();
+        std::fs::write(&stdout_path, "unfinished\n").unwrap();
+        let attempt_token = "eeee1111ffff2222aaaa3333bbbb4444";
+        let mut req = dispatch_impl_req(task_id, dir.path());
+        req.worktree = Some(worktree.clone());
+        req.last_path = Some(last_path.clone());
+        req.stdout_path = Some(stdout_path.clone());
+        req.dispatch_attempt_token = Some(attempt_token.into());
+        let session_path = req.session_path.clone();
+        let resp = sup
+            .acquire(&StraySenderDriver::new(false), req)
+            .await
+            .expect("acquire the run that will be wedged mid-release");
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        // Wedge the run mid-release: `explicit_release_in_progress` is set under
+        // the lock and the drain blocks on the parked producer.
+        let wedged = tokio::spawn({
+            let sup = sup.clone();
+            let run_id = resp.run_id.clone();
+            async move {
+                sup.release_with_finalization(
+                    &run_id,
+                    "worker finalize for TASK-95SGV-MIDRELEASE",
+                    ReleaseOutcome::Completed,
+                    true,
+                    None,
+                )
+                .await
+            }
+        });
+        wait_for_finalize_admission(&session_path).await;
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "the run must still be present and mid-release for the refusal to be \
+             ReleaseInProgress"
+        );
+
+        // Cleanup against the wedged run: identity matches, so the only thing
+        // that can stop `release_dispatch_worker_for_cleanup` is the in-flight
+        // release. The reservation was installed; the refusal must NOT strand.
+        let params = DispatchCleanupParams {
+            project_id: "orgasmic".into(),
+            task_id: task_id.into(),
+            kind: RunKind::Worker,
+            branch: "task-95sgv-midrelease-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some(attempt_token.into()),
+            last_path: Some(last_path),
+            stdout_path: Some(stdout_path),
+        };
+        let err = sup
+            .prepare_dispatch_cleanup(&sessions, &params)
+            .await
+            .expect_err("a cleanup against a run being released must refuse, not proceed");
+        assert!(
+            matches!(err, SupervisorError::ReleaseInProgress(ref id) if *id == resp.run_id),
+            "the refusal must be the in-flight release naming the run, got {err:?}"
+        );
+        assert!(
+            sup.inner.lock().await.cleanup_reservations.is_empty(),
+            "the cleanup reservation must be released on the refusal, not stranded"
+        );
+
+        // The first release still finishes within its drain budget.
+        wedged
+            .await
+            .expect("the wedged release task")
+            .expect("the wedged release completes within its drain budget");
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+
+        // And the worktree is acquirable again — the task's deterministic path
+        // is not permanently refused, which is the whole point of releasing the
+        // reservation on the refusal.
+        sup.acquire(
+            &AlwaysAttachableDriver,
+            worktree_req(task_id, dir.path(), &worktree),
+        )
+        .await
+        .expect("the worktree must be acquirable again once the release drains");
     }
 
     #[tokio::test]
