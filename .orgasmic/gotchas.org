@@ -564,3 +564,21 @@ true of the REAL tmux binary only. Consequence: a =$TMUX= pin can never steer
 the shim away from the live worker server — an unpinned call through the shim
 always reaches =/private/tmp/rmux-501/default=. The only safe isolation for
 anything that might resolve the shim is an explicit =-L= socket.
+
+** The LaunchAgent launches a MATERIALIZED ~/.orgasmic/bin/orgasmic — repointing current/ does not update the daemon
+Measured 2026-07-29 during the runtime reinstall: the plist's ProgramArguments
+is =~/.orgasmic/bin/orgasmic serve=, and that path is a REGULAR FILE (a copy),
+not a symlink through =current/=. Repointing
+=current -> runtimes/<version>= and cycling launchd restarts the OLD binary
+with a fresh boot_id — every surface check that keys on boot_id or version
+(identical dev version strings!) reads as success. The discriminator is a
+NEW-code endpoint probe (=/api/runs/live= here). Full swap = bootout → drain
+port 4848 → =rm= bin/orgasmic (never overwrite in place — SIGKILL gotcha) →
+=cp= the new binary → bootstrap → probe a new endpoint.
+
+** Stall-kill of quiet workers: FIXED as of the 2026-07-29 reinstall
+TASK-JK66P's evidence-of-work clock is now the installed daemon's. The
+per-crate/punctuated-output brief mitigation is no longer required for new
+dispatches (kept in old briefs harmlessly). A recurrence of
+=stall_timeout_exceeded= on a worker with live cpu-burning children is now a
+REAL bug in the new clock — report it, don't route around it.
