@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-drivers/src/modes/rmux.rs b/crates/orgasmic-drivers/src/modes/rmux.rs
+--- a/crates/orgasmic-drivers/src/modes/rmux.rs
++++ b/crates/orgasmic-drivers/src/modes/rmux.rs
+@@ -757,9 +757,7 @@
+         /// state (or reap in a specific order relative to its own `wait`) can
+         /// do so without waiting for `Drop`. Idempotent.
+         pub fn reap(&mut self) {
+-            if let Some(pgid) = self.pgid.take() {
+-                reap_process_group_blocking(pgid);
+-            }
++            self.pgid.take();
+         }
+     }
+ 

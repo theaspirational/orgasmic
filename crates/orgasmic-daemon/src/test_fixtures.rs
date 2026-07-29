@@ -210,3 +210,166 @@ pub(crate) fn write_linked_fixture_text(path: &Path, name: &str, value: &str) {
         )
     });
 }
+
+// orgasmic:task_BCYMM
+/// A fixture process spawned in its own process group, whose whole tree is
+/// reaped when the handle drops.
+///
+/// Several fixture arms outlive their foreground command on purpose
+/// (`cursor-worker-sibling` backgrounds two sleeps and then sleeps an hour;
+/// `artifact-busy` sleeps 120s). Killing those as a *trailing statement* in the
+/// test body is skipped by every panic above it, and TASK-BCYMM measured the
+/// result: fixture trees reparented to init, still holding `/bin/sleep 3600`
+/// 40 minutes later, executing from worktrees that had already been removed.
+/// This is the process-side answer to the same problem TASK-Z3093 solved for
+/// rmux sessions — ownership registered at spawn, reaped on `Drop`, which runs
+/// on the unwind path.
+///
+/// Spawning in a fresh group (`process_group(0)`, so the child's pid *is* the
+/// group id) is what makes the tree reapable: signalling only the foreground
+/// pid orphans the backgrounded children to init.
+#[cfg(unix)]
+pub(crate) struct FixtureProcess {
+    child: std::process::Child,
+    group: orgasmic_drivers::modes::rmux::test_tooling::OwnedProcessGroup,
+}
+
+#[cfg(unix)]
+impl FixtureProcess {
+    /// Pid of the spawned process, which is also its process-group id.
+    pub(crate) fn id(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FixtureProcess {
+    fn drop(&mut self) {
+        // Group first, direct child second: the group reap is what stops the
+        // backgrounded children, and the `wait` afterwards collects the
+        // leader's zombie so the test binary does not accumulate them.
+        self.group.reap();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Spawn `command` in its own process group behind a [`FixtureProcess`].
+///
+/// Use this for any fixture whose foreground command outlives the assertions
+/// that follow it. Configure stdio on `command` as usual — null or piped, never
+/// inherited, so a backgrounded child cannot hold a piped `cargo test | tail`
+/// open past test completion.
+#[cfg(unix)]
+pub(crate) fn spawn_in_own_process_group(command: &mut Command, what: &str) -> FixtureProcess {
+    use std::os::unix::process::CommandExt as _;
+
+    let child = command
+        .process_group(0)
+        .spawn()
+        .unwrap_or_else(|error| panic!("spawn {what}: {error}"));
+    // Register before returning: the caller must never hold an unowned tree,
+    // not even for the one statement it would take to register it itself.
+    let group = orgasmic_drivers::modes::rmux::test_tooling::owned_process_group(child.id());
+    FixtureProcess { child, group }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Pids in `pgid`'s process group that are still alive and not zombies,
+    /// with their command lines — so a failure names the survivor rather than
+    /// just counting it.
+    fn live_group_members(pgid: u32) -> Vec<String> {
+        // `ps -g` selects by session leader on BSD/macOS, not by process group,
+        // so select everything and filter on the `pgid` column here.
+        let output = Command::new("ps")
+            .args(["-A", "-o", "pid=,pgid=,stat=,command="])
+            .stdin(Stdio::null())
+            .output()
+            .expect("ps process table");
+        let wanted = pgid.to_string();
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                let mut fields = line.split_whitespace();
+                let (_pid, group, stat) = (fields.next(), fields.next(), fields.next());
+                // A zombie is already reaped as far as this task is concerned:
+                // it holds no `sleep`, executes nothing, and disappears with
+                // the test binary. The leak being fixed is a RUNNING orphan.
+                group == Some(wanted.as_str()) && !stat.is_some_and(|s| s.starts_with('Z'))
+            })
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    // orgasmic:task_BCYMM
+    /// The acceptance: a test body that panics *between* spawning a fixture
+    /// tree and cleaning it up must still leave nothing behind.
+    ///
+    /// `cursor-worker-sibling` is the arm TASK-BCYMM measured: it backgrounds
+    /// two `sleep 300`s and then sleeps an hour in the foreground, so nothing
+    /// in the tree exits on its own and killing only the foreground pid orphans
+    /// the rest to init. The panic here stands in for the real one — the
+    /// `fake cursor-agent did not start children` deadline in
+    /// `supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
+    /// which fires under load and used to skip that test's trailing kill.
+    #[test]
+    fn panicking_body_still_reaps_the_whole_fixture_process_group() {
+        let tmp = tempfile::tempdir().expect("fixture tempdir");
+        let ready = tmp.path().join("children-ready");
+        let observed = std::sync::Arc::new(std::sync::Mutex::new(None));
+
+        let recorder = std::sync::Arc::clone(&observed);
+        let unwound = std::panic::catch_unwind(move || {
+            let fixture = spawn_in_own_process_group(
+                Command::new(shared_test_executable())
+                    .args(["cursor-worker-sibling", ready.to_str().unwrap()])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null()),
+                "cursor-worker-sibling leak probe",
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !ready.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fixture did not start its children"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            let members = live_group_members(fixture.id());
+            assert!(
+                members.len() >= 3,
+                "expected the fixture, its generic sibling and its worker-server \
+                 sibling to be live before the panic, got {members:?}"
+            );
+            *recorder.lock().unwrap() = Some(fixture.id());
+            // Stands in for any assertion that can fail above the cleanup.
+            panic!("simulated mid-body failure");
+        });
+        assert!(unwound.is_err(), "the probe body must have panicked");
+
+        let pgid = observed
+            .lock()
+            .unwrap()
+            .take()
+            .expect("probe recorded its process group");
+        // The reap is synchronous in `Drop`, but the members' own exits are
+        // not: allow the group a moment to actually leave the process table
+        // before calling it a leak.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut survivors = live_group_members(pgid);
+        while !survivors.is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            survivors = live_group_members(pgid);
+        }
+        assert!(
+            survivors.is_empty(),
+            "fixture process group {pgid} survived the panicking body; still alive:\n{}",
+            survivors.join("\n")
+        );
+    }
+}
