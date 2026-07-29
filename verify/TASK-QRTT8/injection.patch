@@ -1,0 +1,30 @@
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -9120,14 +9120,6 @@
+                 kind,
+                 worker_id,
+             }) => acquire = Some((task_id, kind, worker_id)),
+-            // orgasmic:TASK-QRTT8 — every field is named and none is matched
+-            // against a literal. A literal here is REFUTABLE: `credential_mode:
+-            // None` silently dropped every run whose harness had resolved a
+-            // mode (claude's `native_login` / `bare_api_key`), so those runs
+-            // were not boot-reattach candidates at all. The `..` that used to
+-            // absorb this field is gone on purpose — a field added to
+-            // `Lifecycle::RunMeta` must now be a compile error here, decided,
+-            // rather than silently dropped from the reattach material.
+             Ok(Lifecycle::RunMeta {
+                 transport,
+                 harness,
+@@ -9138,10 +9130,9 @@
+                 dispatch_attempt_token,
+                 role,
+                 requires_worker_finalize,
+-                // Read back by the operator from the session JSONL; not input
+-                // to the reattach call. Bound, never tested.
+-                credential_mode: _,
++                credential_mode: None,
+                 driver_config,
++                ..
+             }) => {
+                 meta = Some((
+                     transport,
