@@ -1,0 +1,49 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied, on a
+# host with real tmux, through the environment the `cmd` builds for itself.
+#
+# WHY THIS RED IS THE BEHAVIOURAL ONE AND NOT AN ARGV ASSERTION
+#
+# TASK-K4G1D, TASK-JGHNC and TASK-FJCE9 all had to pin their sibling defects one
+# layer up, because each of those was a GREEN defect: nothing failed, a test
+# just quietly ran against the wrong server. This one is not. It is a red —
+# deterministic, on merged HEAD, at a named line — and it was measured as such
+# by TASK-J1XCB before it was ever diagnosed. So the proof replays the failure
+# itself: the manager launch the daemon cannot make, and the `run_id` the test
+# then unwraps out of an error body.
+#
+# The line number is deliberately NOT pinned. It was 6038 when TASK-J1XCB
+# measured it and 6073 after the fix's doc comment landed above it; pinning it
+# would make the artifact stale on the next edit anywhere earlier in the file,
+# which is a false alarm, not a false green.
+#
+# WHAT THE SIGNATURE HAS TO RULE OUT
+#
+# The whole hazard of this artifact is a red for the wrong reason: this test can
+# also fail because tmux is missing, because the daemon did not boot, or because
+# the harness collapsed. So the signature names the mechanism — an unpinned
+# `new-session` landing on a server the process did not select — and not merely
+# "the test failed".
+
+exit: 101
+
+# The mechanism, named exactly: no -L, so the socket came from the environment.
+# This string is produced by `tmux_server_selection()` (TASK-0RCRY) and exists
+# only on the unpinned path; the fixed gate cannot emit it.
+contains: tmux new-session failed (exit 1) on the default shared server (no -L/-S and no TMUX_TMPDIR)
+
+# ...and the socket it landed on was not a tmux server. Two spellings, because
+# which one tmux emits depends on how long TMPDIR is on the host, and both mean
+# the same thing: the `$TMUX` this run inherited names something that does not
+# speak tmux's protocol — a plain file here, an rmux socket in the wild.
+contains-any: Socket operation on non-socket
+contains-any: File name too long
+
+# The consequence, at the surface TASK-2GS7V names: the launch answered a body
+# with no run_id and the test unwrapped it.
+contains: panicked at crates/orgasmic-cli/tests/dispatch.rs
+contains: app_manager_release_via_cli_orgasmic_run_id
+
+# One test, and it is this one. A binary that collapses wholesale, or a run that
+# skipped for missing tooling (which reports `ok. 1 passed`), is a different
+# outcome and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed
