@@ -18672,3 +18672,71 @@ without the worker's own report.
 - Do not fold this into the TASK-WGXKD.2 fix round (TASK-Q07Y5) — the reviewer
   scoped them apart deliberately, and Q07Y5's writer-budget work is unrelated.
 
+* DONE TASK-NYF7Z rmux TUI workers are not MCP-isolated the way acp-stdio workers are :drivers:isolation:rmux:
+:PROPERTIES:
+:ID: TASK-NYF7Z
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-drivers
+:END:
+
+The acp-stdio claude adapter isolates its worker from the operator's MCP
+servers. The rmux TUI path does not. Same harness, same worker personas, two
+different blast radii — and rmux is now the standing default for every dispatch
+(manager-dispatch, standing worker matrix, 2026-07-26).
+
+MEASURED ON A LIVE WORKER, not read from code alone. TASK-6AYEJ dispatched as
+implementer-claude-rmux (rmux / claude / claude-opus-5 / high), pid 37956:
+
+    claude --dangerously-skip-permissions --model claude-opus-5 --effort high
+           --session-id a3c31a76-... -- <compiled prompt>
+
+No --strict-mcp-config. Compare adapters/claude.rs:361-365, where the acp path
+pushes it deliberately, with the comment "without it this machine loaded nine
+MCP servers into a worker that wants none". `claude mcp list` on this machine
+today returns exactly nine: Figma, Google Drive, Gmail, Google Calendar, Notion,
+plugin:svelte, syncntn, ray-exomem-dev, ray-exomem. Six connect.
+
+The rmux argv is built at modes/rmux.rs:550-575 and pushes only
+--dangerously-skip-permissions, --model, --effort, --session-id.
+
+DO NOT REACH FOR --bare. It skips hooks, LSP, plugin sync, auto-memory and
+CLAUDE.md discovery, but it also makes Anthropic auth strictly ANTHROPIC_API_KEY
+or apiKeyHelper — OAuth and keychain are never read. Our workers run on
+subscription auth, so --bare would break them. That is precisely why the acp
+adapter branches on ClaudeCredentialMode and, for NativeLogin, rebuilds "what
+--bare would have given us, minus its credential policy" from
+--strict-mcp-config alone. rmux is NativeLogin. Use the same narrow flag.
+
+SIZE THE WIN HONESTLY — it is an isolation win, not a context win. Measured with
+two `claude --print` runs in this repo, identical but for the flag: prefix
+tokens 26528 without, 26284 with. A 244-token difference. Nine servers' worth of
+tool schemas would cost far more than that if they were loaded eagerly, so the
+harness appears to defer MCP tool schemas and charge only for names. Anyone
+justifying this task on token savings is quoting a number that no longer holds.
+
+The real argument is blast radius. A dispatched implementer working on a Rust
+CLI has no business holding live, authenticated handles to the operator's Gmail,
+Google Drive, Google Calendar and Notion. Nothing in the worker persona forbids
+calling them, the run is --dangerously-skip-permissions, and the operator is not
+watching every pane. TASK-6AYEJ's worker invoked no MCP tool, which is luck
+rather than a control.
+
+Scope:
+- push --strict-mcp-config in the rmux claude path, guarded exactly as the
+  existing pushes are (skip if operator-supplied harness_args already name it,
+  so an operator can still opt a pane back in)
+- check the equivalent for the reviewer stage: rmux/codex gets only --model
+  today. Codex reads MCP from ~/.codex/config.toml. Determine whether it has a
+  comparable flag and either use it or record plainly that it does not exist.
+- one test per harness asserting the flag is present by default and absent when
+  the operator supplied it
+
+Out of scope: changing --dangerously-skip-permissions, touching the acp path,
+and any CLAUDE.md / plugin / hook suppression. Those are separate arguments and
+at least one of them (CLAUDE.md discovery) we actively want.
+
+Acceptance:
+- a live rmux/claude dispatch shows --strict-mcp-config in its argv
+- an operator-supplied harness_args override still wins
+- the codex question is answered in the report with evidence either way
+
