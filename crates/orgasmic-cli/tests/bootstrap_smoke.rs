@@ -16,7 +16,7 @@
 //!   (exercised by the decision/glossary steps, plus a rejection probe).
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use orgasmic_core::Home;
@@ -24,7 +24,7 @@ use orgasmic_daemon::{Daemon, RunningDaemon};
 
 mod common;
 
-use common::{init_git_repo, orgasmic_exe, run_git, test_options, write};
+use common::{init_git_repo, orgasmic_command, run_git, test_options, write};
 
 /// Serialize with the other daemon-booting cli tests (dispatch.rs) via the
 /// same shared flock path, so this suite doesn't contend under `cargo test
@@ -61,7 +61,7 @@ fn run_cli_output(
     project_root: &Path,
     args: &[&str],
 ) -> Output {
-    Command::new(orgasmic_exe())
+    orgasmic_command()
         .args(args)
         .current_dir(project_root)
         .env("ORGASMIC_HOME", &home.root)

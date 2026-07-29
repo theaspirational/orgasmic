@@ -19,7 +19,7 @@
 //!   of the line.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use orgasmic_core::Home;
@@ -27,7 +27,7 @@ use orgasmic_daemon::{Daemon, RunningDaemon};
 
 mod common;
 
-use common::{init_git_repo, orgasmic_exe, run_git, test_options};
+use common::{init_git_repo, orgasmic_command, run_git, test_options};
 
 /// The heading TASK-0RCRY is stuck with, and the correction it needs.
 const RETRACTED_TITLE: &str =
@@ -63,7 +63,7 @@ fn run_cli_output(
     project_root: &Path,
     args: &[&str],
 ) -> Output {
-    Command::new(orgasmic_exe())
+    orgasmic_command()
         .args(args)
         .current_dir(project_root)
         .env("ORGASMIC_HOME", &home.root)

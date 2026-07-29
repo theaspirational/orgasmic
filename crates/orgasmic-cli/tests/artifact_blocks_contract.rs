@@ -4,10 +4,15 @@
 //! that never touch the daemon.
 
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    orgasmic_command()
         .args(args)
         .output()
         .unwrap_or_else(|e| panic!("run orgasmic {args:?}: {e}"))

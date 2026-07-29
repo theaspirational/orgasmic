@@ -3,11 +3,16 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 use orgasmic_core::Home;
 use orgasmic_daemon::DAEMON_OUT_LOG;
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 struct ChildGuard(Child);
 
@@ -37,7 +42,7 @@ fn serve_with_closed_stdout_still_handles_requests_and_writes_log_file() {
     )
     .unwrap();
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+    let mut command = orgasmic_command();
     command
         .arg("serve")
         .env("ORGASMIC_HOME", &home.root)

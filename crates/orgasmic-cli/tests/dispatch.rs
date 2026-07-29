@@ -15,6 +15,11 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
+
 fn tmux_available_for_test() -> bool {
     Command::new("tmux")
         .arg("-V")
@@ -423,8 +428,12 @@ fn run_orgasmic_output_with_daemon_url(
     args: &[&str],
     extra_env: &[(&str, &str)],
 ) -> Output {
-    let exe = orgasmic_exe();
-    let mut command = Command::new(exe);
+    // orgasmic:task_K5NDR
+    // `orgasmic_command` scrubs the ambient `ORGASMIC_*` this shell inherited
+    // before the explicit `.env` calls below set what the test actually means.
+    // Without it a dispatched worker's `ORGASMIC_RUN_ID` reaches `dispatch
+    // finalize` and it resolves the OPERATOR's run: `no live run ...`.
+    let mut command = orgasmic_command();
     command
         .args(args)
         .current_dir(project_root)
@@ -435,15 +444,6 @@ fn run_orgasmic_output_with_daemon_url(
         command.env(key, value);
     }
     command.output().expect("run orgasmic")
-}
-
-fn orgasmic_exe() -> PathBuf {
-    let exe = PathBuf::from(env!("CARGO_BIN_EXE_orgasmic"));
-    if exe.is_absolute() {
-        exe
-    } else {
-        std::env::current_dir().unwrap().join(exe)
-    }
 }
 
 fn branch_exists(project_root: &Path, branch: &str) -> bool {

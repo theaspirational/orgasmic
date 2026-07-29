@@ -1,9 +1,7 @@
 #[allow(dead_code)]
 mod common;
 
-use std::process::Command;
-
-use common::{orgasmic_exe, write};
+use common::{orgasmic_command, write};
 use orgasmic_core::{projects, Home};
 
 const ROUTER_FIXTURE: &str = "\
@@ -45,7 +43,7 @@ fn entry_prints_runtime_router_outside_project() {
         "* WORKFLOW default\n\nshipped default workflow body\n",
     );
 
-    let output = Command::new(orgasmic_exe())
+    let output = orgasmic_command()
         .arg("entry")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(tmp.path())
@@ -77,7 +75,7 @@ fn entry_resolves_workflow_project_user_shipped_order() {
         "* WORKFLOW default\n\nUSER-WORKFLOW\n",
     );
 
-    let outside = Command::new(orgasmic_exe())
+    let outside = orgasmic_command()
         .arg("entry")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(tmp.path())
@@ -109,7 +107,7 @@ fn entry_resolves_workflow_project_user_shipped_order() {
         "* WORKFLOW default\n\nPROJECT-WORKFLOW\n",
     );
 
-    let inside = Command::new(orgasmic_exe())
+    let inside = orgasmic_command()
         .arg("entry")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(&nested)
@@ -150,7 +148,7 @@ fn entry_warns_on_project_stub_version_skew() {
     );
     projects::register_project(&home, &project_root, "entry-project", "main").unwrap();
 
-    let output = Command::new(orgasmic_exe())
+    let output = orgasmic_command()
         .arg("entry")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(&nested)

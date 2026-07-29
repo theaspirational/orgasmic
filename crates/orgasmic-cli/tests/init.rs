@@ -1,6 +1,9 @@
-use std::process::Command;
-
 use orgasmic_core::Home;
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 fn write(path: &std::path::Path, contents: &str) {
     if let Some(parent) = path.parent() {
@@ -14,7 +17,7 @@ fn init_hints_when_source_checkout_missing() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .arg("init")
         .env("ORGASMIC_HOME", &home.root)
         .output()
@@ -43,7 +46,7 @@ fn init_registers_source_checkout_as_default_project() {
         "#+title: orgasmic project\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                  orgasmic\n:DEFAULT_BRANCH:      main\n:END:\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .arg("init")
         .env("ORGASMIC_HOME", &home.root)
         .output()
@@ -70,7 +73,7 @@ fn init_registers_source_checkout_as_default_project() {
         "init must not inject a hardcoded main branch: {board}"
     );
 
-    let rerun = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let rerun = orgasmic_command()
         .arg("init")
         .env("ORGASMIC_HOME", &home.root)
         .output()
@@ -89,7 +92,7 @@ fn init_hints_when_binary_symlink_is_broken() {
     let bin = home.bin_orgasmic();
     std::os::unix::fs::symlink(tmp.path().join("does-not-exist/orgasmic"), &bin).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .arg("init")
         .env("ORGASMIC_HOME", &home.root)
         .output()

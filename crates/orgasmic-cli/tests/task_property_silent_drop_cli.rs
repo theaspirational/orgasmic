@@ -22,7 +22,7 @@
 //!   global home file.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::time::Duration;
 
 use orgasmic_core::Home;
@@ -30,7 +30,7 @@ use orgasmic_daemon::{Daemon, RunningDaemon};
 
 mod common;
 
-use common::{init_git_repo, orgasmic_exe, run_git, test_options};
+use common::{init_git_repo, orgasmic_command, run_git, test_options};
 
 async fn boot(home: Home) -> RunningDaemon {
     home.ensure().unwrap();
@@ -45,7 +45,7 @@ fn run_cli_output(
     project_root: &Path,
     args: &[&str],
 ) -> Output {
-    Command::new(orgasmic_exe())
+    orgasmic_command()
         .args(args)
         .current_dir(project_root)
         .env("ORGASMIC_HOME", &home.root)
@@ -159,7 +159,7 @@ impl Fixture {
         let running = boot(home.clone()).await;
         let project_root = tmp.path().join("repo");
         init_git_repo(&project_root);
-        let out = Command::new(orgasmic_exe())
+        let out = orgasmic_command()
             .args([
                 "project",
                 "init",

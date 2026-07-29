@@ -3,6 +3,11 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::Home;
 
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
+
 struct ChildGuard(Child);
 
 impl Drop for ChildGuard {
@@ -48,7 +53,7 @@ fn daemon_status_reports_adapter_and_persistence_for_external_target() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .args(["daemon", "status"])
         .env("ORGASMIC_HOME", &home.root)
         .env("ORGASMIC_DAEMON_URL", "http://127.0.0.1:9")
@@ -80,7 +85,7 @@ fn second_serve_exits_zero_when_healthy_incumbent_owns_home_lock() {
         format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
     )
     .unwrap();
-    let mut first_command = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+    let mut first_command = orgasmic_command();
     first_command
         .arg("serve")
         .env("ORGASMIC_HOME", &home.root)
@@ -103,7 +108,7 @@ fn second_serve_exits_zero_when_healthy_incumbent_owns_home_lock() {
         std::thread::sleep(Duration::from_millis(25));
     }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .arg("serve")
         .env("ORGASMIC_HOME", &home.root)
         .output()
@@ -186,7 +191,7 @@ fn autostart_survives_a_predecessor_holding_the_lock_past_the_old_start_literal(
 
     // The replacement, started inside that window: it finds the marker and waits
     // the predecessor out instead of refusing on the held lock.
-    let mut replacement = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+    let mut replacement = orgasmic_command();
     replacement
         .arg("serve")
         .env("ORGASMIC_HOME", &home.root)
@@ -207,7 +212,7 @@ fn autostart_survives_a_predecessor_holding_the_lock_past_the_old_start_literal(
     // `orgasmic status` autostarts, so this is the production CLI wait, not a
     // helper called directly.
     let started = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .arg("status")
         .env("ORGASMIC_HOME", &home.root)
         // Keep the operator's real LaunchAgent out of it if this ever decides
@@ -266,7 +271,7 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
     )
     .unwrap();
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+    let mut command = orgasmic_command();
     command
         .arg("serve")
         .env("ORGASMIC_HOME", &home.root)
@@ -381,7 +386,7 @@ mod stalled_writer {
     /// Spawn a real daemon whose writer stalls on `STALL_TX_TYPE`, and return
     /// it only once it is bound AND awaiting signals.
     fn spawn_ready_serve(home: &Home, stall: Duration) -> Child {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+        let mut command = orgasmic_command();
         command
             .arg("serve")
             .env("ORGASMIC_HOME", &home.root)
@@ -573,7 +578,7 @@ mod stalled_writer {
         let _replacement = DetachedDaemonGuard(home.state().join("daemon.pid"));
 
         let started = Instant::now();
-        let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+        let output = orgasmic_command()
             .args(["daemon", "restart"])
             .env("ORGASMIC_HOME", &home.root)
             .env("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")

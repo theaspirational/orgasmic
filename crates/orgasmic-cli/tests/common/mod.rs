@@ -1,10 +1,19 @@
 use std::path::Path;
-use std::path::PathBuf;
 use std::process::Command;
 
 use orgasmic_core::Home;
 use orgasmic_daemon::DaemonOptions;
 
+pub mod env_isolation;
+
+// orgasmic:task_K5NDR
+// The CLI is spawned through `env_isolation::orgasmic_command`, never through a
+// bare `Command::new(orgasmic_exe())`, so ambient `ORGASMIC_*` cannot steer a
+// test's child. Re-exported here so callers keep their existing import path.
+#[allow(unused_imports)]
+pub use env_isolation::{orgasmic_command, orgasmic_exe};
+
+#[allow(dead_code)]
 pub fn test_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -13,6 +22,7 @@ pub fn test_options() -> DaemonOptions {
     }
 }
 
+#[allow(dead_code)]
 pub fn write(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).unwrap();
@@ -88,13 +98,4 @@ pub fn write_config_port(home: &Home, port: u16) {
         &home.config(),
         &format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
     );
-}
-
-pub fn orgasmic_exe() -> PathBuf {
-    let exe = PathBuf::from(env!("CARGO_BIN_EXE_orgasmic"));
-    if exe.is_absolute() {
-        exe
-    } else {
-        std::env::current_dir().unwrap().join(exe)
-    }
 }

@@ -1,4 +1,3 @@
-use std::process::Command;
 use std::time::Duration;
 
 use orgasmic_core::Home;
@@ -6,7 +5,9 @@ use orgasmic_daemon::Daemon;
 
 mod common;
 
-use common::{init_git_repo, orgasmic_exe, run_git, seed_required_shipped, test_options, write};
+use common::{
+    init_git_repo, orgasmic_command, run_git, seed_required_shipped, test_options, write,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg(unix)]
@@ -22,7 +23,7 @@ async fn doctor_warns_when_running_daemon_predates_binary_mtime() {
     write(&stub, "#!/bin/sh\nexit 0\n");
     std::os::unix::fs::symlink(&stub, home.bin_orgasmic()).unwrap();
 
-    let output = Command::new(orgasmic_exe())
+    let output = orgasmic_command()
         .arg("doctor")
         .env("ORGASMIC_HOME", &home.root)
         .env("ORGASMIC_DAEMON_URL", format!("http://{}", running.addr))
@@ -76,7 +77,7 @@ async fn doctor_warns_for_git_commits_since_daemon_boot() {
     run_git(&source, &["commit", "-m", "TASK-052 git path route"]);
     let sha = run_git(&source, &["rev-parse", "--short", "HEAD"]);
 
-    let output = Command::new(orgasmic_exe())
+    let output = orgasmic_command()
         .arg("doctor")
         .env("ORGASMIC_HOME", &home.root)
         .env("ORGASMIC_DAEMON_URL", format!("http://{}", running.addr))

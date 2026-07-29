@@ -1,6 +1,10 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
+
+// orgasmic:task_K5NDR
+#[path = "common/env_isolation.rs"]
+mod env_isolation;
+use env_isolation::orgasmic_command;
 
 const ALLOWED_DEFERRED_LEAVES: &[&str] = &[];
 const MAIN_RS: &str = include_str!("../src/main.rs");
@@ -86,7 +90,7 @@ fn clap_leaf_paths() -> Vec<String> {
 }
 
 fn help_for(path: &[String]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .args(path)
         .arg("--help")
         .output()
@@ -583,7 +587,7 @@ fn help_mentions_flag(help: &str, flag: &str) -> bool {
 }
 
 fn try_help(path: &[String]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+    let output = orgasmic_command()
         .args(path)
         .arg("--help")
         .output()
