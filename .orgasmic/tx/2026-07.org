@@ -45153,3 +45153,65 @@
 :TASK:         TASK-XYYBT
 :REASON:       Review-close to done: exploration-only deliverable; manager verified worktree diff was report.md only, spot-checked inventory claims (grep counts, index.rs:824 exists() guard), report archived at archive/TASK-XYYBT-architecture-excision-estimate.md (merge 84892aa). Excision stages NOT started - operator go/no-go gate per task framing.
 :END:
+
+* TX 2026-07-29 Wed 07:37:41 task.state_transitioned TASK-95SGV
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3893
+:TIME:         [2026-07-29 Wed 07:37:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-95SGV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-95SGV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 07:37:46 manager.dispatch_started TASK-95SGV
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3894
+:TIME:         [2026-07-29 Wed 07:37:46]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-95SGV
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-95sgv/worktree
+:BRANCH:       task-95sgv-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-95sgv/brief-95sgv.md
+:STARTED_AT:   [2026-07-29 Wed 07:37:46]
+:LIVENESS:     8a4706bcd7ec4ba98a2829b46639fc6c3622ae1e
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: P1: cleanup reservation leaked on removed worktree dir makes a task permanently undispatchable
+:END:
+
+* TX 2026-07-29 Wed 07:37:47 run.created TASK-95SGV
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3895
+:TIME:         [2026-07-29 Wed 07:37:47]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-95SGV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-95SGV-implementer-20260729T073745.jsonl
+:REASON:       P1: cleanup reservation leaked on removed worktree dir makes a task permanently undispatchable
+:RUN_ID:       run-20260729T073745-eeec221cf294488f9526d8c4969cb34a
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-95sgv/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-95sgv/brief-95sgv.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-95sgv/brief-95sgv-11e4cbd95eb849778d49d258e13a3da1-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-95sgv/brief-95sgv-11e4cbd95eb849778d49d258e13a3da1-stdout.log
+:DISPATCH_ATTEMPT: 11e4cbd95eb849778d49d258e13a3da1
+:DISPATCH_TX:  tx-20260729-orgasmic-3894
+:END:
