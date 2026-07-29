@@ -79,8 +79,9 @@ use crate::recovery_claim::{
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DispatchCleanupOutcome, DispatchCleanupParams, DispatchCloseGuardOutcome,
-    DispatchCloseGuardParams, RecoveryReattachPlan, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
+    BabysitterAutoSpawn, CleanupHolderDiagnostic, DispatchCleanupOutcome, DispatchCleanupParams,
+    DispatchCloseGuardOutcome, DispatchCloseGuardParams, RecoveryReattachPlan, Supervisor,
+    DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
@@ -1652,6 +1653,32 @@ fn release_in_progress_conflict(run_id: &str) -> ApiError {
     }))
 }
 
+/// The structured 409 every acquire surface owes a worktree held by a dispatch
+/// cleanup reservation (TASK-95SGV.1). One renderer for ordinary dispatch
+/// acquire and recovery, so a refusal from a live cleanup is distinguishable
+/// from a stale leaked entry on *both* surfaces — naming the reservation's
+/// guard, its owner pid, and whether that pid is alive. Without a shared
+/// renderer the ordinary dispatch path collapsed `CleanupInProgress` into a
+/// generic 500 and hid exactly the diagnosis the cleanup reservation was made
+/// to expose.
+fn cleanup_in_progress_conflict(
+    task_id: &str,
+    kind: RunKind,
+    worktree: &str,
+    holder: &CleanupHolderDiagnostic,
+) -> ApiError {
+    ApiError::conflict_json(json!({
+        "error": "dispatch cleanup in progress",
+        "task_id": task_id,
+        "kind": format!("{kind:?}").to_lowercase(),
+        "worktree": worktree,
+        "guard_id": holder.guard_id,
+        "owner_pid": holder.owner_pid,
+        "owner_alive": holder.owner_alive,
+        "detail": "a dispatch cleanup holds this worktree; retry once it finishes",
+    }))
+}
+
 fn supervisor_control_error(context: &str, error: crate::supervisor::SupervisorError) -> ApiError {
     use crate::supervisor::SupervisorError;
     match error {
@@ -1713,24 +1740,15 @@ fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiErr
         // worktree. Recovering into it would put a live worker in a directory
         // that is about to be removed, so the acquire is refused; this is the
         // caller-facing half of that refusal, and it says which close to wait
-        // for rather than reporting an opaque internal error.
+        // for rather than reporting an opaque internal error. The structured
+        // body is shared with ordinary dispatch acquire (TASK-95SGV.1) so both
+        // surfaces name the reservation and its owner the same way.
         SupervisorError::CleanupInProgress {
             task_id,
             kind,
             worktree,
             holder,
-        } => ApiError::conflict_json(json!({
-            "error": "recovery blocked by dispatch cleanup in progress",
-            "task_id": task_id,
-            "kind": format!("{kind:?}").to_lowercase(),
-            "worktree": worktree,
-            // TASK-95SGV — name the reservation and its owner, so a refusal
-            // from a live cleanup is distinguishable from a stale leaked entry.
-            "guard_id": holder.guard_id,
-            "owner_pid": holder.owner_pid,
-            "owner_alive": holder.owner_alive,
-            "detail": "a dispatch cleanup holds this worktree; retry once it finishes",
-        })),
+        } => cleanup_in_progress_conflict(&task_id, kind, &worktree, &holder),
         other => {
             tracing::error!(error = %other, "run recovery failed");
             ApiError::internal("failed to recover run")
@@ -4537,6 +4555,22 @@ async fn spawn_worker_run(
         Err(crate::supervisor::SupervisorError::LeaseHeld { run_id, .. }) => {
             return Err(SpawnWorkerFailure {
                 error: ApiError::conflict(format!("another dispatch is already active: {run_id}")),
+            });
+        }
+        // orgasmic:TASK-95SGV.1 — a dispatch cleanup (or a `dispatch-close`
+        // guard) holds this worktree. The ordinary dispatch acquire path used
+        // to collapse this into a generic 500 alongside every other acquire
+        // error, hiding the guard id, owner pid and owner liveness the task
+        // requires for diagnosis. Share the structured 409 the recovery path
+        // already renders, so both acquire surfaces answer the same way.
+        Err(crate::supervisor::SupervisorError::CleanupInProgress {
+            task_id,
+            kind,
+            worktree,
+            holder,
+        }) => {
+            return Err(SpawnWorkerFailure {
+                error: cleanup_in_progress_conflict(&task_id, kind, &worktree, &holder),
             });
         }
         Err(error) => {
@@ -21758,6 +21792,63 @@ pub(crate) mod tests {
             "explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
         )
         .await;
+    }
+
+    /// TASK-95SGV.1 reviewer gap 2: the ordinary dispatch acquire path used to
+    /// collapse `CleanupInProgress` into a generic 500 alongside every other
+    /// acquire error, hiding the guard id, owner pid and owner liveness the
+    /// task requires for diagnosis. Both acquire surfaces — ordinary dispatch
+    /// and recovery — must render one shared structured 409 naming exactly
+    /// those fields. This asserts the exact body both surfaces now emit.
+    #[test]
+    fn ordinary_dispatch_and_recovery_share_one_cleanup_conflict_409() {
+        use crate::supervisor::SupervisorError;
+        let holder = CleanupHolderDiagnostic {
+            guard_id: Some("cleanup-guard-deadbeef".into()),
+            owner_pid: Some(4242),
+            owner_alive: Some(true),
+        };
+        let expected = json!({
+            "error": "dispatch cleanup in progress",
+            "task_id": "TASK-95SGV-FIELDS",
+            "kind": "worker",
+            "worktree": "/tmp/wt-95sgv-fields",
+            "guard_id": "cleanup-guard-deadbeef",
+            "owner_pid": 4242,
+            "owner_alive": true,
+            "detail": "a dispatch cleanup holds this worktree; retry once it finishes",
+        });
+
+        // The renderer the ordinary dispatch acquire path now calls instead of
+        // `supervisor_acquire_error`'s generic 500.
+        let dispatch = cleanup_in_progress_conflict(
+            "TASK-95SGV-FIELDS",
+            RunKind::Worker,
+            "/tmp/wt-95sgv-fields",
+            &holder,
+        );
+        assert_eq!(dispatch.status, StatusCode::CONFLICT);
+        assert_eq!(
+            dispatch.body.as_ref().unwrap(),
+            &expected,
+            "the dispatch acquire conflict must name guard_id, owner_pid and \
+             owner_alive"
+        );
+
+        // The recovery path renders the identical structured body through the
+        // same shared renderer, so both acquire surfaces answer the same way.
+        let recover = supervisor_recover_error(SupervisorError::CleanupInProgress {
+            task_id: "TASK-95SGV-FIELDS".into(),
+            kind: RunKind::Worker,
+            worktree: "/tmp/wt-95sgv-fields".into(),
+            holder,
+        });
+        assert_eq!(recover.status, StatusCode::CONFLICT);
+        assert_eq!(
+            recover.body.as_ref().unwrap(),
+            &expected,
+            "recovery must render the identical structured conflict as dispatch acquire"
+        );
     }
 
     /// Acquire a run whose driver reaches `Ready` and then never says anything
