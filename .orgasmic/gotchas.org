@@ -612,6 +612,28 @@ channel, dispatch long-thinking workers with
 bounds the run). A live worker about to be hit can be nudged with
 =rmux resize-window= (forces a TUI repaint → pane bytes → fresh window).
 
+Exit condition IN TREE as of TASK-JQ8AV (2026-07-29): the probe now reads the
+pane's *content* at the stall deadline — the TUI keeps its open-turn
+statusline (=Quantumizing… (3m41s · ↓13.1k tokens=) on screen for exactly as
+long as a turn is open, and removes it at rest — so a provider-bound turn is
+=Working= and the connectionless at-rest wedge still dies on schedule. Two
+premise corrections from the measurement (do not repeat them as fact): the
+TUI normally repaints every 30s even while thinking (the killed workers'
+session files show 30s =pane_activity= right up to a dead stop; the silence
+is specific to long opus-5 high-effort no-token stretches), and the network
+candidates are unsound here (telemetry sockets persist idle >25 min;
+bridge-session streaming moves bytes on the api-host sockets with no turn in
+flight). The governance override stays necessary until the runtime is
+REINSTALLED with this change; a stall kill of a worker whose pane shows the
+statusline after that reinstall is a real bug in the pane channel.
+
+THE EXIT CONDITION IS =rmux= ONLY (manager, 2026-07-29 integration). The pane
+consult is gated on =target.transport == "rmux"=, so on a =tmux= transport the
+channel never runs and the 600s kill is exactly as it was before JQ8AV. This
+matters now that tmux is the shipped default driver: keep the governance
+override on every long-thinking =tmux= dispatch until TASK-4CSMY generalises
+the consult to all pane transports.
+
 ** =$RMUX= outranks =RMUX_TMPDIR=, so a socket-root pin alone cannot steer rmux inside a worker
 Measured 2026-07-29 (TASK-SZJ2B), from inside a worker pane, deterministic:
 
