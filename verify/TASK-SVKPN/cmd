@@ -1,0 +1,14 @@
+# One line. Run from the repo root by `orgasmic verify TASK-SVKPN`.
+#
+# The property is the product one, at the layer that owns it: a harness that
+# prints N lines and exits must have all N in the session, and a run_complete
+# synthesized from them. The daemon-level symptom (a dispatch orphaned as
+# protocol_end_without_finalize with an empty transcript) is downstream of this
+# and is load-dependent, so it is proved by the pinned A/B rounds in the report,
+# not by this probe — see README.md.
+#
+# The name filter already excludes everything else in the binary; the explicit
+# `--skip` of the billed harness test is the suite's mandatory guard, asserted
+# by `orgasmic verify` itself, and is kept even under a filter that cannot reach
+# it so the guard never has to trust the filter.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --test driver_modes -- a_fast_exiting_harness_loses_no_stdout_to_the_release_race --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

@@ -1,0 +1,20 @@
+# Pinned from the red run of 2026-07-29 with the injection applied.
+#
+# The injection restores the pre-fix world in the three ways that made it cost
+# something: every install writes a NEW executable (`copy`, not `hard_link` —
+# the evaluation cache is keyed by inode, so a byte-identical copy pays in
+# full), nothing is exec'd at install time, and a new inode's first exec pays a
+# one-time serialized cost, which is what macOS's Gatekeeper evaluation is.
+exit: 101
+
+# PROPERTY 1 — identity. Two inodes where there must be one: every test's
+# harness is a file the machine has never evaluated, on a path with a deadline
+# already running.
+contains: must be a link to the pre-warmed executable rather than a new one
+
+# PROPERTY 2 — the warm itself. One shared file still costs its first exec; the
+# receipt is written by that exec, so its absence is the exec's absence.
+contains: no warm receipt beside it
+
+# Both, and only these two.
+contains: test result: FAILED. 0 passed; 2 failed

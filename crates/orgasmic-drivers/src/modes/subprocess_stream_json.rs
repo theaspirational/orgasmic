@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{mpsc, oneshot};
-use tracing::info;
+use tracing::{info, warn};
 
 use orgasmic_core::{DriverEvent, TextStream};
 
@@ -247,8 +247,53 @@ fn detach_subprocess(cmd: &mut Command) {
 fn detach_subprocess(_cmd: &mut Command) {}
 
 /// Grace window between the group TERM and the group KILL escalation.
+///
+/// Kept as a bare millisecond count as well as a `Duration` because
+/// [`RELEASE_DRAIN_BUDGET`] is derived from it in a `const` expression, and
+/// `Duration` has no const subtraction.
+pub(crate) const GROUP_REAP_GRACE_MS: u64 = 2_000;
+
+/// Grace window between the group TERM and the group KILL escalation.
 #[cfg(unix)]
-const GROUP_REAP_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+const GROUP_REAP_GRACE: std::time::Duration = std::time::Duration::from_millis(GROUP_REAP_GRACE_MS);
+
+/// What the supervisor gives this producer task after a release has been
+/// acked, before it aborts the task outright.
+///
+/// This mirrors `DRIVER_RELEASE_TIMEOUT` in `orgasmic-daemon`'s
+/// `supervisor.rs`: `stop_and_join_driver_producer` awaits `control.release`
+/// under that budget and then joins *this* task under the same budget again.
+/// `orgasmic-daemon` depends on `orgasmic-drivers`, not the other way round,
+/// so the constant cannot be imported; it is named here so a change to it has
+/// one place to look, and so the derivation below is arithmetic rather than
+/// prose.
+pub(crate) const PRODUCER_JOIN_BUDGET_MS: u64 = 5_000;
+
+/// Slack reserved for [`finalize_subprocess_exit`] once the drain is done: its
+/// synthesized `RunComplete`/`DriverError` go onto a bounded (64) event
+/// channel whose receiver is the supervisor's own release drain.
+pub(crate) const FINALIZE_SLACK_MS: u64 = 1_000;
+
+/// How long the post-release drain may keep reading the harness's pipes.
+///
+/// orgasmic:TASK-SVKPN — derived, not chosen. Everything this task does after
+/// the select loop breaks runs inside the producer join the supervisor bounds
+/// at [`PRODUCER_JOIN_BUDGET_MS`], and exactly two of those steps can block:
+/// the group reap ([`GROUP_REAP_GRACE_MS`] — TERM, grace, KILL) and this
+/// drain. Reserving [`FINALIZE_SLACK_MS`] for the synthesis that follows
+/// leaves the drain what is left, so the whole teardown fits the budget the
+/// supervisor already assumes a release fits inside. Overrunning the drain
+/// costs only the events still unread — `finalize_subprocess_exit` still runs
+/// on what was drained; overrunning the *join* would cost the whole
+/// synthesis, because the supervisor then aborts this task mid-finalize.
+///
+/// This is the driver-side sibling of TASK-HAREX's `DrainGate`, which bounds
+/// the *supervisor's* wait on the other end of this channel. They compose —
+/// a driver drain that fits here cannot push the supervisor's drain past
+/// `RELEASE_FINALIZATION_DRAIN_TIMEOUT` — and they are not the same gate.
+pub(crate) const RELEASE_DRAIN_BUDGET: std::time::Duration = std::time::Duration::from_millis(
+    PRODUCER_JOIN_BUDGET_MS - GROUP_REAP_GRACE_MS - FINALIZE_SLACK_MS,
+);
 
 /// Reap the whole process group rooted at the detached child, then `wait` the
 /// direct child.
@@ -491,6 +536,35 @@ async fn run_subprocess_stream_json(runtime: SubprocessRuntime) {
         child.wait().await
     };
 
+    // orgasmic:TASK-SVKPN — recover whatever the harness wrote before the break.
+    // Only the release path needs this: the loop's own exit condition is "both
+    // pipes are at EOF", so a loop that ended on its own has nothing left.
+    if released
+        && (stdout_open || stderr_open)
+        && tokio::time::timeout(
+            RELEASE_DRAIN_BUDGET,
+            drain_child_streams(
+                &binary,
+                &mut stdout,
+                &mut stdout_open,
+                &mut stderr,
+                &mut stderr_open,
+                adapter.as_mut(),
+                &events,
+                &mut exit_summary,
+            ),
+        )
+        .await
+        .is_err()
+    {
+        warn!(
+            binary,
+            budget_ms = RELEASE_DRAIN_BUDGET.as_millis() as u64,
+            "harness pipes did not reach EOF within the post-release drain \
+             budget; synthesizing the exit from what was drained"
+        );
+    }
+
     finalize_subprocess_exit(
         &binary,
         wait_status,
@@ -499,6 +573,90 @@ async fn run_subprocess_stream_json(runtime: SubprocessRuntime) {
         &exit_summary,
     )
     .await;
+}
+
+/// Read whatever the harness already wrote but the select loop had not yet
+/// consumed when the command branch broke it.
+///
+/// orgasmic:TASK-SVKPN. The loop above leaves on the command branch — an
+/// explicit release, or the command channel closing — and `tokio::select!`
+/// picks at random among ready branches, so the break can land with the
+/// harness's entire output still sitting unread in the pipe. Measured
+/// (TASK-Z7VQK): a harness that ran to completion in 9.5ms and printed all 16
+/// of its lines had *zero* of them recorded, because the daemon's early-exit
+/// watcher observed the pid gone and released while every line was still
+/// pending. `finalize_subprocess_exit` then distilled an empty summary
+/// (`distill_is_some=false assistant_len=0 system_chunks=0`), no `RunComplete`
+/// was synthesized, and the run was orphaned as `protocol_end_without_finalize`
+/// with an empty transcript — product-visible data loss, not a test artifact.
+///
+/// Note what this deliberately is *not*: a `biased;` in the loop above with
+/// stdout first. That would make the loop prefer output over commands, which
+/// fixes the ordering only for a harness that stops talking — and lets one
+/// that never stops starve the release branch indefinitely, converting a lost
+/// transcript into a wedged release. The bound belongs on the recovery, not on
+/// the loop's fairness. `biased;` *here* is safe and wanted: there is no
+/// command branch left to starve, and stdout carries the transcript.
+///
+/// Called after the child has been reaped, so no writer in the harness's
+/// process group survives to hold the pipes open and EOF is the ordinary exit;
+/// [`RELEASE_DRAIN_BUDGET`] covers the case where some unrelated process
+/// inherited the write end. Data already in the pipe outlives its writer, so
+/// reaping first costs nothing and additionally captures whatever the harness
+/// flushed on the group TERM.
+#[allow(clippy::too_many_arguments)]
+async fn drain_child_streams(
+    binary: &str,
+    stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
+    stdout_open: &mut bool,
+    stderr: &mut tokio::io::Lines<BufReader<ChildStderr>>,
+    stderr_open: &mut bool,
+    adapter: &mut dyn HarnessEventAdapter,
+    events: &mpsc::Sender<DriverEvent>,
+    exit_summary: &mut SubprocessExitSummary,
+) {
+    while *stdout_open || *stderr_open {
+        tokio::select! {
+            biased;
+            line = stdout.next_line(), if *stdout_open => {
+                match line {
+                    Ok(Some(line)) => {
+                        let outgoing = adapter.parse_stdout_line(&line).await;
+                        for event in &outgoing {
+                            exit_summary.record(event);
+                        }
+                        emit_events(events, outgoing).await;
+                    }
+                    Ok(None) => *stdout_open = false,
+                    Err(e) => {
+                        // A read error on a reaped child's pipe is the drain's
+                        // boundary, not a run failure: the loop above would
+                        // have emitted a fatal `DriverError` here, which after
+                        // a release would only compete with the synthesis that
+                        // follows. Stop reading and let it run.
+                        warn!(binary, error = %e, "post-release stdout drain read error");
+                        *stdout_open = false;
+                    }
+                }
+            }
+            line = stderr.next_line(), if *stderr_open => {
+                match line {
+                    Ok(Some(line)) => {
+                        if adapter.ignores_stderr_line(&line) {
+                            continue;
+                        }
+                        let event = adapter.stderr_event(line);
+                        let _ = events.send(event).await;
+                    }
+                    Ok(None) => *stderr_open = false,
+                    Err(e) => {
+                        warn!(binary, error = %e, "post-release stderr drain read error");
+                        *stderr_open = false;
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn handle_subprocess_command(

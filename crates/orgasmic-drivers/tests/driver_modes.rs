@@ -253,6 +253,186 @@ async fn subprocess_stream_json_routes_stdout_through_adapter() {
     ));
 }
 
+// orgasmic:TASK-SVKPN
+/// How many lines the fast-exit harness prints before it exits.
+///
+/// The count is the test's determinism, not decoration. Once a release sits in
+/// the driver's command channel that branch is ready on *every* iteration of
+/// its `tokio::select!`, so before the fix each iteration was an even coin
+/// flip between "read the next line" and "break and lose the rest". Delivering
+/// all N therefore required N consecutive wins: at N = 32 an unfixed driver
+/// passes this test with probability 2^-32 (~2e-10), and the observed red is
+/// the near-certain one — a single-digit number of lines out of 32.
+#[cfg(unix)]
+const FAST_EXIT_LINES: usize = 32;
+
+/// A harness that prints [`FAST_EXIT_LINES`] lines and exits immediately. No
+/// sleep anywhere: a fixture-side delay is exactly what hid this defect until
+/// TASK-Z7VQK removed one, so this test adds none.
+#[cfg(unix)]
+fn fast_exit_subprocess_request() -> HarnessRequest {
+    HarnessRequest::Subprocess {
+        binary: "sh".into(),
+        args: vec![
+            "-c".into(),
+            format!(
+                "i=0; while [ $i -lt {FAST_EXIT_LINES} ]; do \
+                   printf '{{\"msg\":\"line-%s\"}}\\n' $i; i=$((i+1)); done"
+            ),
+        ],
+        env: BTreeMap::new(),
+        cwd: None,
+        stdin_payload: None,
+        close_stdin: true,
+    }
+}
+
+/// Block the runtime — deliberately — until `pid` is a zombie.
+///
+/// A zombie is the exact state this test needs and the only one that makes it
+/// deterministic: the harness has exited (so every line it printed is flushed
+/// into the pipe and readable) with a status the driver will later collect as
+/// success, and nothing in its process group can still be signalled into a
+/// different exit status by the release's group reap.
+///
+/// `std::thread::sleep` and not `tokio::time::sleep`: on the `current_thread`
+/// flavour this test pins, blocking the thread is the only way to let the child
+/// run to completion while guaranteeing the driver's producer task has not been
+/// polled even once. An `.await` here would hand the runtime to the producer,
+/// which would drain the pipe at its leisure and dissolve the race under test.
+#[cfg(unix)]
+fn block_until_zombie(pid: u32) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "state=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps");
+        let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        // `Z`/`Z+`: exited, not yet waited. Empty: already gone entirely, which
+        // is just as good and cannot happen while the producer is unpolled.
+        if state.is_empty() || state.starts_with('Z') {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the fast-exit harness (pid {pid}) never exited; ps state {state:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// A fast-exiting harness must lose nothing to the release race.
+///
+/// orgasmic:TASK-SVKPN. This is the product defect TASK-Z7VQK measured and
+/// could not fix from the fixture side: a harness that runs to completion in
+/// single-digit milliseconds has its whole output still pending in the pipe
+/// when the daemon's early-exit watcher observes the pid gone and releases.
+/// The driver's select loop broke on the command branch without draining
+/// stdout, so `finalize_subprocess_exit` distilled an empty summary
+/// (`assistant_len=0 system_chunks=0`), synthesized no `RunComplete`, and the
+/// run was orphaned as `protocol_end_without_finalize` with an empty transcript.
+///
+/// The construction reproduces that ordering exactly, and deterministically:
+///
+/// 1. `acquire` spawns the child and *queues* the producer task. There is no
+///    `.await` after that `tokio::spawn`, so on the `current_thread` flavour
+///    the producer has not been polled when `acquire` returns — the flavour is
+///    load-bearing, not a default inherited by accident.
+/// 2. The harness prints its N lines into the pipe and exits, while the test
+///    blocks the runtime thread waiting for it to become a zombie.
+/// 3. Only then does the release go out. The producer's *first* poll sees N
+///    lines readable and a release command ready at the same instant.
+///
+/// The adapter mirrors `CursorAdapter::release`: close the harness, emit no
+/// events of its own, and leave the terminal `RunComplete` to exit synthesis —
+/// so this pins the transcript and the run-completion together, which is how
+/// they are lost together in production.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn a_fast_exiting_harness_loses_no_stdout_to_the_release_race() {
+    #[derive(Clone)]
+    struct FastExitAdapter {
+        request: HarnessRequest,
+    }
+
+    #[async_trait]
+    impl HarnessEventAdapter for FastExitAdapter {
+        fn harness(&self) -> &'static str {
+            "fast-exit"
+        }
+
+        fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
+            Box::new(self.clone())
+        }
+
+        async fn parse_event(&mut self, raw: Value) -> Vec<DriverEvent> {
+            vec![DriverEvent::TextChunk {
+                stream: TextStream::Assistant,
+                chunk: raw
+                    .get("msg")
+                    .and_then(Value::as_str)
+                    .unwrap_or("missing")
+                    .to_string(),
+                seq: 0,
+            }]
+        }
+
+        fn compose_request(
+            &mut self,
+            _ctx: &DriverContext,
+            _config: &DriverConfig,
+        ) -> Result<HarnessRequest, DriverError> {
+            Ok(self.request.clone())
+        }
+
+        async fn release(&mut self, _reason: String) -> Result<HarnessControlOutcome, DriverError> {
+            Ok(HarnessControlOutcome {
+                close: true,
+                ..HarnessControlOutcome::default()
+            })
+        }
+    }
+
+    let driver = SubprocessStreamJsonDriver::new(Box::new(FastExitAdapter {
+        request: fast_exit_subprocess_request(),
+    }));
+    let mut session = driver.acquire(ctx(), DriverConfig::empty()).await.unwrap();
+
+    block_until_zombie(session.pid.expect("the subprocess mode owns a pid"));
+
+    session
+        .control
+        .release("observed subprocess exit")
+        .await
+        .unwrap();
+
+    let mut chunks = Vec::new();
+    let mut run_complete: Option<Option<String>> = None;
+    while let Ok(Some(event)) = timeout(Duration::from_secs(10), session.events.recv()).await {
+        match event {
+            DriverEvent::TextChunk { chunk, .. } => chunks.push(chunk),
+            DriverEvent::RunComplete { summary } => run_complete = Some(summary),
+            _ => {}
+        }
+    }
+
+    let expected: Vec<String> = (0..FAST_EXIT_LINES).map(|i| format!("line-{i}")).collect();
+    assert_eq!(
+        chunks,
+        expected,
+        "a fast-exiting harness lost stdout to the release race: the session \
+         holds {} of {FAST_EXIT_LINES} lines",
+        chunks.len()
+    );
+    assert_eq!(
+        run_complete,
+        Some(Some(expected.concat())),
+        "a fast-exiting harness lost its run_complete to the release race: \
+         exit synthesis distilled {run_complete:?} from a transcript it never read"
+    );
+}
+
 /// Drop-guard that reaps a process *group* (`kill -- -<pgid>`) on every test
 /// exit path, including assert-failure/panic unwinds. Mirrors the cursor-agent
 /// smoke's `ProcessGroupGuard` (TASK-104.2) so a regression-test failure can
