@@ -43593,3 +43593,69 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-29 Wed 04:55:08 task.state_transitioned TASK-NYF7Z
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3803
+:TIME:         [2026-07-29 Wed 04:55:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NYF7Z
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-NYF7Z to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 04:55:08 manager.dispatch_started TASK-NYF7Z
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3804
+:TIME:         [2026-07-29 Wed 04:55:08]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NYF7Z
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-nyf7z/worktree
+:BRANCH:       task-nyf7z-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-nyf7z/brief-nyf7z.md
+:STARTED_AT:   [2026-07-29 Wed 04:55:08]
+:LIVENESS:     07e18c24f025cdb49acf7c6743826c487c408ad6
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P1: every default dispatch exposes nine MCP servers to an unwatched worker; blast-radius isolation
+:END:
+
+* TX 2026-07-29 Wed 04:55:09 run.created TASK-NYF7Z
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3805
+:TIME:         [2026-07-29 Wed 04:55:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NYF7Z
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-NYF7Z-implementer-20260729T045508.jsonl
+:REASON:       P1: every default dispatch exposes nine MCP servers to an unwatched worker; blast-radius isolation
+:RUN_ID:       run-20260729T045508-73a081018a174639960fe34fe8509c45
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-nyf7z/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-nyf7z/brief-nyf7z.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-nyf7z/brief-nyf7z-56c3c8c59f0d43ee8bcfd12786e06478-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-nyf7z/brief-nyf7z-56c3c8c59f0d43ee8bcfd12786e06478-stdout.log
+:DISPATCH_ATTEMPT: 56c3c8c59f0d43ee8bcfd12786e06478
+:DISPATCH_TX:  tx-20260729-orgasmic-3804
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
