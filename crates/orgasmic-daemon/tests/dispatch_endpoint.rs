@@ -1394,10 +1394,13 @@ async fn wait_for_session_nonempty(session_path: &Path) {
 ///
 /// The bound now matches what the rest of this file already spends on lesser
 /// waits (`wait_for_session_nonempty` 15s, run-complete 30s), so it is a hang
-/// guard rather than a bet on how fast a loaded machine execs a new file. The
-/// durable fix for the underlying cost is one pre-warmed shared executable,
-/// as TASK-STWVB did for the daemon unit tests; this file still installs a
-/// fresh script per test and that is its own task.
+/// guard rather than a bet on how fast a loaded machine execs a new file.
+///
+/// The cost itself is gone as of TASK-Z7VQK: no test on this path execs a file
+/// this file has not already exec'd. See [`FAKE_AGENT_DISPATCHER`] — one shared
+/// executable, pre-warmed at install time, hard-linked into every fixture, with
+/// per-test behavior sourced from data beside the link. The 30s is now what it
+/// says it is, a hang guard, not a budget Gatekeeper is quietly spending.
 async fn wait_for_session_ready(session_path: &Path) {
     let waited = Duration::from_secs(30);
     let deadline = std::time::Instant::now() + waited;
@@ -2321,17 +2324,216 @@ fn fake_cursor_protocol_exit_script(session_id: &str) -> String {
     script
 }
 
+// orgasmic:TASK-Z7VQK
+/// The one executable every fake harness in this file is exec'd through.
+///
+/// macOS evaluates a newly created executable through Gatekeeper on its first
+/// exec, and that evaluation is serialized system-wide (`.orgasmic/gotchas.org`,
+/// durable invariant as of TASK-STWVB). Every test here used to write its own
+/// fake agent, so every test paid a fresh evaluation *on a timed path*. Measured
+/// on this machine 2026-07-29: a fresh script's first exec 177ms, a hard link to
+/// an already-evaluated one 5ms, a byte-identical copy 157ms — the cache key is
+/// the inode, not the path. Idle those numbers are nothing; queued behind a
+/// loaded suite they became seconds and spent whole wait budgets, which is what
+/// `timed out waiting for session ready` and `timed out waiting for synthetic
+/// run_complete` were reporting (TASK-5FEN5, TASK-HQ970, TASK-Z7VQK).
+///
+/// So there is one file. It is exec'd once at first install, where no deadline
+/// is running; every fixture is a hard link to it, which reuses that inode's
+/// evaluation; and per-test behavior lives in a `.behaviour` data file beside
+/// the link, which is *sourced* rather than exec'd and so is never evaluated at
+/// all. Raising a bound would have kept the cost and only moved where it queues.
+const FAKE_AGENT_DISPATCHER: &str = r#"#!/bin/sh
+# Hard-linked as cursor-agent, worker-server and codex. `$0` is the link the
+# caller exec'd, so the behaviour beside it is this test's and no other's.
+if [ "$1" = "--orgasmic-fixture-warm" ]; then
+  printf 'warm\n'
+  exit 0
+fi
+# Parameter expansion, not `dirname`: one less fork on the path whose whole
+# point is that starting this process costs nothing.
+FAKE_AGENT_DIR=${0%/*}
+export FAKE_AGENT_DIR
+. "$0.behaviour"
+"#;
+
+/// A path beside this test binary, keyed by the fixture's own contents.
+///
+/// Not by the binary's name: cargo reuses that name across rebuilds (measured
+/// 2026-07-29 — `dispatch_endpoint-1edf7bef84349123` survived an edit to this
+/// file), so a name-keyed fixture is a *stale* fixture the moment its text
+/// changes. Content-keyed, an edited fixture simply gets a new path, and an
+/// older test binary still running keeps the one it warmed.
+fn beside_test_binary(suffix: &str, contents: &str) -> PathBuf {
+    use std::hash::{Hash as _, Hasher as _};
+    let test_binary = std::env::current_exe().expect("resolve test binary");
+    let file_name = test_binary
+        .file_name()
+        .expect("test binary has a file name")
+        .to_string_lossy()
+        .to_string();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    contents.hash(&mut hasher);
+    let key = hasher.finish();
+    test_binary.with_file_name(format!("{file_name}.{key:016x}.{suffix}"))
+}
+
+/// Publish an executable at `path` exactly once, tolerating a second copy of
+/// this test binary racing for the same path.
+fn publish_shared_executable(path: &Path, fill: impl FnOnce(&Path)) {
+    if path.exists() {
+        return;
+    }
+    let parent = path.parent().expect("test binary has a parent");
+    let pending = tempfile::NamedTempFile::new_in(parent).expect("stage shared fixture");
+    fill(pending.path());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(pending.path(), std::fs::Permissions::from_mode(0o755))
+            .expect("make shared fixture executable");
+    }
+    match pending.persist_noclobber(path) {
+        Ok(_) => {}
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("publish shared fixture: {}", error.error),
+    }
+}
+
+/// Pay the first-exec cost of the shared dispatcher here, once, where nothing
+/// is being timed — and assert it answered, so a fixture that cannot run at all
+/// fails as itself rather than as some later mystified timeout (TASK-GEZHQ).
+fn shared_fake_agent() -> &'static Path {
+    static SHARED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            let path = beside_test_binary("fake-agent.sh", FAKE_AGENT_DISPATCHER);
+            publish_shared_executable(&path, |pending| {
+                std::fs::write(pending, FAKE_AGENT_DISPATCHER).expect("write shared fixture");
+            });
+            assert_eq!(
+                std::fs::read_to_string(&path).expect("read shared fixture"),
+                FAKE_AGENT_DISPATCHER,
+                "the shared fake agent must match the contents its path is \
+                 keyed by — a mismatch means every test in this run would drive \
+                 a harness nobody wrote"
+            );
+            let output = Command::new(&path)
+                .arg("--orgasmic-fixture-warm")
+                .output()
+                .expect("the shared fake agent must be executable");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("warm"),
+                "the shared fake agent must answer before any test waits on it: {stdout:?}"
+            );
+            // The receipt is the answer itself. `fake_harnesses_share_one_pre_warmed_executable`
+            // reads it, so "was this exec'd before the tests ran" is a fact on
+            // disk rather than a property of code nobody checks.
+            std::fs::write(warm_receipt(&path), stdout.as_bytes())
+                .expect("record the shared fake agent's warm receipt");
+            path
+        })
+        .as_path()
+}
+
+fn warm_receipt(shared: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.warmed", shared.display()))
+}
+
+/// Put a pre-warmed executable at a production-shaped name without creating a
+/// new file, and therefore without a new Gatekeeper evaluation.
+fn link_shared_executable(source: &Path, path: &Path) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create fixture link parent");
+    }
+    let _ = std::fs::remove_file(path);
+    std::fs::hard_link(source, path)
+        .unwrap_or_else(|error| panic!("link shared fixture at {}: {error}", path.display()));
+}
+
+/// Install one fake harness: the shared executable under the name the daemon
+/// will look up, and this test's script beside it as sourced data.
+fn install_fake_agent(path: &Path, script: &str) {
+    write(
+        &PathBuf::from(format!("{}.behaviour", path.display())),
+        script,
+    );
+    link_shared_executable(shared_fake_agent(), path);
+}
+
 #[cfg(unix)]
 fn install_fake_cursor_agent(tmp: &Path, script: &str) -> PathBuf {
     let bin = tmp.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let worker_server = bin.join("worker-server");
-    write(&worker_server, "#!/bin/sh\nsleep \"$@\"\n");
-    let agent = bin.join("cursor-agent");
-    write(&agent, script);
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&worker_server, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    install_fake_agent(&bin.join("worker-server"), "#!/bin/sh\nsleep \"$@\"\n");
+    install_fake_agent(&bin.join("cursor-agent"), script);
+    bin
+}
+
+/// The identity half of what the rest of this file's timing rests on.
+///
+/// Checked by inode because that is the key macOS's evaluation cache uses: a
+/// byte-identical *copy* pays the full first-exec cost (157ms measured
+/// 2026-07-29) while a hard link to the warmed file pays 5ms. Asserted here, in
+/// its own test, because every other test in this file would report a violation
+/// as a wait expiring somewhere far away — the symptom that got read as "slow
+/// machine" for three tasks running (TASK-HQ970, TASK-5FEN5, TASK-Z7VQK).
+#[cfg(unix)]
+#[test]
+fn every_fake_harness_is_the_same_executable() {
+    use std::os::unix::fs::MetadataExt as _;
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let cursor_bin = install_fake_cursor_agent(first.path(), "#!/bin/sh\nexit 0\n");
+    let codex_bin = install_fake_codex(second.path(), "#!/bin/sh\nexit 0\n");
+
+    let shared_inode = std::fs::metadata(shared_fake_agent()).unwrap().ino();
+    for installed in [
+        cursor_bin.join("cursor-agent"),
+        cursor_bin.join("worker-server"),
+        codex_bin.join("codex"),
+    ] {
+        assert_eq!(
+            std::fs::metadata(&installed).unwrap().ino(),
+            shared_inode,
+            "{} must be a link to the pre-warmed executable rather than a new \
+             one: a new inode is a new Gatekeeper evaluation, and that \
+             evaluation is serialized system-wide",
+            installed.display()
+        );
+    }
+}
+
+/// The other half: one shared executable is worth nothing if the first exec of
+/// it still lands inside somebody's deadline.
+///
+/// The receipt is written by the warm-up itself, so this asserts the exec
+/// happened rather than that the code which would have done it is present.
+#[cfg(unix)]
+#[test]
+fn the_shared_fake_agent_is_exec_d_before_any_test_waits_on_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    install_fake_cursor_agent(tmp.path(), "#!/bin/sh\nexit 0\n");
+
+    let receipt = warm_receipt(shared_fake_agent());
+    assert!(
+        receipt.exists(),
+        "the shared fake agent must be exec'd at install time, before any \
+         test's clock starts; no warm receipt beside it"
+    );
+    assert!(
+        std::fs::read_to_string(&receipt).unwrap().contains("warm"),
+        "the warm receipt must hold what the fixture actually answered"
+    );
+}
+
+/// The `codex`-named half of the same treatment, for the finalize, restart and
+/// cleanup tests that hand the daemon a `PATH` in the dispatch body.
+fn install_fake_codex(tmp: &Path, script: &str) -> PathBuf {
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    install_fake_agent(&bin.join("codex"), script);
     bin
 }
 
@@ -2349,6 +2551,90 @@ fn cc_available_for_test() -> bool {
         .unwrap_or(false)
 }
 
+/// The hermetic fake harness, compiled once for the whole file.
+///
+/// Its two per-test knobs are read from the environment rather than argv, and
+/// that is load-bearing: `dispatch_response_pid_prefers_worker_server_child`
+/// asserts the *generic* sibling can never satisfy the "worker-server"
+/// substring, and a fixture argv carrying `--session-id worker-server-pid`
+/// would appear in every child's `ps` line and defeat it.
+const FAKE_CURSOR_AGENT_SOURCE: &str = r#"#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    char session_id[128];
+    const char *requested = getenv("ORGASMIC_FAKE_SESSION_ID");
+    const char *generic = getenv("ORGASMIC_FAKE_GENERIC_SIBLING");
+    if (argc > 1 && strcmp(argv[1], "--orgasmic-fixture-warm") == 0) {
+        return 0;
+    }
+    strncpy(session_id, requested ? requested : "fixture", sizeof(session_id) - 1);
+    session_id[sizeof(session_id) - 1] = 0;
+    if (generic && strcmp(generic, "1") == 0) {
+        pid_t generic_pid = fork();
+        if (generic_pid == 0) {
+            memset(argv[0], 0, strlen(argv[0]));
+            strncpy(argv[0], "generic-sleep", 13);
+            sleep(300);
+            return 0;
+        }
+    }
+    pid_t worker_pid = fork();
+    if (worker_pid == 0) {
+        memset(argv[0], 0, strlen(argv[0]));
+        strncpy(argv[0], "worker-server", 13);
+        sleep(300);
+        return 0;
+    }
+    memset(argv[0], 0, strlen(argv[0]));
+    strncpy(argv[0], "worker-server", 13);
+    printf("{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"%s\"}\n",
+           session_id);
+    fflush(stdout);
+    sleep(300);
+    return 0;
+}
+"#;
+
+/// Compile the hermetic harness once, pre-warm it once, and hand every test the
+/// same inode — a fresh `cc` output is as new to Gatekeeper as a fresh script.
+#[cfg(unix)]
+fn shared_fake_cursor_binary() -> &'static Path {
+    static SHARED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    SHARED
+        .get_or_init(|| {
+            let path = beside_test_binary("fake-cursor-agent", FAKE_CURSOR_AGENT_SOURCE);
+            publish_shared_executable(&path, |pending| {
+                let source = beside_test_binary("fake-cursor-agent.c", FAKE_CURSOR_AGENT_SOURCE);
+                write(&source, FAKE_CURSOR_AGENT_SOURCE);
+                let output = Command::new("cc")
+                    .arg(&source)
+                    .arg("-o")
+                    .arg(pending)
+                    .output()
+                    .expect("compile fake cursor-agent binary");
+                assert!(
+                    output.status.success(),
+                    "compile fake cursor-agent binary failed: {}{}",
+                    String::from_utf8_lossy(&output.stderr),
+                    String::from_utf8_lossy(&output.stdout)
+                );
+            });
+            let status = Command::new(&path)
+                .arg("--orgasmic-fixture-warm")
+                .status()
+                .expect("pre-warm fake cursor-agent binary");
+            assert!(
+                status.success(),
+                "the hermetic fake harness must run before any test waits on it"
+            );
+            path
+        })
+        .as_path()
+}
+
 #[cfg(unix)]
 fn install_fake_cursor_agent_binary(
     tmp: &Path,
@@ -2356,66 +2642,19 @@ fn install_fake_cursor_agent_binary(
     session_id: &str,
 ) -> PathBuf {
     let bin = install_fake_cursor_agent(tmp, "#!/bin/sh\nexit 127\n");
-    let source = tmp.join("cursor-agent.c");
+    link_shared_executable(
+        shared_fake_cursor_binary(),
+        &bin.join("cursor-agent-worker-server"),
+    );
     let generic = if spawn_generic_sibling { "1" } else { "0" };
-    write(
-        &source,
-        format!(
-            r#"#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-
-int main(int argc, char **argv) {{
-    (void)argc;
-    if ({generic}) {{
-        pid_t generic_pid = fork();
-        if (generic_pid == 0) {{
-            memset(argv[0], 0, strlen(argv[0]));
-            strncpy(argv[0], "generic-sleep", 13);
-            sleep(300);
-            return 0;
-        }}
-    }}
-    pid_t worker_pid = fork();
-    if (worker_pid == 0) {{
-        memset(argv[0], 0, strlen(argv[0]));
-        strncpy(argv[0], "worker-server", 13);
-        sleep(300);
-        return 0;
-    }}
-    memset(argv[0], 0, strlen(argv[0]));
-    strncpy(argv[0], "worker-server", 13);
-    printf("%s\n", "{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"{session_id}\"}}");
-    fflush(stdout);
-    sleep(300);
-    return 0;
-}}
-"#
+    install_fake_agent(
+        &bin.join("cursor-agent"),
+        &format!(
+            "#!/bin/sh\nORGASMIC_FAKE_SESSION_ID={session_id} \
+             ORGASMIC_FAKE_GENERIC_SIBLING={generic} \
+             exec \"$FAKE_AGENT_DIR/cursor-agent-worker-server\" \"$@\"\n"
         ),
     );
-    let agent = bin.join("cursor-agent-worker-server");
-    let output = Command::new("cc")
-        .arg(&source)
-        .arg("-o")
-        .arg(&agent)
-        .output()
-        .expect("compile fake cursor-agent binary");
-    assert!(
-        output.status.success(),
-        "compile fake cursor-agent binary failed: {}{}",
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    );
-    write(
-        &bin.join("cursor-agent"),
-        "#!/bin/sh\nDIR=$(dirname \"$0\")\nexec \"$DIR/cursor-agent-worker-server\" \"$@\"\n",
-    );
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(
-        bin.join("cursor-agent"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
     bin
 }
 
@@ -2469,8 +2708,30 @@ async fn wait_for_session_run_complete_summary(session_path: &Path, timeout: Dur
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    // What the session did contain decides which failure this is: no driver
+    // event at all means the fake harness never spoke, a `ready` with nothing
+    // after it means the daemon did not synthesize. Without this the two are
+    // indistinguishable and get diagnosed as "slow machine".
+    let seen: Vec<String> = read_session_file(session_path)
+        .map(|envelopes| {
+            envelopes
+                .iter()
+                .map(|envelope| {
+                    format!(
+                        "{:?}:{}",
+                        envelope.kind,
+                        envelope
+                            .event
+                            .get("type")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("-")
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     panic!(
-        "timed out waiting for synthetic run_complete in {}",
+        "timed out waiting for synthetic run_complete in {} after {timeout:?}; session held {seen:?}",
         session_path.display()
     );
 }
@@ -3075,20 +3336,14 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
     .trim()
     .to_string();
 
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(
-        &codex,
+    // Installed but never handed to the dispatch: unlike its siblings below,
+    // this test's dispatch body carries no `PATH`, so the harness it drives is
+    // whatever the machine has. Left as found — making it hermetic changes what
+    // the test dispatches, which is not this task's (TASK-Z7VQK) to decide.
+    let _unreached_codex_stub = install_fake_codex(
+        tmp.path(),
         "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
 
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-ep");
     std::fs::create_dir_all(&stem_dir).unwrap();
@@ -3387,20 +3642,10 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
     .trim()
     .to_string();
 
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(
-        &codex,
+    let bin_dir = install_fake_codex(
+        tmp.path(),
         "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
 
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-finalize-ep");
     std::fs::create_dir_all(&stem_dir).unwrap();
@@ -3518,17 +3763,7 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(&codex, "#!/bin/sh\nsleep 120\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
+    let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-finalize-tx");
     std::fs::create_dir_all(&stem_dir).unwrap();
     let worktree = stem_dir.join("worktree");
@@ -3690,17 +3925,7 @@ async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(&codex, "#!/bin/sh\nsleep 120\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
+    let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-restart-tx");
     std::fs::create_dir_all(&stem_dir).unwrap();
     let worktree = stem_dir.join("worktree");
@@ -3896,17 +4121,7 @@ async fn dispatch_endpoint_restart_waits_for_a_release_admitted_but_not_yet_regi
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(&codex, "#!/bin/sh\nsleep 120\n");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
+    let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-admit-race");
     std::fs::create_dir_all(&stem_dir).unwrap();
     let worktree = stem_dir.join("worktree");
@@ -4111,20 +4326,10 @@ async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
     .trim()
     .to_string();
 
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    let codex = bin_dir.join("codex");
-    write(
-        &codex,
+    let bin_dir = install_fake_codex(
+        tmp.path(),
         "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
     );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&codex, perms).unwrap();
-    }
 
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-live");
     std::fs::create_dir_all(&stem_dir).unwrap();

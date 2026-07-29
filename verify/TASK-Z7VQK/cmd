@@ -1,0 +1,9 @@
+# One line. Run from the repo root by `orgasmic verify TASK-Z7VQK`.
+#
+# Two tests, one per property the file's timing rests on, because the injection
+# breaks both and a signature that only proves one would let the other rot back.
+# Neither drives a daemon: the end-to-end symptom this task was filed for
+# ("timed out waiting for synthetic run_complete") is not a reliable oracle for
+# it — see README.md, which measures a second, unrelated cause of that same
+# timeout that no fixture change can fix.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --test dispatch_endpoint -- every_fake_harness_is_the_same_executable the_shared_fake_agent_is_exec_d_before_any_test_waits_on_it

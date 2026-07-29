@@ -1,0 +1,51 @@
+diff --git a/crates/orgasmic-daemon/tests/dispatch_endpoint.rs b/crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+index d5a351c..5e83b55 100644
+--- a/crates/orgasmic-daemon/tests/dispatch_endpoint.rs
++++ b/crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+@@ -2354,6 +2354,15 @@ fi
+ # point is that starting this process costs nothing.
+ FAKE_AGENT_DIR=${0%/*}
+ export FAKE_AGENT_DIR
++# Stand-in for macOS's system-wide serialized evaluation of a new executable,
++# keyed the way the real one is keyed: by inode, not by path.
++seen=${TMPDIR:-/tmp}/orgasmic-fixture-seen
++mkdir -p "$seen"
++ino=$(stat -f %i "$0")
++if [ ! -e "$seen/$ino" ]; then
++  : > "$seen/$ino"
++  sleep 45
++fi
+ . "$0.behaviour"
+ "#;
+ 
+@@ -2418,20 +2427,6 @@ fn shared_fake_agent() -> &'static Path {
+                  keyed by — a mismatch means every test in this run would drive \
+                  a harness nobody wrote"
+             );
+-            let output = Command::new(&path)
+-                .arg("--orgasmic-fixture-warm")
+-                .output()
+-                .expect("the shared fake agent must be executable");
+-            let stdout = String::from_utf8_lossy(&output.stdout);
+-            assert!(
+-                stdout.contains("warm"),
+-                "the shared fake agent must answer before any test waits on it: {stdout:?}"
+-            );
+-            // The receipt is the answer itself. `fake_harnesses_share_one_pre_warmed_executable`
+-            // reads it, so "was this exec'd before the tests ran" is a fact on
+-            // disk rather than a property of code nobody checks.
+-            std::fs::write(warm_receipt(&path), stdout.as_bytes())
+-                .expect("record the shared fake agent's warm receipt");
+             path
+         })
+         .as_path()
+@@ -2448,7 +2443,8 @@ fn link_shared_executable(source: &Path, path: &Path) {
+         std::fs::create_dir_all(parent).expect("create fixture link parent");
+     }
+     let _ = std::fs::remove_file(path);
+-    std::fs::hard_link(source, path)
++    std::fs::copy(source, path)
++        .map(|_| ())
+         .unwrap_or_else(|error| panic!("link shared fixture at {}: {error}", path.display()));
+ }
+ 
