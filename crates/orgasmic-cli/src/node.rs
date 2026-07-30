@@ -93,6 +93,11 @@ pub enum NodeBodyCmd {
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
+        /// Create `--section` when it does not exist yet. Without it a write to
+        /// an unknown section is refused by name rather than quietly minting a
+        /// heading, which is how a mistyped title used to become permanent.
+        #[arg(long, requires = "section")]
+        create: bool,
         /// Body text in Org markup, written verbatim.
         #[arg(long, allow_hyphen_values = true)]
         body: String,
@@ -134,6 +139,38 @@ pub enum NodeBodyCmd {
         raw: bool,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
         /// omitted. The write is refused if the node moved underneath it.
+        #[arg(long = "base-version")]
+        base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
+        #[arg(long = "request-id")]
+        request_id: Option<String>,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
+    },
+    // orgasmic:TASK-CB6GQ
+    /// Remove a named `**` section from a node.
+    ///
+    /// The inverse of `set --section --create`, and the counterpart to
+    /// `prop unset`. `node delete` cannot do this: it addresses whole nodes by
+    /// `:ID:`, and a section has none.
+    Unset {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
+        #[arg(long)]
+        project: Option<String>,
+        /// Explicit layer selector; see daemon registry for the accepted set.
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
+        /// Section title to remove. Required: this verb never clears a node's
+        /// free prose body by omission.
+        #[arg(long)]
+        section: String,
+        /// Optimistic-concurrency token from a prior read/edit; fetched when omitted.
         #[arg(long = "base-version")]
         base_version: Option<String>,
         /// Stable idempotency key. Replaying the same value returns the
@@ -252,6 +289,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     project,
                     kind,
                     section,
+                    create,
                     body,
                     raw,
                     base_version,
@@ -262,7 +300,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                         resolve_base_version(&client, project, &id, kind_str(kind), base_version)
                             .await?;
                     let body_format = if raw { "raw" } else { "default" };
-                    let op = body_op(section.as_deref(), &body, body_format);
+                    let op = body_op(section.as_deref(), &body, body_format, create);
                     let response: serde_json::Value = client
                         .post_json(
                             &edit_path(&id, json),
@@ -306,7 +344,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                         merged.push('\n');
                     }
                     merged.push_str(&body);
-                    let op = body_op(section.as_deref(), &merged, "default");
+                    let op = body_op(section.as_deref(), &merged, "default", false);
                     let response: serde_json::Value = client
                         .post_json(
                             &edit_path(&id, json),
@@ -316,6 +354,33 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                                 &base_version,
                                 &request_id,
                                 op,
+                                false,
+                            ),
+                        )
+                        .await?;
+                    println!("{}", serde_json::to_string_pretty(&response)?);
+                }
+                NodeBodyCmd::Unset {
+                    id,
+                    project,
+                    kind,
+                    section,
+                    base_version,
+                    request_id,
+                    json,
+                } => {
+                    let (base_version, project) =
+                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                            .await?;
+                    let response: serde_json::Value = client
+                        .post_json(
+                            &edit_path(&id, json),
+                            &edit_request(
+                                &project,
+                                kind_str(kind),
+                                &base_version,
+                                &request_id,
+                                remove_section_op(&section),
                                 false,
                             ),
                         )
@@ -511,7 +576,15 @@ fn edit_path(id: &str, want_full: bool) -> String {
     }
 }
 
-fn body_op(section: Option<&str>, body: &str, body_format: &str) -> serde_json::Value {
+// orgasmic:TASK-CB6GQ — `create` picks `add_section` over `set_section_body`.
+// The daemon has always had both ops; it used to run them through one code path
+// that appended whenever the section was missing, so every edit could create.
+fn body_op(
+    section: Option<&str>,
+    body: &str,
+    body_format: &str,
+    create: bool,
+) -> serde_json::Value {
     match section {
         None => serde_json::json!({
             "op": "set_body",
@@ -519,12 +592,17 @@ fn body_op(section: Option<&str>, body: &str, body_format: &str) -> serde_json::
             "body_format": body_format,
         }),
         Some(title) => serde_json::json!({
-            "op": "set_section_body",
+            "op": if create { "add_section" } else { "set_section_body" },
             "title": title,
             "body": body,
             "body_format": body_format,
         }),
     }
+}
+
+// orgasmic:TASK-CB6GQ
+fn remove_section_op(title: &str) -> serde_json::Value {
+    serde_json::json!({ "op": "remove_section", "title": title })
 }
 
 fn edit_request(
@@ -667,6 +745,71 @@ mod node_kind_parity {
         assert_eq!(
             cli_kinds, daemon_kinds,
             "CLI --kind enum and daemon-accepted kinds drifted apart"
+        );
+    }
+}
+
+// orgasmic:TASK-CB6GQ
+#[cfg(test)]
+mod node_edit_op_parity {
+    use std::collections::BTreeSet;
+
+    /// Ops the daemon accepts that no `orgasmic node` verb can ask for, each
+    /// with the reason it is unreachable on purpose.
+    ///
+    /// Empty, and meant to stay that way. `remove_section` sat outside this
+    /// list's absence for as long as the enum has had it: implemented in
+    /// `orgasmic-core`, dispatched by the daemon, routed over HTTP, and
+    /// unreachable from the CLI — so a section created by a mistyped
+    /// `--section` could never be removed by supported tooling. Nothing
+    /// compared the two surfaces, so nothing noticed until a dead `Description`
+    /// stub on `handoff-current` had to be left in place.
+    const DELIBERATELY_NOT_EXPOSED: &[&str] = &[];
+
+    /// Every `op` tag some `orgasmic node` verb emits.
+    fn cli_emitted_ops() -> BTreeSet<&'static str> {
+        BTreeSet::from([
+            // node body set
+            "set_body",
+            "set_section_body",
+            // node body set --section --create
+            "add_section",
+            // node body unset --section
+            "remove_section",
+            // node prop set / unset
+            "set_property",
+            "remove_property",
+            // task update --title / --tag
+            "set_title",
+            "set_tags",
+        ])
+    }
+
+    #[test]
+    fn every_daemon_edit_op_is_reachable_from_the_cli() {
+        let daemon: BTreeSet<&str> = orgasmic_daemon::api::NODE_EDIT_OPS
+            .iter()
+            .copied()
+            .collect();
+        let cli = cli_emitted_ops();
+        let excused: BTreeSet<&str> = DELIBERATELY_NOT_EXPOSED.iter().copied().collect();
+
+        let unreachable: Vec<&str> = daemon.difference(&cli).copied().collect();
+        let unreachable: Vec<&str> = unreachable
+            .into_iter()
+            .filter(|op| !excused.contains(op))
+            .collect();
+        assert!(
+            unreachable.is_empty(),
+            "the daemon accepts these edit ops but no CLI verb can ask for them, \
+             so anything they do is unreachable by supported tooling: {unreachable:?}. \
+             Add a verb, or list the op in DELIBERATELY_NOT_EXPOSED with its reason."
+        );
+
+        let invented: Vec<&str> = cli.difference(&daemon).copied().collect();
+        assert!(
+            invented.is_empty(),
+            "the CLI claims to emit ops the daemon does not accept: {invented:?}"
         );
     }
 }

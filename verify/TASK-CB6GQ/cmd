@@ -1,0 +1,14 @@
+# One line. Run from the repo root by `orgasmic verify TASK-CB6GQ`.
+#
+# The natural red from the TASK-CB6GQ ask, replayed exactly. The injection puts
+# both halves of the defect back: `set_section_body` and `add_section` share one
+# code path through `upsert_section_text` again (so a write to an unknown
+# section silently appends the heading instead of refusing), and the CLI's
+# emitted-op set loses `remove_section` (so the daemon accepts an op no verb can
+# ask for, which is what left a section creatable by typo and removable by
+# nothing).
+#
+# Hermetic: two library test binaries. No daemon of the operator's, no tmux, no
+# credential, no billed turn — the daemon under test is booted in-process on
+# port 0 against a tempdir home.
+cargo test -p orgasmic-cli --test cli_parity node_edit_op_parity && cargo test -p orgasmic-daemon --test node_body_roundtrip
