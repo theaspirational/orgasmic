@@ -13,6 +13,21 @@ use crate::governance::{
 
 /// Validate that `(mode, harness)` is in the sole transport registry.
 pub fn validate_supported_pair(mode: &str, harness: &str) -> Result<(), String> {
+    // orgasmic:task_3NJ9K
+    // Test builds also address the in-process stub transport, which the driver
+    // registry deliberately does not list — nothing outside a test build can
+    // name it. A test that drives a stage or dispatch endpoint has to get past
+    // this check to reach the code it is about, and the alternative is the
+    // address it used before: a real harness the endpoint would then exec.
+    #[cfg(test)]
+    if (mode.trim(), harness.trim())
+        == (
+            crate::driver_resolution::STUB_MODE,
+            crate::driver_resolution::STUB_HARNESS,
+        )
+    {
+        return Ok(());
+    }
     drivers_validate_supported_pair(mode, harness)
 }
 

@@ -4838,6 +4838,31 @@ mod tests {
         s.control.release("done").await.unwrap();
     }
 
+    // orgasmic:TASK-3NJ9K
+    /// The daemon's test-profile fence decides whether a mux address is safe
+    /// for a test to hold by asking `harness_execs_provider_binary`. That
+    /// answer is only worth anything while it still matches what this mode
+    /// actually launches, and the two live in different crates — so assert the
+    /// agreement over the whole harness table, here, where the launch is
+    /// defined.
+    ///
+    /// The invariant is exact: a harness execs a provider binary precisely when
+    /// its default command *is its own name*. `custom` resolves to the
+    /// operator's shell and unknown harnesses to `sh`, so neither can turn a
+    /// pane into a provider process on its own.
+    #[test]
+    fn default_command_agrees_with_the_provider_harness_predicate() {
+        for harness in crate::HARNESSES {
+            let (command, _) = default_command_for_harness(harness, &TmuxTuiConfig::default());
+            assert_eq!(
+                crate::harness_execs_provider_binary(harness),
+                command == *harness,
+                "tmux launches {harness} as {command}, which disagrees with \
+                 harness_execs_provider_binary"
+            );
+        }
+    }
+
     #[test]
     fn packed_argv_len_counts_each_nul_terminator() {
         assert_eq!(packed_argv_len(std::iter::empty()), 0);

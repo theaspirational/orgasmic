@@ -1,0 +1,22 @@
+# One line. Run from the repo root by `orgasmic verify TASK-3NJ9K`.
+#
+# The natural red from the TASK-3NJ9K ask: with the fence reverted, a daemon
+# test build resolves a real driver instead of failing. `injection.patch` puts
+# `pair_refusal`/`transport_refusal` back to `None`, so `resolve_driver` hands
+# out `acp-stdio/hermes` (and every other harness-exec pair) exactly as it did
+# before this task, and the fence's own tests go red.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests must see neither.
+#
+# The dispatch-surface twin — `a_dispatch_naming_a_real_driver_is_refused_in_a_
+# test_build`, which drives `spawn_worker_run` with a real driver — is
+# deliberately NOT in this command. It is safe in the fixed tree only because
+# the fence panics before `spawn_worker_run` builds a config or reaches
+# `acquire`. Under the injection it would resolve `acp-stdio/hermes` and run on
+# to acquire, which on any host with `hermes` on `$PATH` is a real provider
+# subprocess and a billed turn: replaying it would reproduce the incident this
+# task exists to prevent, not prove the fix. The fence tests below fail on the
+# same reverted code without ever holding a driver session, so the red is
+# pinned where it costs nothing.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib driver_resolution::tests::

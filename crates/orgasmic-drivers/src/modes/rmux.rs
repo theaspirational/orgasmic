@@ -5459,4 +5459,23 @@ mod tests {
 
         s.control.release("cleanup").await.unwrap();
     }
+
+    // orgasmic:TASK-3NJ9K
+    /// The rmux half of the agreement the daemon's test-profile fence relies
+    /// on; see the tmux twin for why it is asserted per mode. `custom` resolves
+    /// to `$SHELL` here rather than to `sh`, which is exactly why the invariant
+    /// is "the default command is the harness's own name" and not "the default
+    /// command is a shell".
+    #[test]
+    fn default_command_agrees_with_the_provider_harness_predicate() {
+        for harness in crate::HARNESSES {
+            let (command, _) = default_command_for_harness(harness);
+            assert_eq!(
+                crate::harness_execs_provider_binary(harness),
+                command == *harness,
+                "rmux launches {harness} as {command}, which disagrees with \
+                 harness_execs_provider_binary"
+            );
+        }
+    }
 }

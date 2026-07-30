@@ -38,9 +38,9 @@ use orgasmic_core::{
     ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
 };
 use orgasmic_drivers::{
-    driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
-    DriverContext, DriverControl, DriverError, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest,
-    TransitionAck, TransitionRequest, UserInputRequest, WorkerDriver,
+    AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
+    DriverError, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionAck,
+    TransitionRequest, UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -49,6 +49,7 @@ use tokio::time::Instant;
 use tracing::{error, warn};
 use uuid::Uuid;
 
+use crate::driver_resolution::resolve_launch_driver;
 use crate::runtime::BootIdentity;
 use crate::writer::{SessionAppend, WriterHandle};
 
@@ -1481,7 +1482,7 @@ impl Supervisor {
                 {
                     return Ok(resp);
                 }
-                if let Some(bs_driver) = driver_for_mode_harness(&bs.mode, &bs.harness) {
+                if let Some(bs_driver) = resolve_launch_driver(&bs.mode, &bs.harness) {
                     record_babysitter_spawn_attempt();
                     match self
                         .spawn_babysitter(bs_driver.as_ref(), &resp.run_id, &sessions_dir, &bs)
@@ -5875,6 +5876,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driver_resolution::{stub_config, stub_driver, STUB_HARNESS, STUB_MODE};
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::session::TextStream;
@@ -7574,9 +7576,9 @@ mod tests {
     fn test_babysitter_auto_spawn() -> BabysitterAutoSpawn {
         BabysitterAutoSpawn {
             worker_id: "babysitter-stall-detector".into(),
-            mode: "tmux".into(),
-            harness: "claude".into(),
-            driver_config: tmux::inert_config(),
+            mode: STUB_MODE.into(),
+            harness: STUB_HARNESS.into(),
+            driver_config: stub_config(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             applicable_states: Vec::new(),
@@ -11561,13 +11563,15 @@ mod tests {
         assert!(ack.accepted);
     }
 
+    /// Renamed from `acp_stdio_acquire_auto_spawns_babysitter_jsonl`
+    /// (TASK-3NJ9K). What it proves is that a non-mux worker acquire
+    /// auto-spawns the babysitter JSONL; the acp-stdio address it used to name
+    /// was incidental to that, and on a host with `codex` installed it made
+    /// this unit test spawn `codex app-server`.
     #[tokio::test]
-    async fn acp_stdio_acquire_auto_spawns_babysitter_jsonl() {
-        use orgasmic_drivers::adapters::codex::simulated_config;
-        use orgasmic_drivers::driver_for_mode_harness;
-
+    async fn worker_acquire_auto_spawns_babysitter_jsonl() {
         let (sup, dir, _w) = make_supervisor();
-        let driver = driver_for_mode_harness("acp-stdio", "codex").expect("codex stdio driver");
+        let driver = stub_driver();
         let req = AcquireRequest {
             task_id: "TASK-079".into(),
             kind: RunKind::Worker,
@@ -11579,16 +11583,16 @@ mod tests {
             stdout_path: None,
             dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-079.jsonl"),
-            driver_config: simulated_config(),
+            driver_config: stub_config(),
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
-                mode: "tmux".into(),
-                harness: "claude".into(),
-                driver_config: tmux::inert_config(),
+                mode: STUB_MODE.into(),
+                harness: STUB_HARNESS.into(),
+                driver_config: stub_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 applicable_states: Vec::new(),
@@ -11640,9 +11644,15 @@ mod tests {
                 idle_timeout_secs: None,
                 babysitter: Some(BabysitterAutoSpawn {
                     worker_id: "babysitter-stall-detector".into(),
-                    mode: "tmux".into(),
-                    harness: "claude".into(),
-                    driver_config: tmux::inert_config(),
+                    // orgasmic:TASK-3NJ9K — what this proves is that a stale
+                    // babysitter lease does not spin the supervisor; the
+                    // babysitter's address is incidental to it. `tmux`/`claude`
+                    // reaches a launch site, and the launch seam refuses that
+                    // pair because tmux swaps the dispatch placeholder for the
+                    // real `claude` binary.
+                    mode: STUB_MODE.into(),
+                    harness: STUB_HARNESS.into(),
+                    driver_config: stub_config(),
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     applicable_states: Vec::new(),
@@ -11759,11 +11769,8 @@ mod tests {
 
     #[tokio::test]
     async fn implementer_release_cascades_to_auto_spawned_babysitter() {
-        use orgasmic_drivers::adapters::codex::simulated_config;
-        use orgasmic_drivers::driver_for_mode_harness;
-
         let (sup, dir, _w) = make_supervisor();
-        let driver = driver_for_mode_harness("acp-stdio", "codex").expect("codex stdio driver");
+        let driver = stub_driver();
         let req = AcquireRequest {
             task_id: "TASK-082".into(),
             kind: RunKind::Worker,
@@ -11775,16 +11782,16 @@ mod tests {
             stdout_path: None,
             dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-082.jsonl"),
-            driver_config: simulated_config(),
+            driver_config: stub_config(),
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
-                mode: "tmux".into(),
-                harness: "claude".into(),
-                driver_config: tmux::inert_config(),
+                mode: STUB_MODE.into(),
+                harness: STUB_HARNESS.into(),
+                driver_config: stub_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 applicable_states: Vec::new(),
@@ -11844,11 +11851,8 @@ mod tests {
 
     #[tokio::test]
     async fn babysitter_release_before_implementer_release_is_idempotent() {
-        use orgasmic_drivers::adapters::codex::simulated_config;
-        use orgasmic_drivers::driver_for_mode_harness;
-
         let (sup, dir, _w) = make_supervisor();
-        let driver = driver_for_mode_harness("acp-stdio", "codex").expect("codex stdio driver");
+        let driver = stub_driver();
         let req = AcquireRequest {
             task_id: "TASK-083-BS-FIRST".into(),
             kind: RunKind::Worker,
@@ -11860,16 +11864,16 @@ mod tests {
             stdout_path: None,
             dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-BS-FIRST.jsonl"),
-            driver_config: simulated_config(),
+            driver_config: stub_config(),
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
-                mode: "tmux".into(),
-                harness: "claude".into(),
-                driver_config: tmux::inert_config(),
+                mode: STUB_MODE.into(),
+                harness: STUB_HARNESS.into(),
+                driver_config: stub_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 applicable_states: Vec::new(),
@@ -11948,11 +11952,8 @@ mod tests {
 
     #[tokio::test]
     async fn implementer_release_twice_is_idempotent_for_cascade() {
-        use orgasmic_drivers::adapters::codex::simulated_config;
-        use orgasmic_drivers::driver_for_mode_harness;
-
         let (sup, dir, _w) = make_supervisor();
-        let driver = driver_for_mode_harness("acp-stdio", "codex").expect("codex stdio driver");
+        let driver = stub_driver();
         let req = AcquireRequest {
             task_id: "TASK-083-DOUBLE".into(),
             kind: RunKind::Worker,
@@ -11964,16 +11965,16 @@ mod tests {
             stdout_path: None,
             dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-DOUBLE.jsonl"),
-            driver_config: simulated_config(),
+            driver_config: stub_config(),
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
-                mode: "tmux".into(),
-                harness: "claude".into(),
-                driver_config: tmux::inert_config(),
+                mode: STUB_MODE.into(),
+                harness: STUB_HARNESS.into(),
+                driver_config: stub_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 applicable_states: Vec::new(),
