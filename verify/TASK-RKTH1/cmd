@@ -1,0 +1,19 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RKTH1`.
+#
+# The natural red from the TASK-RKTH1 ask, replayed exactly: a worker prompt an
+# order of magnitude past tmux's imsg ceiling is spawned through the ordinary
+# tmux route. Under the injection the oversized launch stays on the imsg
+# command line, so `tmux new-session` refuses with its own `command too long`
+# and the driver surfaces it as a Transport error — the failure an operator saw
+# only as `500 failed to acquire worker run`.
+#
+# Needs a real tmux (the test skips itself without one, which would make this
+# proof vacuous — `expect-red` therefore pins the failure, not the skip). No
+# daemon, no credential, no billed turn: the pane runs /bin/sh and writes the
+# prompt it received to a tempdir.
+#
+# The `--skip` is mandatory for any drivers-suite verify: that suite holds the
+# billed harness test. Redundant against this filter, which already selects one
+# test by name, and carried anyway so the rule holds no matter how the filter
+# is later edited.
+cargo test -p orgasmic-drivers --lib modes::tmux::tests::oversized_prompt_spawns_and_arrives_byte_exact -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

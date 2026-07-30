@@ -1106,6 +1106,127 @@ pub(crate) fn push_initial_prompt_argv(args: &mut Vec<String>, prompt: &str) {
     args.push(prompt.to_string());
 }
 
+// orgasmic:TASK-RKTH1
+/// tmux packs an entire command line into ONE imsg to its server, and imsg's
+/// payload ceiling is `MAX_IMSGSIZE` (16 KiB) less the header.
+///
+/// The worker's compiled prompt rides in that command line as an argv element
+/// ([`push_initial_prompt_argv`]), so a long brief pushes the packed argv past
+/// the ceiling and tmux answers `command too long` — which the daemon can only
+/// surface as an opaque `failed to acquire worker run`. Measured 2026-07-30
+/// against tmux 3.6a: a 16 000-byte argv spawns, 20 000 does not.
+///
+/// The constant is tmux's own and cannot be raised from outside it, so the fix
+/// is to stop sending the prompt through the command line at all — see
+/// [`launcher_script_body`].
+const TMUX_PACKED_ARGV_CEILING: usize = 16 * 1024 - 16;
+
+/// Where the direct argv route stops being provably safe.
+///
+/// Derived from [`TMUX_PACKED_ARGV_CEILING`] rather than written out, so the
+/// margin cannot drift away from the limit it exists to clear. A quarter of the
+/// ceiling is margin: this crate can only count the argv it builds, while tmux
+/// packs its own framing around each element, and a launch that guesses the
+/// remaining headroom wrong fails at spawn rather than falling back. Spending
+/// the margin early costs nothing — the fallback is a file write.
+const TMUX_PACKED_ARGV_BUDGET: usize = TMUX_PACKED_ARGV_CEILING / 4 * 3;
+
+// orgasmic:TASK-RKTH1
+// The margin has to be a margin. A budget at or above the ceiling would admit a
+// launch tmux then refuses — the exact failure this route exists to remove — and
+// the 16 000-byte bound is the largest argv measured to spawn on tmux 3.6a
+// (2026-07-30; 20 000 did not). Asserted at compile time rather than in a test:
+// the relationship is between two constants, so a build is the right place to
+// catch it and no test run is needed to keep it true.
+const _: () = assert!(TMUX_PACKED_ARGV_BUDGET < TMUX_PACKED_ARGV_CEILING);
+const _: () = assert!(TMUX_PACKED_ARGV_BUDGET < 16_000);
+
+// orgasmic:TASK-RKTH1
+/// Bytes tmux packs for `args` — each element is copied with its NUL
+/// terminator, which is the whole of the encoding this crate can account for.
+fn packed_argv_len<'a>(args: impl IntoIterator<Item = &'a str>) -> usize {
+    args.into_iter().map(|arg| arg.len() + 1).sum()
+}
+
+// orgasmic:TASK-RKTH1
+/// `raw` as a single POSIX-shell word, byte for byte.
+///
+/// Single quotes are the only shell quoting that interprets nothing at all, so
+/// prompt bytes — backslashes, `$`, backticks, newlines, trailing whitespace —
+/// survive verbatim, which is the same guarantee argv delivery gives and the
+/// reason `build_spawn_plan` trims only to test for emptiness. The one byte a
+/// single-quoted string cannot carry is `'` itself: close, emit an escaped
+/// quote, reopen.
+fn sh_single_quote(raw: &str) -> String {
+    let mut quoted = String::with_capacity(raw.len() + 2);
+    quoted.push('\'');
+    for ch in raw.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+// orgasmic:TASK-RKTH1
+/// The launcher a pane runs when the command line will not fit in one imsg.
+///
+/// tmux only ever sees `/bin/sh <path>`, so the packed argv is bounded by the
+/// path length no matter how large the prompt is; the prompt itself reaches the
+/// harness through the script, still as one argv element and still byte-exact.
+///
+/// `rm` precedes `exec` rather than following it because `exec` never returns.
+/// Unlinking is safe there: POSIX keeps an unlinked file's inode alive for
+/// every open descriptor, including the one `sh` is still reading this script
+/// through. The artefact carrying the prompt is therefore gone from the
+/// filesystem before the harness starts, and readable to the shell that needs
+/// it until it is done.
+fn launcher_script_body(command: &str, args: &[String]) -> String {
+    let mut script = String::from("#!/bin/sh\nrm -f -- \"$0\"\nexec ");
+    script.push_str(&sh_single_quote(command));
+    for arg in args {
+        script.push(' ');
+        script.push_str(&sh_single_quote(arg));
+    }
+    script.push('\n');
+    script
+}
+
+// orgasmic:TASK-RKTH1
+/// Write [`launcher_script_body`] somewhere only this user can read it.
+///
+/// `create_new` so the launch can never land on an inode someone else prepared,
+/// and `0600` because the file holds the whole worker prompt. No execute bit is
+/// needed or granted: the pane runs `/bin/sh <path>`, which reads the script
+/// rather than executing it.
+fn write_launcher_script(
+    session: &str,
+    command: &str,
+    args: &[String],
+) -> Result<PathBuf, DriverError> {
+    let path = std::env::temp_dir().join(format!(
+        "orgasmic-tmux-launch-{}-{}.sh",
+        sanitize_tmux_name(session),
+        uuid::Uuid::new_v4()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|err| DriverError::Transport(format!("create tmux launcher: {err}")))?;
+    file.write_all(launcher_script_body(command, args).as_bytes())
+        .map_err(|err| DriverError::Transport(format!("write tmux launcher: {err}")))?;
+    Ok(path)
+}
+
 /// Deterministic Claude native session id pinned to the run's runtime UUID.
 /// The runtime_id is already a UUID, so it satisfies `claude --session-id`.
 pub(crate) fn claude_session_id(runtime_id: &str) -> String {
@@ -1756,6 +1877,50 @@ async fn spawn_tmux_session(
         execution_args = gated_args;
     }
 
+    let run_id_env = format!("ORGASMIC_RUN_ID={}", plan.run_id);
+
+    // orgasmic:TASK-RKTH1
+    // Everything below goes into one imsg. Count it before tmux does, and move
+    // the payload off the command line when it will not fit, so a large brief
+    // spawns instead of dying on tmux's `command too long`. Applied after the
+    // launch gate and the pinned-executable wrap so whatever those produced is
+    // what the launcher execs — neither is bypassed, both just move inside.
+    let mut launcher: Option<PathBuf> = None;
+    {
+        let harness_env: Vec<String> = plan
+            .harness_env
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect();
+        let cwd = plan.cwd.to_string_lossy();
+        let mut framing: Vec<&str> = vec![
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-x",
+            TMUX_SESSION_COLS,
+            "-y",
+            TMUX_SESSION_ROWS,
+            "-e",
+            run_id_env.as_str(),
+        ];
+        for pair in &harness_env {
+            framing.push("-e");
+            framing.push(pair.as_str());
+        }
+        framing.extend(["-c", cwd.as_ref(), "--"]);
+        let packed = packed_argv_len(framing.into_iter())
+            + packed_argv_len(std::iter::once(execution_command.as_str()))
+            + packed_argv_len(execution_args.iter().map(String::as_str));
+        if packed > TMUX_PACKED_ARGV_BUDGET {
+            let path = write_launcher_script(session, &execution_command, &execution_args)?;
+            execution_command = "/bin/sh".to_string();
+            execution_args = vec![path.to_string_lossy().into_owned()];
+            launcher = Some(path);
+        }
+    }
+
     let mut tmux = tmux_async_command();
     tmux.args([
         "new-session",
@@ -1768,7 +1933,7 @@ async fn spawn_tmux_session(
         TMUX_SESSION_ROWS,
         "-e",
     ])
-    .arg(format!("ORGASMIC_RUN_ID={}", plan.run_id));
+    .arg(&run_id_env);
     // orgasmic:TASK-GT91X
     for (key, value) in &plan.harness_env {
         tmux.arg("-e").arg(format!("{key}={value}"));
@@ -1787,6 +1952,13 @@ async fn spawn_tmux_session(
         .await
         .map_err(|e| DriverError::Transport(format!("tmux spawn: {e}")))?;
     if !output.status.success() {
+        // orgasmic:TASK-RKTH1
+        // The launcher deletes itself as its first act, so it is still on disk
+        // exactly when the pane never ran it. Nothing else will collect it, and
+        // it holds the whole prompt.
+        if let Some(path) = launcher.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         // orgasmic:TASK-0RCRY
         // Name the server. `server exited unexpectedly` is true and useless on
@@ -4664,5 +4836,110 @@ mod tests {
         };
         assert_eq!(capabilities["reattached"], true);
         s.control.release("done").await.unwrap();
+    }
+
+    #[test]
+    fn packed_argv_len_counts_each_nul_terminator() {
+        assert_eq!(packed_argv_len(std::iter::empty()), 0);
+        assert_eq!(packed_argv_len(["ab", "cde"]), 3 + 4);
+    }
+
+    // orgasmic:TASK-RKTH1
+    /// The prompt is the reason this route exists, so the quoting has to be
+    /// byte-exact — proven against a real shell rather than against our own
+    /// idea of what the shell does.
+    #[test]
+    fn sh_single_quote_survives_a_real_shell_byte_for_byte() {
+        for raw in [
+            "plain",
+            "it's got 'quotes' inside",
+            "$HOME `whoami` \\ \"double\" ${x}",
+            "trailing whitespace   ",
+            "multi\nline\n\n",
+            "unicode: тест 🙂 — em-dash",
+            "*glob* ?and? [brackets]",
+        ] {
+            let output = StdCommand::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("printf %s {}", sh_single_quote(raw)))
+                .output()
+                .expect("run /bin/sh");
+            assert!(output.status.success(), "shell rejected quoting of {raw:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                raw,
+                "quoting changed bytes for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_script_removes_itself_before_exec() {
+        let script = launcher_script_body("/bin/echo", &["one".into(), "it's two".into()]);
+        // `rm` must precede `exec`: exec never returns, so anything after it is
+        // dead code and the artefact would outlive the launch.
+        let rm = script.find("rm -f -- \"$0\"").expect("self-delete");
+        let exec = script.find("exec ").expect("exec");
+        assert!(rm < exec, "self-delete must precede exec:\n{script}");
+        assert!(
+            script.ends_with("'/bin/echo' 'one' 'it'\\''s two'\n"),
+            "{script}"
+        );
+    }
+
+    // orgasmic:TASK-RKTH1
+    /// End to end on a real tmux: a prompt an order of magnitude past the imsg
+    /// ceiling reaches the pane's argv intact. Before this route the same spawn
+    /// died with tmux's `command too long`.
+    #[tokio::test]
+    async fn oversized_prompt_spawns_and_arrives_byte_exact() {
+        let _live_guard = live_session_guard();
+        let (tmux_ok, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "oversized_prompt_spawns_and_arrives_byte_exact",
+            &[("tmux", tmux_ok)],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let landed = tmp.path().join("prompt.txt");
+        // Far past the ceiling, and carrying every byte class the quoting has
+        // to survive.
+        let prompt = format!(
+            "{}\n'single' \"double\" $VAR `cmd` \\ — тест 🙂\n",
+            "x".repeat(100_000)
+        );
+
+        let session = format!("orgasmic-rkth1-{}", uuid::Uuid::new_v4().simple());
+        let _guard = SessionGuard(session.clone());
+        let plan = TmuxSpawnPlan {
+            command: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                format!("printf %s \"$1\" > {}", landed.display()),
+                "rkth1".into(),
+                prompt.clone(),
+            ],
+            cwd: tmp.path().to_path_buf(),
+            paste_prompt: None,
+            native_runtime: None,
+            run_id: "run-rkth1".into(),
+            harness_env: Vec::new(),
+            native_resume_mode: false,
+            trusted_provider_identity: None,
+            pinned_executable: None,
+            provider_home: None,
+        };
+        spawn_tmux_session(&session, &plan)
+            .await
+            .expect("oversized prompt must spawn, not hit `command too long`");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !landed.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let written = std::fs::read_to_string(&landed).expect("pane wrote the prompt");
+        assert_eq!(written, prompt, "prompt bytes changed in transit");
+        kill_tmux_session(&session).await;
     }
 }

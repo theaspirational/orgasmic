@@ -1,0 +1,20 @@
+# Pinned from the real red run of 2026-07-30, from the fixed tree with
+# injection.patch applied (the oversized launch forced back onto the imsg
+# command line).
+
+exit: 101
+
+# The defect, named exactly, in tmux's own words. This is the string the
+# operator never got to see: the daemon could only render it as
+# `500 failed to acquire worker run`.
+contains: command too long
+
+# It must fail at the spawn, not somewhere downstream — the assertion message
+# that guards the launch is part of the signature.
+contains: oversized prompt must spawn, not hit
+
+# One test, and it is this one. A broader collapse is a different failure and
+# would mean this proof did not reproduce the defect it claims to. A skipped
+# test (no tmux on the host) passes, so it can never satisfy this file.
+contains: oversized_prompt_spawns_and_arrives_byte_exact
+contains: test result: FAILED. 0 passed; 1 failed

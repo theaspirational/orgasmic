@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-drivers/src/modes/tmux.rs b/crates/orgasmic-drivers/src/modes/tmux.rs
+index afbd29b..3c3b072 100644
+--- a/crates/orgasmic-drivers/src/modes/tmux.rs
++++ b/crates/orgasmic-drivers/src/modes/tmux.rs
+@@ -1913,7 +1913,8 @@ async fn spawn_tmux_session(
+         let packed = packed_argv_len(framing.into_iter())
+             + packed_argv_len(std::iter::once(execution_command.as_str()))
+             + packed_argv_len(execution_args.iter().map(String::as_str));
+-        if packed > TMUX_PACKED_ARGV_BUDGET {
++        if false {
++            let _ = packed;
+             let path = write_launcher_script(session, &execution_command, &execution_args)?;
+             execution_command = "/bin/sh".to_string();
+             execution_args = vec![path.to_string_lossy().into_owned()];
