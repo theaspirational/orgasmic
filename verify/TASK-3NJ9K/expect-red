@@ -10,11 +10,17 @@ exit: 101
 # reaches first, so this line is stable.
 contains: acp-stdio/claude must be refused in a test build
 
-# And the three direct refusals stop refusing — the `#[should_panic]` tests
-# report the reverted resolver handing back a real driver.
+# And the direct refusals stop refusing — the `#[should_panic]` tests report the
+# reverted resolver handing back a real driver.
 contains: test did not panic as expected
+
+# The injection reverts BOTH tiers, so the launch seam is proven load-bearing
+# too: without it `tmux`/`claude` resolves at a launch site, which is the
+# dispatch address that would have spawned a real billed agent.
+contains: spawning_tmux_claude_panics - should panic ... FAILED
+contains: spawning_rmux_codex_panics - should panic ... FAILED
 
 # Exactly the fence, and only the fence: the stub still resolves, unknown pairs
 # still answer None, and nothing outside the module reaches the registry. A
 # broader collapse would mean this proof did not reproduce the defect it claims.
-contains: test result: FAILED. 3 passed; 4 failed
+contains: test result: FAILED. 5 passed; 6 failed

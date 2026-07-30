@@ -1,8 +1,20 @@
 diff --git a/crates/orgasmic-daemon/src/driver_resolution.rs b/crates/orgasmic-daemon/src/driver_resolution.rs
-index 70e6667..03b14f8 100644
+index d24d0cb..a3c6c5d 100644
 --- a/crates/orgasmic-daemon/src/driver_resolution.rs
 +++ b/crates/orgasmic-daemon/src/driver_resolution.rs
-@@ -118,24 +118,14 @@ pub(crate) use stub::{
+@@ -147,11 +147,6 @@ pub(crate) fn resolve_launch_driver(mode: &str, harness: &str) -> Option<Box<dyn
+     if (mode, harness) == (STUB_MODE, STUB_HARNESS) {
+         return Some(stub_driver());
+     }
+-    if LIVE_TOOLING_MODES.contains(&mode)
+-        && orgasmic_drivers::harness_execs_provider_binary(harness)
+-    {
+-        panic!("{}", refusal_message(&format!("{mode}/{harness}")));
+-    }
+     resolve_driver(mode, harness)
+ }
+ 
+@@ -180,24 +175,14 @@ pub(crate) use stub::{
  /// nothing else — no `$PATH`, no process spawn, no filesystem. That is what
  /// makes the guard's answer identical on every host.
  #[cfg(test)]

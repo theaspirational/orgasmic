@@ -12,6 +12,15 @@
 //! [`LIVE_TOOLING_MODES`]. A mode added to the registry tomorrow is refused by
 //! this file without anyone editing it.
 //!
+//! The fence has two tiers, because resolving a driver and launching one are
+//! different acts. [`resolve_driver`] is the resolution tier and carries the
+//! mux allowance; [`resolve_launch_driver`] is what every site that is about to
+//! make a driver *launch* something calls, and it additionally refuses a mux
+//! address whose harness that mode would exec on its own. Without the second
+//! tier the allowance leaks: an ordinary dispatch of `tmux`/`claude` would have
+//! spawned a real billed agent, because the daemon stages a placeholder command
+//! that both mux modes deliberately swap for the harness's real binary.
+//!
 //! The fence exists because a daemon unit test once built a
 //! `StageWorker { driver: "acp-stdio", harness: "hermes" }` and guarded the
 //! spawn with the comment *"unreachable without a hermes binary"* — true on CI,
@@ -32,7 +41,9 @@
 //!   would hide exactly the mistakes this fence exists to surface.
 //! - The allowance is a closed list, not a judgement about a given test. No
 //!   caller may argue its way past the fence with "this one cannot really
-//!   spawn"; that argument is what produced the incident.
+//!   spawn"; that argument is what produced the incident — and the reason the
+//!   mux allowance is confined to the resolution tier is that the same argument,
+//!   made once about multiplexers, would have reopened it.
 
 use orgasmic_drivers::WorkerDriver;
 
@@ -55,21 +66,34 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 /// The only real modes a daemon test build may resolve, and the only entry in
 /// this file that is an exception rather than a rule.
 ///
-/// `tmux` and `rmux` are multiplexers. They cannot exec a harness on their own:
-/// what runs in the pane is the command the daemon writes into the driver
-/// config, which a test controls outright (`tmux::inert_config`, a pinned
-/// fixture executable). They are also the surface the suite's existing live
-/// mux family is built on — `test_tooling::skip_test_if_missing`,
-/// `own_rmux_server_for_tests`, `test_environment_lock` — a deliberate,
-/// gated body of coverage that this fence is not entitled to delete.
+/// `tmux` and `rmux` are the surface the suite's existing live mux family is
+/// built on — `test_tooling::skip_test_if_missing`, `own_rmux_server_for_tests`,
+/// `test_environment_lock` — a deliberate, gated body of coverage that this
+/// fence is not entitled to delete.
+///
+/// **This allowance covers resolution, which launches nothing.** It is tempting
+/// to say more — that a multiplexer runs whatever command the caller writes
+/// into the driver config, so a test controls what the pane execs. That is
+/// false on exactly the path a dispatch takes: `spawn_worker_run` stages every
+/// worker with the placeholder `sh -lc 'echo orgasmic pipeline stage acquired;
+/// exec sh'`, and both mux modes recognise that sentinel and deliberately swap
+/// it for the harness's real binary off `$PATH` — `claude` with
+/// `--dangerously-skip-permissions`. What keeps the mux allowance honest is
+/// therefore not this list but [`resolve_launch_driver`], which every launch
+/// site calls and which refuses a mux address carrying a harness the mode would
+/// exec. The coverage this list exists for never launches: it attaches to a
+/// session the test created, or execs through the daemon's verified pinned
+/// executable.
 ///
 /// Everything else — `acp-stdio`, `acp-ws`, `subprocess-stream-json`, and any
 /// mode added later — execs the harness binary itself, resolved from `$PATH`,
 /// with no pane and no gate between the test and a billed provider turn. Those
 /// are refused, always.
 ///
-/// This list is the fence's entire allowance. Adding to it means arguing that a
-/// new mode cannot exec a provider binary, in writing, here.
+/// This list is the resolution tier's entire allowance. Adding to it means
+/// arguing that a new mode cannot exec a provider binary, in writing, here —
+/// and it buys nothing at a launch site, which [`resolve_launch_driver`] gates
+/// separately.
 #[cfg(test)]
 pub(crate) const LIVE_TOOLING_MODES: &[&str] = &["tmux", "rmux"];
 
@@ -91,6 +115,44 @@ pub(crate) fn resolve_driver(mode: &str, harness: &str) -> Option<Box<dyn Worker
         panic!("{refusal}");
     }
     orgasmic_drivers::driver_for_mode_harness(mode, harness)
+}
+
+// orgasmic:TASK-3NJ9K
+/// Resolve a driver the caller is about to make **launch** something.
+///
+/// Production build: [`resolve_driver`], unchanged.
+#[cfg(not(test))]
+pub(crate) fn resolve_launch_driver(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
+    resolve_driver(mode, harness)
+}
+
+// orgasmic:TASK-3NJ9K
+/// Test profile: [`resolve_driver`] plus the pair rule the mux allowance needs.
+///
+/// Resolving a driver launches nothing, which is why [`LIVE_TOOLING_MODES`] can
+/// hand the mux modes out at all: the suite's live mux coverage either attaches
+/// to a session the test created itself, or execs through the daemon's pinned
+/// executable authority (`pinned_claude_execution_config`), which refuses an
+/// executable it has not verified.
+///
+/// An ordinary dispatch has neither protection. `spawn_worker_run` stages the
+/// placeholder `sh -lc 'echo orgasmic pipeline stage acquired; exec sh'`, both
+/// mux modes swap that sentinel for the harness's real binary off `$PATH`, and
+/// `claude` arrives with `--dangerously-skip-permissions`. That is the incident
+/// class in the spelling the standing pane mode makes likeliest, so the launch
+/// sites refuse a mux address carrying a harness the mode would exec — while
+/// resolution stays open for the coverage that never launches.
+#[cfg(test)]
+pub(crate) fn resolve_launch_driver(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
+    if (mode, harness) == (STUB_MODE, STUB_HARNESS) {
+        return Some(stub_driver());
+    }
+    if LIVE_TOOLING_MODES.contains(&mode)
+        && orgasmic_drivers::harness_execs_provider_binary(harness)
+    {
+        panic!("{}", refusal_message(&format!("{mode}/{harness}")));
+    }
+    resolve_driver(mode, harness)
 }
 
 /// Test profile: legacy transport ids name the same transports, so they are
@@ -300,6 +362,17 @@ mod tests {
                     pair_refusal(mode, harness).is_none(),
                     "{mode} is the fence's declared mux allowance"
                 );
+                // Resolution is allowed; launching is the part that is not, and
+                // for a harness this mode would exec the launch seam refuses.
+                // Asserted here, over the registry's own table, so a mux pair
+                // added later is covered the day it lands.
+                if orgasmic_drivers::harness_execs_provider_binary(harness) {
+                    let panicked = std::panic::catch_unwind(|| {
+                        let _ = resolve_launch_driver(mode, harness);
+                    })
+                    .is_err();
+                    assert!(panicked, "{mode}/{harness} must never reach a launch");
+                }
                 continue;
             }
             let refusal = pair_refusal(mode, harness)
@@ -422,6 +495,55 @@ mod tests {
              `crate::driver_resolution`; these call it directly and so bypass \
              the test-profile fence: {offenders:?}"
         );
+    }
+
+    // orgasmic:TASK-3NJ9K
+    /// The mux allowance does not extend to a harness the mode would exec
+    /// itself. This is the incident class in its likeliest future spelling:
+    /// `tmux` is the standing pane mode, the dispatch path stages the
+    /// placeholder that tmux swaps for the real binary, and `claude` is what it
+    /// swaps in — with `--dangerously-skip-permissions`. Refused, like any
+    /// other address that can reach a billed provider turn.
+    #[test]
+    #[should_panic(expected = "refuses to resolve the real transport tmux/claude")]
+    fn spawning_tmux_claude_panics() {
+        let _ = resolve_launch_driver("tmux", "claude");
+    }
+
+    #[test]
+    #[should_panic(expected = "refuses to resolve the real transport rmux/codex")]
+    fn spawning_rmux_codex_panics() {
+        let _ = resolve_launch_driver("rmux", "codex");
+    }
+
+    /// The two halves of the split, stated together: a mux address the mode
+    /// would exec is refused at every launch site, and the same address still
+    /// *resolves*, because the live mux coverage that holds one never launches
+    /// it. Getting this backwards either reopens the incident class or deletes
+    /// the suite's mux family.
+    #[test]
+    fn mux_provider_pairs_resolve_but_never_launch() {
+        assert!(
+            pair_refusal("tmux", "claude").is_none(),
+            "resolution launches nothing, so the reattach coverage keeps working"
+        );
+        assert!(
+            resolve_driver("tmux", "claude").is_some(),
+            "the live mux family must still be able to hold this address"
+        );
+        // The launch site is the seam that refuses it; `spawning_tmux_claude_panics`
+        // is the same claim from the other side.
+        assert!(
+            orgasmic_drivers::harness_execs_provider_binary("claude"),
+            "claude is what tmux swaps the dispatch placeholder for"
+        );
+    }
+
+    /// A mux mode carrying a harness it cannot exec stays launchable — that is
+    /// the whole live mux family (`rmux`/`custom` is a bare PTY).
+    #[test]
+    fn mux_modes_still_launch_for_a_harness_they_cannot_exec() {
+        assert!(resolve_launch_driver("rmux", "custom").is_some());
     }
 
     #[test]

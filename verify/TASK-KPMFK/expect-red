@@ -25,16 +25,17 @@ contains: a architect stage that is live across a daemon restart must still emit
 # disk that says which stage this run is, so there is nothing for a restarted
 # daemon to rebuild the watcher from.
 #
-# Re-pinned 2026-07-30 (TASK-3NJ9K). This directive used to carry the tail of
-# the message too — `session had: [String("acquire"), String("run_meta")]`. That
-# list was the session as it stood at the moment of the read, and the fixture
-# addressed `acp-stdio`/`codex`: on a host with codex installed the launch
-# spawned `codex app-server`, and whether its `Ready` had been written to the
-# session yet was a race with the test's own read. TASK-3NJ9K moved the fixture
-# onto the in-process stub, so the list is no longer the same two entries — and
-# pinning a proof on a provider subprocess's timing is the practice that task
-# exists to end. The cause is still named exactly; only the racing tail is gone.
-contains: a launched stage must persist its stage identity so boot recovery can respawn the completion watcher; session had:
+# Re-pinned 2026-07-30 (TASK-3NJ9K). The tail used to read `session had:
+# [String("acquire"), String("run_meta")]`, taken from a fixture addressed at
+# `acp-stdio`/`codex`: on a host with codex installed that launch spawned `codex
+# app-server`, and whether its `Ready` had reached the session before the test
+# read it was a race. TASK-3NJ9K moved the fixture onto the in-process stub, so
+# the list changed — and, more to the point, stopped racing. It is therefore
+# pinned in full again rather than truncated: with no provider subprocess in the
+# picture the phases are deterministic (measured identical across three runs),
+# and a proof that stops naming what it found is a weaker proof than the one
+# this task inherited.
+contains: a launched stage must persist its stage identity so boot recovery can respawn the completion watcher; session had: [String("acquire"), String("run_meta"), Null]
 
 # All four, and only these four. A binary that collapses wholesale is a
 # different failure and has not reproduced this defect.

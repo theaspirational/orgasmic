@@ -71,6 +71,27 @@ pub const MODES: &[&str] = &[
 /// terminal session (no agent CLI — the operator runs any tool by hand).
 pub const HARNESSES: &[&str] = &["codex", "claude", "cursor-agent", "hermes", "custom"];
 
+// orgasmic:TASK-3NJ9K
+/// Will a mux launch of `harness` exec an agent CLI on its own?
+///
+/// A multiplexer runs whatever command the caller writes into the driver
+/// config — but the daemon's dispatch path writes a *placeholder* (`sh -lc
+/// 'echo orgasmic pipeline stage acquired; exec sh'`), and both mux modes
+/// deliberately swap that placeholder for the harness's real binary. So for
+/// every harness below, "the caller controls the command" is false on exactly
+/// the path a dispatch takes; `custom` is the one first-class harness that
+/// cannot become a provider process by itself, which is what makes it the
+/// pseudo-harness [`HARNESSES`] describes.
+///
+/// The daemon's test-profile fence reads this to decide whether a mux address
+/// is safe for a test to hold. It lives here, next to [`HARNESSES`], because
+/// the ground truth is each mode's `default_command_for_harness`; both modes
+/// carry a test asserting they still agree with this answer.
+#[must_use]
+pub fn harness_execs_provider_binary(harness: &str) -> bool {
+    matches!(harness, "claude" | "codex" | "cursor-agent" | "hermes")
+}
+
 /// The originator orgasmic stamps onto every codex launch it owns, and the
 /// codex environment variable that sets it.
 ///

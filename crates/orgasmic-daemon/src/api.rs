@@ -61,7 +61,9 @@ use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
-use crate::driver_resolution::{resolve_driver, resolve_driver_by_transport};
+use crate::driver_resolution::{
+    resolve_driver, resolve_driver_by_transport, resolve_launch_driver,
+};
 use crate::events::{EventBus, EventPayload, Topic};
 #[cfg(test)]
 use crate::governance::SandboxPermissionsPatch;
@@ -2822,7 +2824,7 @@ async fn post_manager_launch(
     validate_address_harness_args(&req.harness, &req.harness_args)
         .map_err(ApiError::bad_request)?;
 
-    let driver = resolve_driver(&req.mode, &req.harness).ok_or_else(|| {
+    let driver = resolve_launch_driver(&req.mode, &req.harness).ok_or_else(|| {
         ApiError::bad_request(format!(
             "unsupported manager driver {}/{}",
             req.mode, req.harness
@@ -3345,7 +3347,7 @@ async fn post_stage(
         &format!("{} stage", spec.stage),
     )?;
     let bundle = stage_prompt_bundle(spec, &worker, &prompt.id, &prompt.compiled);
-    let driver = resolve_driver(&worker.driver, &worker.harness).ok_or_else(|| {
+    let driver = resolve_launch_driver(&worker.driver, &worker.harness).ok_or_else(|| {
         ApiError::internal(format!(
             "driver registry missing {}/{}",
             worker.driver, worker.harness
@@ -4181,7 +4183,7 @@ fn build_babysitter_auto_spawn(
         sandbox_permissions: Some(resolved_sandbox.clone()),
         harness_args: address.harness_args.clone(),
     };
-    let Some(_driver) = resolve_driver(&babysitter.driver, &babysitter.harness) else {
+    let Some(_driver) = resolve_launch_driver(&babysitter.driver, &babysitter.harness) else {
         return Err(ApiError::bad_request(format!(
             "unsupported babysitter driver/harness pair {}/{}",
             babysitter.driver, babysitter.harness
@@ -4418,7 +4420,7 @@ async fn spawn_worker_run(
         });
     }
 
-    let Some(driver) = resolve_driver(&worker.driver, &worker.harness) else {
+    let Some(driver) = resolve_launch_driver(&worker.driver, &worker.harness) else {
         return Err(SpawnWorkerFailure {
             error: ApiError::bad_request(format!(
                 "unsupported driver/harness pair {}/{}",
