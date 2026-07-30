@@ -11,4 +11,9 @@
 # proof vacuous — `expect-red` therefore pins the failure, not the skip). No
 # daemon, no credential, no billed turn: the pane runs /bin/sh and writes the
 # prompt it received to a tempdir.
-cargo test -p orgasmic-drivers --lib modes::tmux::tests::oversized_prompt_spawns_and_arrives_byte_exact
+#
+# The `--skip` is mandatory for any drivers-suite verify: that suite holds the
+# billed harness test. Redundant against this filter, which already selects one
+# test by name, and carried anyway so the rule holds no matter how the filter
+# is later edited.
+cargo test -p orgasmic-drivers --lib modes::tmux::tests::oversized_prompt_spawns_and_arrives_byte_exact -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events
