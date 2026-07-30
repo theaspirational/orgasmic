@@ -1,0 +1,30 @@
+diff --git a/crates/orgasmic-cli/src/node.rs b/crates/orgasmic-cli/src/node.rs
+index c1b74e7..7399fd5 100644
+--- a/crates/orgasmic-cli/src/node.rs
++++ b/crates/orgasmic-cli/src/node.rs
+@@ -774,8 +774,6 @@ mod node_edit_op_parity {
+             "set_section_body",
+             // node body set --section --create
+             "add_section",
+-            // node body unset --section
+-            "remove_section",
+             // node prop set / unset
+             "set_property",
+             "remove_property",
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 849d977..e2d4c6c 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -13018,12 +13018,6 @@ async fn post_org_node_edit(
+             } => {
+                 let body = prepare_body_edit(&body, body_format);
+                 reject_body_with_nested_headings("node body set --section", &body)?;
+-                if !rw
+-                    .has_section(&id, &title)
+-                    .map_err(|e| org_rewriter_error("edit section", &id, e))?
+-                {
+-                    return Err(unknown_section_error(&rw, &id, &title, SECTION_WRITE_HINT));
+-                }
+                 rw.upsert_section_text(&id, &title, &body)
+                     .map_err(|e| org_rewriter_error("edit section", &id, e))?;
+                 changed.insert(format!("section:{title}"), body);

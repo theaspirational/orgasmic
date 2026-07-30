@@ -1,0 +1,22 @@
+# Pinned from the real red run of 2026-07-31, from the fixed tree with
+# injection.patch applied (both halves of the defect restored).
+
+exit: 101
+
+# HALF ONE — the asymmetry. The daemon accepts an op the CLI cannot ask for, so
+# whatever that op does is unreachable by supported tooling. This is the exact
+# state `remove_section` sat in for as long as the enum has had it, and the
+# reason a section created by a typo could never be removed.
+contains: no CLI verb can ask for them
+contains: ["remove_section"]
+
+# HALF TWO — the silent creation. With the existence check gone, a write to a
+# section that does not exist appends the heading instead of refusing, so the
+# typo'd title lands in the file.
+contains: section_write_to_an_unknown_title_is_refused_and_names_what_exists
+
+# Both halves, and only these two. The other seven round-trip tests must still
+# pass: a broader collapse is a different failure and would mean this proof did
+# not reproduce the defect it claims.
+contains: test result: FAILED. 0 passed; 1 failed
+contains: test result: FAILED. 7 passed; 1 failed
