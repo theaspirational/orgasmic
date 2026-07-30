@@ -1,0 +1,11 @@
+# One line. Run from the repo root by `orgasmic verify TASK-95SGV.2`.
+#
+# The natural red from the TASK-95SGV.2 ask, replayed exactly: the ordinary
+# dispatch surface (`spawn_worker_run`, the shared pipeline `post_task_dispatch`
+# calls) is driven into a worktree a real `dispatch-close` reservation holds.
+# Under the injection the `CleanupInProgress` match arm is gone, so the refusal
+# collapses into the generic `supervisor_acquire_error` 500 mapper and the
+# endpoint test's 409 / structured-body assertions fail. Hermetic: daemon lib
+# unit test, no tmux server, no daemon, no real credential, no billed turn — the
+# reservation refuses admission before any driver subprocess is launched.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib ordinary_dispatch_endpoint_surfaces_cleanup_conflict_409

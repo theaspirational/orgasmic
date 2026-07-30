@@ -1,0 +1,16 @@
+# Pinned from the real red run of 2026-07-30: first from the fixed tree with
+# injection.patch applied (the match arm removed, so the cleanup refusal
+# collapses into the generic 500), then byte-identically the same signature
+# from a hand-reverted tree.
+
+exit: 101
+
+# The defect, named exactly: the ordinary dispatch surface answered 500
+# instead of the structured 409, because the `CleanupInProgress` arm was
+# gone and the refusal fell through to `supervisor_acquire_error`.
+contains: the ordinary dispatch surface must answer 409, not the generic 500
+
+# One test, and it is this one. A broader collapse is a different failure and
+# would mean this proof did not reproduce the defect it claims to.
+contains: ordinary_dispatch_endpoint_surfaces_cleanup_conflict_409
+contains: test result: FAILED. 0 passed; 1 failed
