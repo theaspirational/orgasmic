@@ -39,9 +39,8 @@ use orgasmic_core::{
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
-    driver_for, driver_for_mode_harness, find_native_transcript, lookup_from_envelopes,
-    DriverConfig, DriverContext, RunKind, RuntimeOptionsCatalog, RuntimeOptionsRequest,
-    TranscriptRoots, WorkerDriver,
+    find_native_transcript, lookup_from_envelopes, DriverConfig, DriverContext, RunKind,
+    RuntimeOptionsCatalog, RuntimeOptionsRequest, TranscriptRoots, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -62,6 +61,7 @@ use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
+use crate::driver_resolution::{resolve_driver, resolve_driver_by_transport};
 use crate::events::{EventBus, EventPayload, Topic};
 #[cfg(test)]
 use crate::governance::SandboxPermissionsPatch;
@@ -2822,7 +2822,7 @@ async fn post_manager_launch(
     validate_address_harness_args(&req.harness, &req.harness_args)
         .map_err(ApiError::bad_request)?;
 
-    let driver = driver_for_mode_harness(&req.mode, &req.harness).ok_or_else(|| {
+    let driver = resolve_driver(&req.mode, &req.harness).ok_or_else(|| {
         ApiError::bad_request(format!(
             "unsupported manager driver {}/{}",
             req.mode, req.harness
@@ -3345,7 +3345,7 @@ async fn post_stage(
         &format!("{} stage", spec.stage),
     )?;
     let bundle = stage_prompt_bundle(spec, &worker, &prompt.id, &prompt.compiled);
-    let driver = driver_for_mode_harness(&worker.driver, &worker.harness).ok_or_else(|| {
+    let driver = resolve_driver(&worker.driver, &worker.harness).ok_or_else(|| {
         ApiError::internal(format!(
             "driver registry missing {}/{}",
             worker.driver, worker.harness
@@ -4181,7 +4181,7 @@ fn build_babysitter_auto_spawn(
         sandbox_permissions: Some(resolved_sandbox.clone()),
         harness_args: address.harness_args.clone(),
     };
-    let Some(_driver) = driver_for_mode_harness(&babysitter.driver, &babysitter.harness) else {
+    let Some(_driver) = resolve_driver(&babysitter.driver, &babysitter.harness) else {
         return Err(ApiError::bad_request(format!(
             "unsupported babysitter driver/harness pair {}/{}",
             babysitter.driver, babysitter.harness
@@ -4418,7 +4418,7 @@ async fn spawn_worker_run(
         });
     }
 
-    let Some(driver) = driver_for_mode_harness(&worker.driver, &worker.harness) else {
+    let Some(driver) = resolve_driver(&worker.driver, &worker.harness) else {
         return Err(SpawnWorkerFailure {
             error: ApiError::bad_request(format!(
                 "unsupported driver/harness pair {}/{}",
@@ -9010,8 +9010,8 @@ async fn execute_run_recover_action(
                         }
                     }
                     let harness = plan.claim.harness.as_deref().unwrap_or("claude");
-                    let driver = driver_for_mode_harness("tmux", harness)
-                        .or_else(|| driver_for_mode_harness("tmux", "claude"))
+                    let driver = resolve_driver("tmux", harness)
+                        .or_else(|| resolve_driver("tmux", "claude"))
                         .ok_or_else(|| {
                             ApiError::internal("tmux driver unavailable for recovery run")
                         })?;
@@ -9029,8 +9029,8 @@ async fn execute_run_recover_action(
                         .get("harness")
                         .and_then(|v| v.as_str())
                         .unwrap_or("claude");
-                    let driver = driver_for_mode_harness("tmux", harness)
-                        .or_else(|| driver_for_mode_harness("tmux", "claude"))
+                    let driver = resolve_driver("tmux", harness)
+                        .or_else(|| resolve_driver("tmux", "claude"))
                         .ok_or_else(|| {
                             ApiError::internal("tmux driver unavailable for recovery run")
                         })?;
@@ -9070,7 +9070,7 @@ async fn execute_run_recover_action(
                     pin,
                     state.trusted_exec_wrapper.as_deref(),
                 )?;
-                let driver = driver_for_mode_harness("tmux", "claude").ok_or_else(|| {
+                let driver = resolve_driver("tmux", "claude").ok_or_else(|| {
                     ApiError::internal("tmux/claude driver unavailable for native resume")
                 })?;
                 let cfg = DriverConfig::from_value(json!({
@@ -9109,7 +9109,7 @@ async fn execute_run_recover_action(
                             "recovery address unavailable; supply mode+harness/start fresh",
                         )
                     })?;
-                let driver = driver_for_mode_harness(&mode, &harness).ok_or_else(|| {
+                let driver = resolve_driver(&mode, &harness).ok_or_else(|| {
                     ApiError::bad_request(format!(
                         "unsupported recovery mode/harness pair {mode}/{harness}"
                     ))
@@ -9889,8 +9889,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             );
             continue;
         }
-        let Some(driver) =
-            driver_for_mode_harness(&c.transport, c.harness.as_deref().unwrap_or_default())
+        let Some(driver) = resolve_driver(&c.transport, c.harness.as_deref().unwrap_or_default())
         else {
             skipped += 1;
             tracing::info!(
@@ -11076,12 +11075,12 @@ fn session_driver(
     _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
     if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
-        let driver = driver_for_mode_harness(&mode, &harness)?;
+        let driver = resolve_driver(&mode, &harness)?;
         let driver_id = format!("{mode}/{harness}");
         return Some((driver, driver_id));
     }
     let driver_id = session_driver_id_from_ready(envelopes)?;
-    driver_for(&driver_id).map(|driver| (driver, driver_id))
+    resolve_driver_by_transport(&driver_id).map(|driver| (driver, driver_id))
 }
 
 fn session_driver_id_from_ready(envelopes: &[SessionEnvelope]) -> Option<String> {
@@ -18029,14 +18028,27 @@ pub(crate) mod tests {
                     // orgasmic:task_K4G1D — the rmux arm completes an existing
                     // rule (derive the transport from the protocol) rather than
                     // adding a parallel seeding path beside it.
+                    // orgasmic:task_3NJ9K — the non-mux arm seeded `acp-stdio`,
+                    // which the classifier then resolved into a real transport.
+                    // The stub stands for the same class (a transport with no
+                    // reattachable runtime handle) without a test build ever
+                    // holding one.
                     transport: if protocol_version.starts_with("tmux") {
                         "tmux".into()
                     } else if protocol_version.starts_with("rmux") {
                         "rmux".into()
                     } else {
-                        "acp-stdio".into()
+                        crate::driver_resolution::STUB_MODE.into()
                     },
-                    harness: Some("claude".into()),
+                    harness: Some(
+                        if protocol_version.starts_with("tmux")
+                            || protocol_version.starts_with("rmux")
+                        {
+                            "claude".into()
+                        } else {
+                            crate::driver_resolution::STUB_HARNESS.to_string()
+                        },
+                    ),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.to_path_buf()),
                     last_path: None,
@@ -20751,8 +20763,12 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
-                    transport: "acp-stdio".into(),
-                    harness: Some("claude".into()),
+                    // orgasmic:task_3NJ9K — the transport is the stub because a
+                    // test build may not hold an `acp-stdio` one. What this run
+                    // is a candidate *for* is `credential_mode: Some(_)`, which
+                    // is the TASK-QRTT8 pattern and is unchanged below.
+                    transport: crate::driver_resolution::STUB_MODE.into(),
+                    harness: Some(crate::driver_resolution::STUB_HARNESS.into()),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.clone()),
                     last_path: None,
@@ -20771,7 +20787,7 @@ pub(crate) mod tests {
 
         let candidate = boot_reattach_candidate_from_scan(&boot_scan(&session_path), &session_path)
             .expect("a credential-resolving stdio run is now a candidate");
-        assert_eq!(candidate.transport, "acp-stdio");
+        assert_eq!(candidate.transport, crate::driver_resolution::STUB_MODE);
 
         // A fresh Supervisor/ApiState never acquired this run — standing in for
         // the post-restart daemon boot.
@@ -20794,7 +20810,14 @@ pub(crate) mod tests {
         // this task from ever acquiring again. A fresh reattach of the same
         // run reaching `NotReattachable` (rather than a lease conflict) is what
         // proves the reservation was released.
-        let driver = driver_for_mode_harness("acp-stdio", "claude").expect("acp-stdio/claude");
+        // The subject here is the supervisor's lease bookkeeping, not any one
+        // transport's attach logic: what has to hold is that a driver which
+        // declines leaves the lease free. The stub declines exactly as
+        // `AcpStdioDriver::attach` does (an unconditional `NotReattachable`),
+        // and a test build must not hold a real transport at all — TASK-3NJ9K.
+        // Whether acp-stdio itself still declines is a drivers-crate contract
+        // and is tested there.
+        let driver = crate::driver_resolution::stub_driver();
         let error = state
             .supervisor
             .reattach(
@@ -21917,16 +21940,26 @@ pub(crate) mod tests {
             other => panic!("close guard must be reserved for this fixture: {other:?}"),
         };
 
-        // A hermes worker has no preflight probe — `HermesAdapter` leaves
-        // `preflight` at the trait default (`Preflight::Unsupported`), which
-        // never rejects a dispatch. So `spawn_worker_run` runs preflight, then
-        // reaches `acquire`, where admission refuses on the reservation before
-        // any subprocess is spawned. No real credential and no billed turn.
+        // The worker addresses the in-process stub. The stub leaves `preflight`
+        // at the trait default (`Preflight::Unsupported`), which never rejects a
+        // dispatch, so `spawn_worker_run` runs preflight and then reaches
+        // `acquire`, where admission refuses on the reservation — the refusal
+        // this test is about, unchanged.
+        //
+        // It named `acp-stdio`/`hermes` when it was written (TASK-95SGV.2). The
+        // driver was incidental to the refusal and load-bearing for nothing
+        // here, but on a host with `hermes` on `$PATH` it was a real provider
+        // spawn away; TASK-3NJ9K made that address unresolvable in a test build
+        // and this fixture is one of the sites it moved.
+        let (stub_mode, stub_harness) = (
+            crate::driver_resolution::STUB_MODE,
+            crate::driver_resolution::STUB_HARNESS,
+        );
         let worker = StageWorker {
-            id: "implementer-hermes".into(),
+            id: "implementer-stub".into(),
             kind: WorkerKind::Implementer,
-            driver: "acp-stdio".into(),
-            harness: "hermes".into(),
+            driver: stub_mode.into(),
+            harness: stub_harness.into(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
             babysitter: None,
@@ -22012,6 +22045,134 @@ pub(crate) mod tests {
         // `verify/TASK-95SGV.2` pins the 500-vs-409 red without any driver
         // process, so no post-release dispatch is needed.
         state.supervisor.finish_dispatch_close(&guard_id).await;
+    }
+
+    // orgasmic:task_3NJ9K
+    // -----------------------------------------------------------------------
+    // Stub-only driver resolution: the ordinary dispatch surface must refuse a
+    // real driver in a test build, on every host.
+    // -----------------------------------------------------------------------
+
+    /// The regression proof for TASK-3NJ9K, driven through the ordinary
+    /// dispatch surface: `spawn_worker_run`, the same function the CLI dispatch
+    /// pipeline calls.
+    ///
+    /// This is the one test in the daemon that names a real driver, and it is
+    /// safe for a structural reason rather than a hopeful one: the fence fires
+    /// inside `resolve_driver`, which is the first thing `spawn_worker_run`
+    /// does with the address. Nothing downstream runs — no driver config, no
+    /// preflight, no lease, no acquire, no subprocess — so the address cannot
+    /// reach a spawn even on a host where every provider binary is installed.
+    /// That ordering is itself part of what this test pins: move the fence
+    /// later and the panic message stops being the first thing that happens.
+    ///
+    /// Before TASK-3NJ9K this exact call resolved `acp-stdio`/`hermes` into a
+    /// real transport and ran on to acquire.
+    #[tokio::test]
+    #[should_panic(expected = "refuses to resolve the real transport acp-stdio/hermes")]
+    async fn a_dispatch_naming_a_real_driver_is_refused_in_a_test_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let worktree = tmp.path().join("worktrees/task-3njk-real-driver");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "proj-3njk");
+        let state = direct_stage_test_state(home).await;
+
+        let worker = StageWorker {
+            id: "implementer-hermes".into(),
+            kind: WorkerKind::Implementer,
+            driver: "acp-stdio".into(),
+            harness: "hermes".into(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let _ = spawn_worker_run(
+            &state,
+            SpawnWorkerRequest {
+                project_id: "proj-3njk",
+                task_id: "TASK-3NJ9K-REAL-DRIVER",
+                worker,
+                run_kind: RunKind::Worker,
+                bundle: "TASK-3NJ9K real-driver refusal probe",
+                overrides: DriverOverrides::default(),
+                project_root_path: &project_root,
+                worktree_path: &worktree,
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                origin: "cli_dispatch",
+                dispatch_kind: Some("implementer"),
+                task_sandbox_permissions: None,
+                dispatch_governance: None,
+            },
+        )
+        .await;
+    }
+
+    /// The refusal above must not depend on the host, because host-dependence
+    /// is the defect: the original test was inert on CI and a provider spawn on
+    /// a developer machine, and the difference was one binary on `$PATH`.
+    ///
+    /// So run that test twice in child processes of this one, under two `$PATH`
+    /// values this test builds itself: one directory holding executables named
+    /// `hermes`, `codex` and `claude`, and one holding nothing at all. Both
+    /// children must report the refusal.
+    ///
+    /// A child process is what makes this safe to assert. `$PATH` is
+    /// process-global, and the daemon suite runs its tests in parallel threads,
+    /// so mutating it in-process would change the environment underneath every
+    /// other test in the binary. The fake binaries are never executed — the
+    /// point is that the fence answers the same way whether or not they are
+    /// there — so they cost a `write` and a `chmod` and nothing else.
+    #[test]
+    fn the_refusal_is_the_same_with_and_without_a_provider_binary_on_path() {
+        const INNER: &str =
+            "api::tests::a_dispatch_naming_a_real_driver_is_refused_in_a_test_build";
+
+        let tmp = tempfile::tempdir().unwrap();
+        let populated = tmp.path().join("with-providers");
+        let empty = tmp.path().join("without-providers");
+        std::fs::create_dir_all(&populated).unwrap();
+        std::fs::create_dir_all(&empty).unwrap();
+        for binary in ["hermes", "codex", "claude"] {
+            let path = populated.join(binary);
+            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+
+        let exe = std::env::current_exe().expect("this test binary");
+        for (label, path_value) in [("with", &populated), ("without", &empty)] {
+            let out = std::process::Command::new(&exe)
+                .args(["--exact", INNER, "--test-threads=1"])
+                .env("PATH", path_value)
+                .env_remove("ORGASMIC_RUN_ID")
+                .env_remove("ORGASMIC_HOME")
+                .output()
+                .unwrap_or_else(|e| panic!("re-running {INNER} ({label} providers) failed: {e}"));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && stdout.contains("1 passed"),
+                "{INNER} must reach the refusal {label} provider binaries on \
+                 $PATH; status={:?}\nstdout:\n{stdout}\nstderr:\n{}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
     }
 
     /// Acquire a run whose driver reaches `Ready` and then never says anything
@@ -22940,8 +23101,11 @@ pub(crate) mod tests {
             .json(&serde_json::json!({
                 "project": "orgasmic",
                 "task_id": "TASK-KPMFK-LAUNCH",
-                "mode": "acp-stdio",
-                "harness": "codex",
+                // orgasmic:task_3NJ9K — this POST launches a real stage run
+                // through the live daemon; `acp-stdio`/`codex` made it exec
+                // `codex app-server` on any host with codex on `$PATH`.
+                "mode": crate::driver_resolution::STUB_MODE,
+                "harness": crate::driver_resolution::STUB_HARNESS,
                 "request_id": "kpmfk-stage-identity-test",
                 "reason": "stage identity persistence"
             }))
@@ -23197,8 +23361,11 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
-                    transport: "acp-stdio".into(),
-                    harness: Some("claude".into()),
+                    // orgasmic:task_3NJ9K — stub transport: what the manager
+                    // recovery path is asked about is the session record, not
+                    // the transport, and a test build may not hold a real one.
+                    transport: crate::driver_resolution::STUB_MODE.into(),
+                    harness: Some(crate::driver_resolution::STUB_HARNESS.into()),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.clone()),
                     last_path: None,
@@ -24616,25 +24783,31 @@ pub(crate) mod tests {
 
         let cfg = config_for(Some("native_login"));
         assert_eq!(cfg.0["credential_mode"], "native_login");
-        // And the driver it is aimed at must accept that exact config, so the
+        // And the harness it is aimed at must accept that exact config, so the
         // override cannot be a key nothing reads.
-        let driver = driver_for_mode_harness("acp-stdio", "claude").expect("claude acp-stdio");
-        driver
-            .validate(&cfg)
+        //
+        // The question is the claude *adapter's* config contract, so ask the
+        // adapter. `AcpStdioDriver::validate` is `adapter.validate_config` and
+        // nothing else, so this is the same check the dispatch would run —
+        // without a test build ever holding a transport that could exec the
+        // harness (TASK-3NJ9K).
+        let harness = orgasmic_drivers::ClaudeAdapter::new();
+        harness
+            .validate_config(&cfg)
             .expect("claude must accept the override");
 
         // No override is a null field, not an invalid one.
         let cfg = config_for(None);
         assert!(cfg.0["credential_mode"].is_null());
-        driver
-            .validate(&cfg)
+        harness
+            .validate_config(&cfg)
             .expect("absent override must validate");
 
         // A value the harness does not know is rejected before a dispatch
         // takes ownership of anything.
         let cfg = config_for(Some("bare-ish"));
-        let err = driver
-            .validate(&cfg)
+        let err = harness
+            .validate_config(&cfg)
             .expect_err("an unknown mode must not validate");
         assert!(format!("{err:?}").contains("bare-ish"), "{err:?}");
     }
@@ -27285,8 +27458,11 @@ pub(crate) mod tests {
             .json(&serde_json::json!({
                 "project": "orgasmic",
                 "task_id": "TASK-036-GRILL",
-                "mode": "acp-stdio",
-                "harness": "codex",
+                // orgasmic:task_3NJ9K — this POST launches a real stage run
+                // through the live daemon; `acp-stdio`/`codex` made it exec
+                // `codex app-server` on any host with codex on `$PATH`.
+                "mode": crate::driver_resolution::STUB_MODE,
+                "harness": crate::driver_resolution::STUB_HARNESS,
                 "request_id": "stage-requested-event-test",
                 "reason": "test stage event"
             }))

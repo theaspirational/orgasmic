@@ -18,6 +18,7 @@ pub mod authz;
 pub mod boot_state;
 pub mod config;
 pub mod content;
+pub(crate) mod driver_resolution;
 pub mod events;
 pub mod governance;
 pub mod index;

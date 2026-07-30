@@ -1,0 +1,33 @@
+diff --git a/crates/orgasmic-daemon/src/driver_resolution.rs b/crates/orgasmic-daemon/src/driver_resolution.rs
+index 70e6667..03b14f8 100644
+--- a/crates/orgasmic-daemon/src/driver_resolution.rs
++++ b/crates/orgasmic-daemon/src/driver_resolution.rs
+@@ -118,24 +118,14 @@ pub(crate) use stub::{
+ /// nothing else — no `$PATH`, no process spawn, no filesystem. That is what
+ /// makes the guard's answer identical on every host.
+ #[cfg(test)]
+-pub(crate) fn pair_refusal(mode: &str, harness: &str) -> Option<String> {
+-    if LIVE_TOOLING_MODES.contains(&mode) {
+-        return None;
+-    }
+-    orgasmic_drivers::SUPPORTED
+-        .contains(&(mode, harness))
+-        .then(|| refusal_message(&format!("{mode}/{harness}")))
++pub(crate) fn pair_refusal(_mode: &str, _harness: &str) -> Option<String> {
++    None
+ }
+ 
+ /// The same refusal for a legacy transport id.
+ #[cfg(test)]
+-pub(crate) fn transport_refusal(transport: &str) -> Option<String> {
+-    if LIVE_TOOLING_TRANSPORTS.contains(&transport) {
+-        return None;
+-    }
+-    orgasmic_drivers::TRANSPORTS
+-        .contains(&transport)
+-        .then(|| refusal_message(transport))
++pub(crate) fn transport_refusal(_transport: &str) -> Option<String> {
++    None
+ }
+ 
+ #[cfg(test)]
