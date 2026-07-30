@@ -12637,6 +12637,54 @@ fn reject_body_with_nested_headings(verb: &str, body: &str) -> Result<(), ApiErr
     )))
 }
 
+// orgasmic:TASK-CB6GQ
+/// Refusal for a section write that would otherwise have silently created the
+/// section. Names the title and lists what the node does have, because the
+/// overwhelmingly likely cause is a typo or a section name borrowed from
+/// another node kind — and both are obvious the moment the real titles are in
+/// front of you.
+fn unknown_section_error(rw: &OrgRewriter, id: &str, title: &str, hint: &str) -> ApiError {
+    let existing = rw.section_titles(id).unwrap_or_default();
+    let known = if existing.is_empty() {
+        "it has no sections".to_string()
+    } else {
+        format!("it has: {}", existing.join(", "))
+    };
+    ApiError::bad_request(format!(
+        "node {id} has no section `{title}` — {known}. {hint}"
+    ))
+}
+
+/// Why a section write refuses rather than creating.
+const SECTION_WRITE_HINT: &str = "A section write edits an existing section; pass \
+     `--create` to add a new one, which is the flag that distinguishes a \
+     deliberate new section from a mistyped title";
+
+/// Why a section removal refuses rather than passing silently.
+const SECTION_REMOVE_HINT: &str = "Nothing was removed. A removal names the state \
+     the caller wanted, so a title that is not there is reported rather than \
+     treated as already-done";
+
+// orgasmic:TASK-CB6GQ
+/// Every `op` tag [`NodeEditOp`] accepts, as the wire spells it.
+///
+/// The list exists so the CLI can be held to it: `RemoveSection` was
+/// implemented here, routed, and reachable over HTTP for as long as the enum
+/// has had it, while `orgasmic node` exposed no way to ask for it — so a
+/// section created by accident could never be removed by supported tooling.
+/// Nothing compared the two surfaces, so nothing noticed. A parity test in
+/// `orgasmic-cli` now does.
+pub const NODE_EDIT_OPS: &[&str] = &[
+    "set_body",
+    "set_section_body",
+    "add_section",
+    "remove_section",
+    "set_property",
+    "remove_property",
+    "set_title",
+    "set_tags",
+];
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum NodeEditOp {
@@ -12954,23 +13002,58 @@ async fn post_org_node_edit(
                     .map_err(|e| org_rewriter_error("set body", &id, e))?;
                 changed.insert("body".to_string(), body);
             }
+            // orgasmic:TASK-CB6GQ
+            // These two were one arm, both falling through to
+            // `upsert_section_text`, which appends when the section is missing.
+            // That made every section write a potential section *creation*: a
+            // typo, or a section name borrowed from another node kind, minted a
+            // permanent heading and nothing said so. `handoff-current` carries a
+            // task-shaped `Description` stub that arrived exactly this way.
+            // Editing and creating are now distinct, as the op names always
+            // claimed.
             NodeEditOp::SetSectionBody {
-                title,
-                body,
-                body_format,
-            }
-            | NodeEditOp::AddSection {
                 title,
                 body,
                 body_format,
             } => {
                 let body = prepare_body_edit(&body, body_format);
                 reject_body_with_nested_headings("node body set --section", &body)?;
+                if !rw
+                    .has_section(&id, &title)
+                    .map_err(|e| org_rewriter_error("edit section", &id, e))?
+                {
+                    return Err(unknown_section_error(&rw, &id, &title, SECTION_WRITE_HINT));
+                }
                 rw.upsert_section_text(&id, &title, &body)
                     .map_err(|e| org_rewriter_error("edit section", &id, e))?;
                 changed.insert(format!("section:{title}"), body);
             }
+            NodeEditOp::AddSection {
+                title,
+                body,
+                body_format,
+            } => {
+                let body = prepare_body_edit(&body, body_format);
+                reject_body_with_nested_headings("node body set --section --create", &body)?;
+                // Idempotent on purpose: `--create` is a statement of intent
+                // ("a section by this name should exist and hold this"), not a
+                // claim about the current file, so replaying it is safe.
+                rw.upsert_section_text(&id, &title, &body)
+                    .map_err(|e| org_rewriter_error("create section", &id, e))?;
+                changed.insert(format!("section:{title}"), body);
+            }
             NodeEditOp::RemoveSection { title } => {
+                // orgasmic:TASK-CB6GQ — the rewriter refuses an absent section
+                // with `SectionNotFound`, which `org_rewriter_error` renders as
+                // a bare "org file update failed". That is the silence this
+                // suite exists to remove (TASK-ZYWZD), so name the section and
+                // list what the node actually has, exactly as a write does.
+                if !rw
+                    .has_section(&id, &title)
+                    .map_err(|e| org_rewriter_error("remove section", &id, e))?
+                {
+                    return Err(unknown_section_error(&rw, &id, &title, SECTION_REMOVE_HINT));
+                }
                 rw.remove_section(&id, &title)
                     .map_err(|e| org_rewriter_error("remove section", &id, e))?;
                 changed.insert(format!("section:{title}"), "<removed>".to_string());

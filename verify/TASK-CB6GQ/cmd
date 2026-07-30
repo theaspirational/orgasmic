@@ -1,0 +1,17 @@
+# One line. Run from the repo root by `orgasmic verify TASK-CB6GQ`.
+#
+# The natural red from the TASK-CB6GQ ask, replayed exactly. The injection puts
+# both halves of the defect back: `set_section_body` loses its existence check
+# and falls through to `upsert_section_text` again (so a write to an unknown
+# section silently appends the heading instead of refusing), and the CLI's
+# emitted-op set loses `remove_section` (so the daemon accepts an op no verb can
+# ask for — a section creatable by typo and removable by nothing).
+#
+# Both binaries run unconditionally and the exit codes are OR'd, so a failure in
+# the first cannot hide the second. Chaining them with `&&` would have stopped
+# at the CLI failure and pinned half a proof.
+#
+# Hermetic: two test binaries. No daemon of the operator's, no tmux, no
+# credential, no billed turn — the daemon under test boots in-process on port 0
+# against a tempdir home.
+cargo test -p orgasmic-cli --bin orgasmic node_edit_op_parity; A=$?; cargo test -p orgasmic-daemon --test node_body_roundtrip; B=$?; exit $((A|B))

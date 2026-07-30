@@ -1287,6 +1287,37 @@ impl OrgRewriter {
         Ok(())
     }
 
+    // orgasmic:TASK-CB6GQ
+    /// The titles of a heading's nested sections, in document order.
+    ///
+    /// Exists so a caller can tell "edit an existing section" from "create a
+    /// new one" *before* writing. [`Self::upsert_section_text`] cannot make that
+    /// distinction on the caller's behalf — by the time it runs, appending is
+    /// indistinguishable from a typo.
+    pub fn section_titles(&self, heading_id: &str) -> Result<Vec<String>, OrgError> {
+        let view = OrgFile::parse(self.current_text(), &self.file_name)?;
+        let heading = view
+            .find_by_id(heading_id)
+            .ok_or_else(|| OrgError::HeadingNotFound {
+                file: self.file_name.clone(),
+                selector: format!(":ID: {heading_id}"),
+            })?;
+        Ok(heading
+            .sections
+            .iter()
+            .map(|section| section.title.clone())
+            .collect())
+    }
+
+    // orgasmic:TASK-CB6GQ
+    /// Does `heading_id` already carry a section called `section_title`?
+    pub fn has_section(&self, heading_id: &str, section_title: &str) -> Result<bool, OrgError> {
+        Ok(self
+            .section_titles(heading_id)?
+            .iter()
+            .any(|title| title == section_title))
+    }
+
     /// Remove a nested section (its title line through its content, including
     /// the trailing newline) from the heading identified by `:ID:`.
     pub fn remove_section(

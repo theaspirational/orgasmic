@@ -225,6 +225,157 @@ fn assert_names_the_loss(message: &str, first_heading: &str, count: usize) {
 }
 
 // ---------------------------------------------------------------------------
+// orgasmic:TASK-CB6GQ
+// WRITE: a section write edits; only `--create` creates; `unset` removes
+// ---------------------------------------------------------------------------
+
+/// A write to a section that does not exist is refused by name, listing the
+/// sections the node does have.
+///
+/// It used to append one instead — `set_section_body` and `add_section` shared
+/// a code path through `upsert_section_text` — so a mistyped title minted a
+/// permanent heading and said nothing. The listing is the point: the typo is
+/// obvious the moment the real titles are next to it.
+#[tokio::test]
+async fn section_write_to_an_unknown_title_is_refused_and_names_what_exists() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "proj-cb6gq");
+    let running = Daemon::run(home.clone(), test_options()).await.unwrap();
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", running.addr);
+
+    let response = post_edit(
+        &client,
+        &base,
+        &token,
+        "proj-cb6gq",
+        "cb6gq-typo",
+        serde_json::json!([{
+            "op": "set_section_body",
+            "title": "Descrption",
+            "body": "typo'd title.\n",
+        }]),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let message = response.text().await.unwrap();
+    assert!(
+        message.contains("Descrption"),
+        "the refusal must quote the title that was asked for: {message}"
+    );
+    assert!(
+        message.contains("Description") && message.contains("Acceptance Criteria"),
+        "the refusal must list the sections the node does have: {message}"
+    );
+    assert!(
+        message.contains("--create"),
+        "the refusal must name the flag that makes creation deliberate: {message}"
+    );
+
+    let on_disk =
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
+    assert!(
+        !on_disk.contains("Descrption"),
+        "a refused section write must not have appended the heading: {on_disk}"
+    );
+}
+
+/// `--create` adds a section and `unset` removes it, leaving the file byte
+/// identical to before either ran.
+#[tokio::test]
+async fn create_then_unset_a_section_round_trips_byte_exactly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "proj-cb6gq");
+    let backlog = project_root.join(".orgasmic/tasks/backlog.org");
+    let before = std::fs::read_to_string(&backlog).unwrap();
+
+    let running = Daemon::run(home.clone(), test_options()).await.unwrap();
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", running.addr);
+
+    let created = post_edit(
+        &client,
+        &base,
+        &token,
+        "proj-cb6gq",
+        "cb6gq-create",
+        serde_json::json!([{
+            "op": "add_section",
+            "title": "Evidence",
+            "body": "Deliberately created.\n",
+        }]),
+    )
+    .await;
+    assert_eq!(created.status(), reqwest::StatusCode::OK);
+    let with_section = std::fs::read_to_string(&backlog).unwrap();
+    assert!(
+        with_section.contains("** Evidence"),
+        "--create must add the section: {with_section}"
+    );
+
+    let removed = post_edit(
+        &client,
+        &base,
+        &token,
+        "proj-cb6gq",
+        "cb6gq-remove",
+        serde_json::json!([{ "op": "remove_section", "title": "Evidence" }]),
+    )
+    .await;
+    assert_eq!(removed.status(), reqwest::StatusCode::OK);
+
+    let after = std::fs::read_to_string(&backlog).unwrap();
+    assert_eq!(
+        after, before,
+        "create-then-remove must leave the file byte identical"
+    );
+}
+
+/// Removing a section that is not there is refused, never a silent no-op — the
+/// caller asked for a state change and has to learn it did not happen.
+#[tokio::test]
+async fn removing_an_absent_section_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "proj-cb6gq");
+    let running = Daemon::run(home.clone(), test_options()).await.unwrap();
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", running.addr);
+
+    let response = post_edit(
+        &client,
+        &base,
+        &token,
+        "proj-cb6gq",
+        "cb6gq-absent",
+        serde_json::json!([{ "op": "remove_section", "title": "Nonexistent" }]),
+    )
+    .await;
+
+    assert!(
+        response.status().is_client_error() || response.status().is_server_error(),
+        "removing an absent section must not report success"
+    );
+    let message = response.text().await.unwrap();
+    assert!(
+        message.contains("Nonexistent"),
+        "the refusal must name the section asked for: {message}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // WRITE: nested `**` headings are refused, naming what would be lost
 // ---------------------------------------------------------------------------
 
