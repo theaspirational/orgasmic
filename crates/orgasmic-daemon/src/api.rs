@@ -21995,79 +21995,23 @@ pub(crate) mod tests {
              conflict naming guard_id, owner_pid and owner_alive"
         );
 
-        // The refusal really came from this reservation: releasing the guard
-        // lets the very same dispatch advance past admission. It then fails
-        // for an unrelated reason (hermes has no binary to spawn), which must
-        // NOT be the cleanup 409 — proving the 409 above was the reservation,
-        // not a lease or a stale entry.
+        // Release the guard directly so the test leaves no reservation behind.
+        //
+        // The 409 above was this reservation: admission refused on it before
+        // any driver subprocess could be launched, so the refusal was purely
+        // the lease/cleanup fence — no provider credential, no billed turn.
+        //
+        // We deliberately do NOT run a second dispatch after the release. On a
+        // host with a `hermes` binary on `$PATH`, `acp-stdio` upgrades the
+        // simulated harness to a real `hermes acp` subprocess during driver
+        // spawn — which happens *after* admission clears. That second call
+        // would therefore cross a provider boundary this test must stay out
+        // of, and its outcome (spawn vs. a non-cleanup error) is host-dependent
+        // rather than hermetic. The reservation-proves-the-409 link is already
+        // established above by the guarded call; the injection under
+        // `verify/TASK-95SGV.2` pins the 500-vs-409 red without any driver
+        // process, so no post-release dispatch is needed.
         state.supervisor.finish_dispatch_close(&guard_id).await;
-        match spawn_worker_run(
-            &state,
-            SpawnWorkerRequest {
-                project_id,
-                task_id,
-                worker: StageWorker {
-                    id: "implementer-hermes".into(),
-                    kind: WorkerKind::Implementer,
-                    driver: "acp-stdio".into(),
-                    harness: "hermes".into(),
-                    linked_skills: Vec::new(),
-                    missing_skills: Vec::new(),
-                    babysitter: None,
-                    max_iterations: None,
-                    context_budget_chars: None,
-                    applicable_states: Vec::new(),
-                    stall_timeout_secs: None,
-                    max_run_duration_secs: None,
-                    sandbox_permissions: None,
-                    harness_args: Vec::new(),
-                },
-                run_kind: RunKind::Worker,
-                bundle: "TASK-95SGV.2 endpoint cleanup-conflict probe (after release)",
-                overrides: DriverOverrides::default(),
-                project_root_path: &project_root,
-                worktree_path: &worktree,
-                last_path: None,
-                stdout_path: None,
-                dispatch_attempt_token: None,
-                origin: "cli_dispatch",
-                dispatch_kind: Some("implementer"),
-                task_sandbox_permissions: None,
-                dispatch_governance: None,
-            },
-        )
-        .await
-        {
-            Ok(spawn) => {
-                // If hermes somehow spawned, release the run so the test never
-                // leaks a worker. Unreachable without a hermes binary.
-                let _ = state
-                    .supervisor
-                    .release(
-                        &spawn.acquire.run_id,
-                        "TASK-95SGV.2 test cleanup",
-                        ReleaseOutcome::Completed,
-                    )
-                    .await;
-            }
-            Err(after) => {
-                assert_ne!(
-                    after.error.status,
-                    StatusCode::CONFLICT,
-                    "once the guard is released the dispatch must not surface the \
-                     cleanup 409"
-                );
-                assert!(
-                    after.error.body.as_ref().is_none_or(|body| {
-                        body.get("error").and_then(Value::as_str)
-                            != Some("dispatch cleanup in progress")
-                    }),
-                    "once the guard is released the dispatch must not surface the \
-                     cleanup conflict: {:?}",
-                    after.error.body,
-                );
-            }
-        }
     }
 
     /// Acquire a run whose driver reaches `Ready` and then never says anything
