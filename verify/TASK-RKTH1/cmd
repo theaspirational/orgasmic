@@ -1,0 +1,14 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RKTH1`.
+#
+# The natural red from the TASK-RKTH1 ask, replayed exactly: a worker prompt an
+# order of magnitude past tmux's imsg ceiling is spawned through the ordinary
+# tmux route. Under the injection the oversized launch stays on the imsg
+# command line, so `tmux new-session` refuses with its own `command too long`
+# and the driver surfaces it as a Transport error — the failure an operator saw
+# only as `500 failed to acquire worker run`.
+#
+# Needs a real tmux (the test skips itself without one, which would make this
+# proof vacuous — `expect-red` therefore pins the failure, not the skip). No
+# daemon, no credential, no billed turn: the pane runs /bin/sh and writes the
+# prompt it received to a tempdir.
+cargo test -p orgasmic-drivers --lib modes::tmux::tests::oversized_prompt_spawns_and_arrives_byte_exact
