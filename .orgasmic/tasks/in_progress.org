@@ -798,3 +798,46 @@ SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tes
 
 LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
 
+A SECOND AXIS: WORKTREE, NOT ONLY LOAD [2026-07-31, TASK-CB6GQ gate]. This
+task's standing frame is "fails on a full-suite run, passes alone", with load as
+the explanation. There is an independent axis: WHICH WORKTREE runs the suite,
+measured on a quiet machine with sequential runs and no concurrency at all.
+
+Measured, =cargo test -p orgasmic-daemon --lib=, both trees on 75fe95f:
+- =/private/tmp/cb6gq-control= (detached at 75fe95f): 640 passed / 0 failed in
+  42.73s, then 42.90s. Twice, clean.
+- =/private/tmp/task-cb6gq= (a branch one commit on top of 75fe95f): 638-639
+  passed / 1-2 failed, in 122.71s and 123.01s.
+Narrowed to =api::tests= alone: control 36.64s / 0 failed, branch 88.93s / 1
+failed.
+
+THE DECISIVE CONTROL, and the reason this is worth recording: =git checkout
+75fe95f= INSIDE the slow worktree — byte-identical code to the fast one — still
+gave 85.87s and the same failure. Same commit, same machine, same moment,
+different worktree: 2.3x runtime and a red. Whatever this is, it is not the diff
+under test and not concurrent load.
+
+Failures seen on the slow worktree, each green in isolation on the first retry:
+=api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=
+(already registered here), =api::tests::recovery_reattaches_rmux_session_when_handle_exists=,
+=api::tests::recovery_inventory_waits_for_atomic_claim_commit= (the recover-route
+family already on this task), and
+=supervisor::tests::a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=.
+A different subset each run, which is the probabilistic shape already recorded —
+but the 2.3x runtime is reproducible, not probabilistic, and is the part that
+points somewhere.
+
+NOT stale mux state, checked during the slow runs: =rmux ls= empty, no tmux
+server on the default socket, and although 43 leftover
+=/private/tmp/tmux-501/orgasmic-test-*= sockets had accumulated, zero of them
+had a live server behind it. Cause unidentified; the candidates worth trying
+first are per-worktree =target/= state and anything the suite resolves from cwd.
+
+WHY IT MATTERS BEYOND THIS TASK, and the practical rule it produces: a green
+full-suite number is not evidence unless the worktree is held constant, and a
+red one cannot be attributed to a diff without re-running the BASE code in the
+SAME worktree. That control costs one checkout and one run. It was the only
+thing separating "my change broke the suite" from "this worktree is slow" during
+TASK-CB6GQ, where four consecutive full-suite reds on the branch looked exactly
+like a regression and were not.
+

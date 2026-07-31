@@ -1563,3 +1563,234 @@ lands reproduces the original incident.
 - The rmux behaviour JQ8AV shipped is unchanged (its verify artifact still
   replays red-then-green).
 - A shipped injection proof under verify/, per the project bar.
+
+* BACKLOG TASK-JQ8AV.1 Fix reviewer findings: trustworthy pane evidence and bounded stall probes
+:PROPERTIES:
+:ID: TASK-JQ8AV.1
+:IMPLEMENTS: TASK-JQ8AV
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Independent reviewer run =run-20260729T214845-abef62002ce04fc5a2640717c83ad1ca=
+(tmux / codex / gpt-5.6-sol / high) returned NEEDS FIXES on TASK-JQ8AV.
+
+The clean provider-wait path works, but three timeout-boundary defects remain:
+
+1. Free-form or stale pane text containing broad status substrings can be
+   misclassified as a live provider turn and repeatedly rescue an at-rest
+   TASK-VZMZE wedge.
+2. Progress arriving while the external work probe is awaited is not
+   revalidated afterwards and can still be stall-released.
+3. Timing out a =spawn_blocking= probe stops awaiting it but does not kill or
+   reap a wedged =rmux= or =ps= child, so repeated probes can leak processes and
+   blocking-pool work.
+
+** Acceptance
+
+- Replace pane-wide free-form substring matching with a measured,
+  position-aware TUI status contract restricted to known marker shapes and the
+  actual status region.
+- Add regressions for stale transcript markers, arbitrary
+  =Esc to interrupt= prose, tool/shell output echoing incident text,
+  malformed/truncated captures, known live status rows, and clean at-rest panes.
+- Re-lock and fully revalidate identity, lifecycle, precedence and timeout
+  after the probe returns; any progress during the probe must cancel release.
+- Run probe subprocesses as owned children with an OS-level deadline and
+  explicit kill/reap behavior. A deterministic blocking-child test must prove
+  bounded supervisor latency and disappearance of the concrete child pid.
+- Keep the clean provider-bound survival proof and TASK-VZMZE at-rest release
+  proof green. Do not broaden to tmux here; TASK-4CSMY owns transport
+  generalization after this classifier is safe.
+- Run the TASK-JQ8AV injection proof, focused daemon tests, fmt, and clippy with
+  warnings denied. Do not run any billed harness test.
+
+** Reviewer Evidence
+
+The full reviewer report is preserved in the TASK-JQ8AV reviewer dispatch
+artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3942=.
+
+* BACKLOG TASK-FZB6T.1 Fix reviewer findings: complete safe run-catalog retention and maintenance
+:PROPERTIES:
+:ID: TASK-FZB6T.1
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**, crates/orgasmic-daemon/**, crates/orgasmic-cli/**, verify/TASK-FZB6T/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Independent reviewer run =run-20260729T214845-d18c4ba57c824b7f81487e3dc788add8=
+(tmux / codex / gpt-5.6-sol / high) returned NEEDS FIXES on TASK-FZB6T.
+
+The three injection proofs cover their narrow predicates, but the reviewer
+found nine remaining acceptance and safety gaps:
+
+1. History maintenance implements dry-run only; no confirmed recoverable
+   archive/compaction transaction exists.
+2. History inspection marks every =text_chunk= reclaimable, including
+   structured ACP/subprocess evidence, and exact byte accounting misses
+   torn/blank records.
+3. A failed-recoverable run restores per-poll board/session rescans, and all
+   terminal records are classified before paging.
+4. Semantic retention bounds individual strings rather than the serialized
+   event/subtree, allowing unbounded many-small-string or deep payloads.
+5. A tombstoned run can become attachable again when its old path is reused.
+6. Snapshot dirty/throttle state is global instead of per project, and cold
+   boot rebuilds are not persisted by the production path.
+7. Semantically corrupt in-root snapshot entries can survive refresh without a
+   real direct-child session file.
+8. The synchronous catalog holds its global mutex across blocking filesystem
+   work from async request and writer paths.
+9. Exact =run show <id>= cannot resolve terminal runs older than the default
+   list window.
+
+** Acceptance
+
+- Implement a confirmed, dry-run-first maintenance transaction with a stable
+  manifest, transport-aware reclaimability, recoverable archive or atomic
+  rewrite, explicit confirmation, rollback, corruption and partial-write tests.
+- Preserve structured ACP/subprocess evidence; reclaim only proven rendered
+  pane payloads and account every input byte exactly, including blank and torn
+  final records.
+- Bound the serialized semantic event/subtree as a whole and replace over-budget
+  or over-depth content with digest, byte count and a truthful source reference.
+- Make recovery links catalog-authoritative, page/filter before classification,
+  avoid per-poll session rescans, and make exact-id lookup direct.
+- Make tombstones terminal for a run identity unless a durable worktree
+  identity proves continuity; add remove-plus-recreate coverage.
+- Validate loaded snapshot entries as direct regular =.jsonl= children through
+  session-directory authority and current file identity.
+- Track dirty/save throttling per canonical project, persist production cold
+  rebuilds, and gather filesystem state outside the catalog mutex and async hot
+  path before a short compare-and-swap/map commit.
+- Add regressions for multiple projects, semantic snapshot corruption, path
+  traversal/wrong-parent/missing files, deep/composite payloads, old exact-id
+  lookup, and bounded concurrent refresh/write behavior.
+- Re-run all three TASK-FZB6T injection proofs, focused crate tests, fmt, and
+  clippy with warnings denied. Do not run any billed harness test.
+
+** Reviewer Evidence
+
+The full reviewer report is preserved in the TASK-FZB6T reviewer dispatch
+artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3941=.
+
+* BACKLOG TASK-ADHWZ Concurrent structured-state writes can return success while losing sibling task headings
+:PROPERTIES:
+:ID: TASK-ADHWZ
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**, crates/orgasmic-daemon/**, crates/orgasmic-cli/**
+:END:
+
+** Description
+
+Three distinct =orgasmic task create= calls were issued concurrently against
+the same project and =backlog.org= on 2026-07-29. All three returned success:
+
+- TASK-95SGV.1 → =tx-20260729-orgasmic-3946=
+- TASK-JQ8AV.1 → =tx-20260729-orgasmic-3948=
+- TASK-FZB6T.1 → =tx-20260729-orgasmic-3947=
+
+Immediately afterwards, only TASK-JQ8AV.1 existed in =backlog.org= and the
+daemon returned 404 for updates to the other two. The missing headings had to
+be recreated sequentially with new idempotency keys. This is silent successful
+write loss at the daemon's structured state authority boundary.
+
+** Acceptance
+
+- Reproduce with deterministic concurrent creates of distinct task ids that
+  target the same state file.
+- Every successful response has exactly one durable heading and matching tx
+  after the requests finish and after reindex/restart; no last-writer-wins loss.
+- Serialize or compare-and-swap the entire read/transform/write transaction at
+  the central writer boundary, not at individual CLI callers.
+- Cover concurrent create/create, create/update and update/update operations
+  against the same Org file, including response loss and idempotent retry.
+- A stale transform must retry from the new file version or fail explicitly;
+  it must never report success for content absent from the committed file.
+- Preserve the existing sanctioned git/human concurrent-writer rules and tx
+  inode-swap protection.
+- Add an injection proof and run focused writer/API tests, fmt, and clippy with
+  warnings denied. Do not run any billed harness test.
+
+** Incident Evidence
+
+The manager observed the three successful CLI responses directly, then verified
+the raw task files with =rg=. Sequential restore txs are
+=tx-20260729-orgasmic-3950= and =tx-20260729-orgasmic-3952=.
+
+* BACKLOG TASK-3TQ0R Extend the driver-resolution fence to daemon integration tests
+:PROPERTIES:
+:ID: TASK-3TQ0R
+:IMPLEMENTS: TASK-3NJ9K
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-daemon
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+TASK-3NJ9K routed daemon driver resolution through =crate::driver_resolution=
+and fenced it under =cfg(test)=: =resolve_driver= default-denies harness-exec
+modes, and =resolve_launch_driver= additionally refuses a mux address whose
+harness that mode would exec.
+
+=cfg(test)= is enabled only while compiling the lib's own test harness. An
+integration test in =crates/orgasmic-daemon/tests/= links the lib built
+*without* it, so both functions there are the production pass-through. The
+entire fence — default-deny, the panic, the launch seam — is absent for that
+whole body of tests.
+
+This is not hypothetical reach. =tests/dispatch_preflight.rs= boots a real
+daemon and =POST=s =/dispatch= with ={"mode": "acp-stdio", "harness":
+"claude"}=, i.e. the ordinary dispatch surface with a provider address, over
+HTTP. Others carry provider harnesses too: =tests/integration.rs=
+(=acp-stdio=/=codex=), =tests/dispatch_credential_plan.rs=,
+=tests/recovery_fault_restart.rs= (=tmux=/=claude= session fixtures driving boot
+reattach).
+
+Audited 2026-07-30: those dispatches are refused before any spawn, because each
+test engineers an unusable credential and asserts the 400. That is genuinely
+host-independent — =classify_bare_api_key= refuses an empty key without reading
+the Keychain — so **no integration test is known to spawn a provider today**.
+
+The defect is structural, not a live leak: the safety is a property each test
+supplies for itself, exactly the shape of the ="unreachable without a hermes
+binary"= comment that caused the original incident. Nothing stops the next
+integration test from posting the same address without engineering a refusal,
+and the fence that exists to catch precisely that cannot see it.
+
+** Acceptance
+
+- A daemon integration test that resolves or launches a real harness-exec
+  address is refused the same way a lib unit test is, with the same named,
+  host-independent message pointing at the stub.
+- The mechanism cannot be =cfg(test)=. Options to weigh and decide in writing:
+  a runtime test-profile flag the daemon sets when booted by
+  =Daemon::run(.., test_options())=; a cargo feature the =[dev-dependencies]=
+  self-dependency enables; or moving the launch seam behind a trait the test
+  harness substitutes. Whichever is chosen must not be settable in a production
+  build.
+- Production behaviour is byte-for-byte unchanged, and the guard costs nothing
+  in a release build.
+- The existing integration coverage keeps working: the preflight tests must
+  still reach their 400 refusals, and the recovery/reattach tests must still
+  resolve mux drivers for sessions they created themselves.
+- A regression test proves the guard from inside =tests/=: an integration test
+  that asks for =acp-stdio=/=claude= is refused, on any host, with and without
+  the provider binary installed.
+- Audit every file under =crates/orgasmic-daemon/tests/= for provider
+  addresses; migrate those whose address is incidental to the stub, and list in
+  the worklog the ones that legitimately need a real address and why.
+
+** Prior Evidence
+
+TASK-3NJ9K fence: =crates/orgasmic-daemon/src/driver_resolution.rs=, merged
+=75fe95f=. Launch-seam gap found in manager review and closed in =32c3f8c=.
+Original incident: =tx-20260730-orgasmic-3992=. Integration reach:
+=crates/orgasmic-daemon/tests/dispatch_preflight.rs= around line 200.
+
