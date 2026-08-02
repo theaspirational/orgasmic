@@ -2636,3 +2636,148 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 23:06:16 reviewer.reported TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4192
+:TIME:         [2026-08-02 Sun 23:06:16]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:RUN_ID:       run-20260802T224823-505d6380ebee41c6b0c169f5de030a64
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 23:07:25 reviewer.done TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4193
+:TIME:         [2026-08-02 Sun 23:07:25]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Round 2 rejected the residual the previous author declared as acceptable, with a reason: the archive demonstrably predates the append it is claimed to recover, so an append landing between the final fingerprint check and the rename is lost outright. It also found a REGRESSION this fix round introduced — the durable manifest changed its defaulted results array to a defaulted files array with no version and no compatibility decoder, so a current runtime reading an old manifest and an old runtime reading a new one BOTH report a successful rollback having restored nothing, which breaks the exact recoverability contract that justifies deleting evidence. And it proved the new structural scanner accepts invalid JSON: skip_value takes any non-empty primitive token, so a record with a truncated literal is classified rendered_tui and dropped, violating fail-closed. Two MEDIUMs are real: dec_BBPW4 cannot hold both 'catalog is disposable' and 'a tombstone never revives' without durable authority outside the cache, and the re-cut FZB6T.1 injection panics on an earlier path assertion so it never exercises the semantic-validation machinery it now claims to cover — which the manager's own PASSing replay could not have detected.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         18m
+:REVIEWED_DIFF: 512d636..0e2c6ea
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES
+:FINDINGS:     3 HIGH blocking (fence is a one-shot handle drop not exclusion held across rename; manifest results->files changed with no version or compat decoder so rollback silently restores nothing in BOTH directions; the structural scanner does not validate JSON so malformed records are classified and deleted), 2 MEDIUM (tombstone durability contradicts the disposable-catalog design; the re-cut FZB6T.1 injection never reaches the semantic-validation assertions it claims to pin)
+:CLOSED_TX:    tx-20260802-orgasmic-4167
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:07:25 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4194
+:TIME:         [2026-08-02 Sun 23:07:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:08:15 task.created TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4195
+:TIME:         [2026-08-02 Sun 23:08:15]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round-2 review (tx-4193) returned NEEDS FIXES with three HIGH blocking findings. Two of them are the previous round's own doing: the TOCTOU it declared an acceptable residual is blocking because the archive predates the append it claims to recover, and the manifest results->files change silently breaks rollback in both directions.
+:END:
+
+* TX 2026-08-02 Sun 23:08:15 task.property_updated TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4196
+:TIME:         [2026-08-02 Sun 23:08:15]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4193 round-2 verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-02 Sun 23:08:59 task.state_transitioned TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4197
+:TIME:         [2026-08-02 Sun 23:08:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.3 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:09:00 manager.dispatch_started TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4198
+:TIME:         [2026-08-02 Sun 23:09:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.3/worktree
+:BRANCH:       task-fzb6t.3-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t3-fix/brief-fzb6t3-fix.md
+:STARTED_AT:   [2026-08-02 Sun 23:09:00]
+:LIVENESS:     1393e068a068ab2de0f95e48849e9d18d93d9045
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round-2 review returned three HIGH blockers, two of them introduced or declared acceptable by the previous round. Briefed that a declared residual is not a free pass on a deletion path, and that finding 4 requires revising dec_BBPW4 rather than writing code around a contradiction.
+:END:
+
+* TX 2026-08-02 Sun 23:09:00 run.created TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4199
+:TIME:         [2026-08-02 Sun 23:09:00]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.3-implementer-20260802T230900.jsonl
+:REASON:       Round-2 review returned three HIGH blockers, two of them introduced or declared acceptable by the previous round. Briefed that a declared residual is not a free pass on a deletion path, and that finding 4 requires revising dec_BBPW4 rather than writing code around a contradiction.
+:RUN_ID:       run-20260802T230900-8ff494157641457ca825af0793b838a6
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.3/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t3-fix/brief-fzb6t3-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-fzb6t3-fix/brief-fzb6t3-fix-cd6bbe48d25c40f6ae02154f86502af7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-fzb6t3-fix/brief-fzb6t3-fix-cd6bbe48d25c40f6ae02154f86502af7-stdout.log
+:DISPATCH_ATTEMPT: cd6bbe48d25c40f6ae02154f86502af7
+:DISPATCH_TX:  tx-20260802-orgasmic-4198
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:

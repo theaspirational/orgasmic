@@ -1007,3 +1007,188 @@ Acceptance:
 - the router text distinguishes the two classes by a stated property, so an agent reaching an unlisted action can classify it rather than guess
 - reads coherently against TASK-3CM0Q: one task puts a checkpoint where a decision exists, this one removes checkpoints where none does
 
+* IN_PROGRESS TASK-FZB6T P1 compact run catalog and bounded semantic session retention :storage:recovery:sessions:
+:PROPERTIES:
+:DEPENDS_ON: TASK-KWSTJ
+:ID: TASK-FZB6T
+:PRIORITY: P1
+:END:
+
+Separate operational lifecycle inventory from transcript/evidence storage so run enumeration and daemon recovery scale with record count, not transcript bytes. This task follows the P0 wire repair and owns the durable shape rather than adding more per-request scans.
+
+Design and implementation:
+1. Maintain a compact per-run catalog entry containing identity, project/task/kind, driver/harness, verified native metadata reference, worktree authority state, lifecycle classification, terminal outcome/time, and replacement/claim link. Update it through the existing session writer/supervisor boundary; rebuild legacy entries once with bounded prefix/tail parsing and cache them by file identity.
+2. `/api/runs` serves actionable live/recoverable records plus a bounded recent terminal window from the catalog. Older terminal history is paged or queried explicitly; it is never reclassified on every poll. Missing/pruned worktrees become a stable tombstoned authority state, not an eternal ambiguous attach candidate.
+3. Lock future storage: rendered tmux/rmux redraw or scrollback events remain forbidden; add a regression proving a long TUI session does not grow orgasmic JSONL from screen repaint traffic. For structured ACP/subprocess events, retain lifecycle and compact semantic tool/progress events needed for recovery and retrospective analysis, but cap individual text/tool-result/thinking payloads and replace overflow with digest, byte count, and source reference. Never copy harness-native JSONL automatically.
+4. Add `run history inspect` and an explicit dry-run-first maintenance command to compact or archive legacy rendered-TUI payloads. It must report files/bytes by driver+harness+event class, preserve lifecycle/native correlation, write recoverably, and require explicit operator confirmation before deletion or irreversible compaction. No automatic cleanup of existing 2.239 GiB.
+5. Define default retention by authority: lifecycle/catalog kept; compact semantic events retained within a documented budget; derived retro evidence cache is disposable; vendor-native history remains vendor-owned.
+
+Acceptance: inventory latency and boot reconciliation are independent of payload bytes after the one-time legacy index; 197-file production-shaped history yields the same actionable classifications before/after catalog migration; current TUI generates zero persisted redraw chunks; ACP/tool evidence remains sufficient to count calls/results/retries/latencies while oversized outputs are bounded; dry run exactly accounts for reclaimable legacy bytes and changes nothing. Include migration rollback and corruption tests.
+
+=== Evidence (manager, 2026-07-29)
+Merged 1b726f6. The hardest of the three rescues: the reboot left two commits
+on the branch plus a substantial UNCOMMITTED refactor in the worktree
+(api.rs, run_catalog.rs, writer.rs — 136 insertions / 166 deletions) making
+=RunCatalog= synchronous and removing a =Handle::current().block_on= re-entry
+from inside =spawn_blocking=, which is a deadlock hazard on a blocking-pool
+thread.
+
+That uncommitted work was salvaged rather than discarded. It compiled clean on
+first check (=cargo check -p orgasmic-daemon --all-targets=, exit 0), so the
+manager committed it on the task branch (bf1f8cb) purely to get a tree clean
+enough to replay the proof — and the proof, not the compile, is what accepted
+it.
+
+Manager-replayed proof, all three shipped artifacts, each PASS with red at exit
+101 matching its pinned signature, tree byte-identical after revert, green at
+exit 0:
+- =orgasmic verify TASK-FZB6T= — inventory cost independent of transcript
+  bytes, identical classification before/after the catalog, boot reconciliation
+  reading no session bytes
+- =orgasmic verify TASK-FZB6T-corruption=
+- =orgasmic verify TASK-FZB6T-redraw=
+All three replayed against fully-merged main and PASSED there too.
+
+Gates on merged main: fmt clean; clippy -D warnings clean; daemon lib suite 617
+passed / 7 load flakes, all green in isolation.
+
+NOT independently reviewed: manager integration review + injection replay only.
+The rescued refactor in particular reached main without its author ever
+reporting on it, which is worth weighing if anything in the run-catalog path
+misbehaves.
+** Notes
+Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
+
+* IN_PROGRESS TASK-FZB6T.3 Fix reviewer findings: hold exclusion across rename, version the manifest, and validate before deleting
+:PROPERTIES:
+:ID: TASK-FZB6T.3
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/src/session.rs, crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/writer.rs, crates/orgasmic-daemon/src/api.rs, verify/TASK-FZB6T/, verify/TASK-FZB6T.1/, verify/TASK-FZB6T-redraw/, verify/TASK-FZB6T-corruption/
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Round-2 review of the compact run catalog returned NEEDS FIXES: three HIGH
+blocking, two MEDIUM (=reviewer.done= tx =tx-20260802-orgasmic-4193=).
+
+Two of the three blockers are things the PREVIOUS round introduced or declared
+acceptable, so read the reviewer's reasoning before assuming the earlier
+judgement stands.
+
+*1. HIGH, BLOCKS SHIP — the fence is not exclusion.*
+=writer.rs:543,975,1315=, =api.rs:7358=, =run_history.rs:993,1051=.
+
+=FenceSession= drops the cached handle ONCE; the next =SessionAppend= simply
+reopens the same path. =compact_one_file= archives the bytes it read, stages the
+replacement, does ONE final fingerprint check, and renames. An append that opens
+and writes between that check and the =rename= lands on the original inode,
+which the rename immediately orphans — and the replacement excludes it while the
+archive PREDATES it, so rollback cannot recover it either.
+
+The previous round declared this a narrowed, acceptable residual. The reviewer
+rejects that with a reason worth repeating: *the archive demonstrably predates
+the append it is claimed to recover*, so the "rollback recovers it byte for
+byte" argument does not hold for this window. It is also a realistic lifecycle
+edge, not a theoretical one — a persisted terminal driver event can make a file
+eligible BEFORE the supervisor appends its final =Lifecycle::Release=.
+
+FIX: a writer-owned reservation/lease held until compaction or rollback
+COMPLETES. While held, appends for that path queue or fail BEFORE opening.
+Release only after rename and journal completion. Add a scheduled
+append-at-pre-rename regression proving the final lifecycle line either lands in
+the replacement or the transaction refuses.
+
+*2. HIGH, BLOCKS SHIP — the manifest format changed and broke rollback in BOTH
+directions.* =run_history.rs:283,1277,1355=.
+
+This round replaced the durable manifest's defaulted =results= array with a
+defaulted =files= array, with NO format version and NO compatibility decoder.
+So:
+- a current runtime reading a TASK-FZB6T.1 manifest ignores =results=, defaults
+  =files=[]=, fences nothing, and rollback returns SUCCESS having restored
+  nothing;
+- an older runtime reading a new manifest does the symmetric thing and also
+  reports a successful no-op.
+
+A silent successful-empty rollback is the worst possible failure for the one
+mechanism whose entire job is to make deletion recoverable. This is a REGRESSION
+introduced by the fix round, not a pre-existing gap.
+
+FIX: version the manifest and support the immediately preceding =results= shape.
+Never default a non-empty plan to a successful empty rollback — fail loudly
+instead. Both-direction migration tests.
+
+*3. HIGH, BLOCKS SHIP — the structural scanner does not validate JSON.*
+=run_catalog.rs:1861,1913,1784=, =run_history.rs:1163=.
+
+=JsonScan::skip_value= accepts any non-empty primitive token and =JsonScan::string=
+accepts invalid escapes and control bytes. So
+=({"kind":"driver_event","event":{"type":"text_chunk","payload":truX}})= is
+INVALID JSON, is classified =rendered_tui=, and =build_compacted= drops its raw
+bytes. The nested-key collision from round 1 is genuinely fixed; the fail-closed
+rule is not. A malformed legacy record sitting in the skipped middle of an
+otherwise terminal pane session gets deleted without ever being proven valid.
+
+FIX: a streaming parser/visitor that VALIDATES every token while retaining only
+top-level =kind= and =event.type=, or make the scanner fully validate strings,
+escapes, UTF-8, numbers and literals. Regressions for invalid literal, invalid
+escape, raw control byte, and byte-for-byte preservation.
+
+*4. MEDIUM — dec_BBPW4 is internally contradictory and needs a DESIGN decision.*
+=run_catalog.rs:38,596,1108,1223,1435=.
+
+The tombstone is terminal only for one live =RunCatalog=. The catalog is
+explicitly disposable, so an absent/corrupt/foreign-version snapshot is rebuilt
+from session bytes, and =verify_worktree_authority= returns =Verified= whenever
+the recorded path currently holds a same-project checkout. Therefore
+prune -> tombstone -> catalog loss -> path reuse REVIVES the attach candidate.
+Snapshot semantic validation also omits =worktree_authority=, so a valid
+snapshot can carry a contradictory verdict.
+
+"Disposable derived cache" and "a tombstone never revives" cannot both be true
+without a durable authority source OUTSIDE the cache. Pick one and make
+dec_BBPW4 say it: either persist terminal tombstones in authoritative lifecycle
+state, or stop calling the catalog disposable. Rebuild and foreign-version tests
+must cover prune -> tombstone -> catalog loss -> path reuse.
+
+*5. MEDIUM — the re-cut TASK-FZB6T.1 injection does not pin what it claims.*
+=verify/TASK-FZB6T.1/injection.patch:8=, =run_catalog.rs:2675,2711=.
+
+The injection removes =snapshot_entry_semantics_are_self_consistent=, but the
+combined test runs path/fingerprint corruption cases FIRST, and under the
+injection the first of those panics — so the semantic-field cases never execute
+and the pinned red names only the path failure. The artifact still applies and
+still injects a real defect, so a red-then-green replay PASSES (the manager's did)
+— which is exactly why this could not be caught that way. A passing replay proves
+the red happens, not that it is the RIGHT red.
+
+FIX: split semantic snapshot corruption into its own test and its own injection
+signature so the red run reaches that assertion independently.
+
+** What the reviewer explicitly CLEARED — do not redo
+
+- The re-pinned =verify/TASK-FZB6T-redraw= injection is SOUND for the defect it
+  names: it removes both the pane refusal and the payload cap, and removing only
+  the cap would not reintroduce the defect. Its changed red signature correctly
+  pins the assertion the real red run reaches.
+- The absence of a single test driving a real tmux/rmux pane through supervisor
+  persistence into JSONL is a NON-BLOCKING residual gap, because the real
+  drivers independently prove count-only/no-TextChunk behaviour and the writer
+  independently refuses pane =text_chunk= after =RunMeta=, including on reopen.
+- The nested-KEY collision half of round-1 finding 1 is closed.
+
+** Acceptance
+
+- All three blockers closed per the fix directions above, with the fail-closed
+  rule applied throughout: where authority or validity cannot be PROVEN from
+  current bytes, refuse rather than delete.
+- dec_BBPW4 revised through the CLI to state which side of the tombstone
+  contradiction the design takes, with the code matching it.
+- The four injection artifacts keep replaying red-then-green, AND the FZB6T.1
+  artifact actually reaches the semantic-validation assertions. Re-cut anything
+  whose hunks move and say so.
+- fmt, clippy -D warnings, focused crate tests. Run gates with the TASK-NTNK0
+  PATH correction and QUOTE =required_test_tooling_is_present=. Do NOT run the
+  billed harness test (TASK-099T6); do NOT loop the full workspace suite.
