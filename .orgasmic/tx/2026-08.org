@@ -934,3 +934,33 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-02 Sun 21:40:02 task.state_transitioned TASK-15MJN
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4091
+:TIME:         [2026-08-02 Sun 21:40:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-15MJN
+:TARGET:       .orgasmic/tasks/cancelled.org
+:REASON:       Exact duplicate of TASK-A2YEM: identical title, identical body text, same source (TASK-G7E4R axis sweep section 3). A2YEM is the survivor because it carries :PRIORITY: P2 and this one carries no priority at all. No work is lost — nothing in this heading is absent from A2YEM.
+:FROM_STATE:   backlog
+:TO_STATE:     cancelled
+:END:
+
+* TX 2026-08-02 Sun 21:40:30 task.state_transitioned TASK-XHP43
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4092
+:TIME:         [2026-08-02 Sun 21:40:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XHP43
+:TARGET:       .orgasmic/tasks/cancelled.org
+:REASON:       Superseded by TASK-4CSMY, which implemented exactly this ask as its work item 0: modes/tmux.rs now emits a coalesced DriverEvent::PaneActivity (6 sites, reusing rmux's PaneActivityThrottle) with live tests asserting a writing pane must publish it. Verified in merged code at 91ff72c, not inferred from the task text. Closure rides on the TASK-4CSMY verdict (reviewer tx-4077 live): if that review returns NEEDS FIXES, the fix round covers this scope too, because it is the same code — refiling this record would only split the defect across two headings again.
+:FROM_STATE:   backlog
+:TO_STATE:     cancelled
+:END:

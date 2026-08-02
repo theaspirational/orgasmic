@@ -371,3 +371,18 @@ See the task body above.
 
 ** Acceptance
 
+* CANCELLED TASK-15MJN RESTART_DRAIN_TIMEOUT carries 15s of narrative slack; name it as a constant on the restart-endpoint axis :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-15MJN
+:END:
+
+From TASK-G7E4R's axis sweep (its report, section 3): daemon_lifecycle::RESTART_DRAIN_TIMEOUT (40s) waits on the restart endpoint's own budgets (RELEASE_FINALIZATION_DRAIN_TIMEOUT 20s + RESTART_WRITER_DRAIN_TIMEOUT 5s = 25s) and is already guarded by the relationship test restart_drain_fuse_outlasts_the_endpoint_budgets_it_waits_on — so it is NOT the unguarded-literal shape G7E4R removed. But its remaining 15s of slack ('rest of the handler') is documented in prose rather than composed from a named margin constant. Ask: express it as endpoint_budgets_total() + RESTART_HANDLER_MARGIN with the existing relationship test asserting the composition, the G7E4R/QRB8S pattern. Small; ship with a verify artifact.
+
+* CANCELLED TASK-XHP43 tmux pane runs have no liveness signal either, so they are unprotected past 600s :tmux:drivers:defect:
+:PROPERTIES:
+:ID: TASK-XHP43
+:PRIORITY: P2
+:END:
+
+Raised by the TASK-RWCRN reviewer as an open question. tmux.rs:1789-1824 has the same pane-is-not-an-event-source shape that TASK-RWCRN fixed for rmux, and only polls for session exit, so a tmux-mode TUI run emits no driver events after ready and is released by the 600s stall detector exactly as rmux was. The reviewer AGREED with leaving tmux out of the rmux-scoped RWCRN fix — tmux has no existing output subscription to reuse, so adding capture polling there would widen both risk and retention scope, and the standing worker matrix is rmux — but flagged that tmux/claude, tmux/codex, tmux/cursor-agent and tmux/hermes remain in orgasmic_drivers::SUPPORTED and are documented as usable. Either give tmux an equivalent liveness signal, or stop advertising tmux pairs as safe for runs longer than 600s. Depends on the shape TASK-RWCRN.1 settles: if pane observation moves from lines to raw bytes, tmux should adopt the same contract rather than inventing a second one.
+
