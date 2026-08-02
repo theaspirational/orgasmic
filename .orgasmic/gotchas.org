@@ -601,6 +601,72 @@ session-child (nohup, ppid 1) — it inherits the terminal's grant. The daemon's
 own log names the remedy; =unindexed_projects= in /daemon/status (TASK-MRJRK)
 is the tell.
 
+DIAGNOSE IT IN ONE QUERY BEFORE REACHING FOR ANY OF THE ABOVE (2026-08-02):
+: sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+:   "select client, auth_value from access
+:    where service='kTCCServiceSystemPolicyAllFiles' and client like '%orgasmic%';"
+=auth_value= 2 = allowed, 0 = DENIED. Reading it needs a terminal that already
+holds Full Disk Access (Warp does here). On 2026-08-02 the recurrence was not a
+"latched dead" grant at all: =~/.orgasmic/bin/orgasmic= carried an explicit
+=auth_value=0= row dated 2026-07-26, while four stale per-version paths
+(=runtimes/0.0.8=, =0.0.12=, =0.0.14=, =target/…/release/orgasmic=) still held
+2. The stable path that =managed_binary.rs= introduced to survive version swaps
+had inherited a DENY. Fix was one toggle in Full Disk Access plus
+=launchctl kickstart -k gui/501/orgasmic.daemon= — 6/6 projects indexed
+immediately, no bridge needed. TCC.db is SIP-protected, so no CLI can flip it;
+the toggle is operator-only. In the Settings list every row is just named
+"orgasmic" — the one with the dark =exec= icon resolves on disk, a pale blank
+icon means the path is gone, which is how you tell live rows from dead ones.
+
+** A Mac-wide freeze and reboot can come out of our own cargo test cycle (syspolicyd → tccd → WindowServer watchdog)
+Measured twice, same signature: =WindowServer-2026-07-29-112228.ips= and
+=WindowServer-2026-08-02-200136.ips= in =/Library/Logs/DiagnosticReports/=.
+Symptom is not an orgasmic error — the whole machine wedges and reboots, and
+=uptime= afterwards shows a 5-minute load average in the hundreds.
+
+The chain, read off the stackshot's turnstile graph:
+1. =syspolicyd= is the ONLY userspace process with =TH_UNINT= threads — four or
+   more piled on one =krwlock= (readers and writers together). Its log volume
+   collapses from ~4000/min to a trickle at the wedge instant.
+2. =tccd='s worker threads block mid =-[TCCDAccessIdentity staticCode]=, parked
+   in =mach_msg receive= with "turnstile has unknown inheritor", never emitting
+   a =REPLY=.
+3. =WindowServer= main thread, =appleeventsd= and =sandboxd= all block ON tccd
+   (they show as turnstile edges → tccd).
+4. WindowServer misses its watchdog checkin for 40s → =WATCHDOG= termination →
+   reboot. On 2026-08-02 the unanswered request was =msgID=183.1377= at
+   20:00:51; the watchdog fired at 20:01:36.
+
+Cause: syspolicyd XProtect-scans our build output. From
+=/var/db/SystemPolicyConfiguration/ExecPolicy= (0600 root — =sudo cp= the db
+plus =-shm= and =-wal= somewhere and query the copy), =policy_scan_cache= for
+2026-08-02 holds ~1570 scans, bursts to 39/min, 214 in the incident hour:
+=build_script_build-*= ×202, =orgasmic_daemon-5f50721007a8fd8c= ×62 (the exact
+test binary alive in BOTH stackshots), =orgasmic-*=, =orgasmic_drivers-*=,
+=lib*_derive-*.dylib= proc-macros, and the test binaries themselves
+(=daemon_lifecycle-*=, =writer_durability-*=, =tx_ledger_guard-*=, …). A single
+scan was measured blocking one =exec= for 10.3 seconds.
+
+MITIGATION: System Settings > Privacy & Security > Developer Tools, add the
+apps that actually run the builds. =executable_measurements_v2.
+responsible_file_identifier= ranks them: Warp 341, Codex 313, Cursor 208,
+iTerm2 197, VS Code Insiders 82, cmux 58. Warp, Cursor and ChatGPT/Codex were
+granted 2026-08-02 21:59; iTerm2 is still ungranted. Second lever: do not run
+the mux-spawning test suite next to a live dispatch swarm — that stacks a scan
+burst on an exec path already running ~3000 notifications/min on this machine.
+
+DO NOT re-derive this with a hand-compiled probe. A bare =cc=-built executable
+triggers no scan at all (verified from a shell and from a launchd control), and
+that null result reads as "our builds are innocent" — it is not the trigger.
+The triggers are cargo's build scripts, dlopen'd proc-macro dylibs, and test
+binaries. Quarantine (=com.apple.quarantine=) is a separate, real trigger, but
+the quarantine-events db showed one event all day, none in the window.
+
+Attribution honesty: orgasmic is a leading contributor, not the proven sole
+cause. The installed daemon was idle for the 10 minutes before the 2026-08-02
+hang, and the TCC responsible-app census in that window read Cursor 10,
+Raycast 4, codex 3, CleanShot 3, orgasmic 2.
+
 ** The evidence stall clock kills provider-bound turns: dispatch high-effort workers with a governance stall override
 Measured 2026-07-29 (TASK-JQ8AV): a claude-opus-5 high-effort turn thinking
 server-side for minutes produces ~0% cpu, zero pane repaints, no events — the

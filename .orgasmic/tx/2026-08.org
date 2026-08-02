@@ -546,3 +546,32 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Observed by the TASK-4CSMY reviewer: 112 inactive orgasmic-pane-* dirs in five clusters, no open handles, no surviving cat processes. Its own acquire/release smoke and Drop-path test each added zero, so this is test-teardown residue, not a per-run daemon leak — but it accumulates unbounded.
 :END:
+
+* TX 2026-08-02 Sun 14:53:58 implementer.reported TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4068
+:TIME:         [2026-08-02 Sun 14:53:58]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:RUN_ID:       run-20260802T140310-7f380a1a5360475d9a0091ecadc38cd1
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-JQ8AV.1/worktree
+:SHA:          24df77ac142771ce8e1e13711718eb6f297246e8
+:END:
+
+* TX 2026-08-02 Sun 15:00:36 manager.dispatch_orphaned TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4069
+:TIME:         [2026-08-02 Sun 15:00:36]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-FZB6T.1-implementer-20260802T140036.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260802T140036-98fa029c8e4a4c76add05471d94f46bb
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.1/worktree
+:END:
