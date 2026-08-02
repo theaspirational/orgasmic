@@ -3471,3 +3471,135 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Found by the TASK-0JY7M implementer while writing the router's agent-selection policy, and outside its declared scope. A manager reading both files now gets 'ask the operator, nothing is stored' from the router and a stored per-stage model table from the convention it is pointed at four times.
 :END:
+
+* TX 2026-08-02 Sun 23:57:31 task.state_transitioned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4240
+:TIME:         [2026-08-02 Sun 23:57:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-VEGRV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:57:31 manager.dispatch_started TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4241
+:TIME:         [2026-08-02 Sun 23:57:31]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:BRANCH:       task-vegrv-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-vegrv/brief-vegrv.md
+:STARTED_AT:   [2026-08-02 Sun 23:57:31]
+:LIVENESS:     43619f1a7401945cfff03a8a2a0653af2524f129
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P1 and active: the standing worker matrix in shipped content contradicts the agent-selection policy TASK-0JY7M landed an hour ago, and its --mode tmux guidance would reproduce the failure that destroyed the TASK-FZB6T.1 report last night on the currently installed daemon. Prose-only, disjoint from the FZB6T reviewer and from TASK-3CM0Q.
+:END:
+
+* TX 2026-08-02 Sun 23:57:32 run.created TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4242
+:TIME:         [2026-08-02 Sun 23:57:32]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-VEGRV-implementer-20260802T235731.jsonl
+:REASON:       P1 and active: the standing worker matrix in shipped content contradicts the agent-selection policy TASK-0JY7M landed an hour ago, and its --mode tmux guidance would reproduce the failure that destroyed the TASK-FZB6T.1 report last night on the currently installed daemon. Prose-only, disjoint from the FZB6T reviewer and from TASK-3CM0Q.
+:RUN_ID:       run-20260802T235731-a0f17bb23ec74e43be1b4574dc437a74
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-vegrv/brief-vegrv.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-vegrv/brief-vegrv-1e24b6d050b6459db24ccef2af59441e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-vegrv/brief-vegrv-1e24b6d050b6459db24ccef2af59441e-stdout.log
+:DISPATCH_ATTEMPT: 1e24b6d050b6459db24ccef2af59441e
+:DISPATCH_TX:  tx-20260802-orgasmic-4241
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 23:57:32 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4243
+:TIME:         [2026-08-02 Sun 23:57:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-3CM0Q to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:57:33 manager.dispatch_started TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4244
+:TIME:         [2026-08-02 Sun 23:57:33]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:BRANCH:       task-3cm0q-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q.md
+:STARTED_AT:   [2026-08-02 Sun 23:57:33]
+:LIVENESS:     43619f1a7401945cfff03a8a2a0653af2524f129
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Unblocked: TASK-YGB1R landed the derivable triggers this depends on, so the tier is now computable and what remains is the output obligation that makes it auditable. Briefed to land the verb BEFORE the prose, because cli_parity resolves every orgasmic invocation in shipped/ against the real binary and would correctly go red otherwise.
+:END:
+
+* TX 2026-08-02 Sun 23:57:33 run.created TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4245
+:TIME:         [2026-08-02 Sun 23:57:33]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-3CM0Q-implementer-20260802T235733.jsonl
+:REASON:       Unblocked: TASK-YGB1R landed the derivable triggers this depends on, so the tier is now computable and what remains is the output obligation that makes it auditable. Briefed to land the verb BEFORE the prose, because cli_parity resolves every orgasmic invocation in shipped/ against the real binary and would correctly go red otherwise.
+:RUN_ID:       run-20260802T235733-a642ea866ff145058a1581e19b5ffe3a
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q-5e4bad4d1e9145c8b0bc4fc00f399156-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q-5e4bad4d1e9145c8b0bc4fc00f399156-stdout.log
+:DISPATCH_ATTEMPT: 5e4bad4d1e9145c8b0bc4fc00f399156
+:DISPATCH_TX:  tx-20260802-orgasmic-4244
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:

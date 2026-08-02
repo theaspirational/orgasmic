@@ -1,32 +1,6 @@
 #+title: Todo
 #+orgasmic_version: 1
 
-* TODO TASK-3CM0Q Require a recorded tier declaration before manager-direct source edits :workflow:runtime:process:
-:PROPERTIES:
-:ID: TASK-3CM0Q
-:PRIORITY: P1
-:DEPENDS_ON: TASK-YGB1R
-:END:
-
-Problem, observed 2026-07-25 on TASK-KWSTJ: a manager session read the resolved `default` workflow printed by `orgasmic entry`, registered that manager-implementer is a sanctioned mode, and went straight to editing source. It never classified the work as trivial / ordinary / risky at all. The result was ~900 lines of P0 daemon-recovery code across four crates landing with no independent reviewer pass and no user decision about tier.
-
-The failure mode is structural, not textual. The workflow states the rule clearly, but it only imposes a *reading* obligation. An agent under execution momentum skims a reading obligation; it cannot skim an *output* obligation. Nothing in the current flow requires the agent to emit anything before its first source edit, so skipping the decision is silent and leaves no trace to audit afterwards.
-
-Also note the existing escape hatch does not fire: "if the tier is unclear, ask the user" only triggers when the agent notices ambiguity, and an agent that never asked the question never notices any.
-
-Work:
-1. Add a manager-side tier declaration recorded through the daemon, e.g. `orgasmic manager tier --task <id> --tier trivial|ordinary|risky --reason <text>`, appended to tx like any other manager state write so it is auditable after the run.
-2. Invert the default in `shipped/entry/router.org` and `shipped/workflows/default.org`: no tier stated for the current task means the manager may not edit source directly. Manager-direct becomes a thing you claim, not a thing you fall into.
-3. Make the declaration cheap for genuinely trivial work — one command, no prompt round-trip when the tier is `trivial` and the task carries no escalating trigger (see the sibling triggers task).
-4. Decide and document what happens on a mid-task tier change (scope grew from trivial to ordinary): re-declare, or escalate to the user.
-
-Out of scope: enforcing this in the daemon against arbitrary file writes. This is a manager-discipline surface, not a sandbox.
-
-Acceptance:
-- a manager session that edits source with no declared tier is visibly out of policy, and the omission is detectable from tx after the fact
-- declaring `trivial` costs one command
-- router and workflow text agree with the CLI surface, with no leftover prose implying manager-direct is the default
-
 * TODO TASK-8ED6V Make retired-content residue visible to agents, not just to the daemon log :runtime:docs:process:
 :PROPERTIES:
 :ID: TASK-8ED6V
