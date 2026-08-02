@@ -1116,22 +1116,41 @@ enum RunHistoryCmd {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Report exactly which legacy rendered-TUI bytes a compaction pass could
-    /// reclaim.
+    /// Reclaim legacy rendered-TUI payload from ended runs.
     ///
-    /// `--dry-run` is required and is the only mode this build implements. The
-    /// destructive half — compacting or archiving those payloads — is
-    /// deliberately not wired up here: it must preserve lifecycle/native
-    /// correlation, write recoverably, and take an explicit operator
-    /// confirmation, and none of that may ship on the back of a flag that
-    /// already accounts correctly. Nothing is ever cleaned up automatically.
+    /// Dry run unless `--confirm <manifest-id>` names the plan you just read.
+    /// A dry run prints the plan and its manifest id; passing that id back
+    /// executes exactly that plan and nothing else — if anything on the board
+    /// changed in between, the id no longer matches and the command refuses
+    /// rather than acting on a stale decision.
+    ///
+    /// Only ended runs are candidates (a live run's session file is held open
+    /// by the writer), and only records proven to be rendered pane output are
+    /// reclaimed: structured ACP/subprocess evidence, lifecycle, and any record
+    /// the accounting could not classify are never touched. Every original is
+    /// archived whole before its file is replaced, and
+    /// `orgasmic run history rollback` restores them byte for byte. Nothing is
+    /// ever cleaned up automatically.
     Compact {
-        /// Required. Report only; changes nothing.
+        /// The registered project to maintain.
+        #[arg(long)]
+        project: String,
+        /// Report only; changes nothing. The default, and mutually exclusive
+        /// with `--confirm`.
         #[arg(long = "dry-run")]
         dry_run: bool,
-        /// Restrict accounting to one registered project id.
+        /// The manifest id printed by the dry run. Executes that exact plan.
+        #[arg(long, conflicts_with = "dry_run")]
+        confirm: Option<String>,
+    },
+    /// Restore the originals archived by one compaction manifest.
+    Rollback {
+        /// The registered project the manifest belongs to.
         #[arg(long)]
-        project: Option<String>,
+        project: String,
+        /// Manifest id, as reported by `run history compact`.
+        #[arg(long)]
+        manifest: String,
     },
 }
 
@@ -3337,22 +3356,31 @@ fn cmd_run(home: &Home, cmd: RunCmd) -> Result<()> {
             RunCmd::History(RunHistoryCmd::Inspect { project }) => {
                 client.get(&run_history_path(project.as_deref())).await?
             }
-            // orgasmic:TASK-FZB6T item 4 — the dry run and the destructive run
-            // are the same accounting with different consequences, so the
-            // refusal is stated here, in front of the daemon, rather than by a
-            // route that could later start doing the other thing.
-            RunCmd::History(RunHistoryCmd::Compact { dry_run, project }) => {
-                if !dry_run {
-                    anyhow::bail!(
-                        "`run history compact` requires --dry-run: this build implements the \
-                         accounting only. Compacting or archiving legacy payloads must preserve \
-                         lifecycle/native correlation, write recoverably, and take an explicit \
-                         operator confirmation; none of that is wired up, and no cleanup of \
-                         existing history happens automatically. Run with --dry-run to see \
-                         exactly what a future pass could reclaim."
-                    );
-                }
-                client.get(&run_history_path(project.as_deref())).await?
+            // orgasmic:TASK-FZB6T.1 finding 1 — the dry run and the executing
+            // run are the same plan with different consequences. The daemon
+            // decides which one happened, from whether a manifest id it can
+            // verify was supplied; the CLI never turns "no confirmation" into
+            // an execution.
+            RunCmd::History(RunHistoryCmd::Compact {
+                project,
+                dry_run,
+                confirm,
+            }) => {
+                let _ = dry_run;
+                client
+                    .post_json(
+                        "/runs/history/compact",
+                        &serde_json::json!({"project": project, "confirm": confirm}),
+                    )
+                    .await?
+            }
+            RunCmd::History(RunHistoryCmd::Rollback { project, manifest }) => {
+                client
+                    .post_json(
+                        "/runs/history/rollback",
+                        &serde_json::json!({"project": project, "manifest_id": manifest}),
+                    )
+                    .await?
             }
             RunCmd::NativeTranscript { id } => {
                 client.get(&format!("/runs/{id}/native-transcript")).await?

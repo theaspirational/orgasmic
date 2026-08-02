@@ -1,0 +1,53 @@
+diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
+--- a/crates/orgasmic-daemon/src/run_catalog.rs
++++ b/crates/orgasmic-daemon/src/run_catalog.rs
+@@ -1037,26 +1037,11 @@
+ ///
+ /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
+ fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
+-    let path = entry.session_path.as_path();
+-    if path.parent() != Some(sessions_dir) {
+-        return false;
+-    }
+-    if path
+-        .components()
+-        .any(|component| matches!(component, std::path::Component::ParentDir))
+-    {
+-        return false;
+-    }
+-    if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+-        return false;
+-    }
+-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+-        return false;
+-    };
+-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+-        return false;
+-    }
+-    SessionFileFingerprint::of(&metadata) == entry.fingerprint
++    // INJECTED (TASK-FZB6T.1): the pre-fix rule — anything under the project
++    // root is admitted, with no session-directory authority, no traversal
++    // check, and no current file identity check.
++    let project_root = sessions_dir.ancestors().nth(3).unwrap_or(sessions_dir);
++    entry.session_path.starts_with(project_root)
+ }
+ 
+ /// One filesystem observation of the path a cached authority verdict names.
+@@ -1126,13 +1111,10 @@
+                 verified_identity: *identity,
+             })
+         }
+-        WorktreeAuthority::Tombstoned {
+-            verified_identity, ..
+-        } => {
+-            // A tombstone with no verified identity was already gone at first
+-            // index; nothing can prove continuity for it.
+-            let identity = (*verified_identity)?;
+-            if probe.current != Some(identity) {
++        WorktreeAuthority::Tombstoned { .. } => {
++            // INJECTED (TASK-FZB6T.1): existence at the recorded path is enough
++            // to revive a tombstone, whatever directory now answers to it.
++            if !probe.exists {
+                 return None;
+             }
+             match verify_worktree_authority(project_id, run_meta) {

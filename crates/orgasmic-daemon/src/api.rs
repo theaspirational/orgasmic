@@ -640,6 +640,8 @@ pub fn router(state: ApiState) -> Router {
         // orgasmic:TASK-FZB6T — registered before `/runs/:id` so `history` is a
         // verb, not a run id.
         .route("/runs/history", get(get_run_history))
+        .route("/runs/history/compact", post(post_run_history_compact))
+        .route("/runs/history/rollback", post(post_run_history_rollback))
         .route("/runs/:id", get(get_run).post(stub("TASK-006")))
         .route(
             "/runs/:id/native-transcript",
@@ -7283,6 +7285,111 @@ pub struct RunHistoryQuery {
     project: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct RunHistoryCompactRequest {
+    /// The registered project to maintain. Required: maintenance is per
+    /// project, and a board-wide destructive default is not a thing an
+    /// operator should be able to reach by omission.
+    pub project: String,
+    /// The manifest id of the plan the operator read. Absent means dry run.
+    #[serde(default)]
+    pub confirm: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RunHistoryRollbackRequest {
+    pub project: String,
+    pub manifest_id: String,
+}
+
+/// Resolve one registered project id to its canonical root.
+async fn project_root_for(state: &ApiState, project: &str) -> Result<PathBuf, ApiError> {
+    let board = state.index.snapshot().await.board;
+    let entry = board
+        .iter()
+        .find(|entry| entry.id == project)
+        .ok_or_else(|| ApiError::not_found(format!("project {project}")))?;
+    entry
+        .path
+        .canonicalize()
+        .map_err(|error| ApiError::internal(format!("canonicalize project root: {error}")))
+}
+
+/// `POST /runs/history/compact` — the maintenance transaction
+/// (orgasmic:TASK-FZB6T.1 finding 1).
+///
+/// Dry run by default and in every ambiguous case: without a `confirm` token
+/// this reads and reports, and with a token that does not match the plan it
+/// just computed it refuses. The token is a digest of the plan itself, so
+/// "confirm" cannot be satisfied by anything except having read this exact
+/// plan.
+async fn post_run_history_compact(
+    State(state): State<ApiState>,
+    Json(request): Json<RunHistoryCompactRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let root = project_root_for(&state, &request.project).await?;
+    let catalog = state.run_catalog.clone();
+    let started = std::time::Instant::now();
+    let confirm = request.confirm.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        refresh_project_catalog(&catalog, &root);
+        let entries = catalog.entries_for_project(&root);
+        let plan = crate::run_history::plan_compaction(&root, &entries);
+        let outcome = match confirm {
+            None => Ok(crate::run_history::dry_run_report(plan)),
+            Some(confirm) => crate::run_history::apply_compaction(plan, Some(&confirm)),
+        };
+        // Whatever happened, every rewritten file's cached entry is stale now.
+        for entry in &entries {
+            catalog.invalidate_session(&entry.session_path);
+        }
+        outcome
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("run history compaction failed: {error}")))?;
+
+    let report = report.map_err(|error| match error {
+        crate::run_history::CompactionError::ConfirmationRequired { .. }
+        | crate::run_history::CompactionError::ConfirmationStale { .. } => {
+            ApiError::bad_request(error.to_string())
+        }
+        other => ApiError::internal(other.to_string()),
+    })?;
+    Ok(Json(json!({
+        "report": report,
+        "duration_ms": started.elapsed().as_millis() as u64,
+    })))
+}
+
+/// `POST /runs/history/rollback` — restore the originals one manifest archived.
+async fn post_run_history_rollback(
+    State(state): State<ApiState>,
+    Json(request): Json<RunHistoryRollbackRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let root = project_root_for(&state, &request.project).await?;
+    let catalog = state.run_catalog.clone();
+    let manifest_id = request.manifest_id.clone();
+    let report = tokio::task::spawn_blocking(move || {
+        let report = crate::run_history::rollback_compaction(&root, &manifest_id);
+        if let Ok(report) = &report {
+            for path in &report.restored {
+                catalog.invalidate_session(path);
+            }
+        }
+        report
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("run history rollback failed: {error}")))?;
+
+    let report = report.map_err(|error| match error {
+        crate::run_history::CompactionError::ManifestNotFound { .. } => {
+            ApiError::not_found(error.to_string())
+        }
+        other => ApiError::bad_request(other.to_string()),
+    })?;
+    Ok(Json(json!({ "report": report })))
+}
+
 async fn get_run(
     State(state): State<ApiState>,
     Path(id): Path<String>,
@@ -7296,7 +7403,14 @@ async fn get_run(
         return Ok(Json(json!({"source": source, "run": run})));
     }
 
-    let recovery = recovery_status(&state).await;
+    // orgasmic:TASK-FZB6T.1 finding 9 — an exact id is answered by an exact
+    // lookup. The previous route ran the whole inventory and then searched its
+    // *paged* result, so `run show <id>` returned "no such run" for any
+    // terminal run older than the default fifty-record window: the record
+    // existed, was indexed, and was simply not in the page. The catalog is
+    // keyed by path and carries the id, so a direct lookup answers without
+    // classifying the board at all.
+    let recovery = recovery_status_for_run(&state, &id).await;
     for (classification, runs) in [
         ("interrupted", &recovery.interrupted_runs),
         ("reattached", &recovery.reattached_runs),
@@ -7312,6 +7426,118 @@ async fn get_run(
         }
     }
     Err(ApiError::not_found(format!("run {id}")))
+}
+
+/// The inventory answer for ONE run id, without paging it out of the response.
+///
+/// orgasmic:TASK-FZB6T.1 finding 9. The catalog is refreshed for the project
+/// that holds the run — nothing else on the board is touched — and only that
+/// one record is classified. A run the catalog does not hold falls back to the
+/// full unbounded inventory, which is the pre-catalog answer and still finds
+/// records the index has not seen yet.
+async fn recovery_status_for_run(state: &ApiState, run_id: &str) -> RecoveryResponse {
+    let _status_guard = state.recovery_status_lock.lock().await;
+    let board = state.index.snapshot().await.board;
+    let roots: Vec<PathBuf> = board.iter().map(|entry| entry.path.clone()).collect();
+
+    // Refresh only the project whose sessions directory could hold this id.
+    // The catalog may not have it yet (a run created since the last poll), so a
+    // miss re-indexes every project once and then asks again.
+    let catalog = state.run_catalog.clone();
+    let lookup_id = run_id.to_string();
+    let refresh_roots = roots.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        if let Some(entry) = catalog.find_by_run_id(&lookup_id) {
+            if let Some(root) = entry.project_root.clone() {
+                refresh_project_catalog(&catalog, &root);
+                return catalog.find_by_run_id(&lookup_id).map(|_| root);
+            }
+        }
+        for root in &refresh_roots {
+            let Ok(canonical) = root.canonicalize() else {
+                continue;
+            };
+            refresh_project_catalog(&catalog, &canonical);
+            if catalog.find_by_run_id(&lookup_id).is_some() {
+                return Some(canonical);
+            }
+        }
+        None
+    })
+    .await
+    .unwrap_or(None);
+
+    let scoped: Vec<PathBuf> = found.map(|root| vec![root]).unwrap_or(roots);
+    let live = state.supervisor.snapshot().await;
+    let (recovered, _) = classify_session_files(
+        &state.home,
+        state.trusted_claude_binary.as_ref(),
+        &state.boot.boot_id,
+        &live.runs,
+        &scoped,
+        &state.run_catalog,
+        Some(&state.writer),
+        TerminalWindow::unbounded(),
+    )
+    .await;
+
+    let indexed_origins = recovered
+        .iter()
+        .any(|run| run.run_id == run_id && run.classification == "failed_recoverable")
+        .then(|| {
+            collect_recovery_origin_index(
+                &state.home,
+                &board,
+                Some(&state.run_catalog),
+                &mut InventoryStageMetrics::default(),
+            )
+        });
+    let mut response = RecoveryResponse {
+        boot_id: state.boot.boot_id.clone(),
+        acquisition_paused: live.acquisition_paused,
+        live_runs: live.runs,
+        interrupted_runs: Vec::new(),
+        reattached_runs: Vec::new(),
+        failed_recoverable_runs: Vec::new(),
+        terminal_noop_runs: Vec::new(),
+        ambiguous_runs: Vec::new(),
+        inventory: None,
+        lost_release_finalizations: state.release_tasks.lost_finalizations(),
+        note: "exact run lookup: one record, classified under the same rules as the inventory",
+    };
+    for mut run in recovered {
+        if run.run_id != run_id {
+            continue;
+        }
+        if run.classification == "failed_recoverable" && run.project_id.is_some() {
+            apply_recovery_claim_to_run(
+                &state.home,
+                indexed_origins.as_deref().unwrap_or_default(),
+                &mut run,
+            );
+        }
+        match run.classification.as_str() {
+            "interrupted" => response.interrupted_runs.push(run),
+            "reattached" => response.reattached_runs.push(run),
+            "failed_recoverable" => response.failed_recoverable_runs.push(run),
+            "terminal_noop" => response.terminal_noop_runs.push(run),
+            _ => response.ambiguous_runs.push(run),
+        }
+    }
+    response
+}
+
+/// Refresh one canonical project root's catalog entries. Blocking.
+fn refresh_project_catalog(catalog: &crate::run_catalog::RunCatalog, canonical_root: &FsPath) {
+    let project_id = read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
+        .ok()
+        .map(|identity| identity.project_id);
+    catalog.refresh_dir(
+        &project_sessions_dir(canonical_root),
+        project_id.as_deref(),
+        canonical_root,
+        SessionScanBudget::DEFAULT,
+    );
 }
 
 /// Resolve harness-native session transcript for a run (TASK-0SADP / dec_WDR5K item 7).
@@ -8417,8 +8643,12 @@ async fn post_run_recover(
         hook();
     }
     let board = state.index.snapshot().await.board;
-    let indexed_origins =
-        collect_recovery_origin_index(&state.home, &board, &mut InventoryStageMetrics::default());
+    let indexed_origins = collect_recovery_origin_index(
+        &state.home,
+        &board,
+        Some(&state.run_catalog),
+        &mut InventoryStageMetrics::default(),
+    );
 
     let failed_origin = prior.classification == "failed_recoverable";
     let request_id = req
@@ -9334,6 +9564,17 @@ impl Default for TerminalWindow {
     }
 }
 
+impl TerminalWindow {
+    /// Every terminal record. The exact-id lookup and the tests that compare a
+    /// whole board's classifications use it; no request handler does.
+    fn unbounded() -> Self {
+        Self {
+            limit: usize::MAX,
+            offset: 0,
+        }
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct RunInventoryQuery {
     /// Terminal records to return, newest first. Capped at
@@ -9384,6 +9625,7 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
         &project_roots,
         &state.run_catalog,
         Some(&state.writer),
+        window,
     )
     .await;
     let mut interrupted_runs = Vec::new();
@@ -9397,7 +9639,14 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
     let indexed_origins = recovered
         .iter()
         .any(|run| run.classification == "failed_recoverable")
-        .then(|| collect_recovery_origin_index(&state.home, &board, &mut metrics));
+        .then(|| {
+            collect_recovery_origin_index(
+                &state.home,
+                &board,
+                Some(&state.run_catalog),
+                &mut metrics,
+            )
+        });
     for mut run in recovered {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
@@ -9417,24 +9666,21 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
             _ => ambiguous_runs.push(run),
         }
     }
-    // orgasmic:TASK-FZB6T item 2 — bound the terminal window here, after
-    // classification and before serialization. Newest first, so the default
-    // response answers "what just ended" and older history is reached by an
-    // explicit page rather than by making every poll carry the whole board.
-    // Nothing is reclassified to do this: the ordering key is the terminal time
-    // the catalog recorded once.
+    // orgasmic:TASK-FZB6T item 2 — the terminal window is bounded, newest
+    // first, so the default response answers "what just ended" and older
+    // history is reached by an explicit page rather than by making every poll
+    // carry the whole board.
+    //
+    // orgasmic:TASK-FZB6T.1 finding 3 — the bound is now applied by
+    // `classify_session_files`, BEFORE classification, so the records outside
+    // the window cost a comparison rather than a classification. All that is
+    // left here is presenting them in the response's order; `terminal_total`
+    // and `terminal_returned` were both set by the pass that decided them.
     terminal_noop_runs.sort_by(|a, b| {
         b.terminal_at
             .cmp(&a.terminal_at)
             .then(a.run_id.cmp(&b.run_id))
     });
-    metrics.terminal_total = terminal_noop_runs.len() as u64;
-    let terminal_noop_runs: Vec<RecoveredRun> = terminal_noop_runs
-        .into_iter()
-        .skip(window.offset)
-        .take(window.limit)
-        .collect();
-    metrics.terminal_returned = terminal_noop_runs.len() as u64;
 
     metrics.interrupted = interrupted_runs.len() as u64;
     metrics.reattached = reattached_runs.len() as u64;
@@ -9842,6 +10088,52 @@ fn collect_boot_reattach_candidates(
     candidates
 }
 
+/// Write every project's pending catalog snapshot through the writer.
+///
+/// Per project, and each one's dirty flag and throttle are its own
+/// (orgasmic:TASK-FZB6T.1 finding 6). Best-effort by design: the catalog is
+/// derived state, and a failed snapshot write costs a rebuild, never
+/// correctness.
+async fn persist_catalog_snapshots(
+    state: &ApiState,
+    project_roots: &[PathBuf],
+    min_interval: std::time::Duration,
+) {
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    for root in project_roots {
+        let Ok(canonical_root) = root.canonicalize() else {
+            continue;
+        };
+        if !seen.insert(canonical_root.clone()) {
+            continue;
+        }
+        let Some(bytes) = state
+            .run_catalog
+            .snapshot_bytes_after(&canonical_root, min_interval)
+        else {
+            continue;
+        };
+        let path = canonical_root.join(crate::run_catalog::CATALOG_REL_PATH);
+        if let Err(error) = state
+            .writer
+            .rewrite_file(
+                crate::writer::FileRewrite {
+                    path: path.clone(),
+                    new_contents: bytes,
+                },
+                None,
+            )
+            .await
+        {
+            tracing::debug!(
+                path = %path.display(),
+                error = %error,
+                "run catalog snapshot write failed; the next inventory rebuilds it"
+            );
+        }
+    }
+}
+
 pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
     let home = &state.home;
     let supervisor = &state.supervisor;
@@ -9857,7 +10149,18 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
     })
     .await
     {
-        Ok(candidates) => candidates,
+        Ok(candidates) => {
+            // orgasmic:TASK-FZB6T.1 finding 6 — persist what the boot pass just
+            // derived. The boot scan was the ONLY production caller that
+            // rebuilt the whole index and never wrote it: a daemon that booted
+            // cold and was then stopped before any `GET /api/runs` poll threw
+            // its rebuild away and paid for it again on the next boot, which is
+            // exactly the cost the durable snapshot exists to remove. The floor
+            // is `ZERO` because a cold boot's index is the one save that must
+            // not be throttled away.
+            persist_catalog_snapshots(state, project_roots, std::time::Duration::ZERO).await;
+            candidates
+        }
         Err(error) => {
             tracing::warn!(error = %error, "boot reattach scan failed; skipping reattach");
             return;
@@ -10092,6 +10395,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
 /// catalog's retained lifecycle envelope set, which is what the pre-catalog
 /// code passed it. The catalog decides *when* a file is read, never what its
 /// lifecycle means.
+#[allow(clippy::too_many_arguments)]
 async fn classify_session_files(
     home: &Home,
     trusted_claude_binary: Option<&PinnedClaudeExecutable>,
@@ -10100,11 +10404,13 @@ async fn classify_session_files(
     project_roots: &[PathBuf],
     catalog: &crate::run_catalog::RunCatalog,
     writer: Option<&WriterHandle>,
+    window: TerminalWindow,
 ) -> (Vec<RecoveredRun>, InventoryStageMetrics) {
     let live_ids: std::collections::BTreeSet<_> =
         live_runs.iter().map(|run| run.run_id.as_str()).collect();
     let mut metrics = InventoryStageMetrics::default();
     let mut runs = Vec::new();
+    let mut indexed: Vec<crate::run_catalog::RunCatalogEntry> = Vec::new();
     let mut attach_probes = Vec::new();
     let attach_limit = Arc::new(tokio::sync::Semaphore::new(RECOVERY_ATTACH_MAX_CONCURRENCY));
     // Per-run transcripts live per project under `.orgasmic/tmp/sessions/`
@@ -10119,16 +10425,39 @@ async fn classify_session_files(
         if !seen_dirs.insert(dir.clone()) {
             continue;
         }
-        let project_id =
-            read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
-                .ok()
-                .map(|identity| identity.project_id);
-        let stats = catalog.refresh_dir(
-            &dir,
-            project_id.as_deref(),
-            &canonical_root,
-            SessionScanBudget::DEFAULT,
-        );
+        // orgasmic:TASK-FZB6T.1 finding 8 — the refresh reads a directory,
+        // scans session files, and stats worktrees. None of that may run on an
+        // async runtime thread: `GET /api/runs` is a request handler, and a
+        // session file on a slow or unresponsive volume would block the whole
+        // executor, not just this poll.
+        let stats = {
+            let catalog = catalog.clone();
+            let dir = dir.clone();
+            let canonical_root = canonical_root.clone();
+            match tokio::task::spawn_blocking(move || {
+                let project_id =
+                    read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
+                        .ok()
+                        .map(|identity| identity.project_id);
+                catalog.refresh_dir(
+                    &dir,
+                    project_id.as_deref(),
+                    &canonical_root,
+                    SessionScanBudget::DEFAULT,
+                )
+            })
+            .await
+            {
+                Ok(stats) => stats,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "run catalog refresh failed; skipping this project for this pass"
+                    );
+                    continue;
+                }
+            }
+        };
         metrics.session_files += stats.session_files;
         metrics.session_file_bytes += stats.session_file_bytes;
         metrics.bytes_inspected += stats.bytes_inspected;
@@ -10169,10 +10498,39 @@ async fn classify_session_files(
             }
         }
 
+        indexed.extend(catalog.entries_for_project(&canonical_root));
+    }
+
+    // orgasmic:TASK-FZB6T.1 finding 3 — page BEFORE classifying. Terminal
+    // history is the unbounded part of a board and it is also the part nothing
+    // can be done about: classifying all of it and then returning fifty records
+    // paid the whole cost of the history on every poll, including a recovery
+    // action resolution per record. The split below is decided from catalog
+    // fields alone — no session read, no attach probe — and only the records
+    // this response will actually carry are classified.
+    let (mut terminal, actionable): (Vec<_>, Vec<_>) = indexed
+        .into_iter()
+        .partition(|entry| entry_is_terminal_noop(entry, &live_ids));
+    metrics.terminal_total = terminal.len() as u64;
+    // The same ordering key the response uses: newest terminal first, run id
+    // as the tiebreak so a page boundary is stable across polls.
+    terminal.sort_by(|a, b| {
+        b.terminal_at()
+            .cmp(&a.terminal_at())
+            .then(a.run_id.cmp(&b.run_id))
+    });
+    let paged: Vec<crate::run_catalog::RunCatalogEntry> = terminal
+        .into_iter()
+        .skip(window.offset)
+        .take(window.limit)
+        .collect();
+    metrics.terminal_returned = paged.len() as u64;
+
+    for entries in [&actionable, &paged] {
         classify_catalog_entries(
             home,
             trusted_claude_binary,
-            &catalog.entries_for_project(&canonical_root),
+            entries,
             &live_ids,
             &attach_limit,
             &mut attach_probes,
@@ -10219,6 +10577,42 @@ async fn classify_session_files(
     }
     runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
     (runs, metrics)
+}
+
+/// Whether this catalog record will classify as `terminal_noop`, decided from
+/// catalog fields alone.
+///
+/// orgasmic:TASK-FZB6T.1 finding 3 — this predicate is what makes paging before
+/// classification safe, so it has to reproduce the classifier's terminal branch
+/// exactly: the same three [`TerminalRecord`] shapes, the same live-registration
+/// exception, and the same `Failed` carve-out that routes a failed tombstone to
+/// `failed_recoverable` instead. An unreadable record classifies `ambiguous`
+/// and is never paged out — a record the daemon could not read is work, not
+/// history.
+fn entry_is_terminal_noop(
+    entry: &crate::run_catalog::RunCatalogEntry,
+    live_ids: &std::collections::BTreeSet<&str>,
+) -> bool {
+    use crate::run_catalog::TerminalRecord;
+    if entry.unreadable {
+        return false;
+    }
+    let Some(first) = entry.lifecycle_envelopes.first() else {
+        return false;
+    };
+    let is_terminal = match entry.terminal.as_ref() {
+        Some(TerminalRecord::Release { .. }) | Some(TerminalRecord::DriverEvent { .. }) => true,
+        Some(TerminalRecord::ExternalRegistrationEnded) => {
+            !live_ids.contains(first.run_id.as_str())
+        }
+        None => false,
+    };
+    is_terminal
+        && entry
+            .terminal
+            .as_ref()
+            .and_then(TerminalRecord::outcome)
+            .is_none_or(|outcome| outcome != ReleaseOutcome::Failed)
 }
 
 /// Classify one project's catalog entries, appending to `runs`.
@@ -10968,9 +11362,29 @@ fn apply_recovery_claim_to_run(
     );
 }
 
+/// Index the durable `RecoveryOrigin` links across the board.
+///
+/// orgasmic:TASK-FZB6T.1 finding 3 — this used to `read_dir` every project's
+/// sessions directory and open **every** session file, on every inventory pass
+/// that found a single failed-recoverable run. That is the whole-board rescan
+/// the catalog exists to remove, reintroduced by a different route: a board
+/// with one failed tombstone paid a bounded scan of all 197 files per poll,
+/// forever.
+///
+/// The catalog is authority on which sessions can carry a link. A
+/// `RecoveryOrigin` is a lifecycle envelope, lifecycle envelopes are retained
+/// verbatim by the catalog, and [`RunCatalogEntry::replacement_run_id`] is set
+/// from exactly those envelopes at index time. So the set of candidates is a
+/// map filter, and only a session the catalog already says carries a link is
+/// opened — which on a board with no recovery in flight is none of them.
+///
+/// `catalog` is `None` only where no catalog is available; the fallback is the
+/// old whole-directory enumeration, so the answer can never be *smaller* than
+/// before for want of an index.
 fn collect_recovery_origin_index(
     home: &Home,
     board: &[BoardEntry],
+    catalog: Option<&crate::run_catalog::RunCatalog>,
     metrics: &mut InventoryStageMetrics,
 ) -> Vec<IndexedRecoveryOrigin> {
     let mut links = Vec::new();
@@ -10995,14 +11409,25 @@ fn collect_recovery_origin_index(
         if !seen_dirs.insert(canonical_dir.clone()) {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(&canonical_dir) else {
-            continue;
-        };
-        for file in entries.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-                continue;
+        let candidates: Vec<PathBuf> = match catalog {
+            Some(catalog) => catalog
+                .entries_for_project(&project_root)
+                .into_iter()
+                .filter(|entry| entry.replacement_run_id.is_some())
+                .map(|entry| entry.session_path)
+                .collect(),
+            None => {
+                let Ok(entries) = std::fs::read_dir(&canonical_dir) else {
+                    continue;
+                };
+                entries
+                    .flatten()
+                    .map(|file| file.path())
+                    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+                    .collect()
             }
+        };
+        for path in candidates {
             let indexed = index_recovery_origins_in_session(home, &project_root, &path, project_id);
             metrics.origin_index_files += 1;
             metrics.origin_index_bytes_inspected += indexed.bytes_inspected;
@@ -20191,15 +20616,33 @@ pub(crate) mod tests {
         let catalog = crate::run_catalog::RunCatalog::new();
         let roots = std::slice::from_ref(&board.root);
 
-        let (cold_runs, cold) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        let (cold_runs, cold) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
         assert_eq!(cold.session_files, 197);
         assert_eq!(cold.catalog_rebuilds, 197);
         assert_eq!(cold.catalog_cache_hits, 0);
         assert!(cold.bytes_inspected > 0);
 
-        let (warm_runs, warm) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        let (warm_runs, warm) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
         assert_eq!(
             warm.catalog_cache_hits, 197,
             "every record of an unchanged board must be answered from the catalog"
@@ -20256,10 +20699,28 @@ pub(crate) mod tests {
             let board = catalog_board(scale);
             let catalog = crate::run_catalog::RunCatalog::new();
             let roots = std::slice::from_ref(&board.root);
-            let (_, cold) =
-                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
-            let (_, warm) =
-                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+            let (_, cold) = classify_session_files(
+                &home,
+                None,
+                "boot-1",
+                &[],
+                roots,
+                &catalog,
+                None,
+                TerminalWindow::unbounded(),
+            )
+            .await;
+            let (_, warm) = classify_session_files(
+                &home,
+                None,
+                "boot-1",
+                &[],
+                roots,
+                &catalog,
+                None,
+                TerminalWindow::unbounded(),
+            )
+            .await;
             measurements.push((cold, warm));
         }
         let (small_cold, small_warm) = &measurements[0];
@@ -20328,16 +20789,34 @@ pub(crate) mod tests {
 
         // While the worktree is present, run-008 is a live non-terminal record
         // like any other and IS probed.
-        let (runs, before) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        let (runs, before) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
         assert_eq!(before.tombstoned_authority, 0);
         assert!(runs
             .iter()
             .any(|run| run.run_id == "run-008" && run.worktree_authority == "verified"));
 
         std::fs::remove_dir_all(&board.pruned_worktree).unwrap();
-        let (runs, after) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        let (runs, after) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
         assert_eq!(
             after.tombstoned_authority, 1,
             "the pruned worktree must be recognized once"
@@ -20426,8 +20905,17 @@ pub(crate) mod tests {
         let roots = std::slice::from_ref(&board.root);
 
         let sound = crate::run_catalog::RunCatalog::new();
-        let (expected, _) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &sound, None).await;
+        let (expected, _) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &sound,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
         let snapshot_path = board.root.join(crate::run_catalog::CATALOG_REL_PATH);
         std::fs::write(&snapshot_path, sound.snapshot_bytes(&board.root).unwrap()).unwrap();
 
@@ -20439,7 +20927,15 @@ pub(crate) mod tests {
             ("not json", "}{ not a catalog".to_string()),
             (
                 "written by a daemon whose catalog version this build cannot vouch for",
-                good.replace("\"catalog_version\": 1", "\"catalog_version\": 99"),
+                // Built from the constant, never a literal: a version bump must
+                // not silently turn this case into "the same sound snapshot".
+                good.replace(
+                    &format!(
+                        "\"catalog_version\": {}",
+                        crate::run_catalog::CATALOG_VERSION
+                    ),
+                    "\"catalog_version\": 99",
+                ),
             ),
         ];
         for (name, contents) in corruptions {
@@ -20450,8 +20946,17 @@ pub(crate) mod tests {
                 !matches!(load, crate::run_catalog::SnapshotLoad::Loaded { .. }),
                 "{name}: a catalog this daemon cannot vouch for must not load: {load:?}"
             );
-            let (actual, stats) =
-                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+            let (actual, stats) = classify_session_files(
+                &home,
+                None,
+                "boot-1",
+                &[],
+                roots,
+                &catalog,
+                None,
+                TerminalWindow::unbounded(),
+            )
+            .await;
             assert_eq!(
                 stats.catalog_rebuilds, 197,
                 "{name}: the board is re-indexed"
@@ -20472,8 +20977,17 @@ pub(crate) mod tests {
         let (_home_tmp, home) = catalog_home();
         let catalog = crate::run_catalog::RunCatalog::new();
         let roots = std::slice::from_ref(&board.root);
-        let (runs, _) =
-            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        let (runs, _) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
 
         let mut terminal: Vec<RecoveredRun> = runs
             .into_iter()
@@ -20531,6 +21045,204 @@ pub(crate) mod tests {
             terminal: None,
         });
         assert_eq!(capped.limit, crate::run_catalog::MAX_TERMINAL_WINDOW);
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 3 — terminal history is paged BEFORE it
+    /// is classified, so a poll pays for the window it returns rather than for
+    /// the board's whole past.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_terminal_window_is_applied_before_classification() {
+        let board = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        let catalog = crate::run_catalog::RunCatalog::new();
+        let roots = std::slice::from_ref(&board.root);
+
+        let (bounded, metrics) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::default(),
+        )
+        .await;
+        let returned = bounded
+            .iter()
+            .filter(|run| run.classification == "terminal_noop")
+            .count();
+        assert_eq!(returned, crate::run_catalog::DEFAULT_TERMINAL_WINDOW);
+        assert_eq!(
+            metrics.terminal_total, 188,
+            "the total must still count every terminal record on the board"
+        );
+        assert_eq!(
+            metrics.terminal_returned as usize, returned,
+            "the metric must report what was actually classified"
+        );
+        assert!(
+            bounded.len() < 197,
+            "records outside the window must not be classified at all: {} classified",
+            bounded.len()
+        );
+        // The actionable buckets are never bounded: a failed tombstone or an
+        // ambiguous record is work, and hiding work behind a page is the one
+        // thing the window must not do.
+        assert_eq!(
+            bounded
+                .iter()
+                .filter(|run| run.classification == "failed_recoverable")
+                .count(),
+            5
+        );
+
+        // And the page is the NEWEST terminal records, in the response's own
+        // ordering — the same set an unbounded pass would put first.
+        let (all, _) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
+        let mut every: Vec<&RecoveredRun> = all
+            .iter()
+            .filter(|run| run.classification == "terminal_noop")
+            .collect();
+        every.sort_by(|a, b| {
+            b.terminal_at
+                .cmp(&a.terminal_at)
+                .then(a.run_id.cmp(&b.run_id))
+        });
+        let expected: Vec<&String> = every
+            .iter()
+            .take(crate::run_catalog::DEFAULT_TERMINAL_WINDOW)
+            .map(|run| &run.run_id)
+            .collect();
+        let mut got: Vec<&String> = bounded
+            .iter()
+            .filter(|run| run.classification == "terminal_noop")
+            .map(|run| &run.run_id)
+            .collect();
+        got.sort();
+        let mut want: Vec<&String> = expected.clone();
+        want.sort();
+        assert_eq!(got, want, "the window must carry the newest terminal page");
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 9 — an exact `run show <id>` resolves a
+    /// terminal run that is far outside the default list window.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_exact_id_resolves_a_terminal_run_older_than_the_default_window() {
+        let board = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        std::fs::write(
+            home.board(),
+            format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj\n\
+                 :PROPERTIES:\n:ID:               proj\n:PATH:             {}\n\
+                 :BRANCH:           main\n:STATUS:           active\n:END:\n",
+                board.root.display()
+            ),
+        )
+        .unwrap();
+        let state = direct_stage_test_state(home).await;
+
+        // Establish which terminal runs the DEFAULT window would hide, using
+        // the same classification the endpoint uses.
+        let (paged, _) = classify_session_files(
+            &state.home,
+            None,
+            "boot-1",
+            &[],
+            std::slice::from_ref(&board.root),
+            &state.run_catalog,
+            None,
+            TerminalWindow::default(),
+        )
+        .await;
+        let visible: BTreeSet<String> = paged.iter().map(|run| run.run_id.clone()).collect();
+        // run-196 is a completed worker; the board has 188 of them and the
+        // window carries 50, so most are outside it.
+        let hidden = (9..197)
+            .map(|index| format!("run-{index:03}"))
+            .find(|id| !visible.contains(id))
+            .expect("a 197-record board must have terminal runs outside a 50-record window");
+
+        let answer = get_run(State(state.clone()), Path(hidden.clone()))
+            .await
+            .unwrap_or_else(|error| {
+                panic!("an indexed terminal run must resolve by exact id: {hidden}: {error:?}")
+            });
+        assert_eq!(answer.0["run"]["run_id"].as_str(), Some(hidden.as_str()));
+        assert_eq!(answer.0["classification"].as_str(), Some("terminal_noop"));
+
+        // A genuinely unknown id is still a 404, so the fix did not make the
+        // lookup answer for runs that do not exist.
+        assert!(get_run(State(state), Path("run-not-a-run".to_string()))
+            .await
+            .is_err());
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 6 — two projects on one board each get
+    /// their own snapshot, and neither consumes the other's.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_projects_each_persist_their_own_catalog_snapshot() {
+        let first = catalog_board(1);
+        let second = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        let catalog = crate::run_catalog::RunCatalog::new();
+        let roots = vec![first.root.clone(), second.root.clone()];
+
+        let (_, metrics) = classify_session_files(
+            &home,
+            None,
+            "boot-1",
+            &[],
+            &roots,
+            &catalog,
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
+        assert_eq!(metrics.session_files, 394, "both boards were enumerated");
+
+        for root in &roots {
+            let bytes = catalog
+                .snapshot_bytes_after(root, std::time::Duration::ZERO)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "every refreshed project must have a snapshot to persist: {}",
+                        root.display()
+                    )
+                });
+            std::fs::write(root.join(crate::run_catalog::CATALOG_REL_PATH), bytes).unwrap();
+        }
+
+        // Each snapshot carries exactly its own project's records, and a
+        // restart loads both without re-reading a byte.
+        for root in &roots {
+            let reloaded = crate::run_catalog::RunCatalog::new();
+            assert_eq!(
+                reloaded.load_snapshot(root),
+                crate::run_catalog::SnapshotLoad::Loaded { entries: 197 },
+                "{}",
+                root.display()
+            );
+            let stats = reloaded.refresh_dir(
+                &project_sessions_dir(root),
+                Some("proj"),
+                root,
+                SessionScanBudget::DEFAULT,
+            );
+            assert_eq!(stats.rebuilt, 0);
+            assert_eq!(stats.bytes_inspected, 0);
+        }
     }
 
     /// `run history inspect`'s dry run accounts for every byte and changes
@@ -23310,6 +24022,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         )
         .await;
         let external = recovered
@@ -23483,6 +24196,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         )
         .await;
         let run = recovered
@@ -27867,6 +28581,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         )
         .await;
 
@@ -28160,6 +28875,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         )
         .await;
 
@@ -28607,6 +29323,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         )
         .await;
         let run = recovered
@@ -29671,6 +30388,7 @@ pub(crate) mod tests {
             std::slice::from_ref(&project_root),
             &crate::run_catalog::RunCatalog::new(),
             None,
+            TerminalWindow::unbounded(),
         ));
         let run = recovered
             .iter()

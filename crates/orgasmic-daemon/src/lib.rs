@@ -27,6 +27,7 @@ pub mod manager_registration;
 pub mod prompt_compiler;
 pub mod recovery_claim;
 pub mod run_catalog;
+pub mod run_history;
 pub mod runtime;
 pub mod supervisor;
 pub mod watcher;

@@ -301,6 +301,70 @@ fn get_over_wire(addr: std::net::SocketAddr, token: &str, path: &str) -> WireRes
     }
 }
 
+/// One authenticated POST over a raw socket, for any path.
+///
+/// orgasmic:TASK-FZB6T.1 finding 1 — the maintenance transaction is a POST, and
+/// it is the one route in this file that WRITES. Driving it over the real wire
+/// is the point: an operator's confirmation has to travel the same path as the
+/// dry run that produced it.
+fn post_over_wire(
+    addr: std::net::SocketAddr,
+    token: &str,
+    path: &str,
+    body: &Value,
+) -> WireResponse {
+    // Maintenance is explicitly the command that visits every byte and then
+    // rewrites files, so it gets its own deadline. The 5 s bound this file
+    // enforces everywhere else is a statement about `GET /api/runs` — a poll
+    // that must never grow with the board — and applying it here would be
+    // asserting the opposite of what this route is for.
+    const MAINTENANCE_DEADLINE: Duration = Duration::from_secs(120);
+    let started = Instant::now();
+    let mut stream = TcpStream::connect(addr).expect("connect daemon");
+    stream.set_read_timeout(Some(MAINTENANCE_DEADLINE)).unwrap();
+    stream
+        .set_write_timeout(Some(MAINTENANCE_DEADLINE))
+        .unwrap();
+    let payload = serde_json::to_vec(body).unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\
+         Accept: application/json\r\n\r\n",
+        payload.len()
+    );
+    stream.write_all(request.as_bytes()).expect("send request");
+    stream.write_all(&payload).expect("send body");
+    stream.flush().unwrap();
+    let mut raw = Vec::new();
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        assert!(
+            started.elapsed() < MAINTENANCE_DEADLINE,
+            "POST {path} exceeded the {MAINTENANCE_DEADLINE:?} deadline after {} bytes",
+            raw.len()
+        );
+        let read = stream.read(&mut chunk).expect("read response");
+        if read == 0 {
+            break;
+        }
+        raw.extend_from_slice(&chunk[..read]);
+    }
+    let elapsed = started.elapsed();
+    let header_end = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("response headers must be complete");
+    let head = String::from_utf8_lossy(&raw[..header_end]).to_string();
+    let (status_line, headers) = head.split_once("\r\n").unwrap_or((head.as_str(), ""));
+    WireResponse {
+        status_line: status_line.to_string(),
+        headers: headers.to_string(),
+        time_to_headers: elapsed,
+        time_to_eof: elapsed,
+        body: raw[header_end + 4..].to_vec(),
+    }
+}
+
 /// orgasmic:TASK-FZB6T — `GET /api/runs` serves a BOUNDED recent-terminal
 /// window by default; `?terminal=all` is the explicit query for the whole
 /// history. Actionable buckets are never bounded either way.
@@ -557,14 +621,17 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         } else {
             32 * 1024
         };
-        SessionFixture::new(
-            &format!("run-scale-{index:03}"),
-            "acp-stdio",
-            Some("claude"),
-        )
-        .released(ReleaseOutcome::Completed)
-        .transcript_bytes(bytes)
-        .write_to(&project_root, "orgasmic");
+        // orgasmic:TASK-FZB6T.1 finding 2 — half the board is a PANE transport
+        // and half is a structured one. The two write the same `text_chunk`
+        // shape and mean entirely different things by it: a pane's is legacy
+        // rendered TUI output, a structured transport's is the assistant's
+        // words and its tool results. The accounting has to tell them apart,
+        // and a board with only one of them cannot prove that it does.
+        let transport = if index % 2 == 0 { "rmux" } else { "acp-stdio" };
+        SessionFixture::new(&format!("run-scale-{index:03}"), transport, Some("claude"))
+            .released(ReleaseOutcome::Completed)
+            .transcript_bytes(bytes)
+            .write_to(&project_root, "orgasmic");
     }
 
     // Warm the page cache and the pass itself, then measure.
@@ -684,21 +751,42 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         reclaimable > 0 && reclaimable < accounted,
         "reclaimable {reclaimable} of {accounted}: authority bytes are never reclaimable"
     );
+    // orgasmic:TASK-FZB6T.1 finding 2 — reclaimability is TRANSPORT-AWARE.
+    // The pane transport's legacy redraw payload is reclaimable; the
+    // structured transport's identical-looking `text_chunk` is assistant and
+    // subprocess evidence and must never be counted as free space.
     assert!(
-        report["reclaimable_by_driver"]["acp-stdio/claude"]
+        report["reclaimable_by_driver"]["rmux/claude"]
             .as_u64()
             .unwrap()
             > 0,
         "accounting is reported by driver+harness: {}",
         report["reclaimable_by_driver"]
     );
+    assert!(
+        report["reclaimable_by_driver"]
+            .get("acp-stdio/claude")
+            .is_none(),
+        "a structured transport's text_chunk is evidence, not reclaimable space: {}",
+        report["reclaimable_by_driver"]
+    );
     let buckets = report["buckets"].as_array().unwrap();
     assert!(buckets
         .iter()
         .any(|b| b["event_class"] == "lifecycle" && b["reclaimable"] == false));
-    assert!(buckets
-        .iter()
-        .any(|b| b["event_class"] == "rendered_tui" && b["reclaimable"] == true));
+    assert!(
+        buckets.iter().any(|b| b["event_class"] == "rendered_tui"
+            && b["driver"] == "rmux/claude"
+            && b["reclaimable"] == true),
+        "a pane transport's rendered payload is the reclaimable class"
+    );
+    assert!(
+        buckets.iter().any(|b| b["event_class"] == "rendered_tui"
+            && b["driver"] == "acp-stdio/claude"
+            && b["reclaimable"] == false),
+        "the SAME class from a structured transport is refused: {}",
+        report["buckets"]
+    );
     assert!(report["retention"]
         .as_array()
         .unwrap()
@@ -708,12 +796,173 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         ));
 
     // ...and the board is byte-identical afterwards: the dry run changes nothing.
-    let after: u64 = std::fs::read_dir(project_root.join(".orgasmic/tmp/sessions"))
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.metadata().unwrap().len())
-        .sum();
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    let board_bytes = |dir: &std::path::Path| -> u64 {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("jsonl"))
+            .map(|entry| entry.metadata().unwrap().len())
+            .sum()
+    };
+    let after = board_bytes(&sessions_dir);
     assert_eq!(after, file_bytes, "the dry run must change nothing on disk");
+
+    // orgasmic:TASK-FZB6T.1 finding 1 — the maintenance TRANSACTION, over the
+    // same wire and the same board. Plan, refuse, confirm, roll back.
+    let contents = |dir: &std::path::Path| -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("jsonl"))
+            .map(|entry| (entry.path(), std::fs::read(entry.path()).unwrap()))
+            .collect()
+    };
+    let before_contents = contents(&sessions_dir);
+
+    let plan = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || {
+            post_over_wire(
+                addr,
+                &token,
+                "/api/runs/history/compact",
+                &json!({"project": "orgasmic"}),
+            )
+        }
+    })
+    .await
+    .unwrap();
+    assert!(plan.status_line.starts_with("HTTP/1.1 200"));
+    let plan_body: Value = serde_json::from_slice(&plan.body).expect("plan body parses");
+    let plan_report = &plan_body["report"];
+    assert_eq!(plan_report["dry_run"], true);
+    let token_id = plan_report["confirm_token"].as_str().unwrap().to_string();
+    let planned_bytes = plan_report["plan"]["reclaimable_bytes"].as_u64().unwrap();
+    assert!(
+        planned_bytes > 0,
+        "the board has legacy pane payload to plan"
+    );
+    assert_eq!(
+        planned_bytes, reclaimable,
+        "the plan and the accounting must agree on the number, or the operator is \
+         confirming a different thing than the one they read"
+    );
+    assert_eq!(
+        contents(&sessions_dir),
+        before_contents,
+        "planning must not touch a single byte"
+    );
+
+    // A confirmation that is not this plan is refused, and still writes nothing.
+    let refused = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || {
+            post_over_wire(
+                addr,
+                &token,
+                "/api/runs/history/compact",
+                &json!({"project": "orgasmic", "confirm": "not-the-plan"}),
+            )
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        refused.status_line.starts_with("HTTP/1.1 400"),
+        "a stale confirmation must be refused: {}",
+        refused.status_line
+    );
+    assert_eq!(contents(&sessions_dir), before_contents);
+
+    // The real thing.
+    let applied = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        let token_id = token_id.clone();
+        move || {
+            post_over_wire(
+                addr,
+                &token,
+                "/api/runs/history/compact",
+                &json!({"project": "orgasmic", "confirm": token_id}),
+            )
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        applied.status_line.starts_with("HTTP/1.1 200"),
+        "{}",
+        applied.status_line
+    );
+    let applied_body: Value = serde_json::from_slice(&applied.body).expect("apply body parses");
+    let applied_report = &applied_body["report"];
+    assert_eq!(applied_report["dry_run"], false);
+    assert_eq!(
+        applied_report["reclaimed_bytes"].as_u64(),
+        Some(planned_bytes),
+        "the transaction reclaims exactly what it planned"
+    );
+    let compacted = board_bytes(&sessions_dir);
+    assert!(
+        compacted < file_bytes,
+        "the board must actually shrink: {compacted} vs {file_bytes}"
+    );
+    // Only the pane transport's files changed; every structured-transport
+    // session is byte-identical.
+    let after_contents = contents(&sessions_dir);
+    for (path, before) in &before_contents {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let index: usize = name
+            .trim_start_matches("run-scale-")
+            .trim_end_matches(".jsonl")
+            .parse()
+            .expect("fixture name");
+        if index.is_multiple_of(2) {
+            assert!(
+                after_contents[path].len() < before.len(),
+                "{name}: a pane transport's legacy payload must be reclaimed"
+            );
+        } else {
+            assert_eq!(
+                &after_contents[path], before,
+                "{name}: a structured transport's session must be untouched"
+            );
+        }
+    }
+
+    // And it is recoverable: rollback restores the board byte for byte.
+    let rolled_back = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || {
+            post_over_wire(
+                addr,
+                &token,
+                "/api/runs/history/rollback",
+                &json!({"project": "orgasmic", "manifest_id": token_id}),
+            )
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        rolled_back.status_line.starts_with("HTTP/1.1 200"),
+        "{}",
+        rolled_back.status_line
+    );
+    let rollback_body: Value = serde_json::from_slice(&rolled_back.body).unwrap();
+    assert!(rollback_body["report"]["failed"]
+        .as_object()
+        .is_some_and(|failed| failed.is_empty()));
+    assert_eq!(
+        contents(&sessions_dir),
+        before_contents,
+        "rollback must restore every archived original byte for byte"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
