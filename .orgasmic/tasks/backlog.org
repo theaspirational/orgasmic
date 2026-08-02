@@ -1995,3 +1995,4 @@ the state, but it means the recovery path is also compromised by the same fault.
 - Consider a durable fallback for =dispatch finalize= so a worker report is not
   lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
   transaction so dispatch-close is one commit).
+

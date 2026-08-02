@@ -1792,3 +1792,300 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 22:27:15 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4141
+:TIME:         [2026-08-02 Sun 22:27:15]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:29:15 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4142
+:TIME:         [2026-08-02 Sun 22:29:15]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:31:16 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4143
+:TIME:         [2026-08-02 Sun 22:31:16]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:33:16 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4144
+:TIME:         [2026-08-02 Sun 22:33:16]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:35:17 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4145
+:TIME:         [2026-08-02 Sun 22:35:17]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:36:03 reviewer.finding TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4146
+:TIME:         [2026-08-02 Sun 22:36:03]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:5205-5214
+:REASON:       HIGH correctness — BLOCKS SHIP: STATUS_SPINNER_GLYPHS omits U+2736, but the installed Anthropic Claude Code 2.1.220 production binary defines every normal and Ghostty spinner sequence with U+2736. A provider-bound turn frozen on that live frame is not recognized, so low CPU plus no pane bytes is stall-released at 600s—the false-KILL path this mechanism exists to prevent. Replace the unrelated U+2217 entry with U+2736 and add the exact production frame set to both classifier and real-pane positive controls.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:BLOCKS_SHIP:  true
+:REVIEWED_DIFF: 0bc81d7..817ac4c
+:END:
+
+* TX 2026-08-02 Sun 22:37:17 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4147
+:TIME:         [2026-08-02 Sun 22:37:17]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:37:20 reviewer.reported TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4148
+:TIME:         [2026-08-02 Sun 22:37:20]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:RUN_ID:       run-20260802T222635-02684a2d750f415bbb677526efed9735
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 22:39:18 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4149
+:TIME:         [2026-08-02 Sun 22:39:18]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:40:13 reviewer.done TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4150
+:TIME:         [2026-08-02 Sun 22:40:13]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:REASON:       Round 3 found that the tightening reintroduced the original TASK-JQ8AV failure mode. STATUS_SPINNER_GLYPHS omits U+2736 and includes U+2217; the reviewer extracted the frame table from the INSTALLED Claude Code 2.1.220 binary, which returns [B7,2722,2733,2736,273B,273D] normally and [B7,2722,2733,2736,273B,273B] under ghostty — so 2736 is a real frame in both and 2217 is in neither. A provider-bound turn frozen on that frame is now rejected, CPU stays low, and the healthy worker is stall-released. Manager re-ran the same extraction against the same binary and confirms it exactly. The positive controls could not catch it: both real-pane arms hard-code one glyph and the unit loop only proves the table accepts its own entries. The reviewer also cleared two of the author's residuals as acceptable with reasons, and ran the tooling sentinel with the rmux shim stripped, quoting the PATH — so unlike round 2 its coverage claim is checkable.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         9m
+:REVIEWED_DIFF: 0bc81d7..817ac4c
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     1 HIGH blocking: the new spinner-glyph allowlist omits U+2736, a real Claude frame, creating the false-KILL path the round was required to avoid
+:CLOSED_TX:    tx-20260802-orgasmic-4139
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 22:40:13 reviewer.done TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4151
+:TIME:         [2026-08-02 Sun 22:40:13]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:REASON:       Round 3 found that the tightening reintroduced the original TASK-JQ8AV failure mode. STATUS_SPINNER_GLYPHS omits U+2736 and includes U+2217; the reviewer extracted the frame table from the INSTALLED Claude Code 2.1.220 binary, which returns [B7,2722,2733,2736,273B,273D] normally and [B7,2722,2733,2736,273B,273B] under ghostty — so 2736 is a real frame in both and 2217 is in neither. A provider-bound turn frozen on that frame is now rejected, CPU stays low, and the healthy worker is stall-released. Manager re-ran the same extraction against the same binary and confirms it exactly. The positive controls could not catch it: both real-pane arms hard-code one glyph and the unit loop only proves the table accepts its own entries. The reviewer also cleared two of the author's residuals as acceptable with reasons, and ran the tooling sentinel with the rmux shim stripped, quoting the PATH — so unlike round 2 its coverage claim is checkable.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         9m
+:REVIEWED_DIFF: 0bc81d7..817ac4c
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     1 HIGH blocking: the new spinner-glyph allowlist omits U+2736, a real Claude frame, creating the false-KILL path the round was required to avoid
+:CLOSED_TX:    tx-20260802-orgasmic-4139
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 22:40:13 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4152
+:TIME:         [2026-08-02 Sun 22:40:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 22:40:13 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4153
+:TIME:         [2026-08-02 Sun 22:40:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-JQ8AV to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 22:40:50 task.created TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4154
+:TIME:         [2026-08-02 Sun 22:40:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round-3 reviewer (tx-4150) proved the TASK-4CSMY.1 tightening reintroduced the TASK-JQ8AV failure mode: STATUS_SPINNER_GLYPHS omits U+2736, a real frame in both installed-binary sequences, so a turn frozen on it is rejected and the healthy worker is stall-released. Manager independently confirmed the extraction.
+:END:
+
+* TX 2026-08-02 Sun 22:40:50 task.property_updated TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4155
+:TIME:         [2026-08-02 Sun 22:40:50]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4150 round-3 verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-02 Sun 22:41:19 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4156
+:TIME:         [2026-08-02 Sun 22:41:19]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/healthcheck
+:REASON:       writer liveness probe (TASK-BX5SR: a dead writer serves reads as if healthy)
+:END:
+
+* TX 2026-08-02 Sun 22:41:24 task.state_transitioned TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4157
+:TIME:         [2026-08-02 Sun 22:41:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY.2 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 22:41:25 manager.dispatch_started TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4158
+:TIME:         [2026-08-02 Sun 22:41:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.2/worktree
+:BRANCH:       task-4csmy.2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-4csmy2-fix/brief-4csmy2-fix.md
+:STARTED_AT:   [2026-08-02 Sun 22:41:25]
+:LIVENESS:     9a97ba592b90037e37233ea6833543716c0d652f
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round-3 BLOCK SHIP: the spinner allowlist omits U+2736, a real Claude frame, so a live provider-bound turn frozen on it is stall-killed. The deliverable is the completeness guard, not the one glyph — the current tests cannot distinguish a complete allowlist from an incomplete one.
+:END:
+
+* TX 2026-08-02 Sun 22:41:25 run.created TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4159
+:TIME:         [2026-08-02 Sun 22:41:25]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4CSMY.2-implementer-20260802T224125.jsonl
+:REASON:       Round-3 BLOCK SHIP: the spinner allowlist omits U+2736, a real Claude frame, so a live provider-bound turn frozen on it is stall-killed. The deliverable is the completeness guard, not the one glyph — the current tests cannot distinguish a complete allowlist from an incomplete one.
+:RUN_ID:       run-20260802T224125-cb32013545ba471da1fb18bedc8ea9a8
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-4csmy2-fix/brief-4csmy2-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-4csmy2-fix/brief-4csmy2-fix-d3ec9676edca48cba78f91b98e502868-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-4csmy2-fix/brief-4csmy2-fix-d3ec9676edca48cba78f91b98e502868-stdout.log
+:DISPATCH_ATTEMPT: d3ec9676edca48cba78f91b98e502868
+:DISPATCH_TX:  tx-20260802-orgasmic-4158
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
