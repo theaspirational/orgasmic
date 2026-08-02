@@ -1587,3 +1587,61 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-02 Sun 22:23:38 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4130
+:TIME:         [2026-08-02 Sun 22:23:38]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic
+:REASON:       Daemon writer task died at 22:20:22Z on 'cached mutation lacks its recorded identity' and every write failed for ~2.5 minutes; restarted the daemon (boot 7a62d8bf) to restore it. This entry is the write test.
+:END:
+
+* TX 2026-08-02 Sun 22:24:29 task.created TASK-BX5SR
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4131
+:TIME:         [2026-08-02 Sun 22:24:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-BX5SR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Measured live 2026-08-02: a single writer transaction failing with 'cached mutation lacks its recorded identity' took the writer task down, after which every daemon write returned 500 — task transitions, tx appends, and the in-flight worker's session appends. It cost a running implementer its report and, via the restart needed to recover, its life.
+:END:
+
+* TX 2026-08-02 Sun 22:24:48 manager.dispatch_aborted TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4132
+:TIME:         [2026-08-02 Sun 22:24:48]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:REASON:       Worker killed mid-task by the manager's daemon restart, not by its own failure. The daemon writer task died at 22:20:22Z (TASK-BX5SR), which meant every write was failing including this run's session appends and the dispatch finalize it would eventually call — so its report was already lost. The manager restarted to restore the writer, judging the worker's files safe on disk either way; the restart released the run and the rmux pane died with it. Its 2,452 uncommitted insertions across all five scoped files were preserved by the manager as d982af1 on task-fzb6t.2-impl. Completeness unknown, no gate run against it. A continuation dispatch branches from that commit.
+:CLOSED_TX:    tx-20260802-orgasmic-4121
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.2/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 22:24:49 task.state_transitioned TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4133
+:TIME:         [2026-08-02 Sun 22:24:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-FZB6T.2 to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
