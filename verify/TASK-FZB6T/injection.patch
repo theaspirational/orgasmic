@@ -1,8 +1,8 @@
 diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
-index 08f0c11..5c7dfda 100644
+index fe767fe..5910d2f 100644
 --- a/crates/orgasmic-daemon/src/run_catalog.rs
 +++ b/crates/orgasmic-daemon/src/run_catalog.rs
-@@ -779,32 +779,15 @@ impl RunCatalog {
+@@ -795,33 +795,15 @@ impl RunCatalog {
          {
              let state = self.lock();
              for (path, fingerprint, len) in &observed {
@@ -21,6 +21,7 @@ index 08f0c11..5c7dfda 100644
 -                        // never O(bytes), and the stat happens in phase 3.
 -                        recheck.push(PlannedRecheck {
 -                            path: path.clone(),
+-                            run_id: entry.run_id.clone(),
 -                            previous: entry.worktree_authority.clone(),
 -                            invalidation: state.invalidation(path),
 -                        });
