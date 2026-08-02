@@ -575,3 +575,46 @@
 :RUN_ID:       run-20260802T140036-98fa029c8e4a4c76add05471d94f46bb
 :WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.1/worktree
 :END:
+
+
+* TX 2026-08-02 Sun 21:11:14 implementer.done TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4070
+:TIME:         [2026-08-02 Sun 21:11:14]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:REASON:       All three reviewer findings closed in supervisor.rs: position-aware pane status contract (region + column-0 + measured marker shapes) with real at-rest tmux AND rmux false-rescue arms, post-probe revalidation of lifecycle/identity/precedence/progress, and probe subprocesses funnelled through an owned process group with a 2s child deadline and kill+reap. Merged 7ade8af by the prior session, which died before closing. Manager re-verified gates on main; the 14 in-suite reds were machine-level syspolicyd scan pressure, not the diff, proven by 14/14 green in isolation.
+:WORKER_SESSION: session_01EEDgLzuyAJT2gai82AM5WP
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 24df77ac142771ce8e1e13711718eb6f297246e8
+:MERGE_SHA:    7ade8af
+:BRANCH:       task-jq8av.1-impl
+:WALL:         51m
+:REVIEWED_DIFF: 5912b7e..7ade8af
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; daemon lib 637/651 in-suite with all 14 failures GREEN in isolation (8s total vs 659.9s in-suite, same binary, same worktree) under syspolicyd at 586% CPU
+:CLOSED_TX:    tx-20260802-orgasmic-4064
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 21:11:14 task.state_transitioned TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4071
+:TIME:         [2026-08-02 Sun 21:11:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-JQ8AV.1 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

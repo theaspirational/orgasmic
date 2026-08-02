@@ -19334,3 +19334,72 @@ design.
   TASK-1T3FZ considered that and recorded it as the larger follow-on if the
   daemon-state-only boundary is ever rejected; it is not this task.
 
+* DONE TASK-JQ8AV.1 Fix reviewer findings: trustworthy pane evidence and bounded stall probes
+:PROPERTIES:
+:ID: TASK-JQ8AV.1
+:IMPLEMENTS: TASK-JQ8AV
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Independent reviewer run =run-20260729T214845-abef62002ce04fc5a2640717c83ad1ca=
+(tmux / codex / gpt-5.6-sol / high) returned NEEDS FIXES on TASK-JQ8AV.
+
+The clean provider-wait path works, but three timeout-boundary defects remain:
+
+1. Free-form or stale pane text containing broad status substrings can be
+   misclassified as a live provider turn and repeatedly rescue an at-rest
+   TASK-VZMZE wedge.
+2. Progress arriving while the external work probe is awaited is not
+   revalidated afterwards and can still be stall-released.
+3. Timing out a =spawn_blocking= probe stops awaiting it but does not kill or
+   reap a wedged =rmux= or =ps= child, so repeated probes can leak processes and
+   blocking-pool work.
+
+** Acceptance
+ORDERING INVERTED [2026-08-02]. This task's original acceptance said "Do not
+broaden to tmux here; TASK-4CSMY owns transport generalization after this
+classifier is safe." That order did not happen: TASK-4CSMY landed first (merge
+=7d9c60c=) and routes tmux captures through the very classifier this task exists
+to make safe. Its reviewer called that a BLOCK SHIP
+(=tx-20260802-orgasmic-4055=): an at-rest tmux pane whose prompt, transcript or
+tool output contains =Esc to interrupt= is classified =Working= on every expired
+stall sweep and survives to the 14,400s max-run ceiling instead of dying at 600s.
+So the classifier defect now applies to BOTH pane transports, and this task is
+the unblocking work for TASK-4CSMY as well as for TASK-JQ8AV.
+
+- Replace pane-wide free-form substring matching with a measured,
+  position-aware TUI status contract restricted to known marker shapes and the
+  actual status region.
+- Add regressions for stale transcript markers, arbitrary
+  =Esc to interrupt= prose, tool/shell output echoing incident text,
+  malformed/truncated captures, known live status rows, and clean at-rest panes.
+- THE REGRESSIONS ABOVE MUST COVER tmux AS WELL AS rmux, on a real pane. The
+  existing tmux wedge arm
+  (=a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies=)
+  uses a blank =sleep 300= pane, so it cannot catch a false rescue by
+  construction — a pane that is at rest AND carries marker-shaped text is the
+  case that matters and is currently untested on either transport.
+- Re-lock and fully revalidate identity, lifecycle, precedence and timeout
+  after the probe returns; any progress during the probe must cancel release.
+- Run probe subprocesses as owned children with an OS-level deadline and
+  explicit kill/reap behavior. A deterministic blocking-child test must prove
+  bounded supervisor latency and disappearance of the concrete child pid. Apply
+  this to the tmux probe path too, not only rmux.
+- Keep the clean provider-bound survival proof and the TASK-VZMZE at-rest
+  release proof green, on both transports.
+- Keep =verify/TASK-JQ8AV= and =verify/TASK-4CSMY= replaying red-then-green. If
+  a fix rewrites a hunk either patch depends on, RE-CUT the artifact and say so
+  explicitly in the report — a silently weakened injection proof is invisible
+  from then on.
+- Run the injection proofs, focused daemon tests, fmt, and clippy with warnings
+  denied. Do not run any billed harness test (TASK-099T6).
+
+** Reviewer Evidence
+
+The full reviewer report is preserved in the TASK-JQ8AV reviewer dispatch
+artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3942=.
+
