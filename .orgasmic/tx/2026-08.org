@@ -3388,3 +3388,86 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 23:53:27 implementer.reported TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4235
+:TIME:         [2026-08-02 Sun 23:53:27]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:RUN_ID:       run-20260802T234604-a4e13ba8dda84d85996a2e567e7fce93
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0jy7m/worktree
+:SHA:          6f2bf925fc4ea21f04256969c35b6d9b98ea4c72
+:END:
+
+* TX 2026-08-02 Sun 23:55:02 implementer.done TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4236
+:TIME:         [2026-08-02 Sun 23:55:02]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:REASON:       All four acceptance items met as prose, with item 1 honestly qualified: 'a manager CANNOT complete its first dispatch without a preference or a recorded reason' has no runtime enforcement, because the scope was shipped prose only. The recorded-reason half is at least auditable — --reason lands on the manager.dispatch_started tx. The author verified rather than inherited the claim that an omitted effort is unrecoverable: orgasmic run list on the live daemon carries driver and harness and no model or effort key. It also ran cli_parity deliberately, which is the load-bearing gate here — it resolves every orgasmic invocation in shipped/ against the real binary, so the TASK-TKR0H false-verb class cannot slip in. Grep for model-id shapes over the added lines returns nothing, satisfying dec_WDR5K item 9.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 6f2bf92
+:MERGE_SHA:    9192c49
+:BRANCH:       task-0jy7m-impl
+:WALL:         12m
+:REVIEWED_DIFF: b8a1581..9192c49
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        core fixtures 26/0; cli entry 3/0; cli_parity 3/0 including shipped_entry_commands_resolve_against_the_cli, which mechanically proves every orgasmic invocation and named flag in the new prose actually resolves against the binary; author's staged-ORGASMIC_HOME render check clean
+:CLOSED_TX:    tx-20260802-orgasmic-4228
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:55:02 task.state_transitioned TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4237
+:TIME:         [2026-08-02 Sun 23:55:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-0JY7M to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:55:02 task.state_transitioned TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4238
+:TIME:         [2026-08-02 Sun 23:55:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed in merge 9192c49, gates green.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:55:25 task.created TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4239
+:TIME:         [2026-08-02 Sun 23:55:25]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Found by the TASK-0JY7M implementer while writing the router's agent-selection policy, and outside its declared scope. A manager reading both files now gets 'ask the operator, nothing is stored' from the router and a stored per-stage model table from the convention it is pointed at four times.
+:END:
