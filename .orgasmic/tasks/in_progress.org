@@ -934,251 +934,6 @@ correctness.
 Logs kept for this session at the scratchpad paths named in the tx; the
 per-test panics are in each run's =suite.log=.
 
-* IN_PROGRESS TASK-4CSMY The pane open-turn evidence channel is rmux-only, so tmux dispatches stay exposed to the 600s stall-kill :dispatch:daemon:hardening:
-:PROPERTIES:
-:ID: TASK-4CSMY
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs, crates/orgasmic-drivers/src/modes/tmux.rs, crates/orgasmic-drivers/src/modes/rmux.rs, verify/TASK-4CSMY/, verify/TASK-JQ8AV/
-:END:
-
-
-=== WIDENED at filing (manager, 2026-07-29): the primary channel is missing too
-
-Further measurement while scoping the tmux default switch. The gap is not only
-JQ8AV's rescue channel — the PRIMARY pane-liveness channel is absent on tmux:
-
-- =pane_activity= is emitted by =crates/orgasmic-drivers/src/modes/rmux.rs=
-  and by nothing else. A grep for the event across =crates/orgasmic-drivers/src/=
-  returns rmux hits only.
-- =modes/tmux.rs= (4668 lines) sends =DriverEvent::Ready=,
-  =TransitionState=, =ToolCall= and the fatal-error paths. There is no
-  continuous pane-output event of any kind.
-
-So on a tmux transport the stall clock sees driver events only when the worker
-happens to call a tool or change state. Between those, evidence falls back to
-the subtree CPU probe alone. A CPU-hot stretch (a long =cargo test= under the
-pane) is still classified Working, so the common long-tool case survives. The
-fatal case is the provider-bound think: low CPU, no tool calls, no pane event,
-and — because JQ8AV's consult is gated on =transport == "rmux"= — no rescue
-either. That is a 600s kill of a healthy worker with every channel blind.
-
-This is why TASK-RWCRN's history matters: rmux only became safe when it grew
-=pane_activity=. tmux has never had that, so it is where rmux was BEFORE the
-fix, not merely missing the JQ8AV refinement.
-
-ORDERING CONSEQUENCE. The operator has directed that tmux become the shipped
-default driver, on the sound reasoning that a first-time user may have only
-tmux. That makes this task a SHIP BLOCKER rather than a hardening nicety: with
-the default flipped and this unfixed, the users least equipped to diagnose it
-get healthy workers killed at ten minutes. Land this before the default flips;
-dogfood on tmux in the meantime with
-=--governance-json '{"stall_timeout_secs":3600}'= on every long-thinking
-dispatch.
-
-Work item 0, ahead of the others: give the tmux driver a coalesced
-=pane_activity= equivalent to rmux's, with rmux's live tests ported
-(=live_rmux_pane_publishes_pane_activity_while_it_writes= and the
-newline-free-redraw variant) onto a test-owned tmux server. Only then does the
-open-turn-statusline consult of items 1-3 become a refinement rather than the
-sole channel.
-
-** Description
-TASK-JQ8AV landed a third work-evidence channel: at the stall deadline, when
-subtree CPU is below the work threshold, the probe captures the pane and looks
-for the TUI's open-turn statusline. A provider-bound turn is then classified
-=Working= instead of being stall-killed.
-
-That channel is gated on =target.transport == "rmux"= (supervisor.rs, in
-=ProcessSubtreeCpuProbe=). On a =tmux= transport the consult never runs, so the
-classification falls back to CPU alone — which is exactly the state that killed
-FZB6T, RB1ZN and SZJ2B at 600.1s during long claude-opus-5 high-effort thinks.
-
-This matters now because the operator has directed that orgasmic ship =tmux= as
-the default driver (first users may have only tmux installed, so tmux is what
-must be hardened). Dispatching opus-5 high-effort work over tmux before this
-lands reproduces the original incident.
-
-=== Work
-1. Generalise the pane consult from rmux to any pane transport. =rmux= and
-   =tmux= share the =capture-pane -p -t <session>= surface, so the marker
-   classifier (=pane_open_turn_marker=) is reusable verbatim; what differs is
-   the binary, the session-name derivation, and the socket/endpoint flag.
-2. Keep the fail-closed ordering JK66P set and JQ8AV preserved: pane unreadable
-   must never rescue a run, only report =pane capture unavailable=. The channel
-   may flip Idle->Working and nothing else.
-3. Extend the acceptance test to the tmux transport. JQ8AV's
-   =a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=
-   drives a REAL pane on a test-owned server; the tmux half needs the same
-   shape on a test-owned tmux server, not a stubbed capture.
-4. Do NOT widen the rescue to non-pane transports. acp-* transports already
-   stream turn events into the stall clock and need no pane channel.
-
-=== Acceptance
-- A network-waiting provider-bound turn on a =tmux= transport survives repeated
-  expired stall budgets, proven with a real tmux pane.
-- An at-rest, connectionless wedge on =tmux= still dies on schedule, with a
-  reason naming both empty channels.
-- The rmux behaviour JQ8AV shipped is unchanged (its verify artifact still
-  replays red-then-green).
-- A shipped injection proof under verify/, per the project bar.
-** Evidence
-Merged =7d9c60c= (impl =75255e5=, branch =task-4csmy-impl=, base =9017514=).
-Implementer =implementer-claude-tmux=: driver tmux, harness claude, model
-claude-opus-5, effort high. Dispatch =tx-20260802-orgasmic-4044=.
-
-MANAGER GATES on the merge, run independently of the worker's report:
-
-| gate | result |
-| =cargo fmt --all --check= | PASS |
-| =cargo clippy --workspace --all-targets -- -D warnings= | PASS |
-| =orgasmic verify TASK-4CSMY= | PASS — red matches pinned signature, then green, tree byte-identical |
-| =orgasmic verify TASK-JQ8AV= | PASS — the re-cut artifact still replays red-then-green |
-| =scripts/run-tests.sh= | RED, and NOT attributable to this change — see below |
-
-THE SUITE RED, MEASURED RATHER THAN ASSUMED. The project bar is a green suite,
-and this environment does not currently produce one. Three runs, because a
-single red proves nothing about its own cause:
-
-| # | site | tree | real failures |
-| 1 | repo root | =7d9c60c= (the merge) | 8 |
-| 2 | repo root | =9017514= (BASE, pre-merge) | 4 |
-| 3 | dispatch worktree | =75255e5= (tree-identical to the merge) | 2 |
-
-Run 2 is the control the flake convention requires: the SAME worktree at the
-BASE commit. It is red too, so "this change broke the suite" is refuted — four
-failures predate the diff entirely
-(=explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
-=recovery_reattaches_rmux_session_when_handle_exists=,
-=direct_child_pid_finds_wrapper_child_process=,
-=process_subtree_cpu_probe_sees_a_real_cpu_burning_child=).
-
-Run 3 settles the remaining four, which failed ONLY on the merge in run 1
-(=recovery_inventory_waits_for_atomic_claim_commit=,
-=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
-=dead_pid_aborts_joins_hung_producer_then_receiver_releases=, and this task's
-own new =a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies=).
-On a byte-identical tree at another site, NONE of the four reproduced — the new
-test passed. They also each passed in isolation in run 1. So they are
-site/load-dependent, not diff-caused.
-
-Every failure across all three runs also passed in isolation under
-=run-tests.sh='s own re-run.
-
-WHAT THE MATRIX SAYS ABOUT THE FLAKE SET ITSELF (routed to TASK-STWVB): the
-worker measured 0 real failures on tree =75255e5= in the dispatch worktree; run
-3 measured 2 on the SAME tree in the SAME worktree. So the axis is not only
-load and not only worktree — identical tree at an identical site varies BY RUN.
-Any future "N tests green" claim needs a run count, not just a worktree name.
-
-NOT CLAIMED: that the suite is green. It is not, here. What is claimed is that
-its red is independent of this change, on the evidence above.
-
-RESIDUALS the implementer named and I am carrying forward rather than closing
-over: =pipe-pane= backpressure needs a wedged daemon to reach; the tmux probe
-returns Unknown (fail-closed, today's behaviour) if a daemon's PATH resolves
-=tmux= to the rmux shim; and the production claim — a real dispatched tmux
-worker surviving a real 600s provider-bound think — is NOT proven, because it
-needs the runtime reinstalled at =7d9c60c= or later. Until that reinstall,
-=--governance-json '{"stall_timeout_secs":3600}'= stays mandatory on every long
-tmux dispatch.
-
-SCOPE: the implementer wrote outside the declared WRITE_SCOPE and flagged it
-rather than asking. Correct call — the heading's own WIDENED section made
-=modes/tmux.rs= "work item 0", and the scope field had simply never been updated
-when the task widened. WRITE_SCOPE corrected to match at integration.
-
-INDEPENDENT REVIEW [2026-08-02]: NEEDS FIXES — BLOCKS SHIP.
-=reviewer-codex-tmux= (driver tmux, harness codex, model gpt-5.6-sol, effort
-high), run =run-20260802T133215-ec3730d4717a4ca595ee0f9a9bd715a4=, dispatch
-=tx-20260802-orgasmic-4053=, closed =tx-20260802-orgasmic-4060=. Finding:
-=tx-20260802-orgasmic-4055=.
-
-THE BLOCKER is not in what this task built — it is what this task EXPOSED.
-=pane_open_turn_marker= (supervisor.rs ~4902, loose spinner branch ~4913-4919)
-accepts any visible line containing =Esc to interrupt=, anywhere in the capture.
-This task routed tmux through that classifier, so an at-rest tmux pane whose
-prompt, transcript or tool output contains those bytes is classified =Working=
-on every expired stall sweep and survives to the 14,400s max-run ceiling instead
-of dying at 600s. The new wedge arm cannot catch it: it drives a blank
-=sleep 300= pane, so a marker-bearing at-rest pane is untested by construction.
-
-It is also an ORDERING VIOLATION, recorded in TASK-JQ8AV.1 before this task ran:
-transport generalization was to follow the classifier fix, not precede it. That
-ordering inverted. TASK-JQ8AV.1 is therefore the unblocking work for this task
-too; its Acceptance has been updated to require the marker regressions on tmux
-as well as rmux, and it is dispatched (=tx-20260802-orgasmic-4064=).
-
-WHAT THE REVIEWER INDEPENDENTLY CONFIRMED as sound, and should be preserved
-through the fix round: =PaneMux= transport scoping; tmux pane-PID resolution;
-the raw-byte =pipe-pane= activity channel; fail-closed behaviour on capture
-errors; release/Drop cleanup. It ran the live smoke on a real pane
-(=live_tmux_pane_publishes_pane_activity_for_newline_free_redraws=, PASS, 30.3s)
-and watched =cat= pid 61791 live as a child of the test-owned tmux server and
-disappear on release.
-
-CRITICALLY, the re-cut proof was checked and NOT weakened:
-=orgasmic verify TASK-JQ8AV= PASS — "the re-cut patch still removes the same
-pane-content channel, reproduces the pinned incident red, restores a
-byte-identical tree, and passes green. I found no weakening of this artifact."
-That was the sharpest risk in the integration and it is closed.
-
-OPEN, not attributed: 112 inactive =orgasmic-pane-*= FIFO directories were
-already in the temp root in five clusters spanning 15:33-16:28, with no open
-handles and no surviving =cat= processes. The reviewer's own acquire/release
-smoke and explicit Drop-path test each added ZERO, so this is test-teardown
-residue rather than a per-run daemon leak — but it accumulates. Filed as
-TASK-8XPRR.
-
-STATE: stays IN_REVIEW. Per the active goal, a BLOCK SHIP is not closed until
-its fix round lands and passes a fresh review. Do not flip the tmux default
-driver until TASK-JQ8AV.1 lands, and keep
-=--governance-json '{"stall_timeout_secs":3600}'= on every long tmux dispatch.
-
-* IN_PROGRESS TASK-JQ8AV The evidence clock cannot see a provider-bound turn: long server-side thinking reads as the VZMZE wedge (three false-positive kills)
-:PROPERTIES:
-:ID: TASK-JQ8AV
-:PRIORITY: P1
-:END:
-
-Measured 2026-07-29 06:23-06:27, first hours of TASK-JK66P's clock in production: THREE healthy workers (FZB6T, RB1ZN, SZJ2B, dispatched together) were stall-released with 'no work evidence for 600s; 1 process(es) at 0.0-0.3% cpu' — and the RB1ZN retry's pane, captured live, showed the truth: 'Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'. A claude-opus-5 high-effort turn thinks server-side for many minutes: ~0% local cpu (network wait), zero pane repaints (the TUI spinner does not repaint without token arrival), no protocol events on the rmux transport. Under JK66P's two signals (pane bytes, subtree cpu) that is BYTE-IDENTICAL to VZMZE's wedge. The single-dispatch WKJX4 worked earlier only because its turns' evidence landed inside each 600s window.
-
-JK66P's design anticipated adjacent shapes (its Unknown-fails-closed rule is right); what is missing is a third evidence channel that can see 'waiting on the provider'. Candidates, to be MEASURED not assumed: (a) established TCP connection to the provider with recent traffic on the harness pid's sockets; (b) the harness's own native session/log file mtime advancing (claude writes turn state under ~/.claude — check what a thinking turn touches); (c) the TUI spinner does repaint on some cadence in some modes — measure exactly when pane bytes flow during thinking; (d) provider-turn-in-flight marker from the driver where a protocol exists (acp has heartbeats — VZMZE forbids counting them as WORK, but 'turn open' is a different, bounded claim: a turn that stays open past max-turn-duration is its own timeout class).
-
-MITIGATION until fixed (in use now): dispatch with --governance-json '{"stall_timeout_secs":3600}' — the per-run governance override; max_run_duration still bounds the run. Recorded in gotchas.org.
-
-=== Acceptance
-- A worker in a measured multi-minute server-side think survives the stall window with the production default budget, proven by test (compressed budgets, a stub that is network-waiting rather than sleeping — the distinction IS the task).
-- VZMZE's wedge (idle process, no provider connection/no native-file progress) still dies on schedule.
-- The reason string keeps naming which evidence was consulted (JK66P's ask 4).
-- Injection per TCTTD, self-tested.
-
-=== Evidence (manager, 2026-07-29)
-Merged 4fc57fe. Rescued after a host reboot: four commits were already on the
-branch; the implementer's report and a gotchas entry were uncommitted in the
-worktree and were preserved by hand before the tree was cleaned for the replay.
-The report stops mid-sentence at "results below" — the reboot cut it off while
-it was writing its per-crate gate results, so the manager re-ran every gate.
-
-Manager-replayed proof: =orgasmic verify TASK-JQ8AV= PASS — red at exit 101
-matching the pinned incident tombstone verbatim (a provider-bound
-network-waiting turn stall-released at 0.0% cpu), tree byte-identical after
-revert, green at exit 0. Replayed again on fully-merged main and PASSED.
-
-Gates on merged main: fmt clean; clippy -D warnings clean; daemon lib suite 617
-passed / 7 load flakes, all green in isolation.
-
-LIMIT FOUND AT INTEGRATION, recorded in gotchas.org and filed as TASK-4CSMY
-(P1): the pane consult is gated on =target.transport == "rmux"=, so this fix
-does not reach tmux. Compounding it, =pane_activity= is emitted by the rmux
-driver and by nothing else, so on tmux BOTH pane channels are blind and the
-600s kill stands unchanged. This became load-bearing the same day, because the
-operator directed tmux to become the shipped default pane mode.
-
-The worker's scratch report.md was committed into the branch and removed from
-main in 7e0ca50; it is dispatch scratch, not repo content.
-
-NOT independently reviewed: manager integration review + injection replay only.
-
 * IN_PROGRESS TASK-FZB6T P1 compact run catalog and bounded semantic session retention :storage:recovery:sessions:
 :PROPERTIES:
 :DEPENDS_ON: TASK-KWSTJ
@@ -1231,3 +986,149 @@ misbehaves.
 ** Notes
 Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
 
+* IN_PROGRESS TASK-FZB6T.2 Fix reviewer findings: prove deletion authority from current bytes, and make maintenance durable
+:PROPERTIES:
+:ID: TASK-FZB6T.2
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/src/session.rs, crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/writer.rs, crates/orgasmic-daemon/src/api.rs, crates/orgasmic-cli/src/main.rs, verify/TASK-FZB6T/, verify/TASK-FZB6T.1/, verify/TASK-FZB6T-redraw/, verify/TASK-FZB6T-corruption/
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Second review round on the compact run catalog. Reviewer verdict NEEDS FIXES —
+five HIGH findings block ship, two MEDIUM remain actionable
+(=reviewer.done= tx =tx-20260802-orgasmic-4111=; findings
+=tx-4096=..=tx-4102=).
+
+The unifying defect, and the thing to fix rather than patch around: DELETION
+AUTHORITY IS DERIVED RATHER THAN REPROVEN. The catalog documents itself as
+disposable derived state, and compaction then treats its cached semantics as
+permission to destroy session evidence.
+
+*1. HIGH, BLOCKS SHIP* — =run_catalog.rs:1523-1547=, =run_history.rs:587-602=.
+=classify_history_line= takes the FIRST byte occurrence of =type= anywhere in
+the first 64 KiB instead of proving =event.type=. A valid pane semantic event
+whose nested payload contains =type=text_chunk= BEFORE its outer type is
+classified =rendered_tui=, and =build_compacted= then drops the whole record.
+The regression at =run_catalog.rs:2636-2689= only covers minimal events whose
+first =type= happens to be the outer discriminator. Impact: explicit
+maintenance destroys tool and result evidence.
+FIX: identify the envelope and outer discriminator with a bounded STRUCTURAL
+streaming parser; if it cannot be proven, classify unparsed and FAIL CLOSED.
+Add nested-type collision regressions and assert byte-for-byte preservation.
+
+*2. HIGH, BLOCKS SHIP* — =run_history.rs:379-436,513-531,683-755=.
+=apply_compaction= mutates a session file, appends the result in memory, and
+IGNORES every per-file =write_manifest= failure. A crash or ENOSPC after the
+live rename but before a durable manifest update leaves the archived original
+and the rewritten live file absent from =manifest.results=, and rollback
+iterates only =results= — so it cannot restore them. Manifest and live-directory
+renames are not followed by mandatory directory fsyncs.
+FIX: a durable per-file state machine, propagated journal failures, parent
+directory fsyncs, and a rollback reconstructable from PLANNED archive identities
+even when the final result record is missing. Fault-inject after archive, stage,
+rename, and result-journal boundaries.
+
+*3. HIGH, BLOCKS SHIP* — =run_history.rs:465-531,574-620,683-755=,
+=writer.rs:748,790-845,938-943=. Forward compaction does ONE pre-read
+fingerprint check, compares only reclaimable record and byte COUNTS, never
+compares the planned =reclaimable_sha256=, builds from one read and archives
+from a SECOND read. There is no maintenance lock and no session-writer fence.
+An append landing after the check is omitted from the replacement, and the
+rename leaves the cached append handle writing to an ORPHANED INODE. Rollback
+then overwrites the current path without proving it still holds the compacted
+generation.
+FIX: serialize maintenance per project, fence or close the writer handle,
+compact and archive ONE proven byte generation, compare the planned digest,
+revalidate immediately before commit, and refuse rollback unless the destination
+matches the recorded post-compaction fingerprint and digest.
+
+*4. HIGH, BLOCKS SHIP* — =run_catalog.rs:608-666,787-820,1039-1060=,
+=run_history.rs:208-245=. Snapshot admission checks JSON shape, version, session
+path and file fingerprint — then accepts =lifecycle=, =terminal=, =driver= and
+=transport= VERBATIM. A steady-state refresh treats the unchanged fingerprint as
+a cache hit and never rederives those semantics, and =plan_compaction= trusts
+=entry.is_terminal= and =entry.transport= as deletion authority. So a valid-JSON
+but semantically corrupt snapshot can present a LIVE or ACP file as terminal
+rmux data and authorize its deletion. Note =semantically_corrupt_snapshot_entries_are_refused=
+(=run_catalog.rs:2115-2202=) tests PATH and FINGERPRINT corruption, not semantic
+field corruption — the name overclaims what it proves.
+FIX: never use the derived catalog as sole deletion authority. Rederive terminal
+state and transport from the CURRENT session generation during planning and
+apply, or cryptographically bind every semantic field to verified source bytes,
+and fail closed.
+
+*5. HIGH, unmet acceptance, BLOCKS SHIP* — =session.rs:175-200,574-595,1595-1660=.
+=SessionWriter= has no transport context and ACCEPTS =DriverEvent::TextChunk=
+from a pane transport, retaining a bounded head plus digest. The lock test
+injects a 4 MiB repaint but asserts only that the file grows by LESS THAN 8 KiB.
+So one repaint is bounded — not forbidden — and repeated redraw events still
+grow the JSONL linearly, contrary to the zero-persisted-redraw acceptance
+criterion and to the test comments themselves.
+FIX: reject pane =text_chunk= at a transport-aware writer/supervisor boundary,
+and make the regression assert ZERO =text_chunk= envelopes and no
+repaint-derived growth. A real tmux/rmux production-path test is still needed.
+
+*6. MEDIUM* — =run_catalog.rs:787-833,883-915=. Rebuild and authority updates
+capture and compare a per-path invalidation counter, but STALE paths capture no
+generation and commit with an unconditional remove — and the commit deletes the
+counter too. A refresh that observed a path absent can commit after another
+refresh or the writer recreated it, evict the newer entry and RESET the
+generation: a lost-update/ABA window. The stress test at
+=run_catalog.rs:2415-2474= hides it behind a final quiet refresh.
+FIX: plan stale eviction with a monotonic generation and remove only if it is
+unchanged and no newer entry exists. Do not delete the path generation.
+
+*7. MEDIUM* — =run_catalog.rs:1097-1141=. A tombstone revives when the current
+directory has the recorded device and inode. Inode numbers ARE reusable, so an
+unrelated checkout can eventually satisfy it; conversely a legitimate returned
+volume with renumbered inodes never revives, and a tombstone that never had an
+identity can never recover. The recreated-path test assumes a fresh directory
+gets a different inode, which is an assumption about the filesystem rather than
+a guarantee.
+FIX: either make tombstones truly terminal, or model temporary unavailability as
+its own state and verify continuity with immutable worktree/dispatch authority
+rather than dev+inode alone.
+
+** Open questions the reviewer raised, which need a DECISION before coding
+
+- Is =run-catalog.json= trusted authority or disposable derived state? The
+  module docs say derived and rebuildable; compaction treats cached semantics as
+  deletion authority. These cannot both be true.
+- Should a pruned worktree ever revive? If yes, the design needs a stronger
+  persistent identity and a distinct unavailable state. If no, the same-inode
+  revival path should be removed outright.
+- What component owns maintenance exclusion against the writer and against
+  concurrent compact/rollback requests? No such owner exists on the reviewed
+  route.
+
+Answer these in the task or in =decisions.org= before writing code — findings 3,
+4 and 7 all resolve differently depending on the answers.
+
+** Acceptance
+
+- Every fix direction above, with the fail-closed rule applied throughout:
+  where authority cannot be proven from current bytes, refuse rather than
+  delete.
+- Fault-injection coverage at the archive, stage, rename and result-journal
+  boundaries, plus crash and full-disk cases for both forward and rollback.
+- The redraw lock asserts ZERO persisted pane =text_chunk=, not a byte ceiling.
+- Nested-type collision, semantic-field snapshot corruption, and stale-eviction
+  interleaving each get a regression that fails without the fix.
+- All four FZB6T injection artifacts keep replaying red-then-green. RE-CUT any
+  artifact whose hunks this round rewrites and SAY SO explicitly.
+- fmt, clippy -D warnings, and focused crate tests green. Do NOT run the billed
+  harness test (TASK-099T6). Do NOT loop the full workspace suite on this host —
+  see the syspolicyd entry in =gotchas.org=; use the 8-second isolation control
+  before believing any red.
+
+** Reviewer Evidence
+
+Full report in the TASK-FZB6T review dispatch artifacts; =reviewer.done= tx
+=tx-20260802-orgasmic-4111=. The reviewer DID independently compare the original
+and regenerated =verify/TASK-FZB6T/injection.patch= and confirmed the regenerated
+one still injects the same defect. It did NOT apply/revert the four artifacts —
+the reviewer boundary forbids mutating commands — so the manager's four
+red-then-green PASSes remain the only execution evidence for them.

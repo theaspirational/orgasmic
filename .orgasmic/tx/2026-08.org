@@ -1645,3 +1645,150 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     todo
 :END:
+
+* TX 2026-08-02 Sun 22:25:57 task.state_transitioned TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4134
+:TIME:         [2026-08-02 Sun 22:25:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.2 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 22:25:58 manager.dispatch_started TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4135
+:TIME:         [2026-08-02 Sun 22:25:58]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.2/worktree
+:BRANCH:       task-fzb6t.2-impl-cont
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t2-continue/brief-fzb6t2-continue.md
+:STARTED_AT:   [2026-08-02 Sun 22:25:58]
+:LIVENESS:     d982af1542f09eb1dc7e92464820cbea7d5aeadd
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Continuation from d982af1, the WIP the manager preserved when the daemon-writer outage and its recovery restart killed the previous worker mid-task. Branches from that commit so 2,452 insertions are not redone; new branch name because task-fzb6t.2-impl still holds the WIP. Briefed to assess what exists against the seven findings BEFORE adding, and to commit early — this task has lost two reports in one session by two unrelated mechanisms.
+:END:
+
+* TX 2026-08-02 Sun 22:25:58 run.created TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4136
+:TIME:         [2026-08-02 Sun 22:25:58]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.2-implementer-20260802T222558.jsonl
+:REASON:       Continuation from d982af1, the WIP the manager preserved when the daemon-writer outage and its recovery restart killed the previous worker mid-task. Branches from that commit so 2,452 insertions are not redone; new branch name because task-fzb6t.2-impl still holds the WIP. Briefed to assess what exists against the seven findings BEFORE adding, and to commit early — this task has lost two reports in one session by two unrelated mechanisms.
+:RUN_ID:       run-20260802T222558-5d94f7b1e8ce414c915aff2735faf1ea
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t2-continue/brief-fzb6t2-continue.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-fzb6t2-continue/brief-fzb6t2-continue-da1a30d0893d441e8d2e7fafc8f33050-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-fzb6t2-continue/brief-fzb6t2-continue-da1a30d0893d441e8d2e7fafc8f33050-stdout.log
+:DISPATCH_ATTEMPT: da1a30d0893d441e8d2e7fafc8f33050
+:DISPATCH_TX:  tx-20260802-orgasmic-4135
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 22:26:03 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4137
+:TIME:         [2026-08-02 Sun 22:26:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-4CSMY.1 landed (merge 2a55d98); round-3 re-review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 22:26:04 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4138
+:TIME:         [2026-08-02 Sun 22:26:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-4CSMY.1 landed (merge 2a55d98); round-3 re-review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 22:26:36 manager.dispatch_started TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4139
+:TIME:         [2026-08-02 Sun 22:26:36]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRANCH:       task-4csmy-review-r3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-rereview/brief-supervisor-rereview.md
+:STARTED_AT:   [2026-08-02 Sun 22:26:36]
+:LIVENESS:     817ac4cf3d91a8e4cf8a7ccc9b81351f211481eb
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Round 3. The goal requires a BLOCK SHIP to pass a FRESH review after its fix round lands, not merely to have a fix merged. Scoped to the delta 607a751; briefed to weigh the false-KILL direction and to judge the author's one deliberately-unmet criterion. New branch name because task-4csmy-review is held by round 2.
+:END:
+
+* TX 2026-08-02 Sun 22:26:38 run.created TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4140
+:TIME:         [2026-08-02 Sun 22:26:38]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4CSMY_TASK-JQ8AV-reviewer-20260802T222635.jsonl
+:REASON:       Round 3. The goal requires a BLOCK SHIP to pass a FRESH review after its fix round lands, not merely to have a fix merged. Scoped to the delta 607a751; briefed to weigh the false-KILL direction and to judge the author's one deliberately-unmet criterion. New branch name because task-4csmy-review is held by round 2.
+:RUN_ID:       run-20260802T222635-02684a2d750f415bbb677526efed9735
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-rereview/brief-supervisor-rereview.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-supervisor-rereview/brief-supervisor-rereview-8d0d4e58a5e74892b6b4f3f6cfe800d7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-supervisor-rereview/brief-supervisor-rereview-8d0d4e58a5e74892b6b4f3f6cfe800d7-stdout.log
+:DISPATCH_ATTEMPT: 8d0d4e58a5e74892b6b4f3f6cfe800d7
+:DISPATCH_TX:  tx-20260802-orgasmic-4139
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
