@@ -189,12 +189,11 @@ pub enum WorktreeAuthority {
     /// identity no longer matches the one this run was verified against.
     /// Pruned, moved, replaced, or on an unmounted volume.
     ///
-    /// **Terminal for the run identity.** It leaves this state only when a
-    /// directory reappears at the recorded path carrying exactly the
-    /// `verified_identity` this run was once verified against — the one fact
-    /// that proves continuity rather than coincidence of names. A tombstone
-    /// that never had a verified identity (the recorded path was already gone
-    /// at first index) can never be revived.
+    /// **Terminal for the run identity, with no way back** (dec_BBPW4). It is
+    /// never re-probed and never revived: no directory appearing at the
+    /// recorded path — same name, same device, same inode — makes a dead run an
+    /// attach candidate again. `verified_identity` is retained as evidence of
+    /// what this run was once verified against, not as a revival key.
     Tombstoned {
         recorded: PathBuf,
         #[serde(default)]
@@ -410,17 +409,6 @@ pub struct RunCatalogEntry {
 }
 
 impl RunCatalogEntry {
-    /// The recorded `RunMeta` project/worktree pair in the shape
-    /// [`verify_worktree_authority`] consumes.
-    pub fn recorded_run_meta(&self) -> Option<(Option<String>, Option<PathBuf>)> {
-        self.run_meta_recorded.then(|| {
-            (
-                self.run_meta_project.clone(),
-                self.run_meta_worktree.clone(),
-            )
-        })
-    }
-
     /// Driver+harness label used by history accounting. Falls back to the
     /// transport alone, then to `unknown`.
     pub fn driver_label(&self) -> String {
@@ -787,7 +775,7 @@ impl RunCatalog {
         // --- phase 2: plan, short lock -------------------------------------
         let mut rebuild: Vec<PlannedRebuild> = Vec::new();
         let mut recheck: Vec<PlannedRecheck> = Vec::new();
-        let stale: Vec<PathBuf>;
+        let stale: Vec<PlannedStale>;
         {
             let state = self.lock();
             for (path, fingerprint, len) in &observed {
@@ -807,7 +795,6 @@ impl RunCatalog {
                         recheck.push(PlannedRecheck {
                             path: path.clone(),
                             previous: entry.worktree_authority.clone(),
-                            run_meta: entry.recorded_run_meta(),
                             invalidation: state.invalidation(path),
                         });
                     }
@@ -822,13 +809,27 @@ impl RunCatalog {
             // Evict records whose session file is gone from this directory.
             // Scoped to `dir` so refreshing one project never drops another's
             // entries.
+            //
+            // orgasmic:TASK-FZB6T.2 finding 6 — an eviction is a lost update
+            // waiting to happen, so it is PLANNED with a generation exactly
+            // like a rebuild: the invalidation counter plus the identity of the
+            // record actually observed absent. Without it, a refresh that saw
+            // the path gone could commit an unconditional remove after another
+            // refresh (or the writer) had already indexed a NEWER file at that
+            // path, evicting a live record on the strength of a stale
+            // observation.
             let present: std::collections::BTreeSet<&PathBuf> =
                 observed.iter().map(|(path, _, _)| path).collect();
             stale = state
                 .by_path
-                .keys()
-                .filter(|path| path.parent() == Some(dir) && !present.contains(path))
-                .cloned()
+                .iter()
+                .filter(|(path, _)| path.parent() == Some(dir) && !present.contains(path))
+                .map(|(path, entry)| PlannedStale {
+                    invalidation: state.invalidation(path),
+                    path: path.clone(),
+                    fingerprint: entry.fingerprint,
+                    indexed_at: entry.indexed_at,
+                })
                 .collect();
         }
 
@@ -870,12 +871,7 @@ impl RunCatalog {
             let Some(probe) = probe_authority_path(&planned.previous) else {
                 continue;
             };
-            if let Some(refreshed) = reverify_authority(
-                &planned.previous,
-                probe,
-                project_id,
-                planned.run_meta.clone(),
-            ) {
+            if let Some(refreshed) = reverify_authority(&planned.previous, probe) {
                 authority_updates.push((planned, refreshed));
             }
         }
@@ -907,12 +903,28 @@ impl RunCatalog {
             stats.authority_reverified += 1;
             dirty = true;
         }
-        for path in stale {
-            if state.by_path.remove(&path).is_some() {
-                state.invalidations.remove(&path);
-                stats.evicted += 1;
-                dirty = true;
+        for planned in stale {
+            // Compare-and-swap, same discipline as a rebuild: the counter must
+            // not have moved, and the record still at this path must be the
+            // exact one this refresh observed absent. Either check failing
+            // means a newer entry arrived while this pass was working, and the
+            // newer entry wins.
+            if state.invalidation(&planned.path) != planned.invalidation {
+                continue;
             }
+            let Some(entry) = state.by_path.get(&planned.path) else {
+                continue;
+            };
+            if entry.fingerprint != planned.fingerprint || entry.indexed_at != planned.indexed_at {
+                continue;
+            }
+            state.by_path.remove(&planned.path);
+            // The generation is NOT deleted with the entry. Dropping it resets
+            // the counter to zero, which is what turned a stale eviction into
+            // an ABA window: a later refresh could then capture 0, race an
+            // invalidation, and still see 0.
+            stats.evicted += 1;
+            dirty = true;
         }
         if dirty {
             state.mark_dirty(project_root);
@@ -988,6 +1000,13 @@ impl RunCatalog {
     pub(crate) fn len(&self) -> usize {
         self.lock().by_path.len()
     }
+
+    /// The per-path invalidation generation. Test-only: it is a property of the
+    /// commit protocol, not something a consumer reads.
+    #[cfg(test)]
+    pub(crate) fn generation_of(&self, path: &Path) -> u64 {
+        self.lock().invalidation(path)
+    }
 }
 
 /// One session file the plan phase decided must be re-derived from disk.
@@ -1002,8 +1021,18 @@ struct PlannedRebuild {
 struct PlannedRecheck {
     path: PathBuf,
     previous: WorktreeAuthority,
-    run_meta: Option<(Option<String>, Option<PathBuf>)>,
     invalidation: u64,
+}
+
+/// One record the plan phase observed absent from the session directory.
+///
+/// orgasmic:TASK-FZB6T.2 finding 6 — carries the generation AND the identity of
+/// the record observed, so the commit can refuse to evict anything newer.
+struct PlannedStale {
+    path: PathBuf,
+    invalidation: u64,
+    fingerprint: SessionFileFingerprint,
+    indexed_at: DateTime<Utc>,
 }
 
 /// Where a project keeps its per-run session JSONL.
@@ -1025,7 +1054,7 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
 /// semantically corrupt entry survived every refresh and kept answering
 /// inventory queries with a run the session files never described.
 ///
-/// Four checks, each refusing one of those shapes:
+/// Five checks, each refusing one of those shapes:
 ///
 /// 1. the path is a **direct child** of this project's sessions directory, so
 ///    session-directory authority — not the project root — is what admits it;
@@ -1033,7 +1062,15 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
 ///    reached by escaping and coming back;
 /// 3. the file is a **regular file** today, not a symlink, directory, or fifo;
 /// 4. its **current identity** (device/inode/length/mtime) is exactly the one
-///    the entry was derived from.
+///    the entry was derived from;
+/// 5. every SEMANTIC field it claims — lifecycle, terminal verdict, driver,
+///    transport, worktree pair — is reproduced by re-deriving it from the
+///    entry's own retained envelope set (orgasmic:TASK-FZB6T.2 finding 4).
+///
+/// Check 5 is the one the first four do not cover. Path and fingerprint prove
+/// which BYTES an entry is about; they prove nothing about what it says those
+/// bytes mean. A record claiming a live ACP session is a terminal rmux run
+/// passed all four checks and then authorized its own deletion.
 ///
 /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
 fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
@@ -1056,7 +1093,32 @@ fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) ->
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return false;
     }
-    SessionFileFingerprint::of(&metadata) == entry.fingerprint
+    if SessionFileFingerprint::of(&metadata) != entry.fingerprint {
+        return false;
+    }
+    snapshot_entry_semantics_are_self_consistent(entry)
+}
+
+/// Whether an entry's semantic claims are reproduced by its own source
+/// envelopes.
+///
+/// An `unreadable` record was built from no envelopes at all, so it has no
+/// derivation to check — instead it must claim nothing, which is the only
+/// shape [`unreadable_entry`] produces.
+fn snapshot_entry_semantics_are_self_consistent(entry: &RunCatalogEntry) -> bool {
+    if entry.unreadable {
+        return entry.lifecycle_envelopes.is_empty()
+            && entry.terminal.is_none()
+            && entry.transport.is_none()
+            && entry.harness.is_none()
+            && entry.native.is_none()
+            && entry.final_release_outcome.is_none()
+            && entry.driver_terminal_event.is_none()
+            && !entry.run_meta_recorded
+            && !entry.external_registration;
+    }
+    derive_semantics(&entry.lifecycle_envelopes, entry.final_envelope_retained)
+        == claimed_semantics(entry)
 }
 
 /// One filesystem observation of the path a cached authority verdict names.
@@ -1071,17 +1133,18 @@ struct AuthorityProbe {
 
 /// One stat against the path a cached verdict names.
 ///
-/// `None` when the verdict is a property of the session file rather than of the
-/// filesystem: a mismatch is a statement about project identity, which does not
-/// change under a live daemon, and the two "no authority recorded" verdicts are
-/// properties of the session file itself.
+/// `None` when the verdict cannot change: a mismatch is a statement about
+/// project identity, which does not change under a live daemon; the two "no
+/// authority recorded" verdicts are properties of the session file itself; and
+/// a tombstone is terminal (dec_BBPW4), so probing its path would be a stat
+/// whose answer is never used.
 ///
 /// Blocking; the refresh runs this outside the catalog mutex.
 fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
     let path = match authority {
         WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
-        WorktreeAuthority::Tombstoned { recorded, .. } => recorded.as_path(),
-        WorktreeAuthority::Mismatched { .. }
+        WorktreeAuthority::Tombstoned { .. }
+        | WorktreeAuthority::Mismatched { .. }
         | WorktreeAuthority::Unrecorded
         | WorktreeAuthority::Unidentified => return None,
     };
@@ -1094,54 +1157,41 @@ fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe>
 /// Re-derive a cached authority verdict against one [`AuthorityProbe`].
 /// `None` means "unchanged".
 ///
-/// orgasmic:TASK-FZB6T.1 finding 5 — the tombstone is terminal for the run
-/// identity. Existence at the recorded path is no longer enough to revive it:
-/// only the *same directory object* (dev/ino) the run was once verified against
-/// proves continuity. A pruned worktree whose path is later reused by an
-/// unrelated checkout stays tombstoned, so a dead run cannot become an attach
-/// candidate again by coincidence of names.
+/// One transition, and it is one-way: a verified worktree whose directory
+/// object is gone becomes tombstoned. There is no way back.
 ///
-/// Blocking (it may canonicalize and read a `project.org`); runs outside the
-/// catalog mutex.
+/// orgasmic:TASK-FZB6T.2 finding 7 / dec_BBPW4 — the revival path is gone
+/// rather than strengthened. It readmitted a run when the recorded path held
+/// the recorded device and inode, and inode numbers are REUSABLE: an unrelated
+/// checkout could eventually satisfy it, while a legitimately returned volume
+/// with renumbered inodes never could, and a tombstone that never had an
+/// identity could never recover at all. It was unsound in one direction and
+/// useless in the other. A run whose recorded worktree is gone is not
+/// recoverable under that worktree; the recovery path is a new run, not a
+/// revived attach candidate.
+///
+/// Blocking; runs outside the catalog mutex.
 fn reverify_authority(
     previous: &WorktreeAuthority,
     probe: AuthorityProbe,
-    project_id: Option<&str>,
-    run_meta: Option<(Option<String>, Option<PathBuf>)>,
 ) -> Option<WorktreeAuthority> {
-    match previous {
-        WorktreeAuthority::Verified { worktree, identity } => {
-            let still_the_same = match identity {
-                // Durable identity available: the directory object must be the
-                // same one, not merely a directory with the same name.
-                Some(identity) => probe.current == Some(*identity),
-                // No durable identity (non-unix): existence is all there is.
-                None => probe.exists,
-            };
-            if still_the_same {
-                return None;
-            }
-            Some(WorktreeAuthority::Tombstoned {
-                recorded: worktree.clone(),
-                verified_identity: *identity,
-            })
-        }
-        WorktreeAuthority::Tombstoned {
-            verified_identity, ..
-        } => {
-            // A tombstone with no verified identity was already gone at first
-            // index; nothing can prove continuity for it.
-            let identity = (*verified_identity)?;
-            if probe.current != Some(identity) {
-                return None;
-            }
-            match verify_worktree_authority(project_id, run_meta) {
-                refreshed @ WorktreeAuthority::Verified { .. } => Some(refreshed),
-                _ => None,
-            }
-        }
-        _ => None,
+    let WorktreeAuthority::Verified { worktree, identity } = previous else {
+        return None;
+    };
+    let still_the_same = match identity {
+        // Durable identity available: the directory object must be the same
+        // one, not merely a directory with the same name.
+        Some(identity) => probe.current == Some(*identity),
+        // No durable identity (non-unix): existence is all there is.
+        None => probe.exists,
+    };
+    if still_the_same {
+        return None;
     }
+    Some(WorktreeAuthority::Tombstoned {
+        recorded: worktree.clone(),
+        verified_identity: *identity,
+    })
 }
 
 /// Decide worktree authority from the recorded `RunMeta` and the filesystem.
@@ -1224,16 +1274,58 @@ fn compact_envelopes(envelopes: &[SessionEnvelope]) -> Vec<SessionEnvelope> {
         .collect()
 }
 
-/// Build a catalog entry from a bounded lifecycle scan.
-pub(crate) fn entry_from_scan(
-    scan: &SessionLifecycleScan,
-    path: &Path,
-    project_id: Option<&str>,
-    project_root: &Path,
-    fingerprint: SessionFileFingerprint,
-) -> RunCatalogEntry {
-    let envelopes = latest_run_segment(&scan.envelopes);
-    let compact = compact_envelopes(envelopes);
+/// Every semantic fact a catalog entry claims, as derived from the compact
+/// envelope set the entry carries.
+///
+/// orgasmic:TASK-FZB6T.2 finding 4 — snapshot admission checked JSON shape,
+/// version, session path and file fingerprint, then took `lifecycle`,
+/// `terminal`, `driver` and `transport` VERBATIM. A valid-JSON but semantically
+/// corrupt snapshot could therefore present a live ACP run as a terminal rmux
+/// one, and a steady-state refresh treats the unchanged fingerprint as a cache
+/// hit and never re-derives it.
+///
+/// The entry already retains the envelope set it was derived from — that is
+/// what makes serving classification from the catalog provably the same
+/// computation. So the derivation is factored out here and run twice: once when
+/// the entry is built, and once when a snapshot entry asks to be admitted. An
+/// entry whose claims its own source envelopes do not reproduce is refused and
+/// rebuilt. This is the binding the deletion path needs and it costs no
+/// filesystem read at all.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DerivedSemantics {
+    run_id: String,
+    runtime_id: String,
+    boot_id: String,
+    task_id: Option<String>,
+    kind: Option<String>,
+    worker_id: Option<String>,
+    stage: Option<String>,
+    transport: Option<String>,
+    harness: Option<String>,
+    native: Option<NativeRuntimeRef>,
+    run_meta_project: Option<String>,
+    run_meta_worktree: Option<PathBuf>,
+    run_meta_recorded: bool,
+    external_registration: bool,
+    replacement_run_id: Option<String>,
+    replacement_session_path: Option<PathBuf>,
+    terminal: Option<TerminalRecord>,
+    final_release_outcome: Option<ReleaseOutcome>,
+    driver_terminal_event: Option<String>,
+}
+
+/// Derive every semantic fact from one compact envelope set.
+///
+/// `final_envelope_retained` is the scan's own statement that the file's
+/// genuine last line survived the bounded window; without it a release cannot
+/// be proven and the entry must not claim one.
+pub(crate) fn derive_semantics(
+    envelopes: &[SessionEnvelope],
+    final_envelope_retained: bool,
+) -> DerivedSemantics {
+    // Idempotent: the stored set is already one segment, and re-segmenting it
+    // is what makes the two derivations provably the same function.
+    let envelopes = latest_run_segment(envelopes);
     let first = envelopes.first();
 
     let mut task_id = None;
@@ -1302,7 +1394,7 @@ pub(crate) fn entry_from_scan(
         }
     }
 
-    let release = final_release_outcome(scan, envelopes);
+    let release = final_release_outcome(final_envelope_retained, envelopes);
     let driver_event = driver_terminal_event(envelopes);
     let terminal = terminal_record(
         release,
@@ -1310,13 +1402,10 @@ pub(crate) fn entry_from_scan(
         envelopes.last().map(|envelope| envelope.time),
         external_registration,
     );
-    RunCatalogEntry {
+    DerivedSemantics {
         run_id: first.map(|e| e.run_id.clone()).unwrap_or_default(),
         runtime_id: first.map(|e| e.runtime_id.clone()).unwrap_or_default(),
         boot_id: first.map(|e| e.boot_id.clone()).unwrap_or_default(),
-        session_path: path.to_path_buf(),
-        project_id: project_id.map(str::to_string),
-        project_root: Some(project_root.to_path_buf()),
         task_id,
         kind,
         worker_id,
@@ -1324,16 +1413,66 @@ pub(crate) fn entry_from_scan(
         transport,
         harness,
         native,
-        worktree_authority: verify_worktree_authority(project_id, run_meta.clone()),
         run_meta_project: run_meta.as_ref().and_then(|(project, _)| project.clone()),
         run_meta_worktree: run_meta.as_ref().and_then(|(_, worktree)| worktree.clone()),
         run_meta_recorded: run_meta.is_some(),
-        terminal,
-        final_release_outcome: release,
-        driver_terminal_event: driver_event.map(|(event, _)| event),
         external_registration,
         replacement_run_id,
         replacement_session_path,
+        terminal,
+        final_release_outcome: release,
+        driver_terminal_event: driver_event.map(|(event, _)| event),
+    }
+}
+
+/// Build a catalog entry from a bounded lifecycle scan.
+///
+/// The semantics are derived from the COMPACT envelope set the entry will
+/// store, not from the raw scan, so the entry's claims are reproducible from
+/// exactly the bytes it carries (orgasmic:TASK-FZB6T.2 finding 4). Compaction
+/// only reduces driver-event bodies to their `type`, which is the only part of
+/// a driver event any derivation reads, so the two are the same computation.
+pub(crate) fn entry_from_scan(
+    scan: &SessionLifecycleScan,
+    path: &Path,
+    project_id: Option<&str>,
+    project_root: &Path,
+    fingerprint: SessionFileFingerprint,
+) -> RunCatalogEntry {
+    let compact = compact_envelopes(latest_run_segment(&scan.envelopes));
+    let semantics = derive_semantics(&compact, scan.final_envelope_retained);
+    let run_meta = semantics
+        .run_meta_recorded
+        .then(|| {
+            (
+                semantics.run_meta_project.clone(),
+                semantics.run_meta_worktree.clone(),
+            )
+        });
+    RunCatalogEntry {
+        run_id: semantics.run_id,
+        runtime_id: semantics.runtime_id,
+        boot_id: semantics.boot_id,
+        session_path: path.to_path_buf(),
+        project_id: project_id.map(str::to_string),
+        project_root: Some(project_root.to_path_buf()),
+        task_id: semantics.task_id,
+        kind: semantics.kind,
+        worker_id: semantics.worker_id,
+        stage: semantics.stage,
+        transport: semantics.transport,
+        harness: semantics.harness,
+        native: semantics.native,
+        worktree_authority: verify_worktree_authority(project_id, run_meta),
+        run_meta_project: semantics.run_meta_project,
+        run_meta_worktree: semantics.run_meta_worktree,
+        run_meta_recorded: semantics.run_meta_recorded,
+        terminal: semantics.terminal,
+        final_release_outcome: semantics.final_release_outcome,
+        driver_terminal_event: semantics.driver_terminal_event,
+        external_registration: semantics.external_registration,
+        replacement_run_id: semantics.replacement_run_id,
+        replacement_session_path: semantics.replacement_session_path,
         scan_truncated: scan.truncated,
         final_line_run_id: scan.final_line_run_id.clone(),
         final_envelope_retained: scan.final_envelope_retained,
@@ -1345,6 +1484,113 @@ pub(crate) fn entry_from_scan(
     }
 }
 
+/// What a fresh bounded read of a session file proves about the run it holds.
+///
+/// orgasmic:TASK-FZB6T.2 finding 4 / dec_BBPW4 — the catalog is disposable
+/// derived state and is never deletion authority. Maintenance uses it for the
+/// candidate path list and for nothing else; every fact that authorizes an
+/// irreversible operation is re-derived here, from the file's CURRENT bytes,
+/// through exactly the derivation the inventory uses.
+#[derive(Debug, Clone)]
+pub struct SessionAuthority {
+    pub run_id: String,
+    pub terminal: Option<TerminalRecord>,
+    pub transport: Option<String>,
+    pub harness: Option<String>,
+    /// The bounded scan skipped the middle of the file, so what it did not read
+    /// cannot be part of any proof.
+    pub scan_truncated: bool,
+    /// The file's genuine final envelope was retained, so a terminal verdict
+    /// may be made from it. A truncated scan without this proves nothing about
+    /// how the run ended.
+    pub final_envelope_retained: bool,
+    /// `run_id` of the file's last physical line. Equal to [`Self::run_id`]
+    /// exactly when the segment that was derived is the segment the file
+    /// actually ends with (orgasmic:TASK-7QM8M).
+    pub final_line_run_id: Option<String>,
+}
+
+impl SessionAuthority {
+    pub fn is_terminal(&self) -> bool {
+        self.terminal.is_some()
+    }
+
+    /// Whether the terminal verdict rests on bytes that were actually read.
+    ///
+    /// A bounded scan may legitimately skip the middle of a multi-megabyte
+    /// legacy session — that is what makes maintenance affordable at all. What
+    /// it may not do is decide "this run ended" from a segment it cannot prove
+    /// is the file's LAST segment: on a truncated scan the newest retained
+    /// segment and the newest segment on disk are different questions
+    /// (orgasmic:TASK-7QM8M), and `final_line_run_id` is the one fact that
+    /// makes them the same. An untruncated scan read the whole file, so there
+    /// is nothing left to prove.
+    pub fn terminal_is_proven(&self) -> bool {
+        if !self.is_terminal() {
+            return false;
+        }
+        if !self.scan_truncated {
+            return true;
+        }
+        self.final_line_run_id.as_deref() == Some(self.run_id.as_str())
+    }
+
+    /// `transport/harness`, matching [`RunCatalogEntry::driver_label`].
+    pub fn driver_label(&self) -> String {
+        match (self.transport.as_deref(), self.harness.as_deref()) {
+            (Some(transport), Some(harness)) => format!("{transport}/{harness}"),
+            (Some(transport), None) => transport.to_string(),
+            (None, _) => "unknown".to_string(),
+        }
+    }
+}
+
+/// Re-derive one session file's terminal verdict and transport from disk.
+pub fn derive_session_authority(
+    path: &Path,
+    budget: SessionScanBudget,
+) -> std::io::Result<SessionAuthority> {
+    let scan = scan_session_lifecycle(path, budget)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let compact = compact_envelopes(latest_run_segment(&scan.envelopes));
+    let semantics = derive_semantics(&compact, scan.final_envelope_retained);
+    Ok(SessionAuthority {
+        run_id: semantics.run_id,
+        terminal: semantics.terminal,
+        transport: semantics.transport,
+        harness: semantics.harness,
+        scan_truncated: scan.truncated,
+        final_envelope_retained: scan.final_envelope_retained,
+        final_line_run_id: scan.final_line_run_id.clone(),
+    })
+}
+
+/// The semantics one entry CLAIMS, in the shape [`derive_semantics`] returns —
+/// so the two can be compared field for field.
+fn claimed_semantics(entry: &RunCatalogEntry) -> DerivedSemantics {
+    DerivedSemantics {
+        run_id: entry.run_id.clone(),
+        runtime_id: entry.runtime_id.clone(),
+        boot_id: entry.boot_id.clone(),
+        task_id: entry.task_id.clone(),
+        kind: entry.kind.clone(),
+        worker_id: entry.worker_id.clone(),
+        stage: entry.stage.clone(),
+        transport: entry.transport.clone(),
+        harness: entry.harness.clone(),
+        native: entry.native.clone(),
+        run_meta_project: entry.run_meta_project.clone(),
+        run_meta_worktree: entry.run_meta_worktree.clone(),
+        run_meta_recorded: entry.run_meta_recorded,
+        external_registration: entry.external_registration,
+        replacement_run_id: entry.replacement_run_id.clone(),
+        replacement_session_path: entry.replacement_session_path.clone(),
+        terminal: entry.terminal.clone(),
+        final_release_outcome: entry.final_release_outcome,
+        driver_terminal_event: entry.driver_terminal_event.clone(),
+    }
+}
+
 /// The raw `Release` outcome on the file's genuine final envelope.
 ///
 /// `None` when the scan dropped that line as transcript (the normal shape for a
@@ -1352,10 +1598,10 @@ pub(crate) fn entry_from_scan(
 /// only the genuine final envelope can prove a release, and treating a newest
 /// RETAINED lifecycle line as the end of the run would tombstone a live one.
 fn final_release_outcome(
-    scan: &SessionLifecycleScan,
+    final_envelope_retained: bool,
     envelopes: &[SessionEnvelope],
 ) -> Option<ReleaseOutcome> {
-    if !scan.final_envelope_retained {
+    if !final_envelope_retained {
         return None;
     }
     let last = envelopes.last()?;
@@ -1520,47 +1766,282 @@ pub const EVENT_CLASSES: [&str; 9] = [
     "torn",
 ];
 
-/// Classify one raw JSONL line without parsing its payload.
+/// Classify one raw JSONL line by PROVING its envelope structure.
 ///
-/// Deliberately byte-level and bounded: the whole point of the inspect command
-/// is to account for 2.239 GiB of legacy history, and it must not cost a parse
-/// of every transcript line to do it.
+/// orgasmic:TASK-FZB6T.2 finding 1 — this used to take the first byte
+/// occurrence of `"type":"` anywhere in the line's first 64 KiB. A perfectly
+/// valid `tool_result` whose nested payload happens to carry
+/// `{"type":"text_chunk"}` before the envelope's own discriminator was
+/// therefore classified `rendered_tui`, and the maintenance pass deleted the
+/// whole record — tool and result evidence destroyed by a substring match.
+///
+/// So the discriminators are now proven rather than found: one structural pass
+/// over the line reads `kind` as a member of the top-level object and `type` as
+/// a member of the top-level `event` object, and nothing that is nested deeper
+/// can be mistaken for either. Still no payload is materialized — the scan
+/// allocates only the two short discriminator strings and never copies a
+/// value — but a line whose structure cannot be proven is classified `unparsed`
+/// and is therefore never reclaimable. **Fail closed:** a line this accounting
+/// could not read is the last line that should be deleted on its say-so.
 pub fn classify_history_line(line: &[u8]) -> &'static str {
-    const PROBE: usize = 1024;
-    let header = &line[..line.len().min(PROBE)];
-    let kind = probe_value(header, b"\"kind\":\"");
-    match kind.as_deref() {
-        Some("lifecycle") => return "lifecycle",
-        Some("babysitter_summary") => return "babysitter_summary",
-        Some("note") => return "note",
-        Some("driver_event") => {}
-        _ => return "unparsed",
-    }
-    // Driver events: the rendered-TUI class is the legacy `text_chunk` written
-    // by a pane transport before dec_WDR5K item 7 — the payload the maintenance
-    // command exists to account for. Everything else is semantic evidence.
-    match probe_value(&line[..line.len().min(64 * 1024)], b"\"type\":\"").as_deref() {
-        Some("pane_activity") => "pane_activity",
-        Some("text_chunk") => "rendered_tui",
-        Some(_) => "semantic",
-        None => "unparsed",
+    let Some(envelope) = scan_envelope_discriminators(line) else {
+        return "unparsed";
+    };
+    match envelope.kind.as_deref() {
+        Some(b"lifecycle") => "lifecycle",
+        Some(b"babysitter_summary") => "babysitter_summary",
+        Some(b"note") => "note",
+        // Driver events: the rendered-TUI class is the legacy `text_chunk`
+        // written by a pane transport before dec_WDR5K item 7 — the payload the
+        // maintenance command exists to account for. Everything else is
+        // semantic evidence.
+        Some(b"driver_event") => match envelope.event_type.as_deref() {
+            Some(b"pane_activity") => "pane_activity",
+            Some(b"text_chunk") => "rendered_tui",
+            Some(_) => "semantic",
+            None => "unparsed",
+        },
+        _ => "unparsed",
     }
 }
 
-fn probe_value(probe: &[u8], key: &[u8]) -> Option<String> {
-    let start = find_bytes(probe, key)? + key.len();
-    let rest = &probe[start..];
-    let end = rest.iter().position(|byte| *byte == b'"')?;
-    std::str::from_utf8(&rest[..end]).ok().map(str::to_string)
+/// The two discriminators an envelope's class is decided from, each proven to
+/// sit where the envelope schema puts it.
+struct EnvelopeDiscriminators {
+    /// The top-level object's `kind`.
+    kind: Option<Vec<u8>>,
+    /// The top-level `event` object's own `type`.
+    event_type: Option<Vec<u8>>,
 }
 
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
+/// Nesting the structural scan will follow before giving up. Envelope payloads
+/// are shallow; a deeper one costs bounded work and classifies `unparsed`.
+const SCAN_MAX_DEPTH: usize = 64;
+
+/// Longest string the scan will retain as a discriminator candidate. Every
+/// discriminator this module knows is a short snake_case token.
+const SCAN_MAX_DISCRIMINATOR_BYTES: usize = 64;
+
+/// A single-pass structural reader over one JSONL line.
+///
+/// Deliberately not `serde_json`: parsing the line would allocate the whole
+/// payload tree, which for a multi-megabyte legacy `text_chunk` is exactly the
+/// cost the accounting exists to avoid. This walks the bytes, keeping only the
+/// position and the two short discriminators.
+struct JsonScan<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> JsonScan<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
     }
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+
+    fn peek(&mut self) -> Option<u8> {
+        while self
+            .bytes
+            .get(self.pos)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.pos += 1;
+        }
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn eat(&mut self, byte: u8) -> Option<()> {
+        (self.peek()? == byte).then(|| self.pos += 1)
+    }
+
+    /// Consume one JSON string.
+    ///
+    /// Returns its raw contents when they are a plain, short token usable as a
+    /// discriminator, and `Some(None)` when the string is well formed but
+    /// escaped or oversized — consumed correctly, never trusted. No
+    /// discriminator this module matches contains an escape, so refusing to
+    /// decode them costs nothing and keeps the scan allocation-free.
+    fn string(&mut self) -> Option<Option<&'a [u8]>> {
+        self.eat(b'"')?;
+        let start = self.pos;
+        let mut escaped = false;
+        loop {
+            let byte = *self.bytes.get(self.pos)?;
+            self.pos += 1;
+            match byte {
+                b'"' => break,
+                b'\\' => {
+                    escaped = true;
+                    // Consume the escaped byte: a `\"` must not end the string,
+                    // and `\uXXXX`'s hex digits are ordinary bytes.
+                    self.bytes.get(self.pos)?;
+                    self.pos += 1;
+                }
+                _ => {}
+            }
+        }
+        let raw = &self.bytes[start..self.pos - 1];
+        Some((!escaped && raw.len() <= SCAN_MAX_DISCRIMINATOR_BYTES).then_some(raw))
+    }
+
+    /// Structurally consume one JSON value of any shape.
+    fn skip_value(&mut self, depth: usize) -> Option<()> {
+        if depth > SCAN_MAX_DEPTH {
+            return None;
+        }
+        match self.peek()? {
+            b'"' => self.string().map(|_| ()),
+            b'{' => {
+                self.pos += 1;
+                self.skip_members(depth)
+            }
+            b'[' => {
+                self.pos += 1;
+                if self.peek()? == b']' {
+                    self.pos += 1;
+                    return Some(());
+                }
+                loop {
+                    self.skip_value(depth + 1)?;
+                    match self.peek()? {
+                        b',' => self.pos += 1,
+                        b']' => {
+                            self.pos += 1;
+                            return Some(());
+                        }
+                        _ => return None,
+                    }
+                }
+            }
+            // A number or a `true`/`false`/`null` literal: one token, ended by
+            // structure or whitespace.
+            _ => {
+                let start = self.pos;
+                while let Some(byte) = self.bytes.get(self.pos) {
+                    if matches!(byte, b',' | b'}' | b']') || byte.is_ascii_whitespace() {
+                        break;
+                    }
+                    self.pos += 1;
+                }
+                (self.pos > start).then_some(())
+            }
+        }
+    }
+
+    /// Consume the members of an object whose `{` was already read.
+    fn skip_members(&mut self, depth: usize) -> Option<()> {
+        if self.peek()? == b'}' {
+            self.pos += 1;
+            return Some(());
+        }
+        loop {
+            self.string()?;
+            self.eat(b':')?;
+            self.skip_value(depth + 1)?;
+            match self.peek()? {
+                b',' => self.pos += 1,
+                b'}' => {
+                    self.pos += 1;
+                    return Some(());
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Consume the members of an object whose `{` was already read, capturing
+    /// the string value of its own `wanted` member.
+    ///
+    /// Last occurrence wins and a non-string value clears the capture, which is
+    /// exactly what `serde_json` does with a duplicate key — so the class this
+    /// reports is the class a parse of the same line would report.
+    fn capture_member(&mut self, wanted: &[u8], depth: usize) -> Option<Option<Vec<u8>>> {
+        let mut found = None;
+        if self.peek()? == b'}' {
+            self.pos += 1;
+            return Some(found);
+        }
+        loop {
+            let key = self.string()?;
+            self.eat(b':')?;
+            if key == Some(wanted) {
+                found = match self.peek()? {
+                    b'"' => self.string()?.map(<[u8]>::to_vec),
+                    _ => {
+                        self.skip_value(depth + 1)?;
+                        None
+                    }
+                };
+            } else {
+                self.skip_value(depth + 1)?;
+            }
+            match self.peek()? {
+                b',' => self.pos += 1,
+                b'}' => {
+                    self.pos += 1;
+                    return Some(found);
+                }
+                _ => return None,
+            }
+        }
+    }
+}
+
+/// Read one line's envelope discriminators, or `None` when the line is not a
+/// single well-formed JSON object.
+fn scan_envelope_discriminators(line: &[u8]) -> Option<EnvelopeDiscriminators> {
+    let mut scan = JsonScan::new(line);
+    scan.eat(b'{')?;
+    let mut kind = None;
+    let mut event_type = None;
+    if scan.peek()? == b'}' {
+        scan.pos += 1;
+    } else {
+        loop {
+            let key = scan.string()?;
+            scan.eat(b':')?;
+            match key {
+                Some(b"kind") => {
+                    kind = match scan.peek()? {
+                        b'"' => scan.string()?.map(<[u8]>::to_vec),
+                        _ => {
+                            scan.skip_value(1)?;
+                            None
+                        }
+                    };
+                }
+                Some(b"event") => {
+                    // Only an OBJECT `event` has a discriminator. Anything else
+                    // leaves the class unproven, which fails closed.
+                    event_type = if scan.peek()? == b'{' {
+                        scan.pos += 1;
+                        scan.capture_member(b"type", 1)?
+                    } else {
+                        scan.skip_value(1)?;
+                        None
+                    };
+                }
+                _ => scan.skip_value(1)?,
+            }
+            match scan.peek()? {
+                b',' => scan.pos += 1,
+                b'}' => {
+                    scan.pos += 1;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+    }
+    // Trailing content after the top-level object means this line is not one
+    // envelope, whatever the prefix looked like.
+    while scan
+        .bytes
+        .get(scan.pos)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        scan.pos += 1;
+    }
+    (scan.pos == line.len()).then_some(EnvelopeDiscriminators { kind, event_type })
 }
 
 /// Whether a run's transport renders into a pane rather than streaming
@@ -1573,12 +2054,10 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// output; an `acp-*` transport's `text_chunk` is the model's or a subprocess's
 /// content, which is evidence and must never be reclaimed.
 ///
-/// Mirrors `PaneMux::for_transport` in `supervisor.rs` deliberately rather than
-/// sharing it: this module must not depend on the supervisor's private
-/// classifier, and the two answer different questions about the same string.
-pub fn transport_is_pane(transport: &str) -> bool {
-    matches!(transport.trim(), "rmux" | "tmux" | "tmux-tui")
-}
+/// orgasmic:TASK-FZB6T.2 finding 5 — the definition now lives in
+/// `orgasmic_core::session`, because the session writer refuses a pane
+/// `text_chunk` at write time and the two answers must be the same answer.
+pub use orgasmic_core::session::transport_is_pane;
 
 /// Whether an event class may be reclaimed by a maintenance pass, for a run on
 /// `transport`.
@@ -2068,12 +2547,17 @@ mod tests {
         );
     }
 
-    /// The one transition a tombstone IS allowed to make: the SAME directory
-    /// object comes back, which is what an unmounted volume returning looks
-    /// like. Proven by making the recorded path a symlink and swapping it back
-    /// to the original directory.
+    /// orgasmic:TASK-FZB6T.2 finding 7 / dec_BBPW4 — a tombstone is TERMINAL,
+    /// and the "same directory object came back" revival is gone.
+    ///
+    /// The old rule readmitted a run when the recorded path carried the
+    /// recorded device and inode. Inode numbers are reusable, so an unrelated
+    /// checkout could eventually satisfy it, while a returned volume with
+    /// renumbered inodes never could — unsound in one direction and useless in
+    /// the other. This drives the case the old rule was WRITTEN for: the very
+    /// same directory object, moved away and moved back. It must stay dead.
     #[tokio::test]
-    async fn a_tombstone_lifts_only_when_the_original_directory_returns() {
+    async fn a_tombstone_is_terminal_even_when_the_same_directory_returns() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("proj");
         project(&root, "proj-1");
@@ -2099,22 +2583,47 @@ mod tests {
         catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert!(catalog.entries()[0].worktree_authority.is_tombstoned());
 
-        // The very same directory comes back.
+        // The very same directory object comes back — same device, same inode.
         std::fs::rename(dir.path().join("stashed"), &real).unwrap();
+        let identity_now = DirIdentity::at(&real);
+        let WorktreeAuthority::Tombstoned {
+            verified_identity, ..
+        } = &catalog.entries()[0].worktree_authority
+        else {
+            panic!("expected a tombstone");
+        };
+        assert_eq!(
+            *verified_identity, identity_now,
+            "the fixture must actually restore the SAME directory object, or it proves nothing"
+        );
+
         catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(
+            catalog.entries()[0].worktree_authority.is_tombstoned(),
+            "a tombstone is terminal: not even the original directory object returning \
+             revives a dead run: {:?}",
+            catalog.entries()[0].worktree_authority
+        );
         assert!(
             catalog.entries()[0]
                 .worktree_authority
                 .verified_worktree()
-                .is_some(),
-            "the original directory object returning IS continuity: {:?}",
-            catalog.entries()[0].worktree_authority
+                .is_none(),
+            "a tombstoned run offers no verified worktree to attach into"
         );
     }
 
     /// orgasmic:TASK-FZB6T.1 finding 7 — a snapshot entry is admitted through
     /// session-directory authority and current file identity, not by living
     /// somewhere under the project root.
+    ///
+    /// The name used to overclaim (orgasmic:TASK-FZB6T.2 finding 4): it proved
+    /// PATH and FINGERPRINT corruption and called that semantic. Path and
+    /// fingerprint say which BYTES an entry is about; they say nothing about
+    /// what it claims those bytes MEAN. So this now also drives the corruption
+    /// that authorized a deletion — `lifecycle`, `terminal`, `driver` and
+    /// `transport` taken verbatim — and every one of those fields must be
+    /// refused when the entry's own retained envelopes do not reproduce it.
     #[tokio::test]
     async fn semantically_corrupt_snapshot_entries_are_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -2200,6 +2709,121 @@ mod tests {
             SnapshotLoad::Loaded { entries: 0 },
             "an entry whose file identity changed must be re-derived, not trusted"
         );
+
+        // --- THE SEMANTIC HALF (orgasmic:TASK-FZB6T.2 finding 4) -----------
+        //
+        // Each of these is valid JSON at the right path with the right file
+        // identity, and each lies about what the session file MEANS. The one
+        // that mattered is the first: it presents this run as a terminal rmux
+        // run, which is precisely the pair `plan_compaction` used to read as
+        // permission to delete.
+        let semantic_cases: Vec<(&str, Box<dyn Fn(&mut RunCatalogEntry)>)> = vec![
+            (
+                "terminal + transport: the deletion-authority pair",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.transport = Some("rmux".to_string());
+                    entry.terminal = Some(TerminalRecord::DriverEvent {
+                        event: "run_complete".to_string(),
+                        at: Utc::now(),
+                    });
+                }),
+            ),
+            (
+                "terminal verdict alone",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.terminal = None;
+                }),
+            ),
+            (
+                "transport alone",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.transport = Some("acp-stdio".to_string());
+                }),
+            ),
+            (
+                "driver harness",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.harness = Some("not-what-the-session-says".to_string());
+                }),
+            ),
+            (
+                "lifecycle: task and worker",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.task_id = Some("TASK-NEVER-RAN".to_string());
+                    entry.worker_id = Some("someone-else".to_string());
+                }),
+            ),
+            (
+                "worktree authority pair",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.run_meta_project = Some("another-project".to_string());
+                    entry.run_meta_worktree = Some(PathBuf::from("/somewhere/else"));
+                }),
+            ),
+            (
+                "external registration flag",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.external_registration = !entry.external_registration;
+                }),
+            ),
+            (
+                "the source envelopes emptied, the verdicts kept",
+                Box::new(|entry: &mut RunCatalogEntry| {
+                    entry.lifecycle_envelopes.clear();
+                }),
+            ),
+        ];
+        for (name, corrupt) in semantic_cases {
+            let mut entry = template.clone();
+            corrupt(&mut entry);
+            let snapshot = json!({
+                "catalog_version": CATALOG_VERSION,
+                "written_at": Utc::now(),
+                "entries": [entry],
+            });
+            std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+            let catalog = RunCatalog::new();
+            assert_eq!(
+                catalog.load_snapshot(&root),
+                SnapshotLoad::Loaded { entries: 0 },
+                "{name}: a semantic claim its own source envelopes do not reproduce \
+                 must not be admitted as a session record"
+            );
+            assert_eq!(catalog.len(), 0, "{name}");
+        }
+
+        // An `unreadable` record claims nothing, so it is admissible — but only
+        // while it goes on claiming nothing.
+        let mut unreadable = template.clone();
+        unreadable.unreadable = true;
+        unreadable.lifecycle_envelopes.clear();
+        unreadable.transport = None;
+        unreadable.harness = None;
+        unreadable.native = None;
+        unreadable.terminal = None;
+        unreadable.final_release_outcome = None;
+        unreadable.driver_terminal_event = None;
+        unreadable.run_meta_recorded = false;
+        unreadable.external_registration = false;
+        let mut lying = unreadable.clone();
+        lying.terminal = Some(TerminalRecord::ExternalRegistrationEnded);
+        for (name, entry, expected) in [
+            ("claims nothing", unreadable, 1_usize),
+            ("claims a terminal verdict it cannot have", lying, 0),
+        ] {
+            let snapshot = json!({
+                "catalog_version": CATALOG_VERSION,
+                "written_at": Utc::now(),
+                "entries": [entry],
+            });
+            std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+            let catalog = RunCatalog::new();
+            assert_eq!(
+                catalog.load_snapshot(&root),
+                SnapshotLoad::Loaded { entries: expected },
+                "unreadable record that {name}"
+            );
+        }
 
         // The sound entry still loads, so the rule is not merely refusing
         // everything.
@@ -2686,6 +3310,78 @@ mod tests {
         ] {
             assert!(!class_is_reclaimable(class, Some("rmux")), "{class}");
         }
+    }
+
+    /// orgasmic:TASK-FZB6T.2 finding 1 — the discriminators are PROVEN, not
+    /// found. A byte scan takes the first `"type":"` in the line; the envelope
+    /// schema puts the one that decides the class at a specific place, and
+    /// anything nested deeper is payload.
+    ///
+    /// Every case below was classified WRONG by the byte scan, and every one of
+    /// them is a record maintenance would then have deleted.
+    #[test]
+    fn a_nested_type_never_decides_an_envelope_class() {
+        // The headline case: an ACP tool result whose content block is a
+        // `text_chunk`, stated BEFORE the event's own discriminator.
+        let collision = br#"{"seq":1,"kind":"driver_event","event":{"output":{"content":[{"type":"text_chunk","text":"hi"}]},"type":"tool_result"}}"#;
+        assert_eq!(classify_history_line(collision), "semantic");
+
+        // The same trick one level up: a nested `kind` before the envelope's.
+        let nested_kind = br#"{"seq":1,"event":{"meta":{"kind":"lifecycle"},"type":"text_chunk"},"kind":"driver_event"}"#;
+        assert_eq!(classify_history_line(nested_kind), "rendered_tui");
+
+        // A nested `type` inside a STRING, which no structural reader can
+        // mistake for a key and every substring search does.
+        let in_a_string = br#"{"seq":1,"kind":"driver_event","event":{"chunk":"the log said \"type\":\"text_chunk\" here","type":"tool_result"}}"#;
+        assert_eq!(classify_history_line(in_a_string), "semantic");
+
+        // A nested `text_chunk` under a run that also nests an object array.
+        let deep = br#"{"kind":"driver_event","event":{"args":[[{"type":"text_chunk"}],{"a":{"b":{"type":"text_chunk"}}}],"type":"tool_call"}}"#;
+        assert_eq!(classify_history_line(deep), "semantic");
+
+        // FAIL CLOSED. Anything whose structure cannot be proven is
+        // `unparsed`, and `unparsed` is never reclaimable — so an unreadable
+        // line is refused rather than deleted on a guess.
+        for unprovable in [
+            // Truncated mid-object.
+            &br#"{"kind":"driver_event","event":{"type":"text_chunk","#[..],
+            // `event` is not an object, so it has no discriminator.
+            &br#"{"kind":"driver_event","event":"type=text_chunk"}"#[..],
+            // Two top-level objects on one line.
+            &br#"{"kind":"driver_event","event":{"type":"text_chunk"}}{"kind":"note"}"#[..],
+            // A trailing comma: not JSON, whatever it looks like.
+            &br#"{"kind":"driver_event","event":{"type":"text_chunk"},}"#[..],
+            // No envelope `kind` at all.
+            &br#"{"event":{"type":"text_chunk"}}"#[..],
+            // A non-string `kind`.
+            &br#"{"kind":7,"event":{"type":"text_chunk"}}"#[..],
+            // A non-string `type`.
+            &br#"{"kind":"driver_event","event":{"type":7}}"#[..],
+        ] {
+            assert_eq!(
+                classify_history_line(unprovable),
+                "unparsed",
+                "{}",
+                String::from_utf8_lossy(unprovable)
+            );
+            assert!(!class_is_reclaimable(
+                classify_history_line(unprovable),
+                Some("rmux")
+            ));
+        }
+
+        // Duplicate keys resolve the way a parse of the same line resolves
+        // them — last wins — so the accounting can never disagree with what a
+        // reader of the record would see.
+        let duplicated = br#"{"kind":"driver_event","event":{"type":"text_chunk","type":"tool_result"}}"#;
+        assert_eq!(classify_history_line(duplicated), "semantic");
+        let parsed: Value = serde_json::from_slice(duplicated).unwrap();
+        assert_eq!(parsed["event"]["type"].as_str(), Some("tool_result"));
+
+        // And the honest rendered-TUI shape still classifies, with whitespace
+        // and escapes in the payload.
+        let real_redraw = br#" {"seq":1, "kind":"driver_event", "event":{"stream":"stdout","chunk":"[H[2J\"quoted\"","type":"text_chunk"}} "#;
+        assert_eq!(classify_history_line(real_redraw), "rendered_tui");
     }
 
     /// Every byte on disk lands in exactly one class, including the two shapes

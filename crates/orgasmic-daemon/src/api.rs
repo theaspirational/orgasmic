@@ -7331,26 +7331,66 @@ async fn post_run_history_compact(
     let catalog = state.run_catalog.clone();
     let started = std::time::Instant::now();
     let confirm = request.confirm.clone();
-    let report = tokio::task::spawn_blocking(move || {
-        refresh_project_catalog(&catalog, &root);
-        let entries = catalog.entries_for_project(&root);
-        let plan = crate::run_history::plan_compaction(&root, &entries);
-        let outcome = match confirm {
-            None => Ok(crate::run_history::dry_run_report(plan)),
-            Some(confirm) => crate::run_history::apply_compaction(plan, Some(&confirm)),
-        };
-        // Whatever happened, every rewritten file's cached entry is stale now.
-        for entry in &entries {
-            catalog.invalidate_session(&entry.session_path);
-        }
-        outcome
-    })
-    .await
-    .map_err(|error| ApiError::internal(format!("run history compaction failed: {error}")))?;
+
+    // Plan first, and on its own: the plan names the session paths, and the
+    // writer has to be fenced against every one of them BEFORE the transaction
+    // is allowed to rename anything over them (orgasmic:TASK-FZB6T.2 finding
+    // 3 / dec_BBPW4).
+    let plan = {
+        let catalog = catalog.clone();
+        let root = root.clone();
+        tokio::task::spawn_blocking(move || {
+            refresh_project_catalog(&catalog, &root);
+            let entries = catalog.entries_for_project(&root);
+            crate::run_history::plan_compaction(&root, &entries)
+        })
+        .await
+        .map_err(|error| ApiError::internal(format!("run history planning failed: {error}")))?
+    };
+
+    let Some(confirm) = confirm else {
+        return Ok(Json(json!({
+            "report": crate::run_history::dry_run_report(plan),
+            "duration_ms": started.elapsed().as_millis() as u64,
+        })));
+    };
+
+    let mut fenced = Vec::with_capacity(plan.files.len());
+    for file in &plan.files {
+        state
+            .writer
+            .fence_session(file.session_path.clone())
+            .await
+            .map_err(|error| {
+                ApiError::internal(format!("fence session writer before compaction: {error}"))
+            })?;
+        fenced.push(file.session_path.clone());
+    }
+    let fenced = crate::run_history::FencedSessions::new(fenced);
+
+    let report = {
+        let catalog = catalog.clone();
+        tokio::task::spawn_blocking(move || {
+            let paths: Vec<PathBuf> = plan
+                .files
+                .iter()
+                .map(|file| file.session_path.clone())
+                .collect();
+            let outcome = crate::run_history::apply_compaction(plan, Some(&confirm), &fenced);
+            // Whatever happened, every rewritten file's cached entry is stale.
+            for path in &paths {
+                catalog.invalidate_session(path);
+            }
+            outcome
+        })
+        .await
+        .map_err(|error| ApiError::internal(format!("run history compaction failed: {error}")))?
+    };
 
     let report = report.map_err(|error| match error {
         crate::run_history::CompactionError::ConfirmationRequired { .. }
-        | crate::run_history::CompactionError::ConfirmationStale { .. } => {
+        | crate::run_history::CompactionError::ConfirmationStale { .. }
+        | crate::run_history::CompactionError::MaintenanceBusy { .. } => {
             ApiError::bad_request(error.to_string())
         }
         other => ApiError::internal(other.to_string()),
@@ -7369,6 +7409,20 @@ async fn post_run_history_rollback(
     let root = project_root_for(&state, &request.project).await?;
     let catalog = state.run_catalog.clone();
     let manifest_id = request.manifest_id.clone();
+
+    // Rollback renames over live paths exactly like the forward pass, so it
+    // needs the same writer fence (orgasmic:TASK-FZB6T.2 finding 3).
+    let paths = {
+        let root = root.clone();
+        let manifest_id = manifest_id.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::run_history::manifest_session_paths(&root, &manifest_id)
+        })
+        .await
+        .map_err(|error| ApiError::internal(format!("read compaction manifest: {error}")))?
+    };
+    fence_sessions_for_rollback(&state, &paths).await;
+
     let report = tokio::task::spawn_blocking(move || {
         let report = crate::run_history::rollback_compaction(&root, &manifest_id);
         if let Ok(report) = &report {
@@ -7388,6 +7442,14 @@ async fn post_run_history_rollback(
         other => ApiError::bad_request(other.to_string()),
     })?;
     Ok(Json(json!({ "report": report })))
+}
+
+/// Restoring a session file makes the writer's cached append handle stale for
+/// exactly the same reason compaction does.
+async fn fence_sessions_for_rollback(state: &ApiState, paths: &[PathBuf]) {
+    for path in paths {
+        let _ = state.writer.fence_session(path.clone()).await;
+    }
 }
 
 async fn get_run(

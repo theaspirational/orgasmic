@@ -1,4 +1,4 @@
-// orgasmic:TASK-FZB6T.1
+// orgasmic:TASK-FZB6T.1, TASK-FZB6T.2, dec_BBPW4
 //! The run-history maintenance transaction: plan, confirm, apply, roll back.
 //!
 //! # Why this exists
@@ -10,52 +10,80 @@
 //! The reviewer's finding 1 is that a dry run with no confirmable run behind it
 //! is not a maintenance capability; it is a number.
 //!
+//! # The rule this module is built on
+//!
+//! **Where authority cannot be proven from the current bytes, refuse rather
+//! than delete** (dec_BBPW4). A refused compaction costs a re-scan; a wrong one
+//! costs the only record of what a worker did.
+//!
+//! The catalog is disposable derived state and is never deletion authority.
+//! Maintenance takes exactly one thing from it — the list of candidate paths —
+//! and re-derives every fact that authorizes an irreversible operation
+//! ([`crate::run_catalog::derive_session_authority`]) from the session file's
+//! own current bytes, at planning time and again immediately before the file is
+//! touched.
+//!
 //! # The shape of the transaction
 //!
-//! 1. **Plan.** [`plan_compaction`] reads every candidate session file and
+//! 1. **Plan.** [`plan_compaction`] re-derives every candidate from disk and
 //!    produces a [`CompactionPlan`]: which records are reclaimable, how many
-//!    bytes, and the file identity each decision was made against. The plan
-//!    carries a [`CompactionPlan::manifest_id`] that is a pure function of its
-//!    own content, so the same board state always produces the same id and any
+//!    bytes, the digest of those exact bytes, and the file identity each
+//!    decision was made against. The plan carries a
+//!    [`CompactionPlan::manifest_id`] that is a pure function of its own
+//!    content, so the same board state always produces the same id and any
 //!    change to the board produces a different one.
 //! 2. **Confirm.** [`apply_compaction`] re-plans from scratch and refuses
 //!    unless the operator's token equals the id of the plan it just computed.
 //!    There is no server-side pending state to go stale: the token *is* the
 //!    proof that the operator saw this exact plan.
-//! 3. **Apply.** Per file, and only after the file identity is re-verified:
-//!    the original is archived whole, the compacted content is written to a
-//!    sibling temporary file, and the temporary file is `rename`d over the
-//!    original. The rename is the only mutation of the live path and it is
-//!    atomic, so a kill at any instant leaves either the original file or the
-//!    complete compacted one — never a torn one.
-//! 4. **Roll back.** [`rollback_compaction`] restores every archived original
-//!    over its recorded path, by the same archive-then-rename discipline.
+//! 3. **Exclude.** The transaction takes an exclusive `flock` on
+//!    [`MAINTENANCE_LOCK_REL_PATH`] for its whole duration, and refuses to
+//!    touch any session path the caller has not proven it fenced against the
+//!    session writer ([`FencedSessions`]).
+//! 4. **Apply.** Per file, through a durable journalled state machine
+//!    ([`CompactionFileStage`]): archive the ONE byte generation the plan was
+//!    decided against, build the replacement from those same bytes, stage it,
+//!    journal the staged image's digest, re-verify the live file has not moved,
+//!    then `rename`. Every journal write is fsynced and every rename is
+//!    followed by a parent-directory fsync.
+//! 5. **Roll back.** [`rollback_compaction`] restores every archived original,
+//!    and refuses any destination that does not hold a byte image this
+//!    transaction recorded.
 //!
 //! # What is eligible
 //!
-//! Only **terminal** runs, and only records
+//! Only runs whose CURRENT bytes prove they are terminal, and only records
 //! [`crate::run_catalog::class_is_reclaimable`] proves are rendered pane
 //! payload. A live run's session file is held open by the session writer in
 //! append mode; renaming a new file over that path would leave the writer
 //! appending to an orphaned inode and silently lose every subsequent lifecycle
 //! line. That is not a risk worth a few megabytes, so a run that has not ended
-//! is never a candidate.
+//! is never a candidate — and even a terminal one is refused unless its writer
+//! handle has been fenced.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use orgasmic_core::session::SessionScanBudget;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::run_catalog::{
-    class_is_reclaimable, project_sessions_dir, read_history_records, RunCatalogEntry,
-    SessionFileFingerprint,
+    class_is_reclaimable, derive_session_authority, project_sessions_dir, read_history_records,
+    transport_is_pane, RunCatalogEntry, SessionFileFingerprint,
 };
 
 /// Where archived originals and manifests live, relative to a project root.
 pub const ARCHIVE_REL_PATH: &str = ".orgasmic/tmp/run-history-archive";
+
+/// The per-project maintenance exclusion lock (dec_BBPW4 question 3).
+///
+/// An exclusive `flock`, so it serializes compact against compact and compact
+/// against rollback ACROSS PROCESSES — an in-process mutex would leave a second
+/// daemon, or a CLI invoked against the same board, free to interleave.
+pub const MAINTENANCE_LOCK_REL_PATH: &str = ".orgasmic/tmp/run-history-archive/maintenance.lock";
 
 /// Suffix of the sibling file a rewrite is staged in before its rename.
 const STAGING_SUFFIX: &str = ".orgasmic-compact-tmp";
@@ -66,18 +94,23 @@ pub struct CompactionPlanFile {
     pub session_path: PathBuf,
     pub run_id: String,
     pub driver: String,
+    /// The transport this run's CURRENT bytes record. Re-derived, never taken
+    /// from a catalog entry (dec_BBPW4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport: Option<String>,
     /// File identity this plan was decided against. Re-verified before the
-    /// rewrite; a mismatch skips the file rather than rewriting bytes the plan
-    /// never saw.
+    /// rewrite and again immediately before the rename; a mismatch skips the
+    /// file rather than rewriting bytes the plan never saw.
     pub fingerprint: SessionFileFingerprint,
     pub total_bytes: u64,
     pub reclaimable_records: u64,
     pub reclaimable_bytes: u64,
-    /// SHA-256 over the reclaimable records' raw bytes, in file order. Recorded
-    /// so the summary line the rewrite leaves behind names exactly what was
-    /// removed.
+    /// SHA-256 over the reclaimable records' raw bytes, in file order.
+    ///
+    /// orgasmic:TASK-FZB6T.2 finding 3 — the apply pass compares this digest,
+    /// not just the record and byte COUNTS. Two different sets of records can
+    /// have the same count and the same total size; only the digest proves the
+    /// bytes about to be removed are the bytes the operator confirmed.
     pub reclaimable_sha256: String,
 }
 
@@ -95,10 +128,19 @@ pub struct CompactionPlan {
     pub reclaimable_records: u64,
     /// Catalog records considered, including the ones with nothing to reclaim.
     pub candidates_considered: u64,
-    /// Records excluded because the run has not ended.
+    /// Records excluded because a fresh read of the file does not prove the run
+    /// ended.
     pub skipped_not_terminal: u64,
     /// Records excluded because their session file could not be read.
     pub skipped_unreadable: u64,
+    /// Records excluded because the file changed WHILE it was being planned, so
+    /// no single byte generation was ever proven.
+    #[serde(default)]
+    pub skipped_unstable: u64,
+    /// Records excluded because a bounded scan skipped part of the file, so the
+    /// terminal verdict is not provable from what was read.
+    #[serde(default)]
+    pub skipped_unproven: u64,
 }
 
 impl CompactionPlan {
@@ -107,7 +149,33 @@ impl CompactionPlan {
     }
 }
 
-/// What one file's rewrite did.
+/// Session paths whose cached session-writer append handle the caller has
+/// closed.
+///
+/// orgasmic:TASK-FZB6T.2 finding 3 — a `rename` over a path the writer holds
+/// open leaves the writer appending to an orphaned inode, and every line it
+/// writes afterwards is lost. The transaction cannot close that handle itself
+/// (the writer is a daemon task), so the caller proves it did: a planned file
+/// that is not in this set is refused, not compacted. An empty set therefore
+/// compacts nothing, which is the correct fail-closed default.
+#[derive(Debug, Clone, Default)]
+pub struct FencedSessions {
+    paths: BTreeSet<PathBuf>,
+}
+
+impl FencedSessions {
+    pub fn new(paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        Self {
+            paths: paths.into_iter().collect(),
+        }
+    }
+
+    pub fn contains(&self, path: &Path) -> bool {
+        self.paths.contains(path)
+    }
+}
+
+/// What one file's rewrite did, as reported to the operator.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CompactionFileOutcome {
@@ -119,11 +187,11 @@ pub enum CompactionFileOutcome {
         bytes_before: u64,
         bytes_after: u64,
     },
-    /// The file changed between planning and applying. Left untouched.
+    /// Refused before anything was written. The file is untouched.
     SkippedChanged { reason: String },
-    /// The rewrite failed. The original is still in place: nothing is renamed
-    /// over the live path until the replacement is complete on disk.
-    Failed { error: String },
+    /// The rewrite stopped after it had begun. `stage` names the furthest
+    /// DURABLE state it reached, which is what a rollback needs to know.
+    Failed { error: String, stage: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +202,81 @@ pub struct CompactionFileResult {
     pub outcome: CompactionFileOutcome,
 }
 
+/// The furthest DURABLE state one file's rewrite reached.
+///
+/// orgasmic:TASK-FZB6T.2 finding 2 — the old transaction mutated a session
+/// file, appended a result in memory, and ignored every journal write failure.
+/// A crash or ENOSPC after the live rename but before a durable manifest update
+/// left the archived original and the rewritten live file absent from the
+/// manifest entirely, and rollback iterated only the results — so it could not
+/// restore what it could not name.
+///
+/// Every stage below is written to the manifest, fsynced, and its parent
+/// directory fsynced, BEFORE the operation it authorizes. The critical one is
+/// [`Self::Staged`]: it records the replacement's digest before the rename, so
+/// a crash across the rename leaves BOTH candidate images named on disk and a
+/// rollback can tell which one the live path holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum CompactionFileStage {
+    /// The transaction intends to rewrite this file. Nothing has been touched.
+    Planned,
+    /// The original is durably archived and hashes to `original_sha256`.
+    Archived {
+        archived: PathBuf,
+        original_sha256: String,
+    },
+    /// The replacement is durably staged and hashes to `replacement_sha256`.
+    /// Written before the rename.
+    Staged {
+        archived: PathBuf,
+        original_sha256: String,
+        staging: PathBuf,
+        replacement_sha256: String,
+        reclaimed_records: u64,
+        reclaimed_bytes: u64,
+        bytes_before: u64,
+        bytes_after: u64,
+    },
+    /// The rename committed and the sessions directory was fsynced.
+    Committed {
+        archived: PathBuf,
+        original_sha256: String,
+        replacement_sha256: String,
+        reclaimed_records: u64,
+        reclaimed_bytes: u64,
+        bytes_before: u64,
+        bytes_after: u64,
+        post_fingerprint: SessionFileFingerprint,
+    },
+}
+
+impl CompactionFileStage {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Archived { .. } => "archived",
+            Self::Staged { .. } => "staged",
+            Self::Committed { .. } => "committed",
+        }
+    }
+}
+
+/// One file's durable journal record. Exactly one exists per planned file, from
+/// the first manifest write onwards — so a rollback can always reconstruct what
+/// a killed transaction was doing from the PLAN, even when no result was ever
+/// written.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionFileJournal {
+    pub session_path: PathBuf,
+    pub run_id: String,
+    #[serde(flatten)]
+    pub stage: CompactionFileStage,
+    /// Why this file stopped where it did, when it stopped short of committing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+}
+
 /// The durable record of one applied transaction, written under the archive
 /// directory before any file is touched.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,11 +285,12 @@ pub struct CompactionManifest {
     pub project_root: PathBuf,
     pub started_at: DateTime<Utc>,
     pub plan: CompactionPlan,
-    /// Filled in as the transaction progresses; a manifest whose `results` is
-    /// shorter than `plan.files` is the trace of a transaction that was killed
-    /// partway, and every file it does not name is still in its original state.
+    /// One record per planned file, in plan order, present from the first write.
     #[serde(default)]
-    pub results: Vec<CompactionFileResult>,
+    pub files: Vec<CompactionFileJournal>,
+    /// `false` on a manifest whose transaction never reached its end.
+    #[serde(default)]
+    pub complete: bool,
 }
 
 /// The answer `run history compact` returns in either mode.
@@ -164,6 +308,10 @@ pub struct CompactionReport {
     /// Where the originals were archived, when the transaction ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive_dir: Option<PathBuf>,
+    /// `false` when the transaction stopped early; the manifest still names
+    /// every file and the furthest durable stage each one reached.
+    #[serde(default)]
+    pub complete: bool,
     pub note: &'static str,
 }
 
@@ -179,6 +327,12 @@ pub enum CompactionError {
          current plan is {expected}. Re-run --dry-run and confirm the new plan."
     )]
     ConfirmationStale { supplied: String, expected: String },
+    #[error(
+        "run-history maintenance is already running for {}; it is exclusive per project. \
+         Wait for it to finish, then re-read the plan.",
+        project_root.display()
+    )]
+    MaintenanceBusy { project_root: PathBuf },
     #[error("no compaction manifest {manifest_id} under {}", archive_dir.display())]
     ManifestNotFound {
         manifest_id: String,
@@ -186,8 +340,87 @@ pub enum CompactionError {
     },
     #[error("manifest {manifest_id} is unreadable: {error}")]
     ManifestUnreadable { manifest_id: String, error: String },
+    #[error(
+        "the transaction journal could not be made durable, so the transaction stopped \
+         before it could do anything it could not undo: {0}"
+    )]
+    JournalFailed(String),
     #[error("{0}")]
     Io(String),
+}
+
+// ---------------------------------------------------------------------------
+// Exclusion
+// ---------------------------------------------------------------------------
+
+/// An exclusive per-project maintenance lock, released when dropped.
+pub struct MaintenanceLock {
+    _file: std::fs::File,
+}
+
+fn acquire_maintenance_lock(project_root: &Path) -> Result<MaintenanceLock, CompactionError> {
+    let path = project_root.join(MAINTENANCE_LOCK_REL_PATH);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| CompactionError::Io(format!("create archive dir: {error}")))?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| CompactionError::Io(format!("open maintenance lock: {error}")))?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| CompactionError::MaintenanceBusy {
+        project_root: project_root.to_path_buf(),
+    })?;
+    Ok(MaintenanceLock { _file: file })
+}
+
+// ---------------------------------------------------------------------------
+// Fault injection
+// ---------------------------------------------------------------------------
+
+/// A boundary at which a fault can be injected, so the durability claims in
+/// this module have execution evidence behind them rather than a comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FaultPoint {
+    /// The write of the archived original (full disk).
+    ArchiveWrite,
+    /// After the archive is durable, before anything else.
+    AfterArchive,
+    /// The write of the staged replacement (full disk).
+    StageWrite,
+    /// After the replacement is durably staged, before the rename.
+    AfterStage,
+    /// After the rename, before the result is journalled — the exact window
+    /// the reviewer's finding 2 is about.
+    AfterRename,
+    /// The journal write that records the committed result (full disk).
+    ResultJournalWrite,
+}
+
+/// What an injected fault does.
+#[derive(Debug, Clone)]
+pub(crate) enum Fault {
+    /// The next I/O at this point fails, as a full disk would.
+    Io(String),
+    /// The process dies here. The transaction returns immediately, leaving the
+    /// filesystem in exactly the state the boundary produced.
+    Crash,
+}
+
+pub(crate) type FaultInjector<'a> = dyn Fn(FaultPoint, &Path) -> Option<Fault> + 'a;
+
+fn no_faults(_: FaultPoint, _: &Path) -> Option<Fault> {
+    None
+}
+
+/// A crash injected mid-transaction, reported as an ordinary I/O stop. A real
+/// crash is not observable by the caller at all; this is the closest a test can
+/// get without killing the process.
+fn crash_error(point: FaultPoint) -> CompactionError {
+    CompactionError::Io(format!("injected crash at {point:?}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -196,14 +429,23 @@ pub enum CompactionError {
 
 /// Read every candidate and decide what a compaction pass would reclaim.
 ///
-/// Whole-file reads, like the accounting it shares its classifier with; this
-/// runs only under an explicit operator command.
+/// `entries` is a CANDIDATE LIST and nothing more (dec_BBPW4). Terminal state,
+/// transport and reclaimability are all re-derived here from each file's
+/// current bytes; a catalog entry that says a live ACP run is a terminal rmux
+/// one changes which paths are looked at and changes no decision.
+///
+/// Every planned file is also proven STABLE: the file identity is read before
+/// and after the two scans, and a file that moved in between is refused rather
+/// than planned against a generation that no longer exists.
 pub fn plan_compaction(project_root: &Path, entries: &[RunCatalogEntry]) -> CompactionPlan {
     let sessions_dir = project_sessions_dir(project_root);
     let mut files = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     let mut candidates_considered = 0_u64;
     let mut skipped_not_terminal = 0_u64;
     let mut skipped_unreadable = 0_u64;
+    let mut skipped_unstable = 0_u64;
+    let mut skipped_unproven = 0_u64;
 
     for entry in entries {
         // Session-directory authority, same rule the snapshot loader applies:
@@ -212,20 +454,13 @@ pub fn plan_compaction(project_root: &Path, entries: &[RunCatalogEntry]) -> Comp
         if entry.session_path.parent() != Some(sessions_dir.as_path()) {
             continue;
         }
+        if !seen.insert(entry.session_path.clone()) {
+            continue;
+        }
         candidates_considered += 1;
-        if !entry.is_terminal() {
-            skipped_not_terminal += 1;
-            continue;
-        }
-        let transport = entry.transport.clone();
-        let Ok(scan) = scan_reclaimable(&entry.session_path, transport.as_deref()) else {
-            skipped_unreadable += 1;
-            continue;
-        };
-        if scan.records == 0 {
-            continue;
-        }
-        let Ok(metadata) = std::fs::symlink_metadata(&entry.session_path) else {
+        let path = entry.session_path.as_path();
+
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
             skipped_unreadable += 1;
             continue;
         };
@@ -233,12 +468,57 @@ pub fn plan_compaction(project_root: &Path, entries: &[RunCatalogEntry]) -> Comp
             skipped_unreadable += 1;
             continue;
         }
+        let fingerprint = SessionFileFingerprint::of(&metadata);
+
+        // Deletion authority, re-derived from the bytes on disk right now.
+        let Ok(authority) = derive_session_authority(path, SessionScanBudget::DEFAULT) else {
+            skipped_unreadable += 1;
+            continue;
+        };
+        if !authority.is_terminal() {
+            skipped_not_terminal += 1;
+            continue;
+        }
+        if !authority.terminal_is_proven() {
+            // The verdict does not rest on the file's genuine end — a bounded
+            // scan whose retained segment is not provably the last one. Refuse
+            // rather than delete.
+            skipped_unproven += 1;
+            continue;
+        }
+        // Only a pane transport's `text_chunk` is ever reclaimable, and that
+        // has to be proven, not assumed: an unrecorded transport reclaims
+        // nothing.
+        let transport = authority.transport.clone();
+        if !transport.as_deref().is_some_and(transport_is_pane) {
+            continue;
+        }
+
+        let Ok(scan) = scan_reclaimable(path, transport.as_deref()) else {
+            skipped_unreadable += 1;
+            continue;
+        };
+        if scan.records == 0 {
+            continue;
+        }
+
+        // One byte generation, proven: the identity that was true before the
+        // derivation must still be true after it.
+        let Ok(after) = std::fs::symlink_metadata(path) else {
+            skipped_unreadable += 1;
+            continue;
+        };
+        if SessionFileFingerprint::of(&after) != fingerprint {
+            skipped_unstable += 1;
+            continue;
+        }
+
         files.push(CompactionPlanFile {
             session_path: entry.session_path.clone(),
-            run_id: entry.run_id.clone(),
-            driver: entry.driver_label(),
+            run_id: authority.run_id.clone(),
+            driver: authority.driver_label(),
             transport,
-            fingerprint: SessionFileFingerprint::of(&metadata),
+            fingerprint,
             total_bytes: metadata.len(),
             reclaimable_records: scan.records,
             reclaimable_bytes: scan.bytes,
@@ -260,6 +540,8 @@ pub fn plan_compaction(project_root: &Path, entries: &[RunCatalogEntry]) -> Comp
         candidates_considered,
         skipped_not_terminal,
         skipped_unreadable,
+        skipped_unstable,
+        skipped_unproven,
     }
 }
 
@@ -270,18 +552,19 @@ pub fn plan_compaction(project_root: &Path, entries: &[RunCatalogEntry]) -> Comp
 /// produces the same token and a confirmation does not expire for no reason.
 fn manifest_id_for(project_root: &Path, files: &[CompactionPlanFile]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"orgasmic-run-history-compaction/1\n");
+    hasher.update(b"orgasmic-run-history-compaction/2\n");
     hasher.update(project_root.as_os_str().as_encoded_bytes());
     hasher.update(b"\n");
     for file in files {
         hasher.update(file.session_path.as_os_str().as_encoded_bytes());
         hasher.update(
             format!(
-                "\n{}:{}:{}:{}:{}:{}:{}\n",
+                "\n{}:{}:{}:{}:{}:{}:{}:{}\n",
                 file.fingerprint.dev,
                 file.fingerprint.ino,
                 file.fingerprint.len,
                 file.fingerprint.mtime_ns,
+                file.transport.as_deref().unwrap_or(""),
                 file.reclaimable_records,
                 file.reclaimable_bytes,
                 file.reclaimable_sha256,
@@ -321,11 +604,18 @@ fn scan_reclaimable(path: &Path, transport: Option<&str>) -> std::io::Result<Rec
 }
 
 fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
+        let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+fn sha256_of(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex(&hasher.finalize())
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +633,7 @@ pub fn dry_run_report(plan: CompactionPlan) -> CompactionReport {
         reclaimed_bytes: 0,
         reclaimed_records: 0,
         archive_dir: None,
+        complete: true,
         note: "dry run: no file was written, moved, truncated, or deleted. Pass the \
                confirm token back to execute exactly this plan; the originals are \
                archived whole and `run history rollback` restores them.",
@@ -353,9 +644,22 @@ pub fn dry_run_report(plan: CompactionPlan) -> CompactionReport {
 ///
 /// `plan` must be freshly computed by the caller: the confirmation is checked
 /// against the plan that is about to run, never against a stored one.
+///
+/// `fenced` must name every session path whose writer handle the caller has
+/// closed. A planned file that is not fenced is refused.
 pub fn apply_compaction(
     plan: CompactionPlan,
     confirm: Option<&str>,
+    fenced: &FencedSessions,
+) -> Result<CompactionReport, CompactionError> {
+    apply_compaction_with(plan, confirm, fenced, &no_faults)
+}
+
+pub(crate) fn apply_compaction_with(
+    plan: CompactionPlan,
+    confirm: Option<&str>,
+    fenced: &FencedSessions,
+    fault: &FaultInjector<'_>,
 ) -> Result<CompactionReport, CompactionError> {
     let Some(confirm) = confirm else {
         return Err(CompactionError::ConfirmationRequired {
@@ -369,49 +673,88 @@ pub fn apply_compaction(
         });
     }
 
+    // Exclusion first: nothing below this line may run twice against the same
+    // board, and nothing below it may run while a rollback does.
+    let _lock = acquire_maintenance_lock(&plan.project_root)?;
+
     let archive_dir = plan
         .project_root
         .join(ARCHIVE_REL_PATH)
         .join(&plan.manifest_id);
     std::fs::create_dir_all(&archive_dir)
         .map_err(|error| CompactionError::Io(format!("create archive dir: {error}")))?;
+    sync_dir_of(&archive_dir).map_err(|error| CompactionError::Io(error.to_string()))?;
 
-    // The manifest lands BEFORE any file is touched, so a transaction killed
-    // partway leaves a durable statement of what it was doing.
+    // The manifest lands BEFORE any file is touched, already naming every
+    // planned file, so a transaction killed at any instant leaves a durable
+    // statement of what it was doing and what it might have done.
     let mut manifest = CompactionManifest {
         manifest_id: plan.manifest_id.clone(),
         project_root: plan.project_root.clone(),
         started_at: Utc::now(),
         plan: plan.clone(),
-        results: Vec::new(),
+        files: plan
+            .files
+            .iter()
+            .map(|planned| CompactionFileJournal {
+                session_path: planned.session_path.clone(),
+                run_id: planned.run_id.clone(),
+                stage: CompactionFileStage::Planned,
+                refused: None,
+            })
+            .collect(),
+        complete: false,
     };
     write_manifest(&archive_dir, &manifest)
-        .map_err(|error| CompactionError::Io(format!("write manifest: {error}")))?;
+        .map_err(|error| CompactionError::JournalFailed(error.to_string()))?;
 
-    let mut reclaimed_bytes = 0_u64;
-    let mut reclaimed_records = 0_u64;
-    for planned in &plan.files {
-        let outcome = compact_one_file(planned, &archive_dir, &plan.manifest_id);
-        if let CompactionFileOutcome::Compacted {
-            reclaimed_records: records,
-            reclaimed_bytes: bytes,
-            ..
-        } = &outcome
-        {
-            reclaimed_records += records;
-            reclaimed_bytes += bytes;
+    let mut stopped: Option<CompactionError> = None;
+    for (index, planned) in plan.files.iter().enumerate() {
+        match compact_one_file(
+            planned,
+            &archive_dir,
+            &plan.manifest_id,
+            fenced,
+            fault,
+            &mut |stage, refused| {
+                manifest.files[index].stage = stage;
+                manifest.files[index].refused = refused;
+                write_manifest(&archive_dir, &manifest)
+            },
+        ) {
+            Ok(()) => {}
+            Err(error) => {
+                // A journal that cannot be made durable, or an injected crash,
+                // stops the whole transaction. Continuing would mutate files
+                // the manifest can no longer describe, which is exactly the
+                // shape that made the old rollback unable to restore them.
+                stopped = Some(error);
+                break;
+            }
         }
-        manifest.results.push(CompactionFileResult {
-            session_path: planned.session_path.clone(),
-            run_id: planned.run_id.clone(),
-            outcome,
-        });
-        // Rewrite the manifest after every file: the journal is what makes a
-        // half-finished transaction recoverable rather than merely survivable.
-        let _ = write_manifest(&archive_dir, &manifest);
     }
 
-    let results = manifest.results.clone();
+    if stopped.is_none() {
+        manifest.complete = true;
+        if let Err(error) = write_manifest(&archive_dir, &manifest) {
+            stopped = Some(CompactionError::JournalFailed(error.to_string()));
+        }
+    }
+    if let Some(error) = stopped {
+        return Err(error);
+    }
+
+    let results: Vec<CompactionFileResult> = manifest.files.iter().map(result_of).collect();
+    let (reclaimed_records, reclaimed_bytes) = results.iter().fold((0, 0), |(records, bytes), r| {
+        match &r.outcome {
+            CompactionFileOutcome::Compacted {
+                reclaimed_records,
+                reclaimed_bytes,
+                ..
+            } => (records + reclaimed_records, bytes + reclaimed_bytes),
+            _ => (records, bytes),
+        }
+    });
     Ok(CompactionReport {
         dry_run: false,
         confirm_token: plan.manifest_id.clone(),
@@ -420,10 +763,48 @@ pub fn apply_compaction(
         reclaimed_bytes,
         reclaimed_records,
         archive_dir: Some(archive_dir),
+        complete: true,
         note: "originals archived whole; each session file was replaced by an atomic \
                rename. `run history rollback --manifest <id>` restores them byte for \
                byte.",
     })
+}
+
+/// Render one journal record as the outcome an operator reads.
+fn result_of(journal: &CompactionFileJournal) -> CompactionFileResult {
+    let outcome = match (&journal.stage, journal.refused.as_deref()) {
+        (
+            CompactionFileStage::Committed {
+                reclaimed_records,
+                reclaimed_bytes,
+                archived,
+                bytes_before,
+                bytes_after,
+                ..
+            },
+            _,
+        ) => CompactionFileOutcome::Compacted {
+            reclaimed_records: *reclaimed_records,
+            reclaimed_bytes: *reclaimed_bytes,
+            archived: archived.clone(),
+            bytes_before: *bytes_before,
+            bytes_after: *bytes_after,
+        },
+        (CompactionFileStage::Planned, Some(reason)) => CompactionFileOutcome::SkippedChanged {
+            reason: reason.to_string(),
+        },
+        (stage, refused) => CompactionFileOutcome::Failed {
+            error: refused
+                .unwrap_or("the transaction stopped before this file finished")
+                .to_string(),
+            stage: stage.label().to_string(),
+        },
+    };
+    CompactionFileResult {
+        session_path: journal.session_path.clone(),
+        run_id: journal.run_id.clone(),
+        outcome,
+    }
 }
 
 fn write_manifest(archive_dir: &Path, manifest: &CompactionManifest) -> std::io::Result<()> {
@@ -432,7 +813,11 @@ fn write_manifest(archive_dir: &Path, manifest: &CompactionManifest) -> std::io:
     let bytes = serde_json::to_vec_pretty(manifest)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     write_and_sync(&staged, &bytes)?;
-    std::fs::rename(&staged, &path)
+    std::fs::rename(&staged, &path)?;
+    // A rename is only durable once its DIRECTORY is. Without this, a crash
+    // after the rename can leave the manifest at its previous content while the
+    // session files have already moved on.
+    sync_dir_of(&path)
 }
 
 fn write_and_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -442,100 +827,288 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Rewrite one session file, keeping its original recoverable.
+/// fsync the directory containing `path`, so a rename into it is durable.
+fn sync_dir_of(path: &Path) -> std::io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    std::fs::File::open(parent)?.sync_all()
+}
+
+/// Rewrite one session file through a durable, journalled state machine.
+///
+/// `journal(stage, refused)` makes the named stage durable and must be called
+/// BEFORE the operation that stage authorizes. Its failure is propagated, not
+/// swallowed: a transaction that cannot record what it is about to do must not
+/// do it.
 ///
 /// Order is the whole safety argument:
 ///
 /// 1. re-verify the file identity the plan was decided against;
-/// 2. read and build the replacement in memory;
-/// 3. copy the ORIGINAL into the archive and fsync it;
-/// 4. write the replacement to a sibling staging file and fsync it;
-/// 5. `rename` the staging file over the original.
+/// 2. re-prove, from the CURRENT bytes, that the run is terminal, that the
+///    transport is a pane transport, and that the reclaimable records still
+///    digest to exactly what the plan recorded;
+/// 3. read the file ONCE — every later step uses those same bytes, so the
+///    archive and the replacement are provably the same generation;
+/// 4. archive the original, fsync it and its directory, journal `Archived`;
+/// 5. stage the replacement, fsync it and its directory, journal `Staged` with
+///    the replacement's digest;
+/// 6. re-verify the live identity IMMEDIATELY before the commit;
+/// 7. `rename` the staging file over the original, fsync the directory,
+///    journal `Committed`.
 ///
-/// A kill before (5) leaves the original in place. A kill during (5) is not
-/// observable: `rename` within a directory is atomic. So the live path only
-/// ever holds a complete file, and the bytes that left it are already on disk
-/// in the archive before they leave.
+/// A kill before (7) leaves the original in place. A kill during (7) is not
+/// observable: `rename` within a directory is atomic. A kill between (7) and
+/// its journal write leaves a `Staged` record that names BOTH images, which is
+/// what lets rollback decide by digest instead of guessing.
+#[allow(clippy::too_many_arguments)]
 fn compact_one_file(
     planned: &CompactionPlanFile,
     archive_dir: &Path,
     manifest_id: &str,
-) -> CompactionFileOutcome {
+    fenced: &FencedSessions,
+    fault: &FaultInjector<'_>,
+    journal: &mut dyn FnMut(
+        CompactionFileStage,
+        Option<String>,
+    ) -> std::io::Result<()>,
+) -> Result<(), CompactionError> {
     let path = planned.session_path.as_path();
+
+    // Everything in this closure refuses BEFORE anything is written, so the
+    // durable stage stays `Planned` and the file is untouched.
+    let refuse = |reason: String,
+                  journal: &mut dyn FnMut(
+        CompactionFileStage,
+        Option<String>,
+    ) -> std::io::Result<()>|
+     -> Result<(), CompactionError> {
+        journal(CompactionFileStage::Planned, Some(reason))
+            .map_err(|error| CompactionError::JournalFailed(error.to_string()))
+    };
+
+    if !fenced.contains(path) {
+        return refuse(
+            "the session writer was not fenced for this path, so a rename would leave it \
+             appending to an orphaned inode"
+                .to_string(),
+            journal,
+        );
+    }
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) => {
-            return CompactionFileOutcome::SkippedChanged {
-                reason: format!("session file is unreadable: {error}"),
-            }
+            return refuse(format!("session file is unreadable: {error}"), journal);
         }
     };
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return CompactionFileOutcome::SkippedChanged {
-            reason: "session path is no longer a regular file".to_string(),
-        };
+        return refuse(
+            "session path is no longer a regular file".to_string(),
+            journal,
+        );
     }
     if SessionFileFingerprint::of(&metadata) != planned.fingerprint {
-        return CompactionFileOutcome::SkippedChanged {
-            reason: "session file changed between planning and applying".to_string(),
-        };
+        return refuse(
+            "session file changed between planning and applying".to_string(),
+            journal,
+        );
     }
 
-    let rewrite = match build_compacted(planned, manifest_id) {
-        Ok(rewrite) => rewrite,
-        Err(error) => {
-            return CompactionFileOutcome::Failed {
-                error: error.to_string(),
+    // Deletion authority, re-proven from the bytes about to be rewritten.
+    match derive_session_authority(path, SessionScanBudget::DEFAULT) {
+        Ok(authority) => {
+            if !authority.terminal_is_proven() {
+                return refuse(
+                    "the current bytes do not prove this run ended".to_string(),
+                    journal,
+                );
+            }
+            if authority.transport != planned.transport {
+                return refuse(
+                    format!(
+                        "the current bytes record transport {:?}, the plan was decided against \
+                         {:?}",
+                        authority.transport, planned.transport
+                    ),
+                    journal,
+                );
+            }
+            if !authority
+                .transport
+                .as_deref()
+                .is_some_and(transport_is_pane)
+            {
+                return refuse(
+                    "only a pane transport's rendered output is reclaimable".to_string(),
+                    journal,
+                );
             }
         }
+        Err(error) => {
+            return refuse(
+                format!("the current bytes could not be re-derived: {error}"),
+                journal,
+            );
+        }
+    }
+
+    // ONE read. The archive, the digest comparison and the replacement are all
+    // computed from these bytes, so there is no second generation to disagree.
+    let original = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => return refuse(format!("read session file: {error}"), journal),
     };
+    if original.len() as u64 != planned.fingerprint.len {
+        return refuse(
+            "session file changed between planning and applying".to_string(),
+            journal,
+        );
+    }
+
+    let rewrite = build_compacted(&original, planned, manifest_id);
     if rewrite.reclaimed_records != planned.reclaimable_records
         || rewrite.reclaimed_bytes != planned.reclaimable_bytes
+        || rewrite.reclaimed_sha256 != planned.reclaimable_sha256
     {
-        return CompactionFileOutcome::SkippedChanged {
-            reason: format!(
+        return refuse(
+            format!(
                 "reclaimable content changed between planning and applying: planned {} \
-                 records / {} bytes, found {} / {}",
+                 records / {} bytes / {}, found {} / {} / {}",
                 planned.reclaimable_records,
                 planned.reclaimable_bytes,
+                planned.reclaimable_sha256,
                 rewrite.reclaimed_records,
-                rewrite.reclaimed_bytes
+                rewrite.reclaimed_bytes,
+                rewrite.reclaimed_sha256,
             ),
-        };
+            journal,
+        );
     }
 
     let Some(file_name) = path.file_name() else {
-        return CompactionFileOutcome::Failed {
-            error: "session path has no file name".to_string(),
-        };
+        return refuse("session path has no file name".to_string(), journal);
     };
     let archived = archive_dir.join(file_name);
-    if let Err(error) = archive_original(path, &archived) {
-        return CompactionFileOutcome::Failed {
-            error: format!("archive original: {error}"),
-        };
+    let original_sha256 = sha256_of(&original);
+
+    if let Some(Fault::Io(error)) = fault(FaultPoint::ArchiveWrite, path) {
+        return refuse(format!("archive original: {error}"), journal);
+    }
+    if let Err(error) = archive_original(&original, &archived) {
+        return refuse(format!("archive original: {error}"), journal);
+    }
+    journal(
+        CompactionFileStage::Archived {
+            archived: archived.clone(),
+            original_sha256: original_sha256.clone(),
+        },
+        None,
+    )
+    .map_err(|error| CompactionError::JournalFailed(error.to_string()))?;
+    if let Some(Fault::Crash) = fault(FaultPoint::AfterArchive, path) {
+        return Err(crash_error(FaultPoint::AfterArchive));
     }
 
     let staging = staging_path(path);
-    if let Err(error) = write_and_sync(&staging, &rewrite.bytes) {
-        let _ = std::fs::remove_file(&staging);
-        return CompactionFileOutcome::Failed {
-            error: format!("stage replacement: {error}"),
-        };
-    }
-    if let Err(error) = std::fs::rename(&staging, path) {
-        let _ = std::fs::remove_file(&staging);
-        return CompactionFileOutcome::Failed {
-            error: format!("commit replacement: {error}"),
-        };
-    }
-    CompactionFileOutcome::Compacted {
+    let replacement_sha256 = sha256_of(&rewrite.bytes);
+    let staged_stage = CompactionFileStage::Staged {
+        archived: archived.clone(),
+        original_sha256: original_sha256.clone(),
+        staging: staging.clone(),
+        replacement_sha256: replacement_sha256.clone(),
         reclaimed_records: rewrite.reclaimed_records,
         reclaimed_bytes: rewrite.reclaimed_bytes,
-        archived,
         bytes_before: planned.total_bytes,
         bytes_after: rewrite.bytes.len() as u64,
+    };
+    let stage_write_fault = matches!(fault(FaultPoint::StageWrite, path), Some(Fault::Io(_)));
+    let staged = if stage_write_fault {
+        Err(std::io::Error::other("injected full disk"))
+    } else {
+        write_and_sync(&staging, &rewrite.bytes).and_then(|()| sync_dir_of(&staging))
+    };
+    if let Err(error) = staged {
+        let _ = std::fs::remove_file(&staging);
+        return stop_after_archive(
+            format!("stage replacement: {error}"),
+            CompactionFileStage::Archived {
+                archived,
+                original_sha256,
+            },
+            journal,
+        );
     }
+    // The staged image's digest is durable BEFORE the rename, which is what
+    // makes the rename recoverable in either direction.
+    journal(staged_stage.clone(), None)
+        .map_err(|error| CompactionError::JournalFailed(error.to_string()))?;
+    if let Some(Fault::Crash) = fault(FaultPoint::AfterStage, path) {
+        return Err(crash_error(FaultPoint::AfterStage));
+    }
+
+    // Immediately before the commit, and not one step earlier: everything above
+    // took time, and an append that landed during it must not be overwritten.
+    match std::fs::symlink_metadata(path) {
+        Ok(now) if SessionFileFingerprint::of(&now) == planned.fingerprint => {}
+        _ => {
+            let _ = std::fs::remove_file(&staging);
+            return stop_after_archive(
+                "session file changed while the replacement was being staged".to_string(),
+                staged_stage,
+                journal,
+            );
+        }
+    }
+
+    if let Err(error) = std::fs::rename(&staging, path).and_then(|()| sync_dir_of(path)) {
+        let _ = std::fs::remove_file(&staging);
+        return stop_after_archive(
+            format!("commit replacement: {error}"),
+            staged_stage,
+            journal,
+        );
+    }
+    if let Some(Fault::Crash) = fault(FaultPoint::AfterRename, path) {
+        return Err(crash_error(FaultPoint::AfterRename));
+    }
+
+    let post_fingerprint = match std::fs::symlink_metadata(path) {
+        Ok(now) => SessionFileFingerprint::of(&now),
+        Err(error) => {
+            return stop_after_archive(
+                format!("stat committed replacement: {error}"),
+                staged_stage,
+                journal,
+            )
+        }
+    };
+    if let Some(Fault::Io(error)) = fault(FaultPoint::ResultJournalWrite, path) {
+        return Err(CompactionError::JournalFailed(error));
+    }
+    journal(
+        CompactionFileStage::Committed {
+            archived,
+            original_sha256,
+            replacement_sha256,
+            reclaimed_records: rewrite.reclaimed_records,
+            reclaimed_bytes: rewrite.reclaimed_bytes,
+            bytes_before: planned.total_bytes,
+            bytes_after: rewrite.bytes.len() as u64,
+            post_fingerprint,
+        },
+        None,
+    )
+    .map_err(|error| CompactionError::JournalFailed(error.to_string()))
+}
+
+/// Record a failure that happened AFTER something durable was written, keeping
+/// the durable stage so rollback still knows what exists on disk.
+fn stop_after_archive(
+    error: String,
+    reached: CompactionFileStage,
+    journal: &mut dyn FnMut(CompactionFileStage, Option<String>) -> std::io::Result<()>,
+) -> Result<(), CompactionError> {
+    journal(reached, Some(error)).map_err(|e| CompactionError::JournalFailed(e.to_string()))
 }
 
 fn staging_path(path: &Path) -> PathBuf {
@@ -544,27 +1117,28 @@ fn staging_path(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Copy `source` to `archived` and fsync both the copy and its directory, so
+/// Write the archived original and fsync both the copy and its directory, so
 /// the original bytes are durable before the live path is touched.
-fn archive_original(source: &Path, archived: &Path) -> std::io::Result<()> {
-    let bytes = std::fs::read(source)?;
-    write_and_sync(archived, &bytes)?;
-    if let Some(parent) = archived.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
-    Ok(())
+fn archive_original(original: &[u8], archived: &Path) -> std::io::Result<()> {
+    write_and_sync(archived, original)?;
+    sync_dir_of(archived)
 }
 
 struct CompactedFile {
     bytes: Vec<u8>,
     reclaimed_records: u64,
     reclaimed_bytes: u64,
+    reclaimed_sha256: String,
 }
 
-/// Build the replacement content: every non-reclaimable record verbatim, plus
-/// one summary record standing where the reclaimed ones were.
+/// Build the replacement content from the ALREADY-READ original bytes: every
+/// non-reclaimable record verbatim, plus one summary record standing where the
+/// reclaimed ones were.
+///
+/// Takes the bytes rather than the path (orgasmic:TASK-FZB6T.2 finding 3): the
+/// old version read the file a second time, so the archive and the replacement
+/// could be built from two different generations and an append landing between
+/// them was silently dropped.
 ///
 /// The summary is a `note` envelope carrying the removed byte count, the digest
 /// of the removed bytes, and the archive that holds them — a truthful source
@@ -572,12 +1146,12 @@ struct CompactedFile {
 /// reclaimed record's envelope header so the line belongs to the same run,
 /// runtime and boot, and sorts where the removed content used to sit.
 fn build_compacted(
+    original: &[u8],
     planned: &CompactionPlanFile,
     manifest_id: &str,
-) -> std::io::Result<CompactedFile> {
-    let file = std::fs::File::open(&planned.session_path)?;
-    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
-    let mut out: Vec<u8> = Vec::with_capacity(planned.total_bytes as usize);
+) -> CompactedFile {
+    let mut reader = std::io::BufReader::with_capacity(256 * 1024, original);
+    let mut out: Vec<u8> = Vec::with_capacity(original.len());
     let mut reclaimed_records = 0_u64;
     let mut reclaimed_bytes = 0_u64;
     let mut hasher = Sha256::new();
@@ -585,7 +1159,9 @@ fn build_compacted(
     let mut summary_at: Option<usize> = None;
 
     for record in read_history_records(&mut reader) {
-        let record = record?;
+        // Reading from a byte slice cannot fail; a torn record is a value, not
+        // an error.
+        let Ok(record) = record else { break };
         if !class_is_reclaimable(record.class, planned.transport.as_deref()) {
             out.extend_from_slice(&record.raw);
             continue;
@@ -601,23 +1177,25 @@ fn build_compacted(
         summary_at = Some(out.len());
     }
 
+    let reclaimed_sha256 = hex(&hasher.finalize());
     if let Some(position) = summary_at {
         let summary = summary_record(
             last_reclaimed_header.as_ref(),
             manifest_id,
             reclaimed_records,
             reclaimed_bytes,
-            &hex(&hasher.finalize()),
+            &reclaimed_sha256,
             &planned.session_path,
         );
         out.splice(position..position, summary);
     }
 
-    Ok(CompactedFile {
+    CompactedFile {
         bytes: out,
         reclaimed_records,
         reclaimed_bytes,
-    })
+        reclaimed_sha256,
+    }
 }
 
 fn summary_record(
@@ -675,15 +1253,63 @@ fn summary_record(
 pub struct RollbackReport {
     pub manifest_id: String,
     pub project_root: PathBuf,
+    /// The transaction that wrote this manifest ran to the end.
+    #[serde(default)]
+    pub source_complete: bool,
     pub restored: Vec<PathBuf>,
+    /// Files that already held their original bytes, so there was nothing to
+    /// restore — the ordinary shape for a transaction killed before its rename.
+    #[serde(default)]
+    pub already_original: Vec<PathBuf>,
     pub missing_archives: Vec<PathBuf>,
+    /// Destinations that do not hold a byte image this transaction recorded.
+    /// Refused, not overwritten.
+    #[serde(default)]
+    pub refused: BTreeMap<String, String>,
     pub failed: BTreeMap<String, String>,
+}
+
+/// Every session path one manifest names, so a caller can fence the session
+/// writer against them before asking for a rollback. Empty when the manifest is
+/// absent or unreadable — [`rollback_compaction`] reports that properly.
+pub fn manifest_session_paths(project_root: &Path, manifest_id: &str) -> Vec<PathBuf> {
+    let path = project_root
+        .join(ARCHIVE_REL_PATH)
+        .join(manifest_id)
+        .join("manifest.json");
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = serde_json::from_str::<CompactionManifest>(&source) else {
+        return Vec::new();
+    };
+    manifest
+        .files
+        .into_iter()
+        .map(|record| record.session_path)
+        .collect()
 }
 
 /// Restore every archived original recorded by `manifest_id`.
 ///
-/// Uses the same staging+rename discipline as the forward pass, so a rollback
-/// killed partway also leaves each individual file whole.
+/// Reconstructed from the PLAN, not from a list of successes: the manifest
+/// holds one journal record per planned file from its first write, so a
+/// transaction killed after a rename but before its result was recorded is
+/// still fully described (orgasmic:TASK-FZB6T.2 finding 2).
+///
+/// Every destination is proven before it is overwritten
+/// (orgasmic:TASK-FZB6T.2 finding 3): the live file must hash to either the
+/// replacement image this transaction staged — in which case it is restored —
+/// or the original image, in which case there is nothing to do. Anything else
+/// is a file somebody has written since, and it is REFUSED rather than
+/// clobbered. The archive itself is verified against its recorded digest before
+/// a single byte of it is written back.
+///
+/// Content is the authority here, not metadata: a byte-identical file whose
+/// mtime or inode changed (a touch, a copy back, a restore from a backup) is
+/// still the compacted generation, and refusing it would leave an operator
+/// unable to recover for no safety gain. The recorded `post_fingerprint` is
+/// reported for diagnosis, and the digest decides.
 pub fn rollback_compaction(
     project_root: &Path,
     manifest_id: &str,
@@ -709,27 +1335,85 @@ pub fn rollback_compaction(
             error: error.to_string(),
         })?;
 
+    // Same exclusion as the forward pass: a rollback racing a compaction is the
+    // same defect as two compactions racing.
+    let _lock = acquire_maintenance_lock(project_root)?;
+
     let sessions_dir = project_sessions_dir(project_root);
     let mut report = RollbackReport {
         manifest_id: manifest_id.to_string(),
         project_root: project_root.to_path_buf(),
+        source_complete: manifest.complete,
         restored: Vec::new(),
+        already_original: Vec::new(),
         missing_archives: Vec::new(),
+        refused: BTreeMap::new(),
         failed: BTreeMap::new(),
     };
-    for result in &manifest.results {
-        let CompactionFileOutcome::Compacted { archived, .. } = &result.outcome else {
-            continue;
-        };
+    for record in &manifest.files {
+        let key = record.session_path.display().to_string();
         // Session-directory authority again: a hand-edited manifest must not be
         // able to name an arbitrary destination.
-        if result.session_path.parent() != Some(sessions_dir.as_path()) {
+        if record.session_path.parent() != Some(sessions_dir.as_path()) {
             report.failed.insert(
-                result.session_path.display().to_string(),
+                key,
                 "manifest names a path outside this project's sessions directory".to_string(),
             );
             continue;
         }
+        // Every image this transaction could have left at the live path.
+        let (archived, original_sha256, replacement_sha256) = match &record.stage {
+            // Nothing was ever written for this file.
+            CompactionFileStage::Planned => continue,
+            CompactionFileStage::Archived {
+                archived,
+                original_sha256,
+            } => (archived, original_sha256, None),
+            CompactionFileStage::Staged {
+                archived,
+                original_sha256,
+                replacement_sha256,
+                ..
+            }
+            | CompactionFileStage::Committed {
+                archived,
+                original_sha256,
+                replacement_sha256,
+                ..
+            } => (archived, original_sha256, Some(replacement_sha256)),
+        };
+
+        let live = match std::fs::read(&record.session_path) {
+            Ok(bytes) => Some(sha256_of(&bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                report.failed.insert(key, error.to_string());
+                continue;
+            }
+        };
+        match live.as_deref() {
+            // Already the original: a transaction killed before its rename.
+            Some(digest) if digest == original_sha256 => {
+                report.already_original.push(record.session_path.clone());
+                continue;
+            }
+            // The compacted generation, and provably this transaction's.
+            Some(digest) if Some(digest) == replacement_sha256.map(String::as_str) => {}
+            // The file is gone: restoring the archived original is exactly
+            // right, and there is nothing there to clobber.
+            None => {}
+            Some(_) => {
+                report.refused.insert(
+                    key,
+                    "the live file holds neither the original this transaction archived nor \
+                     the replacement it staged; something has written it since, so rollback \
+                     refuses rather than overwriting it"
+                        .to_string(),
+                );
+                continue;
+            }
+        }
+
         let bytes = match std::fs::read(archived) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -737,22 +1421,31 @@ pub fn rollback_compaction(
                 continue;
             }
         };
-        let staging = staging_path(&result.session_path);
-        if let Err(error) = write_and_sync(&staging, &bytes) {
-            let _ = std::fs::remove_file(&staging);
-            report
-                .failed
-                .insert(result.session_path.display().to_string(), error.to_string());
+        if sha256_of(&bytes) != *original_sha256 {
+            report.refused.insert(
+                key,
+                "the archived original does not match the digest recorded when it was \
+                 archived; it is not restorable"
+                    .to_string(),
+            );
             continue;
         }
-        if let Err(error) = std::fs::rename(&staging, &result.session_path) {
+        let staging = staging_path(&record.session_path);
+        if let Err(error) =
+            write_and_sync(&staging, &bytes).and_then(|()| sync_dir_of(&staging))
+        {
             let _ = std::fs::remove_file(&staging);
-            report
-                .failed
-                .insert(result.session_path.display().to_string(), error.to_string());
+            report.failed.insert(key, error.to_string());
             continue;
         }
-        report.restored.push(result.session_path.clone());
+        if let Err(error) = std::fs::rename(&staging, &record.session_path)
+            .and_then(|()| sync_dir_of(&record.session_path))
+        {
+            let _ = std::fs::remove_file(&staging);
+            report.failed.insert(key, error.to_string());
+            continue;
+        }
+        report.restored.push(record.session_path.clone());
     }
     Ok(report)
 }
@@ -761,9 +1454,7 @@ pub fn rollback_compaction(
 mod tests {
     use super::*;
     use crate::run_catalog::{RunCatalog, CATALOG_REL_PATH};
-    use orgasmic_core::session::{
-        ReleaseOutcome, SessionEnvelope, SessionEventKind, SessionScanBudget,
-    };
+    use orgasmic_core::session::{ReleaseOutcome, SessionEnvelope, SessionEventKind};
     use serde_json::json;
 
     struct Board {
@@ -791,7 +1482,9 @@ mod tests {
     }
 
     /// A session file with `redraws` legacy `text_chunk` records, written
-    /// directly (the writer fsyncs every line and caps payloads).
+    /// directly (the writer now refuses them outright, which is the point of
+    /// the redraw lock; this fixture is the LEGACY history that already exists
+    /// on disk and is what maintenance has to deal with).
     fn write_session(
         sessions: &Path,
         run_id: &str,
@@ -866,6 +1559,26 @@ mod tests {
         catalog.entries_for_project(&board.root)
     }
 
+    /// The fence a caller proves after closing every planned path's writer
+    /// handle. Tests that are not about the fence use this.
+    fn fence_all(plan: &CompactionPlan) -> FencedSessions {
+        FencedSessions::new(plan.files.iter().map(|file| file.session_path.clone()))
+    }
+
+    fn apply(plan: CompactionPlan, token: &str) -> Result<CompactionReport, CompactionError> {
+        let fenced = fence_all(&plan);
+        apply_compaction(plan, Some(token), &fenced)
+    }
+
+    fn manifest_of(board: &Board, manifest_id: &str) -> CompactionManifest {
+        let path = board
+            .root
+            .join(ARCHIVE_REL_PATH)
+            .join(manifest_id)
+            .join("manifest.json");
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
     #[test]
     fn a_plan_is_stable_and_a_dry_run_writes_nothing() {
         let board = board();
@@ -897,12 +1610,13 @@ mod tests {
         let before = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
 
-        let refused = apply_compaction(plan.clone(), None).unwrap_err();
+        let fenced = fence_all(&plan);
+        let refused = apply_compaction(plan.clone(), None, &fenced).unwrap_err();
         assert!(matches!(
             refused,
             CompactionError::ConfirmationRequired { .. }
         ));
-        let stale = apply_compaction(plan.clone(), Some("not-the-plan")).unwrap_err();
+        let stale = apply_compaction(plan.clone(), Some("not-the-plan"), &fenced).unwrap_err();
         assert!(matches!(stale, CompactionError::ConfirmationStale { .. }));
         assert_eq!(
             std::fs::read(&path).unwrap(),
@@ -923,8 +1637,9 @@ mod tests {
         let planned_bytes = plan.reclaimable_bytes;
         assert!(planned_bytes > 0);
 
-        let report = apply_compaction(plan, Some(&token)).unwrap();
+        let report = apply(plan, &token).unwrap();
         assert!(!report.dry_run);
+        assert!(report.complete);
         assert_eq!(report.reclaimed_bytes, planned_bytes);
         let CompactionFileOutcome::Compacted {
             archived,
@@ -980,6 +1695,8 @@ mod tests {
         let rollback = rollback_compaction(&board.root, &token).unwrap();
         assert_eq!(rollback.restored.len(), 1);
         assert!(rollback.failed.is_empty());
+        assert!(rollback.refused.is_empty());
+        assert!(rollback.source_complete);
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
@@ -1009,6 +1726,39 @@ mod tests {
         assert_eq!(plan.skipped_not_terminal, 1);
     }
 
+    /// dec_BBPW4 / finding 4 — the catalog is a candidate list, never deletion
+    /// authority. A semantically corrupt entry claiming a LIVE ACP run is a
+    /// terminal rmux one authorizes nothing: the plan re-derives both facts from
+    /// the file's current bytes and refuses.
+    #[test]
+    fn a_corrupt_catalog_entry_cannot_authorize_a_deletion() {
+        let board = board();
+        // Live (no release) and ACP: two independent reasons to refuse.
+        let path = write_session(&board.sessions, "run-acp", "acp-stdio", 40, false);
+        let before = std::fs::read(&path).unwrap();
+
+        let mut entries = indexed(&board);
+        assert_eq!(entries.len(), 1);
+        // The exact corruption the reviewer describes: valid JSON, right path,
+        // right fingerprint, lying semantics.
+        entries[0].transport = Some("rmux".to_string());
+        entries[0].terminal = Some(crate::run_catalog::TerminalRecord::DriverEvent {
+            event: "run_complete".to_string(),
+            at: Utc::now(),
+        });
+        assert!(entries[0].is_terminal());
+
+        let plan = plan_compaction(&board.root, &entries);
+        assert!(
+            plan.is_empty(),
+            "a catalog entry must never be deletion authority: {:?}",
+            plan.files
+        );
+        assert_eq!(plan.candidates_considered, 1);
+        assert_eq!(plan.skipped_not_terminal, 1);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
     /// A file that changed after the plan was made is skipped, not rewritten
     /// against a decision that no longer describes it.
     #[test]
@@ -1029,7 +1779,7 @@ mod tests {
         );
         std::fs::write(&racing, &mutated).unwrap();
 
-        let report = apply_compaction(plan, Some(&token)).unwrap();
+        let report = apply(plan, &token).unwrap();
         let by_path: BTreeMap<PathBuf, &CompactionFileOutcome> = report
             .results
             .iter()
@@ -1048,6 +1798,111 @@ mod tests {
             by_path[&stable],
             CompactionFileOutcome::Compacted { .. }
         ));
+    }
+
+    /// finding 3 — the plan's DIGEST is compared, not just its counts. A file
+    /// edited to hold different reclaimable records of the same count and the
+    /// same total size is refused.
+    #[test]
+    fn compaction_compares_the_planned_digest_not_just_the_counts() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+
+        // Swap one reclaimable record's payload for a different one of exactly
+        // the same length, and restore the original file identity so nothing
+        // upstream of the digest can notice.
+        let original = std::fs::read(&path).unwrap();
+        let source = String::from_utf8(original.clone()).unwrap();
+        let victim = source
+            .lines()
+            .find(|line| line.contains("\"text_chunk\""))
+            .unwrap()
+            .to_string();
+        let swapped = victim.replacen("redraw ", "REDRAW ", 1);
+        assert_eq!(swapped.len(), victim.len());
+        assert_ne!(swapped, victim);
+        std::fs::write(&path, source.replacen(&victim, &swapped, 1)).unwrap();
+        // Same length, and the fingerprint's mtime is restored so the identity
+        // check cannot be what refuses this.
+        let mut mutated_plan = plan.clone();
+        mutated_plan.files[0].fingerprint =
+            crate::run_catalog::SessionFileFingerprint::of(&std::fs::metadata(&path).unwrap());
+        let mutated_bytes = std::fs::read(&path).unwrap();
+        assert_eq!(mutated_bytes.len(), original.len());
+
+        let fenced = fence_all(&mutated_plan);
+        let report = apply_compaction(mutated_plan, Some(&token), &fenced);
+        // The plan's manifest id no longer matches (the digest is part of it),
+        // so the confirmation itself is refused — and if a caller forces the
+        // fingerprint through, the per-file digest comparison refuses too.
+        match report {
+            Err(CompactionError::ConfirmationStale { .. }) => {}
+            Ok(report) => {
+                let CompactionFileOutcome::SkippedChanged { reason } = &report.results[0].outcome
+                else {
+                    panic!("digest mismatch must refuse: {:?}", report.results[0]);
+                };
+                assert!(reason.contains("reclaimable content changed"), "{reason}");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            mutated_bytes,
+            "a refused file must be byte-identical afterwards"
+        );
+    }
+
+    /// finding 3 — a planned file whose session writer was not fenced is
+    /// refused, because renaming over a held-open path orphans the inode.
+    #[test]
+    fn an_unfenced_session_is_never_rewritten() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 16, true);
+        let before = std::fs::read(&path).unwrap();
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+
+        let report = apply_compaction(plan, Some(&token), &FencedSessions::default()).unwrap();
+        let CompactionFileOutcome::SkippedChanged { reason } = &report.results[0].outcome else {
+            panic!("an unfenced path must be refused: {:?}", report.results[0]);
+        };
+        assert!(reason.contains("not fenced"), "{reason}");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(report.reclaimed_bytes, 0);
+    }
+
+    /// finding 3 — maintenance is exclusive per project. A second transaction
+    /// while one holds the lock is refused, not interleaved.
+    #[test]
+    fn maintenance_is_exclusive_per_project() {
+        let board = board();
+        write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let held = acquire_maintenance_lock(&board.root).unwrap();
+
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        let refused = apply(plan, &token).unwrap_err();
+        assert!(
+            matches!(refused, CompactionError::MaintenanceBusy { .. }),
+            "{refused:?}"
+        );
+        let refused = rollback_compaction(&board.root, &token).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                CompactionError::MaintenanceBusy { .. } | CompactionError::ManifestNotFound { .. }
+            ),
+            "{refused:?}"
+        );
+        drop(held);
+
+        // And it is released, so the next transaction runs.
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        assert!(apply(plan, &token).is_ok());
     }
 
     /// A torn final record and blank records are preserved verbatim: this
@@ -1074,7 +1929,7 @@ mod tests {
 
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
-        let report = apply_compaction(plan, Some(&token)).unwrap();
+        let report = apply(plan, &token).unwrap();
         assert!(matches!(
             report.results[0].outcome,
             CompactionFileOutcome::Compacted { .. }
@@ -1085,6 +1940,67 @@ mod tests {
             "the torn final record must survive verbatim"
         );
         assert!(String::from_utf8_lossy(&after).contains("\n   \n"));
+    }
+
+    /// finding 1 — a semantic driver event whose NESTED payload carries
+    /// `"type":"text_chunk"` before the envelope's own discriminator is
+    /// evidence, and compaction must preserve it byte for byte.
+    #[test]
+    fn a_nested_type_collision_is_never_reclaimed() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        // The exact shape the byte-scan classifier got wrong: an ACP-style
+        // tool_result whose content block is `{"type":"text_chunk"}`, and whose
+        // `event` object states its own type AFTER that nested one.
+        let collision = serde_json::to_string(&json!({
+            "seq": 700,
+            "time": "2026-08-02T00:00:00Z",
+            "run_id": "run-a",
+            "runtime_id": "runtime-run-a",
+            "boot_id": "boot-compact",
+            "kind": "driver_event",
+            "event": {
+                "output": {"content": [{"type": "text_chunk", "text": "tool said this"}]},
+                "call_id": "c9",
+                "ok": true,
+                "type": "tool_result",
+            },
+        }))
+        .unwrap();
+        assert!(
+            collision.find("\"text_chunk\"").unwrap() < collision.find("\"tool_result\"").unwrap(),
+            "the fixture must put the nested type FIRST or it proves nothing"
+        );
+        content.push_str(&collision);
+        content.push('\n');
+        content.push_str(
+            "{\"seq\":701,\"time\":\"2026-08-02T00:00:01Z\",\"run_id\":\"run-a\",\
+             \"runtime_id\":\"runtime-run-a\",\"boot_id\":\"boot-compact\",\
+             \"kind\":\"lifecycle\",\"event\":{\"phase\":\"release\",\"reason\":\"done\",\
+             \"outcome\":\"completed\"}}\n",
+        );
+        std::fs::write(&path, &content).unwrap();
+
+        assert_eq!(
+            crate::run_catalog::classify_history_line(collision.as_bytes()),
+            "semantic",
+            "the outer discriminator decides, not the first `type` in the bytes"
+        );
+
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        let report = apply(plan, &token).unwrap();
+        assert!(matches!(
+            report.results[0].outcome,
+            CompactionFileOutcome::Compacted { .. }
+        ));
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains(&collision),
+            "a tool result carrying a nested text_chunk must survive byte for byte"
+        );
+        assert!(after.contains("tool said this"));
     }
 
     /// A staging file left behind by a killed transaction never becomes the
@@ -1102,7 +2018,7 @@ mod tests {
         // The plan sees the real file, not the staging one: staging files are
         // not `.jsonl` children the catalog indexes.
         assert_eq!(plan.files.len(), 1);
-        let report = apply_compaction(plan, Some(&token)).unwrap();
+        let report = apply(plan, &token).unwrap();
         assert!(matches!(
             report.results[0].outcome,
             CompactionFileOutcome::Compacted { .. }
@@ -1125,18 +2041,17 @@ mod tests {
         write_session(&board.sessions, "run-a", "rmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
-        apply_compaction(plan, Some(&token)).unwrap();
+        apply(plan, &token).unwrap();
 
         let manifest_path = board
             .root
             .join(ARCHIVE_REL_PATH)
             .join(&token)
             .join("manifest.json");
-        let mut manifest: CompactionManifest =
-            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        let mut manifest = manifest_of(&board, &token);
         let victim = board.root.join(CATALOG_REL_PATH);
         std::fs::write(&victim, b"catalog\n").unwrap();
-        manifest.results[0].session_path = victim.clone();
+        manifest.files[0].session_path = victim.clone();
         std::fs::write(
             &manifest_path,
             serde_json::to_vec_pretty(&manifest).unwrap(),
@@ -1154,5 +2069,210 @@ mod tests {
         let board = board();
         let error = rollback_compaction(&board.root, "deadbeef").unwrap_err();
         assert!(matches!(error, CompactionError::ManifestNotFound { .. }));
+    }
+
+    /// finding 3 — a destination that holds neither the original this
+    /// transaction archived nor the replacement it staged is REFUSED, not
+    /// overwritten. Rollback is a restore, not a blind write.
+    #[test]
+    fn rollback_refuses_a_destination_it_did_not_produce() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        apply(plan, &token).unwrap();
+
+        // Somebody else wrote the session file after the compaction committed.
+        let foreign = b"{\"seq\":0,\"kind\":\"note\",\"event\":{}}\n".to_vec();
+        std::fs::write(&path, &foreign).unwrap();
+
+        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        assert!(rollback.restored.is_empty());
+        assert_eq!(rollback.refused.len(), 1, "{rollback:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            foreign,
+            "a refused destination must be byte-identical afterwards"
+        );
+    }
+
+    /// finding 3 — an archive that no longer matches the digest recorded when
+    /// it was written is not restorable, and rollback says so instead of
+    /// writing corrupt bytes over a live file.
+    #[test]
+    fn rollback_refuses_a_corrupted_archive() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        let report = apply(plan, &token).unwrap();
+        let CompactionFileOutcome::Compacted { archived, .. } = &report.results[0].outcome else {
+            panic!("expected a compaction");
+        };
+        let compacted = std::fs::read(&path).unwrap();
+        std::fs::write(archived, b"not the original\n").unwrap();
+
+        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        assert!(rollback.restored.is_empty());
+        assert_eq!(rollback.refused.len(), 1, "{rollback:?}");
+        assert_eq!(std::fs::read(&path).unwrap(), compacted);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fault injection (finding 2): a durability claim with no fault injection
+    // behind it is a comment, not a proof.
+    // -----------------------------------------------------------------------
+
+    fn fault_at(point: FaultPoint, fault: Fault) -> impl Fn(FaultPoint, &Path) -> Option<Fault> {
+        move |seen, _| (seen == point).then(|| fault.clone())
+    }
+
+    /// A crash at each durable boundary leaves the manifest naming the file and
+    /// the stage it reached, and a rollback afterwards restores the original —
+    /// or proves it was never lost.
+    #[test]
+    fn a_crash_at_every_boundary_stays_recoverable() {
+        for point in [
+            FaultPoint::AfterArchive,
+            FaultPoint::AfterStage,
+            FaultPoint::AfterRename,
+        ] {
+            let board = board();
+            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let original = std::fs::read(&path).unwrap();
+            let plan = plan_compaction(&board.root, &indexed(&board));
+            let token = plan.manifest_id.clone();
+            let fenced = fence_all(&plan);
+
+            let error = apply_compaction_with(
+                plan,
+                Some(&token),
+                &fenced,
+                &fault_at(point, Fault::Crash),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("injected crash"),
+                "{point:?}: {error}"
+            );
+
+            // The manifest names the file and the furthest DURABLE stage, even
+            // though no result was ever recorded.
+            let manifest = manifest_of(&board, &token);
+            assert!(!manifest.complete, "{point:?}");
+            assert_eq!(manifest.files.len(), 1, "{point:?}");
+            let expected_stage = match point {
+                FaultPoint::AfterArchive => "archived",
+                _ => "staged",
+            };
+            assert_eq!(
+                manifest.files[0].stage.label(),
+                expected_stage,
+                "{point:?}: {:?}",
+                manifest.files[0]
+            );
+
+            // A crash after the rename really did leave the compacted file
+            // live; the earlier two left the original untouched.
+            let live = std::fs::read(&path).unwrap();
+            if point == FaultPoint::AfterRename {
+                assert_ne!(live, original, "{point:?}");
+            } else {
+                assert_eq!(live, original, "{point:?}");
+            }
+
+            // And in every case rollback lands on the original.
+            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            assert!(rollback.failed.is_empty(), "{point:?}: {rollback:?}");
+            assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
+            assert!(!rollback.source_complete, "{point:?}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "{point:?}: rollback must land on the original"
+            );
+        }
+    }
+
+    /// A full disk at the archive or staging write stops that file BEFORE the
+    /// live path is touched, and the transaction says so.
+    #[test]
+    fn a_full_disk_before_the_rename_never_touches_the_live_file() {
+        for point in [FaultPoint::ArchiveWrite, FaultPoint::StageWrite] {
+            let board = board();
+            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let original = std::fs::read(&path).unwrap();
+            let plan = plan_compaction(&board.root, &indexed(&board));
+            let token = plan.manifest_id.clone();
+            let fenced = fence_all(&plan);
+
+            let report = apply_compaction_with(
+                plan,
+                Some(&token),
+                &fenced,
+                &fault_at(point, Fault::Io("no space left on device".to_string())),
+            )
+            .unwrap();
+            assert_eq!(report.reclaimed_bytes, 0, "{point:?}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "{point:?}: the live file must be untouched"
+            );
+            assert!(
+                !staging_path(&path).exists(),
+                "{point:?}: the staging file must be cleaned up"
+            );
+
+            // Rollback finds nothing to do and refuses nothing.
+            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            assert!(rollback.restored.is_empty(), "{point:?}: {rollback:?}");
+            assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{point:?}");
+        }
+    }
+
+    /// finding 2 — a journal write that fails STOPS the transaction. The old
+    /// code ignored every `write_manifest` failure, which is how a rewritten
+    /// file ended up absent from the manifest that was supposed to describe it.
+    #[test]
+    fn a_failed_result_journal_stops_the_transaction() {
+        let board = board();
+        let first = write_session(&board.sessions, "run-a", "rmux", 12, true);
+        let second = write_session(&board.sessions, "run-b", "rmux", 12, true);
+        let original_second = std::fs::read(&second).unwrap();
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        let fenced = fence_all(&plan);
+        assert_eq!(plan.files.len(), 2);
+
+        let error = apply_compaction_with(
+            plan,
+            Some(&token),
+            &fenced,
+            &|point, path| {
+                (point == FaultPoint::ResultJournalWrite && path == first)
+                    .then(|| Fault::Io("no space left on device".to_string()))
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, CompactionError::JournalFailed(_)),
+            "{error:?}"
+        );
+
+        // The second file was never touched: the transaction stopped.
+        assert_eq!(std::fs::read(&second).unwrap(), original_second);
+        let manifest = manifest_of(&board, &token);
+        assert!(!manifest.complete);
+        assert_eq!(manifest.files[1].stage.label(), "planned");
+
+        // And the first file, whose rename DID land but whose result was never
+        // journalled, is still fully described and fully restorable — the exact
+        // window the reviewer's finding 2 names.
+        assert_eq!(manifest.files[0].stage.label(), "staged");
+        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        assert_eq!(rollback.restored, vec![first.clone()]);
+        assert!(rollback.refused.is_empty(), "{rollback:?}");
     }
 }

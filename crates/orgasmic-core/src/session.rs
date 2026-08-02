@@ -31,6 +31,31 @@ pub enum SessionError {
     Serialize(#[from] serde_json::Error),
     #[error("invalid run sub-state {0}")]
     InvalidRunSubState(String),
+    /// orgasmic:TASK-FZB6T.2 finding 5 — a pane transport offered rendered
+    /// output to the session file. Refused, not bounded: a bound turns an
+    /// 8 MiB repaint into a small line, and a million small lines is the same
+    /// 2.239 GiB by another route.
+    #[error(
+        "refused a rendered pane payload: transport {transport} renders into a pane, so its \
+         `text_chunk` is screen repaint, not evidence. A pane transport persists a \
+         PaneActivity byte count and nothing else (dec_WDR5K item 7)."
+    )]
+    RenderedPanePayloadRefused { transport: String },
+}
+
+/// Whether a run's transport renders into a pane rather than streaming
+/// structured turn events.
+///
+/// The whole difference between a `text_chunk` that is a screen repaint and a
+/// `text_chunk` that is the assistant's actual words. A pane transport
+/// (rmux/tmux) has no other channel, so its `text_chunk` is rendered TUI output
+/// and forbidden storage; an `acp-*` transport's `text_chunk` is the model's or
+/// a subprocess's content, which is evidence.
+///
+/// Lives here because [`SessionWriter`] is the choke point that has to act on
+/// it; `orgasmic-daemon` re-exports rather than re-implements it.
+pub fn transport_is_pane(transport: &str) -> bool {
+    matches!(transport.trim(), "rmux" | "tmux" | "tmux-tui")
 }
 
 /// One session JSONL line.
@@ -130,6 +155,16 @@ pub struct SessionWriter {
     file: File,
     identity: RuntimeIdentity,
     seq: u64,
+    /// The transport this run recorded, learned from the run's own `RunMeta`
+    /// lifecycle line (orgasmic:TASK-FZB6T.2 finding 5).
+    ///
+    /// The writer had no transport context at all, so it could not tell a
+    /// repaint from an assistant turn and treated both as payload to be
+    /// bounded. It is learned from the bytes the run itself recorded rather
+    /// than passed in by the caller, because every call site is a driver and a
+    /// driver that believes it may send rendered output is exactly the
+    /// regression this refusal exists to stop.
+    transport: Option<String>,
 }
 
 impl SessionWriter {
@@ -139,11 +174,13 @@ impl SessionWriter {
             std::fs::create_dir_all(parent)?;
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let transport = recorded_transport(&path);
         Ok(Self {
             path,
             file,
             identity,
             seq: 0,
+            transport,
         })
     }
 
@@ -151,16 +188,23 @@ impl SessionWriter {
     /// use this when pathname re-resolution would discard retained file
     /// identity across a security-sensitive boundary.
     pub fn from_file(path: PathBuf, file: File, identity: RuntimeIdentity) -> Self {
+        let transport = recorded_transport(&path);
         Self {
             path,
             file,
             identity,
             seq: 0,
+            transport,
         }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The transport this run recorded, once its `RunMeta` line has been seen.
+    pub fn transport(&self) -> Option<&str> {
+        self.transport.as_deref()
     }
 
     pub fn identity(&self) -> &RuntimeIdentity {
@@ -179,7 +223,32 @@ impl SessionWriter {
     /// call site (orgasmic:TASK-FZB6T item 3). Lifecycle, babysitter-summary,
     /// and note envelopes are supervisor-authored authority and are written
     /// verbatim.
+    ///
+    /// Ahead of the cap sits a REFUSAL (orgasmic:TASK-FZB6T.2 finding 5): a
+    /// `text_chunk` from a run whose recorded transport renders into a pane is
+    /// rendered screen output, and no amount of it may be persisted. The cap
+    /// bounds one such event; it does not forbid a million of them, and the
+    /// zero-persisted-redraw rule is a ban rather than a budget.
     pub fn append(&mut self, kind: SessionEventKind, event: Value) -> Result<u64, SessionError> {
+        if kind == SessionEventKind::DriverEvent {
+            if let Some(transport) = self.transport.as_deref() {
+                if transport_is_pane(transport)
+                    && event.get("type").and_then(Value::as_str) == Some("text_chunk")
+                {
+                    return Err(SessionError::RenderedPanePayloadRefused {
+                        transport: transport.to_string(),
+                    });
+                }
+            }
+        }
+        // A run states its transport in its own `RunMeta` line, so the writer
+        // is fenced from that line onward — including a writer reopened by a
+        // restarted daemon, which learns it from the file at `open`.
+        if kind == SessionEventKind::Lifecycle {
+            if let Some(transport) = run_meta_transport(&event) {
+                self.transport = Some(transport);
+            }
+        }
         let event = match kind {
             SessionEventKind::DriverEvent => {
                 bound_driver_event_payload(event, DRIVER_EVENT_PAYLOAD_CAP_BYTES).value
@@ -204,6 +273,63 @@ impl SessionWriter {
         self.seq += 1;
         Ok(seq)
     }
+}
+
+/// The `transport` a `RunMeta` lifecycle event states, or `None` for any other
+/// lifecycle event.
+fn run_meta_transport(event: &Value) -> Option<String> {
+    if event.get("phase").and_then(Value::as_str) != Some("run_meta") {
+        return None;
+    }
+    event
+        .get("transport")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Bytes of a session file read to recover a run's recorded transport when a
+/// writer is opened over history it did not write.
+///
+/// `RunMeta` is the second line of a run segment, immediately after `Acquire`,
+/// so a small prefix window always contains it. A file whose window holds no
+/// `RunMeta` leaves the transport unknown, and an unknown transport refuses
+/// nothing: refusing on "not proven to be ACP" would delete assistant turns and
+/// tool results, which is the opposite failure.
+const TRANSPORT_PROBE_BYTES: usize = 256 * 1024;
+
+/// The transport recorded by the newest `RunMeta` in a session file's prefix
+/// window. `None` for an absent, empty, or pre-`RunMeta` file.
+///
+/// orgasmic:TASK-FZB6T.2 finding 5 — without this, a daemon restart mid-run
+/// reopens the session with no transport context and the pane refusal silently
+/// stops applying for the rest of the run.
+fn recorded_transport(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut file = File::open(path).ok()?;
+    let mut buffer = vec![0_u8; TRANSPORT_PROBE_BYTES];
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match file.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return None,
+        }
+    }
+    buffer.truncate(filled);
+    let mut transport = None;
+    for line in buffer.split(|byte| *byte == b'\n') {
+        let Ok(envelope) = serde_json::from_slice::<SessionEnvelope>(line) else {
+            continue;
+        };
+        if envelope.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Some(recorded) = run_meta_transport(&envelope.event) {
+            transport = Some(recorded);
+        }
+    }
+    transport
 }
 
 // orgasmic:TASK-FZB6T
@@ -1548,6 +1674,12 @@ mod tests {
     /// content (a `text_chunk` synthesized from the pane, a scrollback capture,
     /// a redraw payload) fails on file size and on the content assertion, in
     /// that order.
+    ///
+    /// orgasmic:TASK-FZB6T.2 finding 5 — the lock used to end at a byte
+    /// ceiling: a 4 MiB repaint was asserted to grow the file by less than
+    /// 8 KiB, which forbids one repaint and permits a million. It now asserts
+    /// what the criterion actually says: ZERO persisted `text_chunk`
+    /// envelopes, and zero repaint-derived growth.
     #[test]
     fn a_long_tui_session_persists_no_rendered_redraw_bytes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1560,6 +1692,15 @@ mod tests {
                 json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-TUI", "worker_id": "implementer-claude-rmux"}),
             )
             .unwrap();
+        // The run states its own transport, exactly as a dispatched rmux run
+        // does. This line is what fences the writer.
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({"phase": "run_meta", "transport": "rmux", "harness": "claude", "driver_config": {}}),
+            )
+            .unwrap();
+        assert_eq!(writer.transport(), Some("rmux"));
 
         // One full-screen repaint: cursor home, clear, 40 rows of content.
         let repaint = format!(
@@ -1626,37 +1767,66 @@ mod tests {
         // do, and exactly what a future one could stop doing. So drive the case
         // that regression looks like: a driver that synthesizes a `text_chunk`
         // out of accumulated pane repaints and hands it to the writer. The
-        // writer is the choke point, and it must refuse to persist the rendered
-        // bytes whatever the driver believes.
+        // writer is the choke point, and it must REFUSE the rendered bytes
+        // whatever the driver believes — not bound them, refuse them.
+        //
+        // A fresh writer, so this also proves the refusal survives the daemon
+        // restart case: the reopened writer recovers the transport from the
+        // run's own `RunMeta` line rather than from process memory.
         let scrollback = repaint.repeat(4096);
         assert!(scrollback.len() > 4 * 1024 * 1024);
         let before = std::fs::metadata(&path).unwrap().len();
         let mut writer =
             SessionWriter::open(&path, RuntimeIdentity::new("run-tui", "boot-tui")).unwrap();
-        writer
-            .append(
+        assert_eq!(
+            writer.transport(),
+            Some("rmux"),
+            "a reopened writer must recover the run's recorded transport"
+        );
+        // Repeatedly, because a byte ceiling forbids one repaint and permits a
+        // million: a linear-growth regression has to fail here too.
+        for seq in 0..64_u64 {
+            let refused = writer.append(
                 SessionEventKind::DriverEvent,
                 serde_json::to_value(&DriverEvent::TextChunk {
                     stream: TextStream::Stdout,
                     chunk: scrollback.clone(),
-                    seq: 9_999,
+                    seq,
                 })
                 .unwrap(),
-            )
-            .unwrap();
+            );
+            assert!(
+                matches!(
+                    refused,
+                    Err(SessionError::RenderedPanePayloadRefused { .. })
+                ),
+                "the writer must refuse a pane transport's rendered payload, got {refused:?}"
+            );
+        }
         drop(writer);
+
         let grew = std::fs::metadata(&path).unwrap().len() - before;
-        assert!(
-            grew < 8 * 1024,
-            "a redraw chunk persisted to JSONL: a {} byte rendered repaint grew the \
-             session file by {grew} bytes",
+        assert_eq!(
+            grew, 0,
+            "a redraw chunk persisted to JSONL: 64 rendered repaints of {} bytes each grew \
+             the session file by {grew} bytes; a pane transport must persist ZERO of them",
             scrollback.len()
+        );
+        let envelopes = read_session_file(&path).unwrap();
+        let text_chunks = envelopes
+            .iter()
+            .filter(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("text_chunk"))
+            .count();
+        assert_eq!(
+            text_chunks, 0,
+            "a redraw chunk persisted to JSONL: {text_chunks} text_chunk envelopes survived \
+             in a pane transport's session file"
         );
         let source = std::fs::read_to_string(&path).unwrap();
         assert!(
-            source.contains("orgasmic-bounded"),
-            "the rendered payload must be replaced by a digest that names its size \
-             and where the bytes actually live"
+            !source.contains("text_chunk") && !source.contains("orgasmic-bounded"),
+            "a pane transport's rendered payload must leave no trace at all — not a \
+             bounded digest, not an envelope"
         );
     }
 
