@@ -210,7 +210,7 @@ impl WorkerDriver for TmuxDriver {
         let mut native_runtime = spawn_plan.native_runtime.clone();
 
         // orgasmic:TASK-AFE5Q,TASK-756WX
-        let (lifecycle_task, startup_task) = if !inert {
+        let (lifecycle_task, startup_task, pane_activity_task) = if !inert {
             let launch_observation = spawn_tmux_session(&session_name, &spawn_plan).await?;
             if cfg.native_resume_mode
                 && is_claude_harness_command(
@@ -258,6 +258,14 @@ impl WorkerDriver for TmuxDriver {
                 }
             }
             let task = start_session_exit_watch(
+                session_name.clone(),
+                tx.clone(),
+                terminal_emitted.clone(),
+            );
+            // orgasmic:TASK-4CSMY — the stall clock's pane channel. Started
+            // next to the exit watch because both are per-live-session and
+            // both end at release.
+            let pane_activity_task = start_pane_activity_watch(
                 session_name.clone(),
                 tx.clone(),
                 terminal_emitted.clone(),
@@ -317,7 +325,7 @@ impl WorkerDriver for TmuxDriver {
             } else {
                 None
             };
-            (Some(task), startup_task)
+            (Some(task), startup_task, pane_activity_task)
         } else {
             if cfg.native_resume_mode
                 && is_claude_harness_command(
@@ -338,7 +346,7 @@ impl WorkerDriver for TmuxDriver {
                     let _ = resumed;
                 }
             }
-            (None, None)
+            (None, None, None)
         };
 
         let _ = tx
@@ -367,6 +375,7 @@ impl WorkerDriver for TmuxDriver {
                 kind: ctx.run_kind,
                 inert,
                 lifecycle_abort: lifecycle_task.as_ref().map(JoinHandle::abort_handle),
+                pane_activity_abort: pane_activity_task.as_ref().map(JoinHandle::abort_handle),
                 startup_task,
                 startup_cancel,
                 send_child,
@@ -414,6 +423,12 @@ impl WorkerDriver for TmuxDriver {
         let lifecycle_task =
             start_session_exit_watch(session_name.clone(), tx.clone(), terminal_emitted.clone());
         let lifecycle_abort = lifecycle_task.abort_handle();
+        // orgasmic:TASK-4CSMY — a reattached run is stall-clocked like any
+        // other, so it needs the pane channel too.
+        let pane_activity_abort =
+            start_pane_activity_watch(session_name.clone(), tx.clone(), terminal_emitted.clone())
+                .as_ref()
+                .map(JoinHandle::abort_handle);
 
         Ok(AttachOutcome::Attached(Attached {
             session: Box::new(DriverSession {
@@ -426,6 +441,7 @@ impl WorkerDriver for TmuxDriver {
                     kind: ctx.run_kind,
                     inert: false,
                     lifecycle_abort: Some(lifecycle_abort),
+                    pane_activity_abort,
                     startup_task: None,
                     startup_cancel: Arc::new(AtomicBool::new(false)),
                     send_child: SendChildOwner::new(),
@@ -447,6 +463,10 @@ struct TmuxTuiControl {
     inert: bool,
     /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
     lifecycle_abort: Option<tokio::task::AbortHandle>,
+    // orgasmic:TASK-4CSMY
+    /// Counts pane output bytes into the coalesced `PaneActivity` liveness
+    /// event. Aborted on release, which drops the FIFO with it.
+    pane_activity_abort: Option<tokio::task::AbortHandle>,
     /// One-shot startup helper (prompt paste or Cursor trust gate).
     startup_task: Option<JoinHandle<()>>,
     startup_cancel: Arc<AtomicBool>,
@@ -586,6 +606,9 @@ impl DriverControl for TmuxTuiControl {
         if let Some(abort) = self.lifecycle_abort.take() {
             abort.abort();
         }
+        if let Some(abort) = self.pane_activity_abort.take() {
+            abort.abort();
+        }
         cancel_and_join_driver_task(
             &self.startup_cancel,
             self.startup_task.take(),
@@ -607,6 +630,9 @@ impl Drop for TmuxTuiControl {
     fn drop(&mut self) {
         self.startup_cancel.store(true, Ordering::SeqCst);
         if let Some(abort) = self.lifecycle_abort.take() {
+            abort.abort();
+        }
+        if let Some(abort) = self.pane_activity_abort.take() {
             abort.abort();
         }
         abort_driver_task(self.startup_task.take());
@@ -2261,6 +2287,196 @@ async fn session_exit_watch(
     }
 }
 
+// orgasmic:TASK-4CSMY
+/// How often the pane watcher re-checks `terminal_emitted` while no bytes are
+/// arriving. Only a shutdown latency, not a sampling rate: every byte the pane
+/// writes wakes the read arm immediately.
+const PANE_ACTIVITY_SHUTDOWN_POLL: Duration = Duration::from_millis(500);
+
+// orgasmic:TASK-4CSMY
+/// Start the tmux transport's pane-liveness channel: the coalesced
+/// [`DriverEvent::PaneActivity`] the supervisor's stall clock reads
+/// (TASK-RWCRN gave rmux this; tmux had no continuous pane event of any kind,
+/// so a provider-bound turn at ~0% cpu had no evidence channel at all).
+///
+/// Returns `None` when the channel could not be established; the run then
+/// behaves exactly as it did before this existed. Failing to start must never
+/// fail a run: this is evidence, not control.
+#[cfg(unix)]
+fn start_pane_activity_watch(
+    session_name: String,
+    events: mpsc::Sender<DriverEvent>,
+    terminal_emitted: Arc<AtomicBool>,
+) -> Option<JoinHandle<()>> {
+    Some(tokio::spawn(async move {
+        pane_activity_watch(
+            session_name,
+            events,
+            terminal_emitted,
+            crate::modes::rmux::PANE_ACTIVITY_INTERVAL,
+        )
+        .await;
+    }))
+}
+
+#[cfg(not(unix))]
+fn start_pane_activity_watch(
+    _session_name: String,
+    _events: mpsc::Sender<DriverEvent>,
+    _terminal_emitted: Arc<AtomicBool>,
+) -> Option<JoinHandle<()>> {
+    None
+}
+
+// orgasmic:TASK-4CSMY
+/// Publish coalesced pane activity for a live tmux session until the run ends.
+///
+/// tmux has no SDK output stream, so the analogue of rmux's `PaneOutputStream`
+/// is `pipe-pane`: tmux runs a shell command *on the server* with the pane's
+/// raw output on its stdin. Piping that into a FIFO this task already holds
+/// open is what brings those bytes back into the driver process.
+///
+/// The unit is raw output BYTES, not lines (TASK-RWCRN.1): a full-screen TUI
+/// redraws in place with CR and ANSI and can go for many minutes without ever
+/// emitting an LF, and a line-counting channel sees nothing at all for exactly
+/// the harnesses this event exists to protect.
+///
+/// Nothing is persisted. A FIFO has no backing store, and only the byte
+/// *count* leaves this function — the buffer is overwritten in place and never
+/// forwarded (dec_WDR5K item 7).
+#[cfg(unix)]
+async fn pane_activity_watch(
+    session: String,
+    events: mpsc::Sender<DriverEvent>,
+    terminal_emitted: Arc<AtomicBool>,
+    activity_interval: Duration,
+) {
+    use tokio::io::AsyncReadExt;
+
+    // The FIFO's directory is a `TempDir`: dropped when this task ends or is
+    // aborted, which is every exit path including release.
+    let Some((_fifo_dir, fifo_path)) = pane_output_fifo(&session) else {
+        return;
+    };
+    let mut reader = match tokio::net::unix::pipe::OpenOptions::new().open_receiver(&fifo_path) {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::warn!(%session, ?error, "tmux pane activity: FIFO unreadable");
+            return;
+        }
+    };
+    // A FIFO with no writer reads EOF rather than blocking, and `pipe-pane`'s
+    // `cat` comes and goes with the pane. Holding a write end of our own means
+    // the read side never ends before this task does. Opened second because
+    // O_WRONLY on a FIFO fails with ENXIO until a reader is present.
+    let _writer_end = match tokio::net::unix::pipe::OpenOptions::new().open_sender(&fifo_path) {
+        Ok(writer) => writer,
+        Err(error) => {
+            tracing::warn!(%session, ?error, "tmux pane activity: FIFO unwritable");
+            return;
+        }
+    };
+    // Both ends first, then the pipe: `cat` blocks opening a FIFO for writing
+    // until a reader is present, and that block would be inside the tmux
+    // server's child.
+    if !start_pipe_pane(&session, &fifo_path).await {
+        return;
+    }
+
+    let mut activity = crate::modes::rmux::PaneActivityThrottle::new(activity_interval);
+    let mut buf = vec![0u8; 16 * 1024];
+    loop {
+        tokio::select! {
+            read = reader.read(&mut buf) => {
+                let observed = match read {
+                    Ok(0) => break,
+                    Ok(bytes) => bytes as u64,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(error) => {
+                        tracing::warn!(%session, ?error, "tmux pane activity: read ended");
+                        break;
+                    }
+                };
+                if terminal_emitted.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Some(event) =
+                    activity.observe_bytes(observed, tokio::time::Instant::now())
+                {
+                    if events.send(event).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            _ = tokio::time::sleep(PANE_ACTIVITY_SHUTDOWN_POLL) => {
+                if terminal_emitted.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// orgasmic:TASK-4CSMY
+/// A private FIFO for one session's pane output, and the directory that owns
+/// its lifetime.
+#[cfg(unix)]
+fn pane_output_fifo(session: &str) -> Option<(tempfile::TempDir, PathBuf)> {
+    let dir = match tempfile::Builder::new().prefix("orgasmic-pane-").tempdir() {
+        Ok(dir) => dir,
+        Err(error) => {
+            tracing::warn!(%session, ?error, "tmux pane activity: no FIFO directory");
+            return None;
+        }
+    };
+    let path = dir.path().join("pane.fifo");
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) else {
+        return None;
+    };
+    // 0o600: the pane's raw output passes through it, so nothing else on the
+    // box may read it (the directory is 0o700 already).
+    if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+        tracing::warn!(
+            %session,
+            error = ?std::io::Error::last_os_error(),
+            "tmux pane activity: mkfifo failed"
+        );
+        return None;
+    }
+    Some((dir, path))
+}
+
+// orgasmic:TASK-4CSMY
+/// `tmux pipe-pane -t <session> 'exec cat >> <fifo>'` — tell the server to
+/// copy the pane's raw output into our FIFO. `exec` so the pane's writer is
+/// `cat` itself rather than a shell holding it.
+#[cfg(unix)]
+async fn start_pipe_pane(session: &str, fifo: &Path) -> bool {
+    let sink = format!(
+        "exec cat >> {}",
+        sh_single_quote(&fifo.display().to_string())
+    );
+    let status = tmux_async_command()
+        .args(["pipe-pane", "-t", session, &sink])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await;
+    match status {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            tracing::warn!(%session, ?status, "tmux pane activity: pipe-pane refused");
+            false
+        }
+        Err(error) => {
+            tracing::warn!(%session, ?error, "tmux pane activity: pipe-pane failed");
+            false
+        }
+    }
+}
+
 async fn capture_pane(session: &str) -> Result<String, DriverError> {
     let output = tmux_async_command()
         .args(["capture-pane", "-p", "-t", session, "-S", "-2000"])
@@ -2955,7 +3171,11 @@ mod tests {
         let _environment = test_environment_lock().lock().await;
         assert_required_test_tooling(&[
             ToolRequirement::new("rmux", 9, probe_rmux_binary().usable()),
-            ToolRequirement::new("tmux", 9, tmux_spawn_usable().await),
+            // orgasmic:TASK-4CSMY — +1 for the real-pane proof of the tmux
+            // pane-liveness channel. The two live smokes beside it carry
+            // `#[ignore]` and never run from the default suite, so counting
+            // them here would overstate what a green run covered.
+            ToolRequirement::new("tmux", 10, tmux_spawn_usable().await),
             ToolRequirement::new("sleep", 1, command_available("sleep")),
             ToolRequirement::new("bash", 1, command_available("bash")),
             ToolRequirement::new("claude", 8, command_succeeds("claude", &["--version"])),
@@ -4530,6 +4750,212 @@ mod tests {
             .status()
             .unwrap();
         assert!(!listed.success(), "tmux session should be gone");
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// A newline-emitting pane and a newline-FREE redrawing pane, the two
+    /// fixtures TASK-RWCRN.1 established for rmux. The second is the ship
+    /// blocker: a full-screen TUI repaints with CR and ANSI and can go many
+    /// minutes without an LF, so anything counting lines sees nothing at all
+    /// for exactly the harnesses this event exists to protect.
+    #[cfg(unix)]
+    const PANE_ACTIVITY_TICKING_FIXTURE: &str = "while :; do echo tick; sleep 0.05; done";
+    #[cfg(unix)]
+    const PANE_ACTIVITY_REDRAW_FIXTURE: &str = "i=0; while :; do i=$((i+1)); \
+         printf '\\r\\033[K%s%% working' \"$i\"; sleep 0.05; done";
+
+    // orgasmic:TASK-4CSMY
+    /// Run the pane watcher against a REAL tmux pane on the test-owned server
+    /// at a compressed cadence, and return the first `(seq, bytes)` it
+    /// publishes. Compressed so the default suite carries this proof instead
+    /// of an `#[ignore]`d smoke; the production cadence is proven separately
+    /// by the two live smokes below, which go through `acquire`.
+    #[cfg(unix)]
+    async fn first_pane_activity_for(session: &str, shell: &str) -> (u64, u64) {
+        let status = tmux_command()
+            .args([
+                "new-session",
+                "-d",
+                "-x",
+                TMUX_SESSION_COLS,
+                "-y",
+                TMUX_SESSION_ROWS,
+                "-s",
+                session,
+                "--",
+                "/bin/sh",
+                "-c",
+                shell,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn tmux fixture pane");
+        assert!(
+            status.success(),
+            "tmux new-session failed on {}",
+            tmux_server_selection()
+        );
+
+        let (tx, mut rx) = mpsc::channel(8);
+        let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let watcher = tokio::spawn(pane_activity_watch(
+            session.to_string(),
+            tx,
+            terminal_emitted.clone(),
+            Duration::from_millis(250),
+        ));
+
+        let observed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match rx.recv().await {
+                    Some(DriverEvent::PaneActivity { seq, bytes }) => break Some((seq, bytes)),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            }
+        })
+        .await;
+
+        terminal_emitted.store(true, Ordering::SeqCst);
+        watcher.abort();
+        observed
+            .expect("a writing pane must publish PaneActivity")
+            .expect("the pane event channel closed before any activity")
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// The tmux transport had no continuous pane event of any kind, so a
+    /// provider-bound turn (~0% cpu, no tool calls) had no evidence channel at
+    /// all and the stall clock released it at 600 s. This is that channel,
+    /// against a real pane on a real tmux server.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tmux_pane_activity_publishes_raw_byte_counts_from_a_real_pane() {
+        const TEST: &str = "tmux_pane_activity_publishes_raw_byte_counts_from_a_real_pane";
+        let _live_guard = live_session_guard();
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(TEST, &[("tmux", tmux_available)]) {
+            return;
+        }
+
+        let ticking = format!("orgasmic-pane-activity-lines-{}", std::process::id());
+        let _ticking_guard = SessionGuard(ticking.clone());
+        let (seq, bytes) = first_pane_activity_for(&ticking, PANE_ACTIVITY_TICKING_FIXTURE).await;
+        assert_eq!(seq, 0, "the first window publishes seq 0");
+        assert!(bytes > 0, "a writing pane must report bytes, got {bytes}");
+
+        // The unit is BYTES, not lines: this pane never emits an LF.
+        let redraw = format!("orgasmic-pane-activity-redraw-{}", std::process::id());
+        let _redraw_guard = SessionGuard(redraw.clone());
+        let (seq, bytes) = first_pane_activity_for(&redraw, PANE_ACTIVITY_REDRAW_FIXTURE).await;
+        assert_eq!(
+            seq, 0,
+            "a redrawing pane must publish on the same cadence as a ticking one"
+        );
+        assert!(
+            bytes > 0,
+            "a pane repainting with CR and ANSI and no LF must still report bytes, got {bytes}"
+        );
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// The production path, at the production cadence: `acquire` →
+    /// `start_pane_activity_watch` → the driver's own event channel, which is
+    /// the stream the daemon consumes. The compressed test above cannot prove
+    /// the watcher is wired to `acquire`.
+    ///
+    /// Returns the first observed `(seq, bytes)`, or `None` if the channel
+    /// closed first; panics if nothing arrived within two intervals.
+    #[cfg(unix)]
+    async fn live_tmux_pane_activity_for(
+        test_name: &'static str,
+        shell: &str,
+    ) -> Option<(u64, u64)> {
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        assert!(tmux_available, "{test_name} needs a real tmux binary");
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "/bin/sh",
+            "args": ["-c", shell],
+        }));
+        let mut s = d
+            .acquire(ctx("run-tmux-pane-activity", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+        let _guard = SessionGuard(tmux_session_name(&s.identity));
+        let ready = s.events.recv().await.expect("ready event");
+        let DriverEvent::Ready { capabilities, .. } = ready else {
+            panic!("expected Ready, got {ready:?}");
+        };
+        assert_eq!(
+            capabilities["inert"], false,
+            "{test_name} must run against a real pane, not an inert session"
+        );
+
+        let observed =
+            tokio::time::timeout(crate::modes::rmux::PANE_ACTIVITY_INTERVAL * 2, async {
+                loop {
+                    match s.events.recv().await {
+                        Some(DriverEvent::PaneActivity { seq, bytes }) => break Some((seq, bytes)),
+                        Some(_) => continue,
+                        None => break None,
+                    }
+                }
+            })
+            .await;
+
+        // Reap before asserting: a failed assertion must not leak the session.
+        s.control.release("test done").await.unwrap();
+
+        observed.expect("a writing pane must publish PaneActivity within 2 intervals")
+    }
+
+    /// `#[ignore]` for the reason the rmux twin of this test is ignored
+    /// (TASK-RRT4T): it spawns a real session and waits a full
+    /// `PANE_ACTIVITY_INTERVAL`, so the default summary counts it instead of
+    /// silently paying 30 s for it. Run with
+    /// `cargo test -p orgasmic-drivers -- --ignored live_tmux_pane_publishes`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "live tmux smoke: real tmux session, waits one PANE_ACTIVITY_INTERVAL"]
+    async fn live_tmux_pane_publishes_pane_activity_while_it_writes() {
+        let _live_guard = live_session_guard();
+        let observed = live_tmux_pane_activity_for(
+            "live_tmux_pane_publishes_pane_activity_while_it_writes",
+            PANE_ACTIVITY_TICKING_FIXTURE,
+        )
+        .await;
+        let (seq, bytes) = observed.expect("event channel closed before any pane activity");
+        assert_eq!(seq, 0);
+        assert!(
+            bytes > 100,
+            "a pane writing ~20 lines/s across one window should report many bytes, got {bytes}"
+        );
+    }
+
+    /// TASK-RWCRN.1's fixture on the tmux transport: CR + ANSI repaint, never
+    /// an LF, for longer than one `PANE_ACTIVITY_INTERVAL`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "live tmux smoke: real tmux session, waits one PANE_ACTIVITY_INTERVAL"]
+    async fn live_tmux_pane_publishes_pane_activity_for_newline_free_redraws() {
+        let _live_guard = live_session_guard();
+        let observed = live_tmux_pane_activity_for(
+            "live_tmux_pane_publishes_pane_activity_for_newline_free_redraws",
+            PANE_ACTIVITY_REDRAW_FIXTURE,
+        )
+        .await;
+        let (seq, bytes) = observed.expect("event channel closed before any pane activity");
+        assert_eq!(
+            seq, 0,
+            "a redrawing pane must publish its first activity on the same cadence"
+        );
+        assert!(
+            bytes > 100,
+            "a pane repainting ~20x/s with no LF across one window should report many bytes, \
+             got {bytes}"
+        );
     }
 
     #[tokio::test]

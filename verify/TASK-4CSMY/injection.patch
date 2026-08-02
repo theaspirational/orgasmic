@@ -1,0 +1,51 @@
+diff --git a/crates/orgasmic-drivers/src/modes/tmux.rs b/crates/orgasmic-drivers/src/modes/tmux.rs
+index b00c4f6..2920d84 100644
+--- a/crates/orgasmic-drivers/src/modes/tmux.rs
++++ b/crates/orgasmic-drivers/src/modes/tmux.rs
+@@ -2353,6 +2353,14 @@ async fn pane_activity_watch(
+ ) {
+     use tokio::io::AsyncReadExt;
+ 
++    // TASK-4CSMY injection: the tmux transport publishes no continuous pane
++    // event of any kind, which is where it stood before this task. The FIFO,
++    // the throttle and the `pipe-pane` plumbing below stay exactly where the
++    // fix put them and are unreachable. A tmux pane can repaint for ten
++    // minutes and the stall clock sees nothing.
++    #[allow(clippy::needless_return)]
++    return;
++
+     // The FIFO's directory is a `TempDir`: dropped when this task ends or is
+     // aborted, which is every exit path including release.
+     let Some((_fifo_dir, fifo_path)) = pane_output_fifo(&session) else {
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+index 259a708..f5d9c4f 100644
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -4710,7 +4710,14 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
+         // cannot diagnose a healthy worker killed at ten minutes. Only
+         // rescues: a pane that cannot be read cannot save a run (JK66P's
+         // fail-closed rule), it only gets named in the reason.
+-        if let Some(mux) = PaneMux::for_transport(&target.transport) {
++        // TASK-4CSMY injection: the consult is rmux-only again, as JQ8AV
++        // shipped it. `PaneMux`, `pane_content` and `pane_pid` stay exactly
++        // where the fix put them and keep working — for rmux. A tmux run
++        // reaches none of it, so a provider-bound turn on the shipped default
++        // driver has no evidence channel at all and dies at the deadline.
++        if let Some(mux) = PaneMux::for_transport(&target.transport)
++            .filter(|mux| *mux == PaneMux::Rmux)
++        {
+             match pane_content(mux, &target.identity, socket) {
+                 Some(pane) => match pane_open_turn_marker(&pane) {
+                     Some(marker) => {
+@@ -4748,7 +4755,11 @@ fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path
+     if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
+         return Some(pid);
+     }
++    // TASK-4CSMY injection: only rmux resolves a pane's root pid, so a tmux
++    // run has no cpu channel either — the probe answers Unknown and the stall
++    // stands on the bare reason.
+     PaneMux::for_transport(&target.transport)
++        .filter(|mux| *mux == PaneMux::Rmux)
+         .and_then(|mux| pane_pid(mux, &target.identity, socket))
+ }
+ 
