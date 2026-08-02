@@ -2704,13 +2704,13 @@ mod tests {
     /// session-directory authority and current file identity, not by living
     /// somewhere under the project root.
     ///
-    /// The name used to overclaim (orgasmic:TASK-FZB6T.2 finding 4): it proved
-    /// PATH and FINGERPRINT corruption and called that semantic. Path and
-    /// fingerprint say which BYTES an entry is about; they say nothing about
-    /// what it claims those bytes MEAN. So this now also drives the corruption
-    /// that authorized a deletion — `lifecycle`, `terminal`, `driver` and
-    /// `transport` taken verbatim — and every one of those fields must be
-    /// refused when the entry's own retained envelopes do not reproduce it.
+    /// This test proves PATH and FINGERPRINT corruption only: which BYTES an
+    /// entry is about. What it CLAIMS those bytes mean is
+    /// `a_snapshot_entrys_semantic_claims_must_be_reproduced_by_its_own_envelopes`,
+    /// which is a separate test on purpose (orgasmic:TASK-FZB6T.3 finding 5) —
+    /// the two were one test, the path cases ran first, and under the
+    /// TASK-FZB6T.1 injection the first of them panicked so the semantic
+    /// assertions were never reached at all.
     #[tokio::test]
     async fn semantically_corrupt_snapshot_entries_are_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -2796,6 +2796,52 @@ mod tests {
             SnapshotLoad::Loaded { entries: 0 },
             "an entry whose file identity changed must be re-derived, not trusted"
         );
+
+        // The sound entry still loads, so the rule is not merely refusing
+        // everything.
+        std::fs::write(&snapshot_path, source.snapshot_bytes(&root).unwrap()).unwrap();
+        let catalog = RunCatalog::new();
+        assert_eq!(
+            catalog.load_snapshot(&root),
+            SnapshotLoad::Loaded { entries: 1 }
+        );
+        let _ = real;
+    }
+
+    /// orgasmic:TASK-FZB6T.3 finding 5 — the SEMANTIC half, on its own test and
+    /// its own injection signature.
+    ///
+    /// It used to be the tail of `semantically_corrupt_snapshot_entries_are_refused`,
+    /// which drives path and fingerprint corruption FIRST. Under the
+    /// TASK-FZB6T.1 injection the first path case panics, so these assertions
+    /// were never reached and the pinned red named only the path failure. The
+    /// replay still passed — which is the lesson: a passing red-then-green
+    /// proves the red HAPPENS, not that it is the RIGHT red.
+    ///
+    /// Path and fingerprint say which BYTES an entry is about. They say nothing
+    /// about what it claims those bytes MEAN. Each case below is valid JSON at
+    /// the right path with the right file identity, and each lies about the
+    /// session file's meaning — starting with the pair that authorized a
+    /// deletion.
+    #[tokio::test]
+    async fn a_snapshot_entrys_semantic_claims_must_be_reproduced_by_its_own_envelopes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let real = write_session(
+            &sessions,
+            "run-real",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &root,
+            "proj-1",
+        );
+
+        let source = RunCatalog::new();
+        source.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let template = source.entries().remove(0);
+        let snapshot_path = root.join(CATALOG_REL_PATH);
 
         // --- THE SEMANTIC HALF (orgasmic:TASK-FZB6T.2 finding 4) -----------
         //

@@ -9,5 +9,10 @@
 # 2. a snapshot entry is admitted through session-directory authority and
 #    current file identity, so a wrong parent, a nested path, a `..` traversal,
 #    a missing file, a non-session extension, a symlink, and a stale fingerprint
-#    are each refused rather than loaded as a run record.
-env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_recreated_worktree_at_the_same_path_does_not_revive_a_tombstone semantically_corrupt_snapshot_entries_are_refused
+#    are each refused rather than loaded as a run record;
+# 3. and — separately, which is the point (TASK-FZB6T.3 finding 5) — an entry
+#    whose SEMANTIC claims its own retained envelopes do not reproduce is
+#    refused. This used to be the tail of test 2, so under the injection the
+#    first path case panicked and these assertions were never reached: the
+#    replay passed while proving the wrong red.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_recreated_worktree_at_the_same_path_does_not_revive_a_tombstone semantically_corrupt_snapshot_entries_are_refused a_snapshot_entrys_semantic_claims_must_be_reproduced_by_its_own_envelopes
