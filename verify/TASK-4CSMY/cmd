@@ -1,0 +1,22 @@
+# One line. Run from the repo root by `orgasmic verify TASK-4CSMY`.
+#
+# Two tests, one per half of the defect, because on tmux BOTH pane channels
+# were blind and either alone leaves a healthy worker killable:
+#
+#   tmux_pane_activity_publishes_raw_byte_counts_from_a_real_pane
+#     (orgasmic-drivers) — the driver publishes a coalesced `pane_activity`
+#     counted in RAW OUTPUT BYTES from a real tmux pane, including a pane that
+#     repaints with CR + ANSI and never emits an LF.
+#
+#   a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies
+#     (orgasmic-daemon) — at the stall deadline the open-turn consult runs on a
+#     tmux transport, so a network-waiting provider-bound turn survives
+#     repeated expired budgets while an at-rest connectionless wedge still dies.
+#
+# `--no-fail-fast` so a red run reports BOTH halves instead of stopping at the
+# first failing target. `--skip` is mandatory for any command touching the
+# drivers suite: it carries the billed harness test.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor and a driver that must see neither.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test --no-fail-fast -p orgasmic-daemon -p orgasmic-drivers --lib -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events a_network_waiting_tmux_turn_outlives tmux_pane_activity_publishes

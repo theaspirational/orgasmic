@@ -4607,7 +4607,7 @@ pub(crate) enum WorkEvidence {
     /// The daemon looked and found none. The stall stands, and `detail` says
     /// what was looked at so the operator can tell a wedge from a quiet worker.
     Idle { detail: String },
-    /// The daemon could not look: no probe target, no rmux binary, no session,
+    /// The daemon could not look: no probe target, no mux binary, no session,
     /// `ps` unavailable, or the probe outran [`WORK_PROBE_TIMEOUT`]. The stall
     /// stands on today's bare reason — a probe that cannot run must not be able
     /// to save a run, or a broken probe is an immortality switch.
@@ -4617,9 +4617,9 @@ pub(crate) enum WorkEvidence {
 /// Everything a [`WorkEvidenceProbe`] is allowed to know about a run.
 #[derive(Debug, Clone)]
 pub(crate) struct WorkProbeTarget {
-    /// Driver transport (`rmux`, `acp-stdio`, …).
+    /// Driver transport (`rmux`, `tmux`, `acp-stdio`, …).
     transport: String,
-    /// Run identity — for pane transports this is what names the rmux session.
+    /// Run identity — for pane transports this is what names the mux session.
     identity: RuntimeIdentity,
     /// Wrapper pid, for transports that own a direct child process. `None` for
     /// pane transports: a tmux pane is a child of the mux server, not of us.
@@ -4666,6 +4666,10 @@ pub(crate) struct ProcessSubtreeCpuProbe {
     /// the default endpoint, where every dispatch session lives. Tests pin
     /// their owned server's socket so the probe reads panes the test created
     /// instead of live dispatch panes.
+    ///
+    /// rmux only: a tmux probe inherits its `-L` from the drivers' own
+    /// `tmux_command()`, the same selection the driver used to create the
+    /// session (see [`pane_probe_command`]).
     rmux_socket: Option<std::path::PathBuf>,
 }
 
@@ -4699,12 +4703,15 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
         if cpu_percent >= MIN_WORK_CPU_PERCENT {
             return WorkEvidence::Working { detail: cpu_detail };
         }
-        // orgasmic:TASK-JQ8AV — the subtree is quiet; before calling that a
-        // wedge, read the one channel that can still see a provider-bound
-        // turn. Only rescues: a pane that cannot be read cannot save a run
-        // (JK66P's fail-closed rule), it only gets named in the reason.
-        if target.transport == "rmux" {
-            match rmux_pane_content(&target.identity, socket) {
+        // orgasmic:TASK-JQ8AV,TASK-4CSMY — the subtree is quiet; before calling
+        // that a wedge, read the one channel that can still see a
+        // provider-bound turn. Every pane transport, not just rmux: tmux is the
+        // shipped default driver, and a first-time user on tmux is exactly who
+        // cannot diagnose a healthy worker killed at ten minutes. Only
+        // rescues: a pane that cannot be read cannot save a run (JK66P's
+        // fail-closed rule), it only gets named in the reason.
+        if let Some(mux) = PaneMux::for_transport(&target.transport) {
+            match pane_content(mux, &target.identity, socket) {
                 Some(pane) => match pane_open_turn_marker(&pane) {
                     Some(marker) => {
                         return WorkEvidence::Working {
@@ -4741,35 +4748,98 @@ fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path
     if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
         return Some(pid);
     }
-    (target.transport == "rmux")
-        .then(|| rmux_pane_pid(&target.identity, socket))
-        .flatten()
+    PaneMux::for_transport(&target.transport)
+        .and_then(|mux| pane_pid(mux, &target.identity, socket))
 }
 
-/// An `rmux` invocation for the probe's read-only pane lookups, addressed at
-/// the default endpoint in production (`socket: None`, where a dispatch's
-/// session lives) or at an explicit `-S` socket in tests. A run on a private
-/// endpoint resolves to `None` and therefore [`WorkEvidence::Unknown`], i.e.
-/// the pre-probe behavior.
-fn rmux_probe_command(socket: Option<&std::path::Path>) -> Option<Command> {
-    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-    let rmux_bin = probe.path.filter(|_| probe.found)?;
-    let mut cmd = Command::new(rmux_bin);
-    if let Some(socket) = socket {
-        cmd.arg("-S").arg(socket);
+// orgasmic:TASK-4CSMY
+/// Which terminal multiplexer hosts a run's pane, for the transports that have
+/// one.
+///
+/// `rmux` and `tmux` are one surface here — `display-message -p -t <session>`
+/// and `capture-pane -p -t <session>` are identical verbs on both, so
+/// [`pane_open_turn_marker`] classifies either mux's capture unchanged. What
+/// differs is only the binary, how the run's session is named, and how a
+/// non-default server is addressed.
+///
+/// `acp-*` transports are deliberately absent: they stream turn events
+/// straight into the stall clock and need no pane channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneMux {
+    Rmux,
+    Tmux,
+}
+
+impl PaneMux {
+    fn for_transport(transport: &str) -> Option<Self> {
+        match transport {
+            "rmux" => Some(Self::Rmux),
+            // `tmux-tui` is the legacy driver id for the same transport.
+            "tmux" | "tmux-tui" => Some(Self::Tmux),
+            _ => None,
+        }
     }
+
+    /// The run-scoped session name the driver created, derived from the same
+    /// identity the driver used.
+    fn session_name(self, identity: &RuntimeIdentity) -> String {
+        match self {
+            Self::Rmux => orgasmic_drivers::modes::rmux::rmux_session_name(identity),
+            Self::Tmux => orgasmic_drivers::modes::tmux::tmux_session_name(identity),
+        }
+    }
+}
+
+/// A read-only mux invocation for the probe's pane lookups.
+///
+/// rmux is addressed at the default endpoint in production (`socket: None`,
+/// where a dispatch's session lives) or at an explicit `-S` socket in tests; a
+/// run on a private endpoint resolves to `None` and therefore
+/// [`WorkEvidence::Unknown`], i.e. the pre-probe behavior.
+///
+/// tmux carries its own server selection: `tmux_command()` is the one place
+/// the driver builds a tmux command line, and it applies the same `-L` the
+/// driver used to create the session — unset in production, pinned by a test
+/// binary that owns its server. Reusing it is what makes "the probe reads the
+/// server the pane is on" true by construction rather than by plumbing.
+// orgasmic:TASK-4CSMY
+fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<Command> {
+    let mut cmd = match mux {
+        PaneMux::Rmux => {
+            let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+            let rmux_bin = probe.path.filter(|_| probe.found)?;
+            let mut cmd = Command::new(rmux_bin);
+            if let Some(socket) = socket {
+                cmd.arg("-S").arg(socket);
+            }
+            cmd
+        }
+        // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
+        // to `rmux`, which answers `-V` with a lie and would point the probe at
+        // the rmux server hosting live dispatch panes.
+        PaneMux::Tmux => {
+            if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
+                return None;
+            }
+            orgasmic_drivers::modes::tmux::tmux_command()
+        }
+    };
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     Some(cmd)
 }
 
-/// `rmux display-message -p -t <session> '#{pane_pid}'` — the pane's root
+/// `<mux> display-message -p -t <session> '#{pane_pid}'` — the pane's root
 /// process (the shell the harness runs in), whose descendants are the harness
 /// and everything the harness spawned.
-fn rmux_pane_pid(identity: &RuntimeIdentity, socket: Option<&std::path::Path>) -> Option<u32> {
-    let session = orgasmic_drivers::modes::rmux::rmux_session_name(identity);
-    let output = rmux_probe_command(socket)?
+fn pane_pid(
+    mux: PaneMux,
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+) -> Option<u32> {
+    let session = mux.session_name(identity);
+    let output = pane_probe_command(mux, socket)?
         .args(["display-message", "-p", "-t", &session, "#{pane_pid}"])
         .output()
         .ok()?;
@@ -4779,16 +4849,17 @@ fn rmux_pane_pid(identity: &RuntimeIdentity, socket: Option<&std::path::Path>) -
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
-/// `rmux capture-pane -p -t <session>` — the pane's current *screen content*,
+/// `<mux> capture-pane -p -t <session>` — the pane's current *screen content*,
 /// which survives exactly the state that starves the byte channels: a frozen
 /// TUI keeps its last frame, and that frame carries the open-turn statusline.
-// orgasmic:TASK-JQ8AV
-fn rmux_pane_content(
+// orgasmic:TASK-JQ8AV,TASK-4CSMY
+fn pane_content(
+    mux: PaneMux,
     identity: &RuntimeIdentity,
     socket: Option<&std::path::Path>,
 ) -> Option<String> {
-    let session = orgasmic_drivers::modes::rmux::rmux_session_name(identity);
-    let output = rmux_probe_command(socket)?
+    let session = mux.session_name(identity);
+    let output = pane_probe_command(mux, socket)?
         .args(["capture-pane", "-p", "-t", &session])
         .output()
         .ok()?;
@@ -6001,6 +6072,62 @@ mod tests {
             let _ = tx
                 .send(DriverEvent::Ready {
                     protocol_version: "rmux/1".into(),
+                    capabilities: json!({"tui": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(RmuxPaneControl {
+                    event_tx: Arc::clone(&self.event_tx),
+                }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// The same pane-transport double on `tmux`. A separate driver rather than
+    /// a parameter on the one above so the rmux test JQ8AV shipped keeps
+    /// exercising exactly the driver it was written against.
+    ///
+    /// `pid: None` is the shape that matters: a tmux pane is a child of the
+    /// tmux server, not of the daemon, so the cpu channel has nothing to walk
+    /// down from until the probe resolves the pane's own root pid from the mux.
+    struct TmuxPaneDriver {
+        event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    impl TmuxPaneDriver {
+        fn new() -> Self {
+            Self {
+                event_tx: Arc::new(Mutex::new(None)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for TmuxPaneDriver {
+        fn transport(&self) -> &'static str {
+            "tmux"
+        }
+
+        fn harness(&self) -> Option<&'static str> {
+            Some("claude")
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            *self.event_tx.lock().await = Some(tx.clone());
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "tmux-tui/1".into(),
                     capabilities: json!({"tui": true}),
                 })
                 .await;
@@ -9395,10 +9522,14 @@ mod tests {
     }
 
     #[cfg(unix)]
-    async fn wait_for_open_turn_marker(identity: &RuntimeIdentity, socket: &Path) {
+    async fn wait_for_open_turn_marker(
+        mux: PaneMux,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if let Some(pane) = rmux_pane_content(identity, Some(socket)) {
+            if let Some(pane) = pane_content(mux, identity, socket) {
                 if pane_open_turn_marker(&pane).is_some() {
                     return;
                 }
@@ -9412,10 +9543,10 @@ mod tests {
     }
 
     #[cfg(unix)]
-    async fn wait_for_pane_pid(identity: &RuntimeIdentity, socket: &Path) {
+    async fn wait_for_pane_pid(mux: PaneMux, identity: &RuntimeIdentity, socket: Option<&Path>) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            if rmux_pane_pid(identity, Some(socket)).is_some() {
+            if pane_pid(mux, identity, socket).is_some() {
                 return;
             }
             assert!(
@@ -9488,7 +9619,7 @@ mod tests {
         .expect("stub connected within 10s")
         .expect("accept task")
         .expect("accept establishes the stub's connection");
-        wait_for_open_turn_marker(&resp.identity, &socket).await;
+        wait_for_open_turn_marker(PaneMux::Rmux, &resp.identity, Some(&socket)).await;
 
         for window in 0..3 {
             age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
@@ -9506,7 +9637,7 @@ mod tests {
         // statusline, and the process under it sleeps with no connection.
         kill_probe_pane_stub(&socket, &session);
         spawn_probe_pane_stub(&socket, &session, "/bin/sh", "sleep 300");
-        wait_for_pane_pid(&resp.identity, &socket).await;
+        wait_for_pane_pid(PaneMux::Rmux, &resp.identity, Some(&socket)).await;
         age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
         sup.release_first_timed_out_run().await;
         assert!(
@@ -9529,6 +9660,162 @@ mod tests {
         );
 
         kill_probe_pane_stub(&socket, &session);
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// Create the run's pane on the test-owned *tmux* server, running `script`
+    /// under `shell`. Built through `tmux::tmux_command()`, which carries the
+    /// `-L` the gate pinned — an unpinned call lands on whichever server
+    /// `$TMUX` names, which inside a worker is the one hosting live dispatch
+    /// panes (`.orgasmic/gotchas.org`).
+    #[cfg(unix)]
+    fn spawn_tmux_probe_pane_stub(session: &str, shell: &str, script: &str) {
+        let status = tmux::tmux_command()
+            .args([
+                "new-session",
+                "-d",
+                "-x",
+                "200",
+                "-y",
+                "50",
+                "-s",
+                session,
+                "--",
+                shell,
+                "-c",
+                script,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn tmux pane stub");
+        assert!(
+            status.success(),
+            "tmux new-session failed for {session} on {}",
+            tmux::tmux_server_selection()
+        );
+    }
+
+    #[cfg(unix)]
+    fn kill_tmux_probe_pane_stub(session: &str) {
+        let _ = tmux::tmux_command()
+            .args(["kill-session", "-t", session])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    /// TASK-4CSMY acceptance, the tmux arm of the JQ8AV test above, against
+    /// the REAL probe reading a REAL tmux pane.
+    ///
+    /// This is not a refinement of the rmux case, it is the whole channel.
+    /// `pane_activity` was emitted by the rmux driver and nothing else, and
+    /// the open-turn consult was gated on `transport == "rmux"`, so a
+    /// provider-bound turn on tmux — ~0% cpu, no tool calls, no pane event —
+    /// had NO evidence channel that could see it and died at 600 s. tmux is
+    /// the shipped default driver, so that is the path a first-time user is
+    /// on.
+    ///
+    /// Same two arms and the same three windows as the rmux test: a
+    /// network-waiting turn survives repeatedly (one saved sweep would not
+    /// separate a fix from an off-by-one), then the same run with an at-rest
+    /// pane over a sleeping, connectionless process dies on schedule with a
+    /// reason naming both empty channels.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies() {
+        const TEST: &str = "a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies";
+        // Lock order is flock-then-environment, as in the rmux twin: the
+        // owned-server fixture pins process-global mux endpoint resolution.
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(
+            TEST,
+            &[
+                ("tmux", tmux_spawn_usable_for_test().await),
+                ("bash", command_available_for_test("bash")),
+            ],
+        ) {
+            return;
+        }
+
+        // The provider's stand-in: a local listener the stub connects to and
+        // then blocks reading from.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        // No socket override: the tmux probe resolves its server through the
+        // drivers' own `tmux_command()`, which the gate above already pinned
+        // to this process's owned `-L`. The production default is the same
+        // call with nothing pinned.
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-TMUX-PROVIDER-BOUND", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = tmux::tmux_session_name(&resp.identity);
+
+        let think_stub = format!(
+            "printf '✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
+             exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
+        );
+        spawn_tmux_probe_pane_stub(&session, "/bin/bash", &think_stub);
+        // Accepting the stub's connection is the proof it is network-waiting
+        // and not asleep; holding the stream keeps it blocked mid-read.
+        let _provider_side = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || listener.accept()),
+        )
+        .await
+        .expect("stub connected within 10s")
+        .expect("accept task")
+        .expect("accept establishes the stub's connection");
+        wait_for_open_turn_marker(PaneMux::Tmux, &resp.identity, None).await;
+
+        for window in 0..3 {
+            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+            sup.release_first_timed_out_run().await;
+            assert!(
+                run_is_live(&sup, &resp.run_id).await,
+                "quiet window {window}: a provider-bound network-waiting tmux turn was \
+                 stall-released: {:?}",
+                release_reason(&session_path)
+            );
+        }
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+
+        // The wedge half, unchanged from the rmux arm: a fresh pane under the
+        // same session name with no statusline, over a sleeping process with
+        // no connection anywhere.
+        kill_tmux_probe_pane_stub(&session);
+        spawn_tmux_probe_pane_stub(&session, "/bin/sh", "sleep 300");
+        wait_for_pane_pid(PaneMux::Tmux, &resp.identity, None).await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(&sup, &resp.run_id).await,
+            "an idle tmux run with no provider connection and an at-rest pane must still stall"
+        );
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no work evidence for") && reason.contains("% cpu"),
+            "the reason must still carry the cpu channel: {reason}"
+        );
+        assert!(
+            reason.contains("no open-turn statusline in pane capture"),
+            "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+
+        kill_tmux_probe_pane_stub(&session);
     }
 
     #[tokio::test]
@@ -9753,8 +10040,11 @@ mod tests {
             // gate and two rmux gates.
             // orgasmic:task_JQ8AV — +1 for the network-waiting pane-stub
             // acceptance test.
+            // orgasmic:TASK-4CSMY — +1 tmux for the tmux arm of that
+            // acceptance, which drives a real pane on a test-owned tmux
+            // server.
             ToolRequirement::new("rmux", 15, probe_rmux_binary().found),
-            ToolRequirement::new("tmux", 9, tmux_spawn_usable_for_test().await),
+            ToolRequirement::new("tmux", 10, tmux_spawn_usable_for_test().await),
             ToolRequirement::new("bash", 1, command_available_for_test("bash")),
         ]);
     }

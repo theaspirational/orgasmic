@@ -43,6 +43,18 @@ reaches the second half. Those assertions pin what the fix must NOT change:
 Unknown and Idle still fail closed, and a probe that cannot read a pane can
 name that fact but never rescue on it.
 
+## Re-cut for TASK-4CSMY (2026-08-02)
+
+`injection.patch` was re-cut, not rewritten. TASK-4CSMY generalised this exact
+hunk from `transport == "rmux"` to every pane transport, so the stored patch no
+longer applied — a stale artifact, which `orgasmic verify` fails on by design.
+The injection is the same defect and the same shape: the probe answers from the
+cpu channel alone again, and everything the fix added stays where it is and
+becomes unreachable. One consequence worth naming: because the consult is no
+longer rmux-only, the injection now removes it for *every* pane transport at
+once. The pinned red below is unchanged and still matches, because the test it
+names is unchanged. TASK-4CSMY's own artifact covers the tmux arm.
+
 ## Replay notes
 
 - Requires a usable `rmux`; the test is counted by the binary's

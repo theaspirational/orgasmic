@@ -94,7 +94,7 @@ const RMUX_SESSION_CLI_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 /// leaves 20x headroom. It must stay long enough that a chatty pane cannot
 /// re-create the JSONL bloat `dec_WDR5K` item 7 removed: at 30 s a four-hour
 /// run adds at most 480 content-free lines.
-const PANE_ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
+pub(crate) const PANE_ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct RmuxDriver {
     adapter: Box<dyn HarnessEventAdapter>,
@@ -3060,7 +3060,12 @@ async fn wait_for_pane_stable(
 ///
 /// Only the byte *count* crosses this boundary. The bytes themselves are never
 /// retained or forwarded (dec_WDR5K item 7; the 2.2 GiB `text_chunk` incident).
-struct PaneActivityThrottle {
+///
+/// Shared with the tmux pane watcher (TASK-4CSMY) rather than copied: the
+/// cadence, the first-chunk-after-silence rule and the byte-not-line unit are
+/// the same claim on both pane transports, and a second copy is a second thing
+/// to drift.
+pub(crate) struct PaneActivityThrottle {
     interval: Duration,
     window_started_at: Option<tokio::time::Instant>,
     bytes: u64,
@@ -3068,7 +3073,7 @@ struct PaneActivityThrottle {
 }
 
 impl PaneActivityThrottle {
-    fn new(interval: Duration) -> Self {
+    pub(crate) fn new(interval: Duration) -> Self {
         Self {
             interval,
             window_started_at: None,
@@ -3080,7 +3085,11 @@ impl PaneActivityThrottle {
     /// Record `bytes` of pane output seen at `now`. A zero-byte observation
     /// still counts as activity: an SDK lag notice proves the pane wrote
     /// output even though the bytes themselves were dropped by the daemon.
-    fn observe_bytes(&mut self, bytes: u64, now: tokio::time::Instant) -> Option<DriverEvent> {
+    pub(crate) fn observe_bytes(
+        &mut self,
+        bytes: u64,
+        now: tokio::time::Instant,
+    ) -> Option<DriverEvent> {
         self.bytes = self.bytes.saturating_add(bytes);
         let window_started_at = *self.window_started_at.get_or_insert(now);
         if now.duration_since(window_started_at) < self.interval {
