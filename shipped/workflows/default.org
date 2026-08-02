@@ -12,16 +12,19 @@ task, not judged from how the work feels. Compute it before the first edit.
 
 Triggers. Count how many fire:
 1. Priority. `priority` is P0 or P1.
-2. Blast radius. The change touches daemon recovery or supervision, boot, auth
-   or credentials, the dispatch lease, or writer/tx durability.
+2. Blast radius. The change alters behavior in daemon recovery or supervision,
+   boot, auth or credentials, the dispatch lease, or writer/tx durability.
+   Renaming, commenting, or adding tests on those paths does not count.
 3. Breadth. More than one crate, or more than ten files, or more than three
    hundred net lines changed.
 4. Coupling. `depends_on` is non-empty, `parent_task` is set, or another task
    names this one in its `depends_on`.
 
-Floor. No trigger fires: trivial. One fires: at least ordinary. Two or more
-fire, or trigger 2 lands on a safety path (auth, credentials, recovery,
-durability): risky.
+Floor. No trigger fires: trivial. Any trigger fires: at least ordinary. Risky
+when trigger 2 lands on a safety path (auth, credentials, recovery,
+durability), or when two or more fire and at least one of them is trigger 2 or
+trigger 3. Priority and coupling on their own reach ordinary, not risky: they
+say the work matters, not that it is wide.
 
 Exemption, so the fast path stays fast: a task that changes no tracked source
 files - cancelling a duplicate heading, retitling, re-prioritizing, recording a
