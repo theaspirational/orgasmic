@@ -1346,3 +1346,135 @@
 :REASON:       Narrowed from crates/**: TASK-4CSMY.1 runs in parallel and owns crates/orgasmic-daemon/src/supervisor.rs. Disjoint scopes are what let the two fix rounds run at once per the manager-dispatch convention.
 :WRITE_SCOPE:  crates/orgasmic-core/src/session.rs, crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/writer.rs, crates/orgasmic-daemon/src/api.rs, crates/orgasmic-cli/src/main.rs, verify/TASK-FZB6T/, verify/TASK-FZB6T.1/, verify/TASK-FZB6T-redraw/, verify/TASK-FZB6T-corruption/
 :END:
+
+* TX 2026-08-02 Sun 21:55:59 task.state_transitioned TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4117
+:TIME:         [2026-08-02 Sun 21:55:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 21:56:00 manager.dispatch_started TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4118
+:TIME:         [2026-08-02 Sun 21:56:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.1/worktree
+:BRANCH:       task-4csmy.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-4csmy1-fix/brief-4csmy1-fix.md
+:STARTED_AT:   [2026-08-02 Sun 21:56:00]
+:LIVENESS:     0bc81d7ee07485c3762ed3bd3141299562d7f8ff
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Second BLOCK SHIP on the pane evidence channel (tx-4104). The column-0 discriminator JQ8AV.1 installed does not separate a live status row from a completed assistant row, because the measured Claude assistant bullet is itself at column 0. rmux transport because the installed daemon 57e35de has no tmux liveness channel.
+:END:
+
+* TX 2026-08-02 Sun 21:56:01 run.created TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4119
+:TIME:         [2026-08-02 Sun 21:56:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4CSMY.1-implementer-20260802T215600.jsonl
+:REASON:       Second BLOCK SHIP on the pane evidence channel (tx-4104). The column-0 discriminator JQ8AV.1 installed does not separate a live status row from a completed assistant row, because the measured Claude assistant bullet is itself at column 0. rmux transport because the installed daemon 57e35de has no tmux liveness channel.
+:RUN_ID:       run-20260802T215600-61908757916a43eeacfd62d3c638ccba
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.1/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-4csmy1-fix/brief-4csmy1-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-4csmy1-fix/brief-4csmy1-fix-e433fb0501c8495fa7aa63a9c1d594de-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-4csmy1-fix/brief-4csmy1-fix-e433fb0501c8495fa7aa63a9c1d594de-stdout.log
+:DISPATCH_ATTEMPT: e433fb0501c8495fa7aa63a9c1d594de
+:DISPATCH_TX:  tx-20260802-orgasmic-4118
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 21:56:07 task.state_transitioned TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4120
+:TIME:         [2026-08-02 Sun 21:56:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.2 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 21:56:08 manager.dispatch_started TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4121
+:TIME:         [2026-08-02 Sun 21:56:08]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.2/worktree
+:BRANCH:       task-fzb6t.2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t2-fix/brief-fzb6t2-fix.md
+:STARTED_AT:   [2026-08-02 Sun 21:56:08]
+:LIVENESS:     0bc81d7ee07485c3762ed3bd3141299562d7f8ff
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Five HIGH blocking findings on the salvaged run-catalog round (tx-4111), unified by deletion authority being derived from cached catalog state rather than reproven from current bytes. Write scope narrowed off supervisor.rs so it runs disjoint from TASK-4CSMY.1.
+:END:
+
+* TX 2026-08-02 Sun 21:56:08 run.created TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4122
+:TIME:         [2026-08-02 Sun 21:56:08]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.2-implementer-20260802T215608.jsonl
+:REASON:       Five HIGH blocking findings on the salvaged run-catalog round (tx-4111), unified by deletion authority being derived from cached catalog state rather than reproven from current bytes. Write scope narrowed off supervisor.rs so it runs disjoint from TASK-4CSMY.1.
+:RUN_ID:       run-20260802T215608-31a488115db74c43aaac95a9d5e008a5
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t2-fix/brief-fzb6t2-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-fzb6t2-fix/brief-fzb6t2-fix-8cd0f5ab06a94195800ba703067a8663-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-fzb6t2-fix/brief-fzb6t2-fix-8cd0f5ab06a94195800ba703067a8663-stdout.log
+:DISPATCH_ATTEMPT: 8cd0f5ab06a94195800ba703067a8663
+:DISPATCH_TX:  tx-20260802-orgasmic-4121
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
