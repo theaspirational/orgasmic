@@ -5,9 +5,9 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         9b807444fc55eeed12af7a69137d0597b1b7329f
-:LIVENESS_AT:      [2026-07-31 Fri]
-:UPDATED_AT:       [2026-07-31 Fri]
+:LIVENESS:         57e35dedd63d8788ea778b727c72a631e1080ce2
+:LIVENESS_AT:      [2026-08-02 Sun]
+:UPDATED_AT:       [2026-08-02 Sun]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
@@ -87,6 +87,27 @@ in the small hours of 07-30, so it landed in that worktree's frozen =.orgasmic=
 snapshot (gotcha =0a054b3=) and survived only in a git stash; the live ledger for
 that day starts at 3973 and the entry claimed 3931.
 
+RUNTIME REINSTALLED FROM SOURCE [2026-08-02 Sun] — =~/.orgasmic/bin/orgasmic= now
+runs =57e35de=, closing the 55-commit gap (=tx-20260802-orgasmic-4036=). Built with
+=scripts/package-runtime.sh= under the stable =orgasmic dev codesign= identity and
+installed as a local bundle, so =install.json= stays =mode: bundle= and the TCC grant
+survived: the Documents-hosted projects index unchanged (6 projects, 550 tasks,
+parse_errors 0, no permission errors in =daemon.err.log=).
+
+Two traps were live on this path and both are structural, not luck:
+- =install.sh= SKIPS the unpack when =runtimes/<version>-<target>/= already exists.
+  The version string does NOT change between local builds, so a reinstall silently
+  installs nothing unless the old dir is moved aside first (=.bak-20260802a= here).
+- Its trailing =orgasmic status= auto-spawns a competing daemon onto the drained
+  port. =ORGASMIC_INSTALL_SKIP_STATUS=1= is required while the LaunchAgent is out.
+
+Proof was behavioural, never the version string: =/api/runs/history= (the route
+TASK-FZB6T added) answered 404 before and 200 after, and the running daemon's exec
+inode equals the freshly installed =bin/orgasmic= inode — the check that would have
+caught the 2026-07-29 no-op, where launchd restarted the OLD materialized binary
+with a fresh boot_id. TASK-RKTH1's oversized-brief fix is now in the running daemon
+(present, not re-exercised).
+
 ** Next likely actions
 1. TASK-4CSMY (P1, backlog) — give tmux a coalesced =pane_activity= and
    generalise TASK-JQ8AV's open-turn consult beyond rmux. Still the SHIP BLOCKER
@@ -107,15 +128,10 @@ that day starts at 3973 and the entry claimed 3931.
    work were still being written. FZB6T is the one to review first: its rescued
    refactor changed the run-catalog concurrency model and its author never
    described it.
-5. Reinstall the runtime in a zero-worker window (now is one). The installed
-   binary is 51+ commits behind and contains none of this session's merges — so
-   TASK-RKTH1's fix is not live, and a dispatch with a large brief through the
-   INSTALLED daemon still dies on tmux's =command too long=. Not done here
-   because replacing the operator's running daemon is theirs to time.
-6. TASK-3TQ0R (P2, backlog) — extend the fence past =cfg(test)= to daemon
+5. TASK-3TQ0R (P2, backlog) — extend the fence past =cfg(test)= to daemon
    integration tests. Not urgent (nothing there spawns today) but it is the last
    place the orphan class can still be written by accident.
-7. TASK-STWVB (P2, in_progress) now carries a second axis: the suite's flakes are
+6. TASK-STWVB (P2, in_progress) now carries a second axis: the suite's flakes are
    worktree-sensitive, not only load-sensitive. Identical code in two worktrees
    measured 42.9s/clean against 85.9s/red. Any full-suite number quoted anywhere
    needs the worktree held constant to mean anything.
@@ -141,13 +157,12 @@ README that stands alone: pre-kill =ps=, per-PID cwd/fd/descendants, the six
 orphan ownership, and the repo/ledger state from before the kills.
 
 ** Divergence / Risks
-THE RUNTIME IS BEHIND THE REPO. =~/.orgasmic/bin/orgasmic= is built at =ee1f855=,
-51+ commits behind =main=. None of this session's merges are live for the
-operator's daemon — including TASK-RKTH1, so a large brief dispatched through the
-INSTALLED daemon still dies on tmux's =command too long=. TASK-CB6GQ's
-=node body unset= is the exception and works today, because the =remove_section=
-op it calls has always existed daemon-side; only the CLI half was missing.
-Reinstall in a zero-worker window.
+RUNTIME AND REPO ARE IN SYNC. =~/.orgasmic/bin/orgasmic= runs =57e35de= as of
+[2026-08-02 Sun]; rollback is =runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260802a=,
+the =ee1f855= build. The trap this swap leaves behind: the version string did NOT
+change across it — both builds call themselves =0.0.15-dev.1= — so version, boot_id
+and =orgasmic status= cannot tell the two apart. Discriminate with
+=current/runtime-manifest.json='s =commit=, or a new-code endpoint probe.
 
 TMUX IS THE DEFAULT AND IS STILL NOT SAFE. =pane_activity= is emitted by
 =modes/rmux.rs= and nothing else, and TASK-JQ8AV's stall rescue is gated on
