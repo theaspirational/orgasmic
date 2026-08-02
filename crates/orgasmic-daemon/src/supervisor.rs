@@ -4945,13 +4945,24 @@ const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// stdout is drained on a helper thread rather than after the wait: a child
 /// that fills the pipe buffer blocks on write, and a deadline loop that is not
 /// reading would kill a child that was making progress.
-// orgasmic:TASK-JQ8AV.1
+///
+/// The DRAIN shares the same absolute deadline as the wait, and that is not
+/// belt-and-braces. The pipe's write end is INHERITED, so `read_to_end` returns
+/// only when the LAST holder closes it — which is not necessarily the direct
+/// child. A child that exits successfully after backgrounding a descendant
+/// (`rmux` forking a server, `sh` leaving a job behind) leaves the reader thread
+/// blocked forever, and a join with no deadline reproduces the exact leak this
+/// funnel exists to close: the blocking task, the helper thread and the
+/// descendant all outlive [`WORK_PROBE_TIMEOUT`], once per sweep, for as long
+/// as the condition lasts.
+// orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
         cmd.process_group(0);
     }
+    let expires_at = std::time::Instant::now() + deadline;
     let mut child = cmd.spawn().ok()?;
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
@@ -4962,7 +4973,6 @@ fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>>
         }
         buf
     });
-    let expires_at = std::time::Instant::now() + deadline;
     let exited = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -4982,13 +4992,50 @@ fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>>
         let _ = reader.join();
         return None;
     };
+    // The direct child is gone. Whoever still holds the write end is a
+    // descendant it left behind, and only the GROUP kill reaches that — so this
+    // is the same kill/reap/join sequence as the branch above, driven by the
+    // same absolute deadline, not a second weaker one.
+    if !drain_finished_by(&reader, expires_at) {
+        kill_probe_child(&mut child);
+        let _ = child.wait();
+        let _ = reader.join();
+        return None;
+    }
     let stdout = reader.join().unwrap_or_default();
     status.success().then_some(stdout)
+}
+
+/// Wait for the stdout reader thread to reach EOF, but not past `expires_at`.
+///
+/// Polled rather than joined because `JoinHandle` has no timed join: the caller
+/// must get control back at the deadline to kill the process group, which is
+/// the only thing that can make the blocked `read_to_end` return.
+// orgasmic:TASK-4CSMY.1
+fn drain_finished_by(
+    reader: &std::thread::JoinHandle<Vec<u8>>,
+    expires_at: std::time::Instant,
+) -> bool {
+    loop {
+        if reader.is_finished() {
+            return true;
+        }
+        if std::time::Instant::now() >= expires_at {
+            return false;
+        }
+        std::thread::sleep(PROBE_CHILD_POLL_INTERVAL);
+    }
 }
 
 /// SIGKILL the probe child's process group, then the child itself as a
 /// fallback. Not SIGTERM: a wedged mux client is exactly the process that does
 /// not act on a catchable signal, and there is nothing here worth draining.
+///
+/// Callable AFTER the direct child has been reaped, which the drain deadline
+/// does: the group id is the leader's pid, and a group with any live member
+/// keeps that number reserved, so the signal reaches this probe's descendants
+/// or nothing at all. `Child::kill` on a reaped child is an error the caller
+/// discards.
 #[cfg(unix)]
 // orgasmic:TASK-JQ8AV.1
 fn kill_probe_child(child: &mut std::process::Child) {
@@ -5090,7 +5137,9 @@ const PANE_MARKER_MAX_CHARS: usize = 120;
 ///
 /// 1. the row must be in the status region ([`PANE_STATUS_REGION_ROWS`]);
 /// 2. the row must start at column 0 (see [`open_turn_status_row`]);
-/// 3. the row must match a measured marker shape end to end
+/// 3. its leading glyph must be a STATUS glyph and not a transcript ROLE glyph
+///    ([`STATUS_SPINNER_GLYPHS`], [`TRANSCRIPT_ROLE_GLYPHS`]);
+/// 4. the row must match a measured marker shape end to end
 ///    ([`spinner_status_row`] or [`interrupt_hint_status_row`]).
 ///
 /// The last match in the region wins: the live statusline sits below anything
@@ -5122,7 +5171,13 @@ fn pane_open_turn_marker(pane: &str) -> Option<String> {
 /// — `cat` of a fixture, a grep hit, a diff of this file — from rescuing itself,
 /// which is the exact case the reviewer found and the exact case the previous
 /// tmux wedge arm could not catch.
-// orgasmic:TASK-JQ8AV.1
+///
+/// It is NOT sufficient, which is what the second reviewer blocked on: the
+/// harness paints its own assistant rows at column 0 too (see
+/// [`TRANSCRIPT_ROLE_GLYPHS`]), so column 0 separates chrome from content, not
+/// completed content from a live turn. The glyph's ROLE does that, and both
+/// arms below check it.
+// orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn open_turn_status_row(raw: &str) -> bool {
     if raw.starts_with([' ', '\t']) {
         return false;
@@ -5130,6 +5185,50 @@ fn open_turn_status_row(raw: &str) -> bool {
     let line = raw.trim_end();
     spinner_status_row(line) || interrupt_hint_status_row(line)
 }
+
+/// Glyphs MEASURED leading a LIVE status row, and nothing else.
+///
+/// `●` (U+25CF) and `✽` (U+273D) are the two carried by the captures this
+/// module documents — four claude panes across 2026-07-29 and 2026-08-02, plus
+/// a fifth on 2026-08-03 (`● Precipitating… (1m 59s · ↓ 4.9k tokens · thinking
+/// more with high effort)`, live rmux pane, column 0, sixth non-blank row from
+/// the bottom). `✽` is one frame of an ANIMATED set, so its siblings are here
+/// too: a capture taken on a different frame is the same live turn, and the
+/// cost of missing it is the incident this whole channel exists to prevent —
+/// a healthy worker killed at the stall deadline.
+///
+/// `◦` (U+25E6) is codex's, from the TASK-4CSMY reviewer's live capture
+/// (`◦ Working (4m 11s • esc to interrupt)`, flush left, third from the
+/// non-blank bottom). See [`interrupt_hint_status_row`] for why that arm does
+/// not gate on this list.
+// orgasmic:TASK-4CSMY.1
+const STATUS_SPINNER_GLYPHS: &[char] = &[
+    '\u{25CF}', // ● measured, claude
+    '\u{273D}', // ✽ measured, claude
+    '\u{00B7}', // · frame sibling
+    '\u{2217}', // ∗ frame sibling
+    '\u{2722}', // ✢ frame sibling
+    '\u{2733}', // ✳ frame sibling
+    '\u{273B}', // ✻ frame sibling
+    '\u{25E6}', // ◦ measured, codex
+];
+
+/// Glyphs MEASURED leading a TRANSCRIPT row — a completed assistant message, a
+/// tool action, a mode footer. Never a live status row.
+///
+/// This list is the whole of finding 1. `⏺` (U+23FA) is claude's assistant
+/// bullet and it sits at COLUMN 0, exactly like the statusline
+/// (`supervisor.rs` fixtures `MEASURED_TRANSCRIPT` / `MEASURED_AT_REST_TAIL`,
+/// re-measured 2026-08-03 on a live sibling worker's pane). So `⏺ Considering…
+/// (2s)` — an at-rest final assistant row — satisfied column 0, "punctuation
+/// glyph" and "≤2-token label", and was credited `Working` on every expired
+/// sweep to the `max_run_duration` ceiling.
+// orgasmic:TASK-4CSMY.1
+const TRANSCRIPT_ROLE_GLYPHS: &[char] = &[
+    '\u{23FA}', // ⏺ claude assistant / tool action bullet
+    '\u{23BF}', // ⎿ claude tool result
+    '\u{23F5}', // ⏵ claude mode footer
+];
 
 /// `<glyph> <Verb…> (<progress>…` — the claude-family spinner row.
 ///
@@ -5144,13 +5243,18 @@ fn open_turn_status_row(raw: &str) -> bool {
 /// `⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)` — an
 /// at-rest transcript row — read as a live turn. All five measured verbs are a
 /// single gerund; prose in front of the ellipsis is not a statusline.
-// orgasmic:TASK-JQ8AV.1
+///
+/// The tightening over THAT is the glyph allowlist ([`STATUS_SPINNER_GLYPHS`]).
+/// "Any punctuation" admitted `⏺ Considering… (2s)`, a COMPLETED assistant row
+/// wearing a spinner's shape, because claude paints that bullet at column 0 as
+/// well. A spinner glyph is a role, not a character class.
+// orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn spinner_status_row(line: &str) -> bool {
     let mut chars = line.char_indices();
     let Some((_, glyph)) = chars.next() else {
         return false;
     };
-    if glyph.is_alphanumeric() || glyph.is_whitespace() {
+    if !STATUS_SPINNER_GLYPHS.contains(&glyph) {
         return false;
     }
     let Some((space_at, ' ')) = chars.next() else {
@@ -5178,7 +5282,23 @@ fn spinner_status_row(line: &str) -> bool {
 /// status LABEL — not sixteen bytes found somewhere in a line. The predecessor
 /// asked `line.to_lowercase().contains("esc to interrupt")`, with no shape and
 /// no position: finding 1 in its purest form.
-// orgasmic:TASK-JQ8AV.1
+///
+/// MEASURED for codex by the TASK-4CSMY reviewer, 2026-08-02, on a live pane:
+/// `◦ Working (4m 11s • esc to interrupt)`, flush left, third from the
+/// non-blank bottom. That is a confirmed TRUE POSITIVE and this arm exists to
+/// keep it.
+///
+/// Which is why the head gate here is a role DENYLIST
+/// ([`status_row_head`]) and not the allowlist
+/// [`spinner_status_row`] uses. The claude spinner family is measured to the
+/// character; codex's status glyph reached this repo only through the
+/// reviewer's prose, and the durable task record transliterated it to ASCII
+/// (`-o-`). Gating this arm on a glyph nobody in-tree has measured byte-for-byte
+/// would trade the false rescue the block was about for a false KILL of a
+/// healthy codex worker at the stall deadline — the incident, not the fix.
+/// Rejecting every measured transcript bullet closes the reported hole without
+/// betting on that guess.
+// orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn interrupt_hint_status_row(line: &str) -> bool {
     let Some(head) = line.strip_suffix(')') else {
         return false;
@@ -5186,15 +5306,56 @@ fn interrupt_hint_status_row(line: &str) -> bool {
     let Some(open) = head.rfind('(') else {
         return false;
     };
-    // A status label, not a sentence: measured `Working (…)`, plus room for a
-    // leading spinner glyph. Prose that happens to end in a parenthetical is
-    // not a status row.
-    if head[..open].split_whitespace().count() > 2 {
+    if !status_row_head(&head[..open]) {
         return false;
     }
     head[open + 1..]
         .split(['·', '•', '|'])
         .any(|segment| segment.trim().eq_ignore_ascii_case("esc to interrupt"))
+}
+
+/// Everything before the status group's `(`: one status LABEL, optionally
+/// behind one glyph that is not a transcript bullet.
+///
+/// Measured heads: `Working ` and `◦ Working `. The predecessor accepted ANY
+/// two whitespace tokens, which is how `⏺ Working (7s • Esc to interrupt)` — a
+/// completed claude assistant row — read as a live turn.
+// orgasmic:TASK-4CSMY.1
+fn status_row_head(head: &str) -> bool {
+    let mut tokens = head.split_whitespace();
+    let Some(first) = tokens.next() else {
+        return false;
+    };
+    let label = match tokens.next() {
+        Some(second) => {
+            if !status_row_leading_glyph(first) {
+                return false;
+            }
+            second
+        }
+        None => first,
+    };
+    if tokens.next().is_some() {
+        return false;
+    }
+    // A one-word label, not a fragment of prose: alphabetic, with room for the
+    // trailing ellipsis a claude-shaped verb carries.
+    let label = label.strip_suffix('…').unwrap_or(label);
+    !label.is_empty() && label.chars().all(char::is_alphabetic)
+}
+
+/// A single glyph that may lead a status row: exactly one character, not a
+/// word, and not one of the measured transcript bullets.
+// orgasmic:TASK-4CSMY.1
+fn status_row_leading_glyph(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(glyph) = chars.next() else {
+        return false;
+    };
+    if chars.next().is_some() {
+        return false;
+    }
+    !glyph.is_alphanumeric() && !TRANSCRIPT_ROLE_GLYPHS.contains(&glyph)
 }
 
 /// The parenthesised status body has to carry live progress: a `↓ … tokens`
@@ -9965,6 +10126,71 @@ mod tests {
         );
     }
 
+    /// TASK-4CSMY.1 finding 2, the door the test above leaves open: the direct
+    /// child EXITS, successfully and immediately, after backgrounding a
+    /// descendant that inherited stdout.
+    ///
+    /// The wait loop is satisfied by that exit, so the deadline it enforces is
+    /// over — and the reader thread is still blocked, because `read_to_end`
+    /// returns when the LAST holder of the write end closes it, not when the
+    /// process this daemon spawned does. Before the drain shared the probe's
+    /// absolute deadline, the join below it had none: the supervisor returned
+    /// `Unknown` on [`WORK_PROBE_TIMEOUT`] while the blocking task, the helper
+    /// thread and the `sleep` all stayed alive — once per sweep, at one sweep
+    /// every [`RUN_TIMEOUT_CHECK_INTERVAL`], which is the leak TASK-JQ8AV.1 set
+    /// out to close.
+    ///
+    /// The stub's exit status is SUCCESS on purpose. A failing parent would
+    /// take the same path but prove less: the point is that the happy path is
+    /// the leaking one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed() {
+        let pidfile = tempfile::TempDir::new().expect("tempdir");
+        let grandchild_pidfile = pidfile.path().join("grandchild.pid");
+        let mut cmd = Command::new("/bin/sh");
+        // `sleep` inherits the stdout pipe; `sh` exits 0 straight away. The
+        // pidfile redirect is `echo`'s own stdout, so it does not disturb the
+        // inherited descriptor under test.
+        cmd.arg("-c")
+            .arg(format!(
+                "sleep 120 & echo $! > {}; exit 0",
+                grandchild_pidfile.display()
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let deadline = Duration::from_millis(400);
+        let started = Instant::now();
+        let (out, grandchild) = tokio::task::spawn_blocking(move || {
+            let out = probe_command_stdout(cmd, deadline);
+            let grandchild = std::fs::read_to_string(&grandchild_pidfile)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok());
+            (out, grandchild)
+        })
+        .await
+        .expect("probe task");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < deadline + Duration::from_secs(3),
+            "the probe must return at its own deadline even though the direct child \
+             exited cleanly, took {elapsed:?}"
+        );
+        assert!(
+            out.is_none(),
+            "a drain that never completed is not a successful probe: {out:?}"
+        );
+        let grandchild = grandchild.expect("the stub recorded its `sleep` pid");
+        assert!(
+            wait_for_pid_to_disappear(grandchild, Duration::from_secs(5)).await,
+            "the descendant holding the pipe must be killed with the group; pid \
+             {grandchild} survived"
+        );
+    }
+
     /// The same finding at the SUPERVISOR, on the real probe, for BOTH pane
     /// transports: a mux binary that never answers must not hold the stall
     /// sweep and must not leave a process behind.
@@ -10165,12 +10391,32 @@ mod tests {
             );
         }
 
+        // 2026-08-02, the TASK-4CSMY reviewer's live codex pane: flush left,
+        // third from the non-blank bottom. A CONFIRMED true positive — the
+        // classifier tightening of TASK-4CSMY.1 must not cost it.
+        let codex = "◦ Working (4m 11s • esc to interrupt)";
+        assert!(
+            pane_open_turn_marker(codex).is_some(),
+            "the measured live codex status row must still rescue: {codex}"
+        );
+        let codex_screen = format!("{MEASURED_TRANSCRIPT}\n{codex}\n\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(pane_open_turn_marker(&codex_screen).as_deref(), Some(codex));
+
         // Elapsed-only spinner: a turn open before the first token arrives.
         assert!(pane_open_turn_marker("· Considering… (2s)").is_some());
         // The generic TUI interrupt hint, any case (codex-style spinners).
         assert!(pane_open_turn_marker("Working (7s • Esc to interrupt)").is_some());
         // The same hint carried inside a claude-shaped spinner row.
         assert!(pane_open_turn_marker("● Herding… (5s · esc to interrupt)").is_some());
+        // Every animated frame of the measured spinner set is the same live
+        // turn; a capture caught on a different frame is not a missed rescue.
+        for glyph in STATUS_SPINNER_GLYPHS {
+            let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
+            assert!(
+                pane_open_turn_marker(&row).is_some(),
+                "status glyph must lead a spinner row: {row}"
+            );
+        }
 
         // The last match in the region wins: the live statusline sits below
         // anything older the region may still hold.
@@ -10279,6 +10525,65 @@ mod tests {
                 pane_open_turn_marker(&screen),
                 None,
                 "echoed marker text inside an at-rest screen: {row}"
+            );
+        }
+    }
+
+    /// The rows the TASK-4CSMY reviewer's BLOCK SHIP is about: a COMPLETED
+    /// assistant row that is a status row in every respect the classifier used
+    /// to check.
+    ///
+    /// This is not the quoted-text case above. There is no prose, no indent and
+    /// no marker above the region to hide behind: the row is bare, flush left,
+    /// and the only thing separating it from a live statusline is the ROLE of
+    /// its leading glyph. `⏺` (U+23FA) is claude's assistant bullet and it sits
+    /// at column 0, so it satisfied the column rule that TASK-JQ8AV.1 made the
+    /// discriminator, satisfied "any punctuation glyph", and satisfied "at most
+    /// two tokens before the parenthesis". Every one of those rows was credited
+    /// `Working` on every expired sweep to the 14,400 s ceiling.
+    #[test]
+    fn pane_open_turn_marker_ignores_a_completed_assistant_row_shaped_like_a_status_row() {
+        for row in [
+            // The reviewer's two verbatim.
+            "⏺ Considering… (2s)",
+            "⏺ Working (7s • Esc to interrupt)",
+            // …and the same forgery wearing the rest of the measured shapes.
+            "⏺ Working (7s Esc to interrupt)",
+            "⏺ Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more with high effort)",
+            "⏺ Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+            "⏺ Herding… (5s · esc to interrupt)",
+            // The other two measured transcript bullets, unindented — a pane
+            // narrow enough to have wrapped away their leading spaces must not
+            // become a rescue either.
+            "⎿  Working (7s • Esc to interrupt)",
+            "⏵⏵ Working (7s • Esc to interrupt)",
+        ] {
+            assert_eq!(
+                pane_open_turn_marker(row),
+                None,
+                "a completed transcript row is not a live turn: {row}"
+            );
+            // And not inside a whole at-rest screen either — this is the shape
+            // the shipped real-pane arms could not build, because each of them
+            // put its marker text above the region, indented, or behind prose.
+            let screen = format!("{MEASURED_TRANSCRIPT}{row}\n{MEASURED_AT_REST_TAIL}");
+            assert_eq!(
+                pane_open_turn_marker(&screen),
+                None,
+                "a bare forged status row inside the status region: {row}"
+            );
+        }
+
+        // The forgery is the GLYPH, not the text: the identical rows behind a
+        // measured status glyph are live turns and must stay rescued.
+        for row in [
+            "● Considering… (2s)",
+            "◦ Working (7s • Esc to interrupt)",
+            "✽ Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+        ] {
+            assert!(
+                pane_open_turn_marker(row).is_some(),
+                "the same row behind a STATUS glyph is a live turn: {row}"
             );
         }
     }
@@ -10687,14 +10992,27 @@ mod tests {
     /// all three places it really appears:
     ///
     /// - row 1 is a REAL statusline, stale — it must fall outside the status
-    ///   region ([`PANE_STATUS_REGION_ROWS`]) because fifteen rows follow it;
+    ///   region ([`PANE_STATUS_REGION_ROWS`]) because seventeen rows follow it;
     /// - rows 5-6 are tool results echoing the incident capture and the
     ///   interrupt hint verbatim, indented as every tool result is;
     /// - rows 7-9 are assistant prose quoting both, one of which ends in a
-    ///   parenthetical and one of which quotes a whole statusline mid-sentence.
+    ///   parenthetical and one of which quotes a whole statusline mid-sentence;
+    /// - rows 12-13 are the TASK-4CSMY reviewer's BLOCK SHIP, and they are the
+    ///   reason this fixture was re-cut. They are BARE — no prose, no indent,
+    ///   flush left, a completed assistant bullet in front of a status-shaped
+    ///   body — and they sit INSIDE the status region, which every other
+    ///   adversarial row here avoids by construction. Under the shipped
+    ///   classifier each one credited the pane `Working` on every expired sweep
+    ///   to the 14,400 s ceiling.
+    ///
+    /// [`assert_quoted_marker_pane_is_not_rescued`] re-derives the region from
+    /// the real capture and asserts rows 12-13 are inside it, so a later row
+    /// added above cannot silently push them out and turn this back into a
+    /// position test.
     ///
     /// `printf '%s\n'` per row rather than one format string: the rows carry
     /// `%` and `\`, which printf would eat.
+    // orgasmic:TASK-4CSMY.1
     #[cfg(unix)]
     const AT_REST_PANE_QUOTING_MARKERS: &str = concat!(
         "printf '%s\\n'",
@@ -10709,6 +11027,8 @@ mod tests {
         " '⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
         " '⏺ Thinking for 8m 28s, running 12 shell commands…'",
         " '  Thought for 26s, searched for 3 patterns, ran 3 shell commands'",
+        " '⏺ Considering… (2s)'",
+        " '⏺ Working (7s • Esc to interrupt)'",
         " '────────────────────────────────────────────────────────────'",
         " '❯ '",
         " '────────────────────────────────────────────────────────────'",
@@ -10716,6 +11036,13 @@ mod tests {
         " '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent'",
         "; sleep 300"
     );
+
+    /// The two BARE forged rows of [`AT_REST_PANE_QUOTING_MARKERS`]: the case
+    /// the TASK-4CSMY reviewer blocked on, asserted by identity rather than by
+    /// eye.
+    #[cfg(unix)]
+    const AT_REST_PANE_FORGED_STATUS_ROWS: &[&str] =
+        &["⏺ Considering… (2s)", "⏺ Working (7s • Esc to interrupt)"];
 
     /// The last row [`AT_REST_PANE_QUOTING_MARKERS`] paints — waiting for it is
     /// what makes "the screen is fully painted" true rather than likely.
@@ -10748,9 +11075,10 @@ mod tests {
     /// showing [`AT_REST_PANE_QUOTING_MARKERS`], the classifier must read no
     /// open turn and the sweep must release the run on schedule.
     ///
-    /// Three expired budgets, not one: a false rescue is unbounded — it repeats
-    /// on every sweep to the `max_run_duration` ceiling — so a single survived
-    /// sweep would not distinguish the fix from a lucky first pass.
+    /// The release is asserted on the FIRST expired sweep, which is the whole
+    /// claim: a false rescue is not a delay, it is unbounded — it repeats on
+    /// every sweep until `max_run_duration`, so a wedge that survives sweep one
+    /// survives to the 14,400 s ceiling.
     #[cfg(unix)]
     async fn assert_quoted_marker_pane_is_not_rescued(
         sup: &Supervisor,
@@ -10766,6 +11094,23 @@ mod tests {
             pane.contains("Esc to interrupt") && pane.contains("Quantumizing…"),
             "the fixture must really carry marker text, or this proves nothing:\n{pane}"
         );
+
+        // TASK-4CSMY.1: the forged rows must land INSIDE the status region of
+        // the real capture. Derived from the capture, not asserted about the
+        // fixture string, because `capture-pane` blank-pads to the pane height
+        // and the region counts NON-BLANK rows. Without this the whole
+        // adversarial half could pass on position alone — which is exactly how
+        // the shipped arms passed while the hole was open.
+        let non_blank: Vec<&str> = pane.lines().filter(|row| !row.trim().is_empty()).collect();
+        let region = &non_blank[non_blank.len().saturating_sub(PANE_STATUS_REGION_ROWS)..];
+        for forged in AT_REST_PANE_FORGED_STATUS_ROWS {
+            assert!(
+                region.iter().any(|row| row.trim_end() == *forged),
+                "the forged row must be inside the last {PANE_STATUS_REGION_ROWS} non-blank \
+                 rows or this test proves nothing: {forged:?} not in {region:?}"
+            );
+        }
+
         assert_eq!(
             pane_open_turn_marker(&pane),
             None,
