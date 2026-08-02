@@ -69,6 +69,19 @@ pub const CATALOG_VERSION: u32 = 2;
 /// Where a project's durable catalog snapshot lives, relative to its root.
 pub const CATALOG_REL_PATH: &str = ".orgasmic/tmp/run-catalog.json";
 
+/// Durable record of every run whose recorded worktree has been observed gone,
+/// relative to a project root (dec_BBPW4 item 2).
+///
+/// orgasmic:TASK-FZB6T.3 finding 4 — "the catalog is disposable derived state"
+/// and "a tombstone never revives" could not both be true. The tombstone lived
+/// only in the cache, so prune → tombstone → catalog loss → path reuse re-derived
+/// `Verified` from a same-project checkout at the recorded path and a dead run
+/// became an attach candidate again. A terminal verdict needs a durable source
+/// OUTSIDE the thing that is allowed to be thrown away, so it has one. This file
+/// is AUTHORITY, not cache: losing it loses a fact no rebuild can recover, which
+/// is exactly the distinction that makes the catalog safe to discard.
+pub const TOMBSTONE_REL_PATH: &str = ".orgasmic/run-tombstones.json";
+
 /// Default size of the recent-terminal window `GET /api/runs` serves.
 ///
 /// Actionable records (live, recoverable, ambiguous) are always served in full:
@@ -467,6 +480,9 @@ pub struct CatalogRefreshStats {
     pub evicted: u64,
     /// Worktree authority verdicts re-verified against the filesystem.
     pub authority_reverified: u64,
+    /// Rebuilt entries whose re-derived `Verified` verdict was overruled by the
+    /// durable tombstone ledger (orgasmic:TASK-FZB6T.3 finding 4).
+    pub tombstones_reasserted: u64,
 }
 
 /// How a durable snapshot load ended. Every non-`Loaded` outcome means the same
@@ -794,6 +810,7 @@ impl RunCatalog {
                         // never O(bytes), and the stat happens in phase 3.
                         recheck.push(PlannedRecheck {
                             path: path.clone(),
+                            run_id: entry.run_id.clone(),
                             previous: entry.worktree_authority.clone(),
                             invalidation: state.invalidation(path),
                         });
@@ -873,6 +890,47 @@ impl RunCatalog {
             };
             if let Some(refreshed) = reverify_authority(&planned.previous, probe) {
                 authority_updates.push((planned, refreshed));
+            }
+        }
+
+        // orgasmic:TASK-FZB6T.3 finding 4 / dec_BBPW4 item 2 — the tombstone is
+        // durable, and this is where the cache is reconciled against it. A
+        // rebuilt entry re-derives `Verified` from whatever directory now
+        // answers to the recorded path, which is precisely how a reused dispatch
+        // worktree revived a dead run; the ledger overrules it. And a tombstone
+        // this pass MINTED is written down before it can be lost with the cache.
+        let mut ledger = TombstoneLedger::load(project_root);
+        let mut ledger_grew = false;
+        for (_, entry) in &mut built {
+            match (&entry.worktree_authority, ledger.contains(&entry.run_id)) {
+                (WorktreeAuthority::Verified { worktree, .. }, true) => {
+                    entry.worktree_authority = WorktreeAuthority::Tombstoned {
+                        recorded: worktree.clone(),
+                        verified_identity: None,
+                    };
+                    stats.tombstones_reasserted += 1;
+                }
+                (WorktreeAuthority::Tombstoned { recorded, .. }, false) => {
+                    ledger_grew |= ledger.record(&entry.run_id, recorded);
+                }
+                _ => {}
+            }
+        }
+        for (planned, refreshed) in &authority_updates {
+            if let WorktreeAuthority::Tombstoned { recorded, .. } = refreshed {
+                ledger_grew |= ledger.record(&planned.run_id, recorded);
+            }
+        }
+        if ledger_grew {
+            // A failure here is not fatal to this refresh, but it IS a lost
+            // terminal fact, so it is loud in the log rather than swallowed.
+            if let Err(error) = ledger.save(project_root) {
+                tracing::warn!(
+                    project_root = %project_root.display(),
+                    %error,
+                    "could not persist run tombstones; a catalog rebuild may re-offer a \
+                     pruned worktree as an attach candidate"
+                );
             }
         }
 
@@ -1020,6 +1078,9 @@ struct PlannedRebuild {
 /// One cached record whose worktree authority the plan phase decided to probe.
 struct PlannedRecheck {
     path: PathBuf,
+    /// Carried so a minted tombstone can be written to the durable ledger
+    /// without re-taking the catalog lock (orgasmic:TASK-FZB6T.3 finding 4).
+    run_id: String,
     previous: WorktreeAuthority,
     invalidation: u64,
 }
@@ -1119,6 +1180,115 @@ fn snapshot_entry_semantics_are_self_consistent(entry: &RunCatalogEntry) -> bool
     }
     derive_semantics(&entry.lifecycle_envelopes, entry.final_envelope_retained)
         == claimed_semantics(entry)
+        && snapshot_authority_verdict_is_consistent(entry)
+}
+
+/// Whether a snapshot entry's `worktree_authority` can be the verdict its own
+/// recorded `RunMeta` produces.
+///
+/// orgasmic:TASK-FZB6T.3 finding 4 — semantic validation checked every derived
+/// field EXCEPT this one, so a snapshot that passed every other check could
+/// still carry a verdict contradicting the record it sits on: `Verified` with no
+/// worktree recorded at all, `Unrecorded` while recording one, `Verified` for a
+/// project the record says it does not belong to.
+///
+/// Only the part of [`verify_worktree_authority`] that does not touch the
+/// filesystem is checked. Where the recorded metadata is complete and
+/// consistent, the verdict is decided by what is on disk NOW, and all three of
+/// `Verified`, `Tombstoned` and `Mismatched` are reachable — including
+/// `Tombstoned` on a path that is occupied again, which is the whole point of
+/// the durable ledger (dec_BBPW4 item 2).
+fn snapshot_authority_verdict_is_consistent(entry: &RunCatalogEntry) -> bool {
+    match &entry.worktree_authority {
+        WorktreeAuthority::Unidentified => entry.project_id.is_none(),
+        WorktreeAuthority::Unrecorded => {
+            entry.project_id.is_some()
+                && (!entry.run_meta_recorded || entry.run_meta_worktree.is_none())
+        }
+        WorktreeAuthority::Mismatched { recorded } => {
+            entry.project_id.is_some()
+                && entry.run_meta_recorded
+                && entry.run_meta_worktree.as_ref() == Some(recorded)
+        }
+        WorktreeAuthority::Verified { .. } | WorktreeAuthority::Tombstoned { .. } => {
+            entry.project_id.is_some()
+                && entry.run_meta_recorded
+                && entry.run_meta_worktree.is_some()
+                && entry.run_meta_project.as_deref() == entry.project_id.as_deref()
+        }
+    }
+}
+
+/// The durable tombstone ledger's format. A file this build cannot vouch for is
+/// refused — and, unlike the catalog, refusing it does NOT mean rebuilding from
+/// session bytes, because session bytes are exactly what cannot answer this
+/// question. It means every run it named stays unproven, which fails closed.
+const TOMBSTONE_LEDGER_VERSION: u32 = 1;
+
+/// Runs whose recorded worktree has been observed gone, and the path each one
+/// recorded (orgasmic:TASK-FZB6T.3 finding 4 / dec_BBPW4 item 2).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TombstoneLedger {
+    #[serde(default)]
+    version: u32,
+    /// run id -> the worktree path that run recorded.
+    #[serde(default)]
+    tombstoned: BTreeMap<String, PathBuf>,
+}
+
+impl TombstoneLedger {
+    /// Load a project's ledger. An absent, unreadable, corrupt or foreign-version
+    /// file yields an EMPTY ledger and is never overwritten silently: see
+    /// [`Self::save`], which refuses to write over a file it could not read.
+    pub fn load(project_root: &Path) -> Self {
+        let path = project_root.join(TOMBSTONE_REL_PATH);
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        match serde_json::from_str::<Self>(&source) {
+            Ok(ledger) if ledger.version == TOMBSTONE_LEDGER_VERSION => ledger,
+            _ => Self::default(),
+        }
+    }
+
+    fn contains(&self, run_id: &str) -> bool {
+        self.tombstoned.contains_key(run_id)
+    }
+
+    fn record(&mut self, run_id: &str, recorded: &Path) -> bool {
+        if run_id.is_empty() {
+            return false;
+        }
+        self.tombstoned
+            .insert(run_id.to_string(), recorded.to_path_buf())
+            .is_none()
+    }
+
+    /// Persist the ledger, MERGING with whatever is on disk.
+    ///
+    /// Merged rather than replaced because this file is authority: another
+    /// daemon, or this one before a restart, may have recorded a tombstone this
+    /// process never observed, and a last-writer-wins overwrite would delete a
+    /// terminal fact. A tombstone is only ever added.
+    fn save(&self, project_root: &Path) -> std::io::Result<()> {
+        let path = project_root.join(TOMBSTONE_REL_PATH);
+        let mut merged = Self::load(project_root);
+        merged.version = TOMBSTONE_LEDGER_VERSION;
+        for (run_id, recorded) in &self.tombstoned {
+            merged
+                .tombstoned
+                .entry(run_id.clone())
+                .or_insert_with(|| recorded.clone());
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let bytes = serde_json::to_vec_pretty(&merged)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let staged = path.with_extension("json.tmp");
+        std::fs::write(&staged, &bytes)?;
+        std::fs::rename(&staged, &path)
+    }
 }
 
 /// One filesystem observation of the path a cached authority verdict names.
@@ -2632,6 +2802,97 @@ mod tests {
             entry.worktree_authority.verified_worktree().is_none(),
             "a tombstoned run offers no verified worktree to attach into"
         );
+    }
+
+    /// orgasmic:TASK-FZB6T.3 finding 4 / dec_BBPW4 item 2 — the tombstone
+    /// survives the CATALOG, because the catalog is allowed to be thrown away.
+    ///
+    /// "The catalog is disposable derived state" and "a tombstone never revives"
+    /// could not both be true while the tombstone lived only in the catalog:
+    /// prune -> tombstone -> catalog loss -> path reuse re-derived `Verified`
+    /// from a same-project checkout at the recorded path, and a dead run became
+    /// an attach candidate again. The verdict is now written to durable
+    /// authority OUTSIDE the cache, so every way of losing the cache — deleted,
+    /// corrupt, or from a version this build refuses — takes the same answer:
+    /// rebuild the derived facts, keep the terminal one.
+    #[tokio::test]
+    async fn a_tombstone_outlives_the_catalog_it_was_minted_in() {
+        for loss in ["deleted", "corrupt", "foreign version"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("proj");
+            project(&root, "proj-1");
+            let sessions = root.join(".orgasmic/tmp/sessions");
+            let worktree = dir.path().join("wt");
+            project(&worktree, "proj-1");
+            write_session(&sessions, "run-wt", 4096, None, &worktree, "proj-1");
+
+            let catalog = RunCatalog::new();
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert!(
+                !catalog.entries()[0].worktree_authority.is_tombstoned(),
+                "{loss}"
+            );
+
+            // Pruned, and the catalog persists what it knows.
+            std::fs::remove_dir_all(&worktree).unwrap();
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert!(
+                catalog.entries()[0].worktree_authority.is_tombstoned(),
+                "{loss}"
+            );
+            std::fs::write(
+                root.join(CATALOG_REL_PATH),
+                catalog.snapshot_bytes(&root).unwrap(),
+            )
+            .unwrap();
+
+            // The cache is lost, in each of the three ways the corruption
+            // artifact says are the same problem with the same answer.
+            let snapshot_path = root.join(CATALOG_REL_PATH);
+            match loss {
+                "deleted" => std::fs::remove_file(&snapshot_path).unwrap(),
+                "corrupt" => std::fs::write(&snapshot_path, b"{\"entries\": [{\"run").unwrap(),
+                _ => {
+                    let mut value: Value =
+                        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+                    value["catalog_version"] = json!(CATALOG_VERSION + 9);
+                    std::fs::write(&snapshot_path, serde_json::to_vec(&value).unwrap()).unwrap();
+                }
+            }
+
+            // The path is reused by an unrelated checkout of the same project —
+            // the ordinary fate of a dispatch worktree path — and a brand new
+            // catalog rebuilds from the session bytes, which cannot tell the
+            // difference.
+            project(&worktree, "proj-1");
+            let rebuilt = RunCatalog::new();
+            let load = rebuilt.load_snapshot(&root);
+            assert!(
+                !matches!(load, SnapshotLoad::Loaded { entries } if entries > 0),
+                "{loss}: the cache must not have survived this test's own setup: {load:?}"
+            );
+            let stats =
+                rebuilt.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert_eq!(
+                stats.rebuilt, 1,
+                "{loss}: the board is re-derived from disk"
+            );
+            assert_eq!(
+                stats.tombstones_reasserted, 1,
+                "{loss}: the durable tombstone must overrule the re-derived verdict"
+            );
+            let entry = rebuilt.entries().remove(0);
+            assert!(
+                entry.worktree_authority.is_tombstoned(),
+                "{loss}: a tombstone that only lived in a disposable cache is not terminal: \
+                 {:?}",
+                entry.worktree_authority
+            );
+            assert!(
+                entry.worktree_authority.verified_worktree().is_none(),
+                "{loss}: a dead run must not be offered as an attach candidate"
+            );
+        }
     }
 
     /// orgasmic:TASK-FZB6T.2 finding 7 / dec_BBPW4 — a tombstone is TERMINAL,
