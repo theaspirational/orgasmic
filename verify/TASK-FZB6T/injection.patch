@@ -1,46 +1,46 @@
 diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
-index fb62486..2d64f2c 100644
 --- a/crates/orgasmic-daemon/src/run_catalog.rs
 +++ b/crates/orgasmic-daemon/src/run_catalog.rs
-@@ -561,38 +561,9 @@ impl RunCatalog {
-             stats.session_file_bytes += metadata.len();
- 
-             let fingerprint = SessionFileFingerprint::of(&metadata);
--            let cached_is_current = state
--                .by_path
--                .get(&path)
--                .is_some_and(|entry| entry.fingerprint == fingerprint);
--            if cached_is_current {
--                stats.cache_hits += 1;
--                // Worktree authority is the one verdict that can change without
--                // the session file changing, so it is re-checked — but with a
--                // single existence probe per record, which is O(records) and
--                // never O(bytes). Full re-verification runs only when that
--                // probe disagrees with the cached verdict.
--                let entry = state.by_path.get_mut(&path).expect("checked above");
--                if authority_needs_recheck(&entry.worktree_authority) {
--                    let refreshed = verify_worktree_authority(
--                        project_id,
--                        run_meta_project_worktree(&entry.lifecycle_envelopes),
--                    );
--                    if refreshed != entry.worktree_authority {
--                        entry.worktree_authority = refreshed;
--                        stats.authority_reverified += 1;
--                        state.dirty = true;
+@@ -784,33 +784,15 @@
+         {
+             let state = self.lock();
+             for (path, fingerprint, len) in &observed {
+-                match state.by_path.get(path) {
+-                    Some(entry) if entry.fingerprint == *fingerprint => {
+-                        stats.cache_hits += 1;
+-                        if entry.scan_truncated {
+-                            stats.truncated_scans += 1;
+-                        }
+-                        if entry.unreadable {
+-                            stats.unreadable_sessions += 1;
+-                        }
+-                        // Worktree authority is the one verdict that can change
+-                        // without the session file changing, so it is
+-                        // re-checked — one stat per record, O(records) and
+-                        // never O(bytes), and the stat happens in phase 3.
+-                        recheck.push(PlannedRecheck {
+-                            path: path.clone(),
+-                            previous: entry.worktree_authority.clone(),
+-                            run_meta: entry.recorded_run_meta(),
+-                            invalidation: state.invalidation(path),
+-                        });
 -                    }
+-                    _ => rebuild.push(PlannedRebuild {
+-                        path: path.clone(),
+-                        fingerprint: *fingerprint,
+-                        len: *len,
+-                        invalidation: state.invalidation(path),
+-                    }),
 -                }
--                if state.by_path[&path].scan_truncated {
--                    stats.truncated_scans += 1;
--                }
--                if state.by_path[&path].unreadable {
--                    stats.unreadable_sessions += 1;
--                }
--                continue;
--            }
--
-+            // INJECTED (TASK-FZB6T): no file-identity cache. Every inventory
-+            // pass and every daemon boot re-derives every record from disk,
-+            // which is what the pre-catalog code did.
-             stats.rebuilt += 1;
-             let built = match scan_session_lifecycle(&path, budget) {
-                 Ok(scan) => {
++                // INJECTED (TASK-FZB6T): no file-identity cache. Every
++                // inventory pass and every daemon boot re-derives every record
++                // from disk, which is what the pre-catalog code did.
++                rebuild.push(PlannedRebuild {
++                    path: path.clone(),
++                    fingerprint: *fingerprint,
++                    len: *len,
++                    invalidation: state.invalidation(path),
++                });
+             }
+             // Evict records whose session file is gone from this directory.
+             // Scoped to `dir` so refreshing one project never drops another's

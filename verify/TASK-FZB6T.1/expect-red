@@ -1,0 +1,22 @@
+# Pinned from the real red run of 2026-08-02 with the injection applied.
+#
+# The injection restores both pre-fix rules: a tombstone is revived by mere
+# existence at the recorded path, and a snapshot entry is admitted by
+# `starts_with(project_root)` with no session-directory authority, no traversal
+# check, and no file-identity check.
+exit: 101
+
+# A PRUNED WORKTREE COMES BACK FROM THE DEAD. The recorded path is reused by an
+# unrelated checkout and the run becomes `Verified` again — a dead run offered
+# as an attach candidate into a working tree that has nothing to do with it.
+contains: a path reused by an unrelated directory must not revive a dead run
+
+# A NON-SESSION FILE BECOMES A RUN RECORD. `<root>/decoy.jsonl` is under the
+# project root, so the pre-fix rule loads it into the catalog and the inventory
+# answers with a run the session files never described. The same rule admits a
+# `..` traversal, a nested path, a missing file, a symlink, and a record whose
+# file identity has moved on.
+contains: must not be admitted as a session record
+
+# Both, and only these two.
+contains: test result: FAILED. 0 passed; 2 failed

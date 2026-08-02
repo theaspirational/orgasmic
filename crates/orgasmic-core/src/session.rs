@@ -298,21 +298,74 @@ pub struct BoundedDriverEvent {
     pub bytes_elided: u64,
 }
 
-/// Cap every individual string payload inside one `driver_event`.
+/// Ceiling on the SERIALIZED size of one whole persisted `driver_event`,
+/// derived from the per-payload cap.
 ///
-/// Strings longer than `cap` are replaced by their first
-/// [`BOUNDED_PAYLOAD_HEAD_BYTES`] plus an inline marker, and — when the string
-/// sits under a key in an object — a sibling `<key>_bounded` object carrying
-/// the byte count, the SHA-256 of the full original payload, and the source
-/// reference. Structure (`type`, `call_id`, `name`, `ok`, `seq`, `stream`) is
-/// never touched, so a bounded stream stays countable.
+/// orgasmic:TASK-FZB6T.1 finding 4 — a per-string cap alone bounds nothing. A
+/// harness that emits ten thousand 1 KiB strings, or one that nests its content
+/// deeper than the recursion ceiling, walked straight past a 16 KiB
+/// per-payload limit and persisted megabytes per event. The budget has to be
+/// stated over the thing that is actually written to disk: the serialized
+/// event.
+pub fn driver_event_total_cap(payload_cap: usize) -> usize {
+    payload_cap.saturating_mul(4)
+}
+
+/// Structural keys, in the order they are given up if even they overflow.
 ///
-/// Idempotent: re-bounding an already-bounded event is a no-op, because the
-/// retained head is shorter than the cap.
+/// These are what makes a bounded stream countable — how many tool calls ran,
+/// which failed, in what order — so they are the LAST thing an over-budget
+/// event loses, never the first.
+const STRUCTURAL_KEYS: [&str; 8] = [
+    "type",
+    "call_id",
+    "name",
+    "ok",
+    "seq",
+    "stream",
+    "phase",
+    "protocol_version",
+];
+
+/// Bound one `driver_event` so both a single payload and the whole serialized
+/// event stay inside a documented budget.
+///
+/// Three rules, applied in that order:
+///
+/// 1. **Per payload.** A string longer than `cap` is replaced by its first
+///    [`BOUNDED_PAYLOAD_HEAD_BYTES`] plus an inline marker, and — when it sits
+///    under a key in an object — a sibling `<key>_bounded` object carrying the
+///    byte count, the SHA-256 of the full original, and the source reference.
+/// 2. **Per subtree.** An object or array whose serialized form still exceeds
+///    `cap` after its children were bounded is replaced wholesale by a digest.
+///    This is what closes the many-small-payloads hole: ten thousand 1 KiB
+///    strings are each individually legal and collectively are not.
+/// 3. **Per event.** If the serialized event still exceeds
+///    [`driver_event_total_cap`], its non-structural values are digested
+///    largest-first until it fits, and only if that is still not enough are the
+///    structural keys given up too.
+///
+/// A subtree deeper than [`BOUND_MAX_DEPTH`] is digested rather than passed
+/// through: recursion has to stop somewhere, and stopping by *ignoring* the
+/// rest of the tree is how an unbounded payload gets in under a depth ceiling.
+///
+/// Every replacement states the same three things — how many bytes were there,
+/// their SHA-256, and where the bytes actually still live
+/// ([`BOUNDED_PAYLOAD_SOURCE`]) — so the record is a truthful reference rather
+/// than a silent truncation.
+///
+/// Idempotent: re-bounding an already-bounded event changes nothing, because
+/// every retained head and every digest is smaller than the cap that produced
+/// it.
 pub fn bound_driver_event_payload(event: Value, cap: usize) -> BoundedDriverEvent {
     let mut value = event;
     let mut stats = BoundStats::default();
-    bound_value(&mut value, cap, 0, &mut stats);
+    let mut size = bound_value(&mut value, cap, 0, &mut stats);
+    let total_cap = driver_event_total_cap(cap);
+    if size > total_cap {
+        size = bound_whole_event(&mut value, total_cap, &mut stats);
+        debug_assert!(size <= total_cap || matches!(value, Value::Object(_)));
+    }
     BoundedDriverEvent {
         value,
         bounded_payloads: stats.bounded_payloads,
@@ -330,46 +383,192 @@ struct BoundStats {
 /// payload must cost bounded work rather than blow the stack.
 const BOUND_MAX_DEPTH: usize = 16;
 
-fn bound_value(value: &mut Value, cap: usize, depth: usize, stats: &mut BoundStats) {
-    if depth >= BOUND_MAX_DEPTH {
-        return;
-    }
+/// Bound one value in place and return its serialized JSON length.
+///
+/// The length is accumulated bottom-up so the whole tree costs one pass: a
+/// re-serialization per container would be O(bytes × depth) on the write path.
+fn bound_value(value: &mut Value, cap: usize, depth: usize, stats: &mut BoundStats) -> usize {
     match value {
         Value::Object(map) => {
+            let keys: Vec<String> = map.keys().cloned().collect();
             let mut digests: Vec<(String, Value)> = Vec::new();
-            for (key, child) in map.iter_mut() {
-                if let Value::String(text) = child {
-                    if text.len() > cap {
-                        let (head, digest) = digest_payload(text);
-                        stats.bounded_payloads += 1;
-                        stats.bytes_elided += text.len().saturating_sub(head.len()) as u64;
-                        *text = head;
-                        digests.push((format!("{key}{BOUNDED_SUFFIX}"), digest));
-                    }
-                    continue;
+            let mut size = 2 + keys.len().saturating_sub(1);
+            for key in &keys {
+                let child = map.get_mut(key).expect("key taken from this map");
+                let (child_size, digest) = bound_child(child, cap, depth + 1, stats);
+                size += json_string_len(key) + 1 + child_size;
+                if let Some(digest) = digest {
+                    digests.push((format!("{key}{BOUNDED_SUFFIX}"), digest));
                 }
-                bound_value(child, cap, depth + 1, stats);
             }
             for (key, digest) in digests {
+                size += json_string_len(&key) + 2 + json_len(&digest);
                 map.insert(key, digest);
             }
+            size
         }
         Value::Array(items) => {
+            let mut size = 2 + items.len().saturating_sub(1);
             for child in items.iter_mut() {
-                if let Value::String(text) = child {
-                    if text.len() > cap {
-                        let (head, _) = digest_payload(text);
-                        stats.bounded_payloads += 1;
-                        stats.bytes_elided += text.len().saturating_sub(head.len()) as u64;
-                        *text = head;
-                    }
-                    continue;
-                }
-                bound_value(child, cap, depth + 1, stats);
+                let (child_size, _) = bound_child(child, cap, depth + 1, stats);
+                size += child_size;
             }
+            size
         }
-        _ => {}
+        other => json_len(other),
     }
+}
+
+/// Bound one child of a container.
+///
+/// Returns `(serialized length after bounding, sibling digest to publish)`. The
+/// sibling is only produced for an oversized *string*: an oversized subtree is
+/// replaced in place by a digest that already says everything a sibling would.
+fn bound_child(
+    child: &mut Value,
+    cap: usize,
+    depth: usize,
+    stats: &mut BoundStats,
+) -> (usize, Option<Value>) {
+    // A digest is already the bounded form of whatever used to be here.
+    // Re-digesting it would make bounding non-idempotent, which matters
+    // because a replayed or forwarded event can pass through the writer twice.
+    if is_bounded_marker(child) {
+        return (json_len(child), None);
+    }
+    if depth >= BOUND_MAX_DEPTH {
+        return (digest_subtree(child, stats, "depth"), None);
+    }
+    if let Value::String(text) = child {
+        if text.len() > cap {
+            let (head, digest) = digest_payload(text);
+            stats.bounded_payloads += 1;
+            stats.bytes_elided += text.len().saturating_sub(head.len()) as u64;
+            *text = head;
+            return (json_string_len(text), Some(digest));
+        }
+        return (json_string_len(text), None);
+    }
+    if matches!(child, Value::Object(_) | Value::Array(_)) {
+        let size = bound_value(child, cap, depth, stats);
+        if size > cap {
+            return (digest_subtree(child, stats, "subtree-size"), None);
+        }
+        return (size, None);
+    }
+    (json_len(child), None)
+}
+
+/// Last resort: the whole serialized event is over budget even after every
+/// payload and subtree inside it was bounded.
+///
+/// Non-structural values go first, largest first, so an event gives up its
+/// content before it gives up the facts that make it countable. Returns the
+/// serialized length that remains.
+fn bound_whole_event(value: &mut Value, total_cap: usize, stats: &mut BoundStats) -> usize {
+    let Value::Object(map) = value else {
+        return digest_subtree(value, stats, "event-size");
+    };
+    // The running size is tracked incrementally. Re-measuring the map after
+    // every elision would be quadratic in the number of keys, and "thousands of
+    // keys" is exactly the shape this function exists to survive.
+    let mut current = json_len_of_object(map);
+    let mut order: Vec<(String, usize)> = map
+        .iter()
+        .filter(|(key, _)| !STRUCTURAL_KEYS.contains(&key.as_str()))
+        .map(|(key, child)| (key.clone(), json_len(child)))
+        .collect();
+    order.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (key, was) in order {
+        if current <= total_cap {
+            return current;
+        }
+        if let Some(child) = map.get_mut(&key) {
+            let now = digest_subtree(child, stats, "event-size");
+            current = current.saturating_sub(was).saturating_add(now);
+        }
+    }
+    if current <= total_cap {
+        return current;
+    }
+    // Structure alone overflows — a pathological event with thousands of keys.
+    // Keep the type and digest everything else, so the record still says what
+    // kind of event it was and how much was elided.
+    let ty = map.get("type").cloned();
+    let size = digest_subtree(value, stats, "event-size");
+    if let (Some(ty), Value::Object(map)) = (ty, &mut *value) {
+        map.insert("type".to_string(), ty.clone());
+        return size + json_string_len("type") + 2 + json_len(&ty);
+    }
+    size
+}
+
+/// Whether `value` is already a digest this function produced.
+fn is_bounded_marker(value: &Value) -> bool {
+    value
+        .as_object()
+        .is_some_and(|map| map.len() == 1 && map.contains_key("orgasmic_bounded"))
+}
+
+/// Replace one subtree by a digest naming its size, hash and true home.
+/// Returns the serialized length of the replacement.
+fn digest_subtree(value: &mut Value, stats: &mut BoundStats, reason: &'static str) -> usize {
+    let serialized = serde_json::to_string(value).unwrap_or_default();
+    let bytes = serialized.len();
+    let mut digest = Map::new();
+    digest.insert("bytes".to_string(), Value::from(bytes as u64));
+    digest.insert(
+        "sha256".to_string(),
+        Value::String(hex_sha256(serialized.as_bytes())),
+    );
+    digest.insert("retained_bytes".to_string(), Value::from(0_u64));
+    digest.insert("reason".to_string(), Value::String(reason.to_string()));
+    digest.insert(
+        "source".to_string(),
+        Value::String(BOUNDED_PAYLOAD_SOURCE.to_string()),
+    );
+    let mut replacement = Map::new();
+    replacement.insert("orgasmic_bounded".to_string(), Value::Object(digest));
+    stats.bounded_payloads += 1;
+    stats.bytes_elided += bytes as u64;
+    *value = Value::Object(replacement);
+    json_len(value)
+}
+
+/// Serialized JSON length of `value`, without building the string.
+fn json_len(value: &Value) -> usize {
+    match value {
+        Value::Null => 4,
+        Value::Bool(true) => 4,
+        Value::Bool(false) => 5,
+        Value::Number(number) => number.to_string().len(),
+        Value::String(text) => json_string_len(text),
+        Value::Array(items) => {
+            2 + items.len().saturating_sub(1) + items.iter().map(json_len).sum::<usize>()
+        }
+        Value::Object(map) => json_len_of_object(map),
+    }
+}
+
+fn json_len_of_object(map: &Map<String, Value>) -> usize {
+    2 + map.len().saturating_sub(1)
+        + map
+            .iter()
+            .map(|(key, child)| json_string_len(key) + 1 + json_len(child))
+            .sum::<usize>()
+}
+
+/// Serialized JSON length of one string, quotes and escapes included.
+fn json_string_len(text: &str) -> usize {
+    let mut len = 2;
+    for ch in text.chars() {
+        len += match ch {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+            ch if (ch as u32) < 0x20 => 6,
+            ch => ch.len_utf8(),
+        };
+    }
+    len
 }
 
 /// `(retained head + marker, machine-readable digest object)` for one
@@ -1578,6 +1777,139 @@ mod tests {
         };
         assert!(chunk.contains("orgasmic-bounded"));
         assert!(chunk.len() < DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 4 — the budget is over the SERIALIZED
+    /// event, not over one string at a time.
+    ///
+    /// Three shapes, each individually legal under a per-string cap and each
+    /// unbounded in aggregate: many small strings in one array, many small
+    /// strings under many keys, and a payload nested past the recursion
+    /// ceiling. All three used to be persisted verbatim.
+    #[test]
+    fn a_composite_payload_is_bounded_as_a_whole_event() {
+        let cap = DRIVER_EVENT_PAYLOAD_CAP_BYTES;
+        let total_cap = driver_event_total_cap(cap);
+
+        // 1. Ten thousand 1 KiB strings in one array: ~10 MB, no single string
+        //    anywhere near the per-payload cap.
+        let many: Vec<Value> = (0..10_000)
+            .map(|index| Value::String(format!("{index:04}").repeat(256)))
+            .collect();
+        let event = json!({"type": "tool_result", "call_id": "c1", "ok": true, "output": many});
+        let raw = serde_json::to_string(&event).unwrap().len();
+        assert!(raw > 8 * 1024 * 1024, "the fixture must be large: {raw}");
+        let bounded = bound_driver_event_payload(event, cap);
+        let persisted = serde_json::to_string(&bounded.value).unwrap();
+        assert!(
+            persisted.len() <= total_cap,
+            "a many-small-payloads event must be bounded as a whole: {} bytes persisted \
+             against a {total_cap} byte ceiling",
+            persisted.len()
+        );
+        // Structure survives, so the event is still countable.
+        assert_eq!(
+            bounded.value.get("type").and_then(Value::as_str),
+            Some("tool_result")
+        );
+        assert_eq!(
+            bounded.value.get("call_id").and_then(Value::as_str),
+            Some("c1")
+        );
+        assert_eq!(bounded.value.get("ok"), Some(&Value::Bool(true)));
+        // And the replacement is a truthful reference, not a silent truncation.
+        let digest = bounded.value["output"]["orgasmic_bounded"].clone();
+        assert!(digest["bytes"]
+            .as_u64()
+            .is_some_and(|bytes| bytes > 8 * 1024 * 1024));
+        assert_eq!(digest["sha256"].as_str().map(str::len), Some(64));
+        assert!(digest["source"]
+            .as_str()
+            .is_some_and(|source| source.contains("never copied by orgasmic")));
+        assert!(bounded.bytes_elided > 8 * 1024 * 1024);
+
+        // 2. The same volume spread across many KEYS rather than one array.
+        let mut wide = Map::new();
+        wide.insert("type".to_string(), Value::String("tool_result".to_string()));
+        for index in 0..10_000 {
+            wide.insert(format!("k{index}"), Value::String("payload".repeat(128)));
+        }
+        let event = Value::Object(wide);
+        assert!(serde_json::to_string(&event).unwrap().len() > 8 * 1024 * 1024);
+        let bounded = bound_driver_event_payload(event, cap);
+        let persisted = serde_json::to_string(&bounded.value).unwrap();
+        assert!(
+            persisted.len() <= total_cap,
+            "a wide event must be bounded too: {} bytes",
+            persisted.len()
+        );
+        assert_eq!(
+            bounded.value.get("type").and_then(Value::as_str),
+            Some("tool_result")
+        );
+
+        // 3. A payload nested well past the recursion ceiling. The old rule
+        //    stopped recursing at depth 16 and persisted everything below it.
+        let mut deep = json!({"leaf": "z".repeat(4 * 1024 * 1024)});
+        for _ in 0..64 {
+            deep = json!({"next": deep});
+        }
+        let event = json!({"type": "text_chunk", "stream": "assistant", "chunk": deep});
+        assert!(serde_json::to_string(&event).unwrap().len() > 4 * 1024 * 1024);
+        let bounded = bound_driver_event_payload(event, cap);
+        let persisted = serde_json::to_string(&bounded.value).unwrap();
+        assert!(
+            persisted.len() <= total_cap,
+            "a deeply nested payload must be bounded, not skipped: {} bytes",
+            persisted.len()
+        );
+        assert!(
+            !persisted.contains("zzzzzzzzzz"),
+            "content below the recursion ceiling reached the session file"
+        );
+        assert_eq!(
+            bounded.value.get("type").and_then(Value::as_str),
+            Some("text_chunk")
+        );
+
+        // Every bounded shape stays idempotent.
+        let again = bound_driver_event_payload(bounded.value.clone(), cap);
+        assert_eq!(again.bounded_payloads, 0, "re-bounding must be a no-op");
+        assert_eq!(again.value, bounded.value);
+    }
+
+    /// The whole-event ceiling is enforced at the writer, not only in the
+    /// helper: a driver that hands the writer a composite payload cannot route
+    /// around it.
+    #[test]
+    fn the_writer_enforces_the_whole_event_ceiling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-wide.jsonl");
+        let mut writer =
+            SessionWriter::open(&path, RuntimeIdentity::new("run-wide", "boot-wide")).unwrap();
+        let many: Vec<Value> = (0..10_000)
+            .map(|index| Value::String(format!("{index:04}").repeat(256)))
+            .collect();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                json!({"type": "tool_result", "call_id": "c1", "ok": false, "output": many}),
+            )
+            .unwrap();
+        drop(writer);
+
+        let persisted = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            persisted < 2 * driver_event_total_cap(DRIVER_EVENT_PAYLOAD_CAP_BYTES) as u64,
+            "a 10 MB composite payload reached the JSONL: {persisted} bytes"
+        );
+        let envelopes = read_session_file(&path).unwrap();
+        assert_eq!(envelopes.len(), 1);
+        assert_eq!(
+            envelopes[0].event.get("ok"),
+            Some(&Value::Bool(false)),
+            "a bounded result must still say whether it failed"
+        );
     }
 
     #[test]

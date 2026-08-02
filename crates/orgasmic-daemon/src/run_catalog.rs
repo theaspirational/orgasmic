@@ -59,7 +59,12 @@ use serde_json::{json, Value};
 /// is discarded and rebuilt — forward and backward alike, which is the rollback
 /// story: install an older runtime and it re-indexes instead of trusting a
 /// record shape it does not know.
-pub const CATALOG_VERSION: u32 = 1;
+///
+/// v2 (orgasmic:TASK-FZB6T.1): entries carry the recorded `RunMeta`
+/// project/worktree pair directly, and [`WorktreeAuthority`] carries the
+/// worktree's durable directory identity so a tombstone cannot be revived by
+/// an unrelated directory appearing at the recorded path.
+pub const CATALOG_VERSION: u32 = 2;
 
 /// Where a project's durable catalog snapshot lives, relative to its root.
 pub const CATALOG_REL_PATH: &str = ".orgasmic/tmp/run-catalog.json";
@@ -119,6 +124,46 @@ impl SessionFileFingerprint {
     }
 }
 
+/// Durable identity of a directory: device plus inode.
+///
+/// orgasmic:TASK-FZB6T.1 finding 5 — a path is a name, not an identity. A
+/// dispatch worktree that was pruned and a *different* directory later created
+/// at the same path are two different objects, and only the second one is
+/// reachable by `exists()`. Recording dev/ino when the worktree was verified is
+/// what lets a later probe tell "the volume came back" from "somebody reused
+/// the path".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirIdentity {
+    pub dev: u64,
+    pub ino: u64,
+}
+
+impl DirIdentity {
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        if !metadata.is_dir() {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Some(Self {
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
+    /// The identity of the directory `path` resolves to, or `None` when the
+    /// path is absent, is not a directory, or the platform cannot answer.
+    pub fn at(path: &Path) -> Option<Self> {
+        Self::of(&std::fs::metadata(path).ok()?)
+    }
+}
+
 /// Whether this run's recorded origin worktree is still authority.
 ///
 /// A separate axis from lifecycle classification on purpose. "The worktree this
@@ -133,10 +178,28 @@ impl SessionFileFingerprint {
 pub enum WorktreeAuthority {
     /// `RunMeta` named a worktree, it exists, and its `project.org` names the
     /// same project as the directory containing this session file.
-    Verified { worktree: PathBuf },
-    /// `RunMeta` named a worktree that is no longer on disk. Pruned, moved, or
-    /// on an unmounted volume. Stable: recovery under this identity is over.
-    Tombstoned { recorded: PathBuf },
+    Verified {
+        worktree: PathBuf,
+        /// Directory identity observed at verification time. `None` only where
+        /// the platform cannot report one.
+        #[serde(default)]
+        identity: Option<DirIdentity>,
+    },
+    /// `RunMeta` named a worktree that is no longer on disk, or whose directory
+    /// identity no longer matches the one this run was verified against.
+    /// Pruned, moved, replaced, or on an unmounted volume.
+    ///
+    /// **Terminal for the run identity.** It leaves this state only when a
+    /// directory reappears at the recorded path carrying exactly the
+    /// `verified_identity` this run was once verified against — the one fact
+    /// that proves continuity rather than coincidence of names. A tombstone
+    /// that never had a verified identity (the recorded path was already gone
+    /// at first index) can never be revived.
+    Tombstoned {
+        recorded: PathBuf,
+        #[serde(default)]
+        verified_identity: Option<DirIdentity>,
+    },
     /// A worktree exists at the recorded path but does not belong to the
     /// project that contains this session file.
     Mismatched { recorded: PathBuf },
@@ -150,7 +213,7 @@ pub enum WorktreeAuthority {
 impl WorktreeAuthority {
     pub fn verified_worktree(&self) -> Option<&Path> {
         match self {
-            Self::Verified { worktree } => Some(worktree.as_path()),
+            Self::Verified { worktree, .. } => Some(worktree.as_path()),
             _ => None,
         }
     }
@@ -268,6 +331,21 @@ pub struct RunCatalogEntry {
 
     // --- worktree authority ---
     pub worktree_authority: WorktreeAuthority,
+    /// The `RunMeta` project/worktree pair verbatim, decided once at index
+    /// time.
+    ///
+    /// orgasmic:TASK-FZB6T.1 finding 8 — authority re-verification needs this
+    /// pair and used to re-parse it out of `lifecycle_envelopes` on every poll,
+    /// inside the catalog mutex. Stored flat, the refresh can clone it in the
+    /// short planning critical section and do the filesystem work outside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_meta_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_meta_worktree: Option<PathBuf>,
+    /// Whether a `RunMeta` lifecycle event was recorded at all — the
+    /// distinction between "recorded no worktree" and "pre-`RunMeta` session".
+    #[serde(default)]
+    pub run_meta_recorded: bool,
 
     // --- lifecycle classification ---
     /// The semantic terminal verdict, decided under exactly the rule the
@@ -332,6 +410,17 @@ pub struct RunCatalogEntry {
 }
 
 impl RunCatalogEntry {
+    /// The recorded `RunMeta` project/worktree pair in the shape
+    /// [`verify_worktree_authority`] consumes.
+    pub fn recorded_run_meta(&self) -> Option<(Option<String>, Option<PathBuf>)> {
+        self.run_meta_recorded.then(|| {
+            (
+                self.run_meta_project.clone(),
+                self.run_meta_worktree.clone(),
+            )
+        })
+    }
+
     /// Driver+harness label used by history accounting. Falls back to the
     /// transport alone, then to `unknown`.
     pub fn driver_label(&self) -> String {
@@ -346,6 +435,13 @@ impl RunCatalogEntry {
     /// window pages over.
     pub fn is_terminal(&self) -> bool {
         self.terminal.is_some()
+    }
+
+    /// When this run reached its terminal state, if it recorded one. The
+    /// ordering key of the recent-terminal window, in exactly the shape the
+    /// response carries it.
+    pub fn terminal_at(&self) -> Option<DateTime<Utc>> {
+        self.terminal.as_ref().and_then(TerminalRecord::at)
     }
 
     /// The time used to order the recent-terminal window. Terminal time when
@@ -423,19 +519,60 @@ struct CatalogSnapshot {
 /// every record, which is not an improvement.
 pub const SNAPSHOT_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
-#[derive(Debug, Default)]
-struct CatalogState {
-    by_path: BTreeMap<PathBuf, RunCatalogEntry>,
+/// Snapshot bookkeeping for one canonical project root.
+///
+/// orgasmic:TASK-FZB6T.1 finding 6 — this used to be one global `dirty` flag
+/// and one global `last_saved` instant for the whole daemon. On a multi-project
+/// board that is wrong in both directions: project A's refresh cleared the flag
+/// project B had set (so B's snapshot was never written), and A's save throttled
+/// B's for a minute even though B had never been saved at all.
+#[derive(Debug, Default, Clone)]
+struct ProjectSnapshotState {
     dirty: bool,
     last_saved: Option<std::time::Instant>,
 }
 
+#[derive(Debug, Default)]
+struct CatalogState {
+    by_path: BTreeMap<PathBuf, RunCatalogEntry>,
+    /// Per canonical project root.
+    projects: BTreeMap<PathBuf, ProjectSnapshotState>,
+    /// Monotonic per-path write counter, bumped by
+    /// [`RunCatalog::invalidate_session`].
+    ///
+    /// orgasmic:TASK-FZB6T.1 finding 8 — the refresh scans session files
+    /// *outside* the mutex, so a lifecycle append can land between the scan and
+    /// the commit. The counter is the compare-and-swap token: a rebuilt entry
+    /// is committed only if nobody invalidated that path while it was being
+    /// built, so the writer's invalidation can never be silently overwritten by
+    /// an entry derived from the bytes that preceded it.
+    invalidations: BTreeMap<PathBuf, u64>,
+}
+
+impl CatalogState {
+    fn mark_dirty(&mut self, project_root: &Path) {
+        self.projects
+            .entry(project_root.to_path_buf())
+            .or_default()
+            .dirty = true;
+    }
+
+    fn invalidation(&self, path: &Path) -> u64 {
+        self.invalidations.get(path).copied().unwrap_or(0)
+    }
+}
+
 /// The daemon-lifetime run catalog.
+///
 /// The lock is a `std::sync::Mutex`, not a tokio one, and the methods are
-/// synchronous. Every critical section is a map lookup or insert with no
-/// `.await` inside it, and the blocking filesystem work these methods do belongs
-/// on a blocking thread anyway — the boot pass and `run history inspect` both
-/// call them from inside `spawn_blocking`, exactly as the pre-catalog code did.
+/// synchronous. Every critical section is a bounded run of map lookups and
+/// inserts with no `.await` and **no filesystem call** inside it: the refresh
+/// gathers directory state, scans session files, and probes worktree paths
+/// entirely outside the lock, then commits under one short critical section
+/// guarded by the per-path invalidation counter (orgasmic:TASK-FZB6T.1 finding
+/// 8). The blocking work belongs on a blocking thread, and every caller — the
+/// boot pass, the inventory, `run history inspect` — reaches it through
+/// `spawn_blocking`.
 ///
 /// An async API here would have forced those callers to `block_on` a handle
 /// from inside a blocking thread, which deadlocks against a current-thread
@@ -511,15 +648,18 @@ impl RunCatalog {
                 }
             }
         };
+        // orgasmic:TASK-FZB6T.1 finding 7 — validate every entry against the
+        // filesystem BEFORE taking the lock, so a snapshot with thousands of
+        // records cannot hold the catalog mutex across thousands of stats.
+        let sessions_dir = project_sessions_dir(project_root);
+        let admitted: Vec<RunCatalogEntry> = snapshot
+            .entries
+            .into_iter()
+            .filter(|entry| snapshot_entry_is_admissible(entry, &sessions_dir))
+            .collect();
         let mut state = self.lock();
         let mut loaded = 0;
-        for entry in snapshot.entries {
-            // A snapshot entry naming a file outside the project it was loaded
-            // for is not this project's record. Refuse rather than let a hand
-            // edited or copied snapshot introduce foreign runs.
-            if !entry.session_path.starts_with(project_root) {
-                continue;
-            }
+        for entry in admitted {
             state.by_path.insert(entry.session_path.clone(), entry);
             loaded += 1;
         }
@@ -531,8 +671,12 @@ impl RunCatalog {
     /// a save happened within [`SNAPSHOT_MIN_INTERVAL`], so a board with a live
     /// run does not rewrite the whole index on every poll.
     ///
-    /// Calling this CONSUMES the dirty flag: the caller is expected to persist
-    /// the bytes it returns.
+    /// Both the dirty flag and the throttle are **per project**
+    /// (orgasmic:TASK-FZB6T.1 finding 6): one project's save neither clears
+    /// another's pending work nor throttles its first write.
+    ///
+    /// Calling this CONSUMES that project's dirty flag: the caller is expected
+    /// to persist the bytes it returns.
     pub fn snapshot_bytes(&self, project_root: &Path) -> Option<Vec<u8>> {
         self.snapshot_bytes_after(project_root, SNAPSHOT_MIN_INTERVAL)
     }
@@ -545,12 +689,15 @@ impl RunCatalog {
         min_interval: std::time::Duration,
     ) -> Option<Vec<u8>> {
         let mut state = self.lock();
-        if !state.dirty {
-            return None;
-        }
-        if let Some(last) = state.last_saved {
-            if last.elapsed() < min_interval {
+        {
+            let project = state.projects.get(project_root)?;
+            if !project.dirty {
                 return None;
+            }
+            if let Some(last) = project.last_saved {
+                if last.elapsed() < min_interval {
+                    return None;
+                }
             }
         }
         let entries: Vec<RunCatalogEntry> = state
@@ -565,8 +712,12 @@ impl RunCatalog {
             entries,
         };
         let bytes = serde_json::to_vec_pretty(&snapshot).ok()?;
-        state.dirty = false;
-        state.last_saved = Some(std::time::Instant::now());
+        let project = state
+            .projects
+            .entry(project_root.to_path_buf())
+            .or_default();
+        project.dirty = false;
+        project.last_saved = Some(std::time::Instant::now());
         Some(bytes)
     }
 
@@ -574,6 +725,18 @@ impl RunCatalog {
     ///
     /// Blocking filesystem work; callers must keep it off the async runtime's
     /// hot threads the same way the boot scan does.
+    ///
+    /// orgasmic:TASK-FZB6T.1 finding 8 — four phases, and the mutex is held
+    /// only in two of them:
+    ///
+    /// 1. **gather** (no lock): `read_dir` + one `symlink_metadata` per file;
+    /// 2. **plan** (short lock): map lookups only — decide what to rebuild,
+    ///    which cached authority verdicts to probe, and what to evict;
+    /// 3. **work** (no lock): `scan_session_lifecycle` per rebuilt file and one
+    ///    authority probe per cached record. This is all of the expensive work
+    ///    and none of it can block another thread's catalog read;
+    /// 4. **commit** (short lock): map inserts and removes, each guarded by the
+    ///    per-path invalidation counter captured in phase 2.
     pub fn refresh_dir(
         &self,
         dir: &Path,
@@ -581,10 +744,24 @@ impl RunCatalog {
         project_root: &Path,
         budget: SessionScanBudget,
     ) -> CatalogRefreshStats {
-        let mut stats = CatalogRefreshStats::default();
-        let mut state = self.lock();
-        let mut seen: Vec<PathBuf> = Vec::new();
+        self.refresh_dir_observed(dir, project_id, project_root, budget, &mut |_| {})
+    }
 
+    /// [`Self::refresh_dir`] with a hook invoked during the unlocked work
+    /// phase. Tests use it to prove the mutex is genuinely free while session
+    /// files are being scanned; production passes an empty closure.
+    fn refresh_dir_observed(
+        &self,
+        dir: &Path,
+        project_id: Option<&str>,
+        project_root: &Path,
+        budget: SessionScanBudget,
+        during_work: &mut dyn FnMut(&Self),
+    ) -> CatalogRefreshStats {
+        let mut stats = CatalogRefreshStats::default();
+
+        // --- phase 1: gather, no lock held ---------------------------------
+        let mut observed: Vec<(PathBuf, SessionFileFingerprint, u64)> = Vec::new();
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(_) => return stats,
@@ -602,73 +779,143 @@ impl RunCatalog {
             if !metadata.is_file() || metadata.file_type().is_symlink() {
                 continue;
             }
-            seen.push(path.clone());
             stats.session_files += 1;
             stats.session_file_bytes += metadata.len();
+            observed.push((path, SessionFileFingerprint::of(&metadata), metadata.len()));
+        }
 
-            let fingerprint = SessionFileFingerprint::of(&metadata);
-            let cached_is_current = state
-                .by_path
-                .get(&path)
-                .is_some_and(|entry| entry.fingerprint == fingerprint);
-            if cached_is_current {
-                stats.cache_hits += 1;
-                // Worktree authority is the one verdict that can change without
-                // the session file changing, so it is re-checked — but with a
-                // single existence probe per record, which is O(records) and
-                // never O(bytes). Full re-verification runs only when that
-                // probe disagrees with the cached verdict.
-                let entry = state.by_path.get_mut(&path).expect("checked above");
-                if authority_needs_recheck(&entry.worktree_authority) {
-                    let refreshed = verify_worktree_authority(
-                        project_id,
-                        run_meta_project_worktree(&entry.lifecycle_envelopes),
-                    );
-                    if refreshed != entry.worktree_authority {
-                        entry.worktree_authority = refreshed;
-                        stats.authority_reverified += 1;
-                        state.dirty = true;
+        // --- phase 2: plan, short lock -------------------------------------
+        let mut rebuild: Vec<PlannedRebuild> = Vec::new();
+        let mut recheck: Vec<PlannedRecheck> = Vec::new();
+        let stale: Vec<PathBuf>;
+        {
+            let state = self.lock();
+            for (path, fingerprint, len) in &observed {
+                match state.by_path.get(path) {
+                    Some(entry) if entry.fingerprint == *fingerprint => {
+                        stats.cache_hits += 1;
+                        if entry.scan_truncated {
+                            stats.truncated_scans += 1;
+                        }
+                        if entry.unreadable {
+                            stats.unreadable_sessions += 1;
+                        }
+                        // Worktree authority is the one verdict that can change
+                        // without the session file changing, so it is
+                        // re-checked — one stat per record, O(records) and
+                        // never O(bytes), and the stat happens in phase 3.
+                        recheck.push(PlannedRecheck {
+                            path: path.clone(),
+                            previous: entry.worktree_authority.clone(),
+                            run_meta: entry.recorded_run_meta(),
+                            invalidation: state.invalidation(path),
+                        });
                     }
+                    _ => rebuild.push(PlannedRebuild {
+                        path: path.clone(),
+                        fingerprint: *fingerprint,
+                        len: *len,
+                        invalidation: state.invalidation(path),
+                    }),
                 }
-                if state.by_path[&path].scan_truncated {
-                    stats.truncated_scans += 1;
-                }
-                if state.by_path[&path].unreadable {
-                    stats.unreadable_sessions += 1;
-                }
-                continue;
             }
+            // Evict records whose session file is gone from this directory.
+            // Scoped to `dir` so refreshing one project never drops another's
+            // entries.
+            let present: std::collections::BTreeSet<&PathBuf> =
+                observed.iter().map(|(path, _, _)| path).collect();
+            stale = state
+                .by_path
+                .keys()
+                .filter(|path| path.parent() == Some(dir) && !present.contains(path))
+                .cloned()
+                .collect();
+        }
 
+        // --- phase 3: work, no lock held -----------------------------------
+        let mut built: Vec<(PlannedRebuild, RunCatalogEntry)> = Vec::with_capacity(rebuild.len());
+        for planned in rebuild {
+            during_work(self);
             stats.rebuilt += 1;
-            let built = match scan_session_lifecycle(&path, budget) {
+            let entry = match scan_session_lifecycle(&planned.path, budget) {
                 Ok(scan) => {
                     stats.bytes_inspected += scan.bytes_inspected;
                     if scan.truncated {
                         stats.truncated_scans += 1;
                     }
-                    entry_from_scan(&scan, &path, project_id, project_root, fingerprint)
+                    entry_from_scan(
+                        &scan,
+                        &planned.path,
+                        project_id,
+                        project_root,
+                        planned.fingerprint,
+                    )
                 }
                 Err(_) => {
                     stats.unreadable_sessions += 1;
-                    unreadable_entry(&path, project_id, project_root, fingerprint, metadata.len())
+                    unreadable_entry(
+                        &planned.path,
+                        project_id,
+                        project_root,
+                        planned.fingerprint,
+                        planned.len,
+                    )
                 }
             };
-            state.by_path.insert(path, built);
-            state.dirty = true;
+            built.push((planned, entry));
+        }
+        let mut authority_updates: Vec<(PlannedRecheck, WorktreeAuthority)> = Vec::new();
+        for planned in recheck {
+            during_work(self);
+            let Some(probe) = probe_authority_path(&planned.previous) else {
+                continue;
+            };
+            if let Some(refreshed) = reverify_authority(
+                &planned.previous,
+                probe,
+                project_id,
+                planned.run_meta.clone(),
+            ) {
+                authority_updates.push((planned, refreshed));
+            }
         }
 
-        // Evict records whose session file is gone from this directory. Scoped
-        // to `dir` so refreshing one project never drops another's entries.
-        let stale: Vec<PathBuf> = state
-            .by_path
-            .keys()
-            .filter(|path| path.parent() == Some(dir) && !seen.contains(path))
-            .cloned()
-            .collect();
+        // --- phase 4: commit, short lock -----------------------------------
+        let mut state = self.lock();
+        let mut dirty = false;
+        for (planned, entry) in built {
+            // Compare-and-swap: a lifecycle append that landed while this entry
+            // was being scanned wins. Dropping the built entry leaves the path
+            // uncached, so the next refresh re-derives it from the newer bytes.
+            if state.invalidation(&planned.path) != planned.invalidation {
+                continue;
+            }
+            state.by_path.insert(planned.path, entry);
+            dirty = true;
+        }
+        for (planned, refreshed) in authority_updates {
+            if state.invalidation(&planned.path) != planned.invalidation {
+                continue;
+            }
+            let Some(entry) = state.by_path.get_mut(&planned.path) else {
+                continue;
+            };
+            if entry.worktree_authority != planned.previous {
+                continue;
+            }
+            entry.worktree_authority = refreshed;
+            stats.authority_reverified += 1;
+            dirty = true;
+        }
         for path in stale {
-            state.by_path.remove(&path);
-            stats.evicted += 1;
-            state.dirty = true;
+            if state.by_path.remove(&path).is_some() {
+                state.invalidations.remove(&path);
+                stats.evicted += 1;
+                dirty = true;
+            }
+        }
+        if dirty {
+            state.mark_dirty(project_root);
         }
         stats
     }
@@ -698,11 +945,43 @@ impl RunCatalog {
     /// would catch it anyway on the next refresh — this makes the update
     /// promptness a property of the write path rather than of mtime
     /// granularity.
+    ///
+    /// Bumping the per-path counter is what makes the invalidation survive a
+    /// refresh that is already scanning this file: the refresh's commit is a
+    /// compare-and-swap against exactly this number
+    /// (orgasmic:TASK-FZB6T.1 finding 8). The critical section is two map
+    /// operations, so the writer task never waits on filesystem work.
     pub fn invalidate_session(&self, session_path: &Path) {
         let mut state = self.lock();
-        if state.by_path.remove(session_path).is_some() {
-            state.dirty = true;
+        *state
+            .invalidations
+            .entry(session_path.to_path_buf())
+            .or_insert(0) += 1;
+        if let Some(entry) = state.by_path.remove(session_path) {
+            if let Some(root) = entry.project_root.clone() {
+                state.mark_dirty(&root);
+            }
         }
+    }
+
+    /// The cached record for an exact run id, if the catalog holds one.
+    ///
+    /// orgasmic:TASK-FZB6T.1 finding 9 — an exact `run show <id>` used to be
+    /// answered by classifying the whole board and then searching the *paged*
+    /// result, so a terminal run older than the default window was reported as
+    /// "no such run". The catalog keys runs by path but holds the id, and a
+    /// direct lookup is O(records) with no session read at all.
+    ///
+    /// Ties are broken by the most recently indexed record: a run id can appear
+    /// on more than one path only when history was copied, and the freshest
+    /// index is the one that describes the file the daemon is actually serving.
+    pub fn find_by_run_id(&self, run_id: &str) -> Option<RunCatalogEntry> {
+        self.lock()
+            .by_path
+            .values()
+            .filter(|entry| entry.run_id == run_id)
+            .max_by_key(|entry| entry.indexed_at)
+            .cloned()
     }
 
     #[cfg(test)]
@@ -711,41 +990,158 @@ impl RunCatalog {
     }
 }
 
-/// Whether a cached authority verdict must be re-derived.
-///
-/// One `symlink_metadata` per record: a verified worktree that vanished, or a
-/// tombstoned worktree that came back, are the only two transitions the
-/// filesystem can make behind an unchanged session file.
-fn authority_needs_recheck(authority: &WorktreeAuthority) -> bool {
-    match authority {
-        WorktreeAuthority::Verified { worktree } => !worktree.exists(),
-        WorktreeAuthority::Tombstoned { recorded } => recorded.exists(),
-        // A mismatch is a statement about project identity, which does not
-        // change under a live daemon, and the two "no authority recorded"
-        // verdicts are properties of the session file itself.
-        WorktreeAuthority::Mismatched { .. }
-        | WorktreeAuthority::Unrecorded
-        | WorktreeAuthority::Unidentified => false,
-    }
+/// One session file the plan phase decided must be re-derived from disk.
+struct PlannedRebuild {
+    path: PathBuf,
+    fingerprint: SessionFileFingerprint,
+    len: u64,
+    invalidation: u64,
 }
 
-/// The `RunMeta` project/worktree pair, if the session recorded one.
-fn run_meta_project_worktree(
-    envelopes: &[SessionEnvelope],
-) -> Option<(Option<String>, Option<PathBuf>)> {
-    envelopes.iter().find_map(|envelope| {
-        if envelope.kind != SessionEventKind::Lifecycle {
-            return None;
-        }
-        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
-            Lifecycle::RunMeta {
-                project_id,
-                worktree,
-                ..
-            } => Some((project_id, worktree)),
-            _ => None,
-        }
+/// One cached record whose worktree authority the plan phase decided to probe.
+struct PlannedRecheck {
+    path: PathBuf,
+    previous: WorktreeAuthority,
+    run_meta: Option<(Option<String>, Option<PathBuf>)>,
+    invalidation: u64,
+}
+
+/// Where a project keeps its per-run session JSONL.
+///
+/// Mirrors `crate::api::project_sessions_dir`; kept here so snapshot admission
+/// does not depend on the API module's visibility.
+pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
+    project_root.join(".orgasmic/tmp/sessions")
+}
+
+/// Whether one snapshot entry may be loaded into the catalog.
+///
+/// orgasmic:TASK-FZB6T.1 finding 7 — `starts_with(project_root)` was the only
+/// admission rule, and it admits far more than a session record. Anything under
+/// the project root passed: `<root>/.orgasmic/project.org`, a path escaping
+/// through `..`, a record for a file that no longer exists, or a record whose
+/// file has since been replaced. None of those are ever evicted either, because
+/// eviction is scoped to direct children of the sessions directory — so a
+/// semantically corrupt entry survived every refresh and kept answering
+/// inventory queries with a run the session files never described.
+///
+/// Four checks, each refusing one of those shapes:
+///
+/// 1. the path is a **direct child** of this project's sessions directory, so
+///    session-directory authority — not the project root — is what admits it;
+/// 2. no path component is `..`, so a normalized-looking parent cannot be
+///    reached by escaping and coming back;
+/// 3. the file is a **regular file** today, not a symlink, directory, or fifo;
+/// 4. its **current identity** (device/inode/length/mtime) is exactly the one
+///    the entry was derived from.
+///
+/// A refused entry costs one bounded re-scan of a file that is on disk anyway.
+fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
+    let path = entry.session_path.as_path();
+    if path.parent() != Some(sessions_dir) {
+        return false;
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+        return false;
+    }
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return false;
+    }
+    SessionFileFingerprint::of(&metadata) == entry.fingerprint
+}
+
+/// One filesystem observation of the path a cached authority verdict names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AuthorityProbe {
+    /// Identity of the directory currently at the recorded path, if any.
+    current: Option<DirIdentity>,
+    /// Something exists at the path — used only where no durable identity is
+    /// available (non-unix).
+    exists: bool,
+}
+
+/// One stat against the path a cached verdict names.
+///
+/// `None` when the verdict is a property of the session file rather than of the
+/// filesystem: a mismatch is a statement about project identity, which does not
+/// change under a live daemon, and the two "no authority recorded" verdicts are
+/// properties of the session file itself.
+///
+/// Blocking; the refresh runs this outside the catalog mutex.
+fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
+    let path = match authority {
+        WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
+        WorktreeAuthority::Tombstoned { recorded, .. } => recorded.as_path(),
+        WorktreeAuthority::Mismatched { .. }
+        | WorktreeAuthority::Unrecorded
+        | WorktreeAuthority::Unidentified => return None,
+    };
+    Some(AuthorityProbe {
+        current: DirIdentity::at(path),
+        exists: path.exists(),
     })
+}
+
+/// Re-derive a cached authority verdict against one [`AuthorityProbe`].
+/// `None` means "unchanged".
+///
+/// orgasmic:TASK-FZB6T.1 finding 5 — the tombstone is terminal for the run
+/// identity. Existence at the recorded path is no longer enough to revive it:
+/// only the *same directory object* (dev/ino) the run was once verified against
+/// proves continuity. A pruned worktree whose path is later reused by an
+/// unrelated checkout stays tombstoned, so a dead run cannot become an attach
+/// candidate again by coincidence of names.
+///
+/// Blocking (it may canonicalize and read a `project.org`); runs outside the
+/// catalog mutex.
+fn reverify_authority(
+    previous: &WorktreeAuthority,
+    probe: AuthorityProbe,
+    project_id: Option<&str>,
+    run_meta: Option<(Option<String>, Option<PathBuf>)>,
+) -> Option<WorktreeAuthority> {
+    match previous {
+        WorktreeAuthority::Verified { worktree, identity } => {
+            let still_the_same = match identity {
+                // Durable identity available: the directory object must be the
+                // same one, not merely a directory with the same name.
+                Some(identity) => probe.current == Some(*identity),
+                // No durable identity (non-unix): existence is all there is.
+                None => probe.exists,
+            };
+            if still_the_same {
+                return None;
+            }
+            Some(WorktreeAuthority::Tombstoned {
+                recorded: worktree.clone(),
+                verified_identity: *identity,
+            })
+        }
+        WorktreeAuthority::Tombstoned {
+            verified_identity, ..
+        } => {
+            // A tombstone with no verified identity was already gone at first
+            // index; nothing can prove continuity for it.
+            let identity = (*verified_identity)?;
+            if probe.current != Some(identity) {
+                return None;
+            }
+            match verify_worktree_authority(project_id, run_meta) {
+                refreshed @ WorktreeAuthority::Verified { .. } => Some(refreshed),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Decide worktree authority from the recorded `RunMeta` and the filesystem.
@@ -775,15 +1171,24 @@ pub fn verify_worktree_authority(
     // before canonicalize so the reason is "gone", not "invalid": those are
     // different operator facts and only one of them is stable.
     if !recorded.exists() {
-        return WorktreeAuthority::Tombstoned { recorded };
+        return WorktreeAuthority::Tombstoned {
+            recorded,
+            verified_identity: None,
+        };
     }
     let Ok(canonical) = recorded.canonicalize() else {
         return WorktreeAuthority::Mismatched { recorded };
     };
     match crate::api::read_existing_project_identity(&canonical.join(".orgasmic/project.org")) {
-        Ok(identity) if identity.project_id == project_id => WorktreeAuthority::Verified {
-            worktree: canonical,
-        },
+        Ok(identity) if identity.project_id == project_id => {
+            // Identity of the canonical path, because that is the path a later
+            // probe stats and the path a tombstone would record.
+            let identity = DirIdentity::at(&canonical);
+            WorktreeAuthority::Verified {
+                worktree: canonical,
+                identity,
+            }
+        }
         _ => WorktreeAuthority::Mismatched { recorded },
     }
 }
@@ -919,7 +1324,10 @@ pub(crate) fn entry_from_scan(
         transport,
         harness,
         native,
-        worktree_authority: verify_worktree_authority(project_id, run_meta),
+        worktree_authority: verify_worktree_authority(project_id, run_meta.clone()),
+        run_meta_project: run_meta.as_ref().and_then(|(project, _)| project.clone()),
+        run_meta_worktree: run_meta.as_ref().and_then(|(_, worktree)| worktree.clone()),
+        run_meta_recorded: run_meta.is_some(),
         terminal,
         final_release_outcome: release,
         driver_terminal_event: driver_event.map(|(event, _)| event),
@@ -1032,6 +1440,9 @@ fn unreadable_entry(
         harness: None,
         native: None,
         worktree_authority: WorktreeAuthority::Unrecorded,
+        run_meta_project: None,
+        run_meta_worktree: None,
+        run_meta_recorded: false,
         terminal: None,
         final_release_outcome: None,
         driver_terminal_event: None,
@@ -1090,7 +1501,14 @@ pub struct HistoryBucket {
 }
 
 /// Event classes, in the order `run history inspect` reports them.
-pub const EVENT_CLASSES: [&str; 7] = [
+///
+/// `blank` and `torn` were added by orgasmic:TASK-FZB6T.1 finding 2: the
+/// accounting claims every byte on disk lands in exactly one class, and before
+/// them a blank line was skipped outright (its bytes vanished from the total)
+/// while a final record with no terminating newline was charged a newline it
+/// does not have. Both are ordinary shapes — a session file torn by a kill ends
+/// mid-line by definition.
+pub const EVENT_CLASSES: [&str; 9] = [
     "lifecycle",
     "rendered_tui",
     "semantic",
@@ -1098,6 +1516,8 @@ pub const EVENT_CLASSES: [&str; 7] = [
     "babysitter_summary",
     "note",
     "unparsed",
+    "blank",
+    "torn",
 ];
 
 /// Classify one raw JSONL line without parsing its payload.
@@ -1143,16 +1563,45 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Whether an event class may be reclaimed by a maintenance pass.
+/// Whether a run's transport renders into a pane rather than streaming
+/// structured turn events.
 ///
-/// Only `rendered_tui` is: it is storage the current build already forbids
+/// orgasmic:TASK-FZB6T.1 finding 2 — this is the whole difference between a
+/// `text_chunk` that is a screen repaint and a `text_chunk` that is the
+/// assistant's actual words. A pane transport (rmux/tmux) had no other channel
+/// before dec_WDR5K item 7, so its legacy `text_chunk` lines are rendered TUI
+/// output; an `acp-*` transport's `text_chunk` is the model's or a subprocess's
+/// content, which is evidence and must never be reclaimed.
+///
+/// Mirrors `PaneMux::for_transport` in `supervisor.rs` deliberately rather than
+/// sharing it: this module must not depend on the supervisor's private
+/// classifier, and the two answer different questions about the same string.
+pub fn transport_is_pane(transport: &str) -> bool {
+    matches!(transport.trim(), "rmux" | "tmux" | "tmux-tui")
+}
+
+/// Whether an event class may be reclaimed by a maintenance pass, for a run on
+/// `transport`.
+///
+/// Only a **proven rendered pane payload** is: a `rendered_tui` line written by
+/// a pane transport. It is storage the current build already forbids
 /// (dec_WDR5K item 7), it carries no lifecycle or native correlation, and it is
-/// the entire 2.239 GiB story. Lifecycle is authority. Semantic events are
-/// budgeted evidence, already capped at write time. `unparsed` is refused on
-/// principle — a line this accounting could not classify is the last line that
-/// should be deleted on its say-so.
-pub fn class_is_reclaimable(event_class: &str) -> bool {
-    event_class == "rendered_tui"
+/// the entire 2.239 GiB story.
+///
+/// Everything else is refused, and the refusals are the point
+/// (orgasmic:TASK-FZB6T.1 finding 2):
+///
+/// - lifecycle is authority;
+/// - semantic events are budgeted evidence, capped at write time;
+/// - `unparsed`, `blank`, and `torn` are refused on principle — a line this
+///   accounting could not classify is the last line that should be deleted on
+///   its say-so;
+/// - a `text_chunk` from an `acp-*` transport, or from a run whose transport
+///   was never recorded, is structured harness/subprocess evidence. The old
+///   rule reclaimed all of it, which would have deleted every ACP assistant
+///   turn and tool result on the board.
+pub fn class_is_reclaimable(event_class: &str, transport: Option<&str>) -> bool {
+    event_class == "rendered_tui" && transport.is_some_and(transport_is_pane)
 }
 
 /// Read one session file and account for it by event class.
@@ -1160,24 +1609,84 @@ pub fn class_is_reclaimable(event_class: &str) -> bool {
 /// Whole-file by necessity — accounting for bytes means visiting them — which
 /// is why this runs only under an explicit operator command and never on an
 /// inventory poll.
+///
+/// Every byte of the file lands in exactly one class, including the two shapes
+/// the first cut lost (orgasmic:TASK-FZB6T.1 finding 2): a blank or
+/// whitespace-only record is charged to `blank` rather than skipped, and a
+/// final record with no terminating newline is charged to `torn` at its true
+/// length rather than to its apparent class plus a newline it does not have.
 pub fn inspect_session_file(path: &Path) -> std::io::Result<BTreeMap<String, HistoryClassTotals>> {
-    use std::io::BufRead;
     let file = std::fs::File::open(path)?;
-    let reader = std::io::BufReader::with_capacity(256 * 1024, file);
+    let mut reader = std::io::BufReader::with_capacity(256 * 1024, file);
     let mut totals: BTreeMap<String, HistoryClassTotals> = BTreeMap::new();
-    for line in reader.split(b'\n') {
-        let line = line?;
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        let class = classify_history_line(&line);
-        let bucket = totals.entry(class.to_string()).or_default();
+    for record in read_history_records(&mut reader) {
+        let record = record?;
+        let bucket = totals.entry(record.class.to_string()).or_default();
         bucket.lines += 1;
-        // +1 for the newline this line consumed on disk.
-        bucket.bytes += line.len() as u64 + 1;
+        bucket.bytes += record.bytes;
         bucket.files = 1;
     }
     Ok(totals)
+}
+
+/// One physical record of a session file, with its on-disk byte cost.
+#[derive(Debug, Clone)]
+pub struct HistoryRecord {
+    /// The record's bytes INCLUDING its terminating newline when it had one.
+    pub raw: Vec<u8>,
+    /// Total bytes this record occupies on disk.
+    pub bytes: u64,
+    pub class: &'static str,
+    /// The record ended without a newline, so it is the file's last one and it
+    /// may have been cut off mid-write.
+    pub torn: bool,
+}
+
+/// Iterate a session file's physical records, accounting for every byte.
+pub fn read_history_records<R: std::io::BufRead>(
+    reader: &mut R,
+) -> impl Iterator<Item = std::io::Result<HistoryRecord>> + '_ {
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+        let mut raw = Vec::new();
+        match reader.read_until(b'\n', &mut raw) {
+            Ok(0) => {
+                done = true;
+                None
+            }
+            Ok(_) => {
+                let bytes = raw.len() as u64;
+                let torn = !raw.ends_with(b"\n");
+                if torn {
+                    done = true;
+                }
+                let content = raw.strip_suffix(b"\n").unwrap_or(&raw);
+                let class = if content.iter().all(u8::is_ascii_whitespace) {
+                    "blank"
+                } else if torn {
+                    // A record with no terminating newline is the last one in
+                    // the file and cannot be proven complete. It is accounted
+                    // truthfully and never reclaimed, whatever it looks like.
+                    "torn"
+                } else {
+                    classify_history_line(content)
+                };
+                Some(Ok(HistoryRecord {
+                    raw,
+                    bytes,
+                    class,
+                    torn,
+                }))
+            }
+            Err(error) => {
+                done = true;
+                Some(Err(error))
+            }
+        }
+    })
 }
 
 /// Full `run history inspect` report for a set of catalog entries.
@@ -1221,7 +1730,13 @@ pub fn retention_tiers() -> Vec<RetentionTier> {
 /// Account for every session file behind `entries`, grouped by driver+harness
 /// and event class.
 pub fn inspect_history(entries: &[RunCatalogEntry]) -> HistoryInspectReport {
-    let mut by_key: BTreeMap<(String, String), HistoryClassTotals> = BTreeMap::new();
+    // Keyed by (driver label, transport) so the reclaimability verdict a bucket
+    // reports is the one that was actually applied to its bytes: two runs can
+    // share a `driver` label only when they share a transport, but keeping the
+    // transport in the key makes that a property of the code rather than of the
+    // label format.
+    let mut by_key: BTreeMap<(String, Option<String>, String), HistoryClassTotals> =
+        BTreeMap::new();
     let mut reclaimable_by_driver: BTreeMap<String, u64> = BTreeMap::new();
     let mut session_file_bytes = 0_u64;
     let mut bytes_accounted = 0_u64;
@@ -1229,6 +1744,7 @@ pub fn inspect_history(entries: &[RunCatalogEntry]) -> HistoryInspectReport {
 
     for entry in entries {
         let driver = entry.driver_label();
+        let transport = entry.transport.clone();
         session_file_bytes += entry.file_bytes;
         let Ok(totals) = inspect_session_file(&entry.session_path) else {
             unreadable_files += 1;
@@ -1236,10 +1752,12 @@ pub fn inspect_history(entries: &[RunCatalogEntry]) -> HistoryInspectReport {
         };
         for (class, class_totals) in totals {
             bytes_accounted += class_totals.bytes;
-            if class_is_reclaimable(&class) {
+            if class_is_reclaimable(&class, transport.as_deref()) {
                 *reclaimable_by_driver.entry(driver.clone()).or_default() += class_totals.bytes;
             }
-            let bucket = by_key.entry((driver.clone(), class)).or_default();
+            let bucket = by_key
+                .entry((driver.clone(), transport.clone(), class))
+                .or_default();
             bucket.files += class_totals.files;
             bucket.lines += class_totals.lines;
             bucket.bytes += class_totals.bytes;
@@ -1248,8 +1766,8 @@ pub fn inspect_history(entries: &[RunCatalogEntry]) -> HistoryInspectReport {
 
     let buckets: Vec<HistoryBucket> = by_key
         .into_iter()
-        .map(|((driver, event_class), totals)| HistoryBucket {
-            reclaimable: class_is_reclaimable(&event_class),
+        .map(|((driver, transport, event_class), totals)| HistoryBucket {
+            reclaimable: class_is_reclaimable(&event_class, transport.as_deref()),
             driver,
             event_class,
             totals,
@@ -1266,8 +1784,9 @@ pub fn inspect_history(entries: &[RunCatalogEntry]) -> HistoryInspectReport {
         unreadable_files,
         retention: retention_tiers(),
         note: "read-only accounting; no file is written, moved, or deleted. \
-               Compaction of the reclaimable bytes requires an explicit, \
-               separately-authorized maintenance run.",
+               Reclaiming these bytes is `run history compact`, which is a dry \
+               run until it is given the manifest id of the plan it printed, \
+               archives every original whole, and can be rolled back.",
     }
 }
 
@@ -1502,6 +2021,481 @@ mod tests {
         );
     }
 
+    /// orgasmic:TASK-FZB6T.1 finding 5 — a tombstone is terminal for the run
+    /// identity. Removing the worktree and creating a NEW one at the same path
+    /// must not make the dead run attachable again.
+    #[tokio::test]
+    async fn a_recreated_worktree_at_the_same_path_does_not_revive_a_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let worktree = dir.path().join("wt");
+        project(&worktree, "proj-1");
+        write_session(&sessions, "run-wt", 4096, None, &worktree, "proj-1");
+
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let verified = catalog.entries().remove(0).worktree_authority;
+        let WorktreeAuthority::Verified { identity, .. } = &verified else {
+            panic!("expected a verified worktree, got {verified:?}");
+        };
+        assert!(
+            identity.is_some(),
+            "a verified worktree must pin a durable directory identity"
+        );
+
+        // Pruned.
+        std::fs::remove_dir_all(&worktree).unwrap();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(catalog.entries()[0].worktree_authority.is_tombstoned());
+
+        // A DIFFERENT checkout is later created at the same path — a perfectly
+        // ordinary thing for a dispatch worktree path to have happen to it.
+        project(&worktree, "proj-1");
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.rebuilt, 0, "the session file did not change");
+        let entry = catalog.entries().remove(0);
+        assert!(
+            entry.worktree_authority.is_tombstoned(),
+            "a path reused by an unrelated directory must not revive a dead run: {:?}",
+            entry.worktree_authority
+        );
+        assert!(
+            entry.worktree_authority.verified_worktree().is_none(),
+            "a tombstoned run offers no verified worktree to attach into"
+        );
+    }
+
+    /// The one transition a tombstone IS allowed to make: the SAME directory
+    /// object comes back, which is what an unmounted volume returning looks
+    /// like. Proven by making the recorded path a symlink and swapping it back
+    /// to the original directory.
+    #[tokio::test]
+    async fn a_tombstone_lifts_only_when_the_original_directory_returns() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let real = dir.path().join("real-worktree");
+        project(&real, "proj-1");
+        let link = dir.path().join("wt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(not(unix))]
+        return;
+        write_session(&sessions, "run-wt", 4096, None, &link, "proj-1");
+
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(catalog.entries()[0]
+            .worktree_authority
+            .verified_worktree()
+            .is_some());
+
+        // The volume goes away.
+        std::fs::rename(&real, dir.path().join("stashed")).unwrap();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(catalog.entries()[0].worktree_authority.is_tombstoned());
+
+        // The very same directory comes back.
+        std::fs::rename(dir.path().join("stashed"), &real).unwrap();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(
+            catalog.entries()[0]
+                .worktree_authority
+                .verified_worktree()
+                .is_some(),
+            "the original directory object returning IS continuity: {:?}",
+            catalog.entries()[0].worktree_authority
+        );
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 7 — a snapshot entry is admitted through
+    /// session-directory authority and current file identity, not by living
+    /// somewhere under the project root.
+    #[tokio::test]
+    async fn semantically_corrupt_snapshot_entries_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let real = write_session(
+            &sessions,
+            "run-real",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &root,
+            "proj-1",
+        );
+
+        let source = RunCatalog::new();
+        source.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let template = source.entries().remove(0);
+        let snapshot_path = root.join(CATALOG_REL_PATH);
+
+        // A decoy file that exists but is not a session record.
+        std::fs::write(root.join("decoy.jsonl"), "{}\n").unwrap();
+        let nested = sessions.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("deep.jsonl"), "{}\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, sessions.join("link.jsonl")).unwrap();
+
+        let cases: Vec<(&str, PathBuf)> = vec![
+            // Wrong parent: under the project root, not a session record.
+            ("wrong parent", root.join("decoy.jsonl")),
+            // Not a DIRECT child.
+            ("nested below the sessions dir", nested.join("deep.jsonl")),
+            // Path traversal that lands back inside the project root.
+            (
+                "traversal out and back",
+                sessions.join("../../../.orgasmic/project.org"),
+            ),
+            // Traversal whose textual parent looks right.
+            (
+                "traversal through the sessions dir",
+                sessions.join("../sessions/../sessions/run-real.jsonl"),
+            ),
+            // A record for a file that is not there any more.
+            ("missing file", sessions.join("run-gone.jsonl")),
+            // Not a `.jsonl` at all.
+            ("non-session extension", sessions.join("notes.txt")),
+            #[cfg(unix)]
+            ("symlink", sessions.join("link.jsonl")),
+        ];
+        for (name, session_path) in cases {
+            let mut entry = template.clone();
+            entry.session_path = session_path.clone();
+            let snapshot = json!({
+                "catalog_version": CATALOG_VERSION,
+                "written_at": Utc::now(),
+                "entries": [entry],
+            });
+            std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+            let catalog = RunCatalog::new();
+            assert_eq!(
+                catalog.load_snapshot(&root),
+                SnapshotLoad::Loaded { entries: 0 },
+                "{name}: {} must not be admitted as a session record",
+                session_path.display()
+            );
+            assert_eq!(catalog.len(), 0, "{name}");
+        }
+
+        // And a record whose file identity moved on is refused too: the entry
+        // describes bytes that are no longer there.
+        let mut stale = template.clone();
+        stale.fingerprint.len += 1;
+        let snapshot = json!({
+            "catalog_version": CATALOG_VERSION,
+            "written_at": Utc::now(),
+            "entries": [stale],
+        });
+        std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        let catalog = RunCatalog::new();
+        assert_eq!(
+            catalog.load_snapshot(&root),
+            SnapshotLoad::Loaded { entries: 0 },
+            "an entry whose file identity changed must be re-derived, not trusted"
+        );
+
+        // The sound entry still loads, so the rule is not merely refusing
+        // everything.
+        std::fs::write(&snapshot_path, source.snapshot_bytes(&root).unwrap()).unwrap();
+        let catalog = RunCatalog::new();
+        assert_eq!(
+            catalog.load_snapshot(&root),
+            SnapshotLoad::Loaded { entries: 1 }
+        );
+        let _ = real;
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 6 — dirty state and the save throttle are
+    /// per project. One project's save must not consume another's pending
+    /// snapshot, nor throttle a project that has never been saved.
+    #[tokio::test]
+    async fn snapshot_dirty_state_and_throttling_are_per_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        project(&first, "proj-1");
+        project(&second, "proj-2");
+        let first_sessions = first.join(".orgasmic/tmp/sessions");
+        let second_sessions = second.join(".orgasmic/tmp/sessions");
+        write_session(
+            &first_sessions,
+            "run-1",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &first,
+            "proj-1",
+        );
+        write_session(
+            &second_sessions,
+            "run-2",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &second,
+            "proj-2",
+        );
+
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(
+            &first_sessions,
+            Some("proj-1"),
+            &first,
+            SessionScanBudget::DEFAULT,
+        );
+        catalog.refresh_dir(
+            &second_sessions,
+            Some("proj-2"),
+            &second,
+            SessionScanBudget::DEFAULT,
+        );
+
+        // Saving the first project must not clear the second's pending work,
+        // and the second's save must not be throttled by the first's.
+        let first_bytes = catalog.snapshot_bytes(&first).expect("first has work");
+        let second_bytes = catalog
+            .snapshot_bytes(&second)
+            .expect("a second project's snapshot must not be consumed by the first's save");
+        assert!(String::from_utf8(first_bytes)
+            .unwrap()
+            .contains("run-1.jsonl"));
+        let second_text = String::from_utf8(second_bytes).unwrap();
+        assert!(second_text.contains("run-2.jsonl"));
+        assert!(
+            !second_text.contains("run-1.jsonl"),
+            "a project's snapshot must carry only its own records"
+        );
+
+        // Both are clean now, and a steady-state refresh writes nothing.
+        catalog.refresh_dir(
+            &first_sessions,
+            Some("proj-1"),
+            &first,
+            SessionScanBudget::DEFAULT,
+        );
+        assert!(catalog.snapshot_bytes(&first).is_none());
+        assert!(catalog.snapshot_bytes(&second).is_none());
+
+        // A new run in the SECOND project marks only the second dirty.
+        write_session(
+            &second_sessions,
+            "run-3",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &second,
+            "proj-2",
+        );
+        catalog.refresh_dir(
+            &second_sessions,
+            Some("proj-2"),
+            &second,
+            SessionScanBudget::DEFAULT,
+        );
+        assert!(catalog
+            .snapshot_bytes_after(&second, std::time::Duration::ZERO)
+            .is_some());
+        assert!(
+            catalog
+                .snapshot_bytes_after(&first, std::time::Duration::ZERO)
+                .is_none(),
+            "an unchanged project must not be rewritten because another changed"
+        );
+    }
+
+    /// orgasmic:TASK-FZB6T.1 finding 8 — the catalog mutex is not held across
+    /// filesystem work.
+    ///
+    /// Deterministic, not timed: the refresh calls a hook while it is scanning
+    /// session files, and the hook proves the lock is free by taking it —
+    /// `try_lock` from the refresh's own thread would succeed on a re-entrant
+    /// lock and prove nothing, so the probe runs on another thread and must
+    /// complete while the scan is still in flight.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_catalog_mutex_is_free_while_session_files_are_scanned() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        for index in 0..24 {
+            write_session(
+                &sessions,
+                &format!("run-{index}"),
+                256 * 1024,
+                Some(ReleaseOutcome::Completed),
+                &root,
+                "proj-1",
+            );
+        }
+
+        let catalog = RunCatalog::new();
+        let observations = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let seen = observations.clone();
+        let probed = catalog.clone();
+        catalog.refresh_dir_observed(
+            &sessions,
+            Some("proj-1"),
+            &root,
+            SessionScanBudget::DEFAULT,
+            &mut |_| {
+                // Another thread does what an inventory poll and the session
+                // writer do: read the map, and invalidate a path. Both must
+                // complete while this refresh is scanning.
+                let probed = probed.clone();
+                let seen = seen.clone();
+                std::thread::spawn(move || {
+                    let _ = probed.entries();
+                    probed.invalidate_session(std::path::Path::new("/nonexistent.jsonl"));
+                    seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                })
+                .join()
+                .expect("a catalog read must not be blocked by an in-flight scan");
+            },
+        );
+        assert!(
+            observations.load(std::sync::atomic::Ordering::SeqCst) >= 24,
+            "the hook must have run once per rebuilt file"
+        );
+    }
+
+    /// A lifecycle append that lands while a refresh is scanning wins: the
+    /// refresh's compare-and-swap drops its own now-stale entry rather than
+    /// overwriting the invalidation.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_write_during_a_scan_wins_the_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let target = write_session(
+            &sessions,
+            "run-a",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &root,
+            "proj-1",
+        );
+
+        let catalog = RunCatalog::new();
+        let racer = catalog.clone();
+        let path = target.clone();
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = fired.clone();
+        catalog.refresh_dir_observed(
+            &sessions,
+            Some("proj-1"),
+            &root,
+            SessionScanBudget::DEFAULT,
+            &mut |_| {
+                if flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                // The writer's lifecycle-append invalidation, delivered while
+                // the scan of this very file is in flight.
+                racer.invalidate_session(&path);
+            },
+        );
+        assert_eq!(
+            catalog.len(),
+            0,
+            "an entry built from bytes older than a concurrent lifecycle write must \
+             not be committed"
+        );
+        // And the next refresh re-derives it from the newer bytes.
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.rebuilt, 1);
+        assert_eq!(catalog.len(), 1);
+    }
+
+    /// Concurrent refreshes, reads and writer invalidations converge without
+    /// deadlock and without losing the board.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_refresh_and_write_traffic_stays_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let mut paths = Vec::new();
+        for index in 0..16 {
+            paths.push(write_session(
+                &sessions,
+                &format!("run-{index}"),
+                64 * 1024,
+                Some(ReleaseOutcome::Completed),
+                &root,
+                "proj-1",
+            ));
+        }
+
+        let catalog = RunCatalog::new();
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let catalog = catalog.clone();
+            let sessions = sessions.clone();
+            let root = root.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..8 {
+                    catalog.refresh_dir(
+                        &sessions,
+                        Some("proj-1"),
+                        &root,
+                        SessionScanBudget::DEFAULT,
+                    );
+                }
+            }));
+        }
+        for _ in 0..4 {
+            let catalog = catalog.clone();
+            let paths = paths.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..32 {
+                    for path in &paths {
+                        catalog.invalidate_session(path);
+                    }
+                    let _ = catalog.entries();
+                }
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("no thread may deadlock or panic");
+        }
+
+        // One quiet refresh afterwards restores the full board, whatever
+        // interleaving happened.
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.session_files, 16);
+        assert_eq!(catalog.len(), 16);
+    }
+
+    #[tokio::test]
+    async fn an_exact_run_id_resolves_without_a_board_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        for index in 0..8 {
+            write_session(
+                &sessions,
+                &format!("run-{index}"),
+                4096,
+                Some(ReleaseOutcome::Completed),
+                &root,
+                "proj-1",
+            );
+        }
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let found = catalog.find_by_run_id("run-5").expect("indexed run");
+        assert_eq!(found.run_id, "run-5");
+        assert!(catalog.find_by_run_id("run-nope").is_none());
+    }
+
     #[tokio::test]
     async fn a_corrupt_snapshot_is_discarded_and_rebuilt() {
         let dir = tempfile::tempdir().unwrap();
@@ -1665,12 +2659,69 @@ mod tests {
             "pane_activity"
         );
         assert_eq!(classify_history_line(b"not json at all"), "unparsed");
-        // Only rendered TUI is reclaimable; authority and unclassifiable lines
-        // are not.
-        assert!(class_is_reclaimable("rendered_tui"));
-        for class in ["lifecycle", "semantic", "pane_activity", "unparsed", "note"] {
-            assert!(!class_is_reclaimable(class), "{class}");
+        // Only a PANE transport's rendered TUI is reclaimable; authority,
+        // unclassifiable lines, and the same `text_chunk` shape from a
+        // structured transport are not (orgasmic:TASK-FZB6T.1 finding 2).
+        for pane in ["rmux", "tmux", "tmux-tui"] {
+            assert!(class_is_reclaimable("rendered_tui", Some(pane)), "{pane}");
         }
+        for structured in ["acp-stdio", "acp-claude", "cursor-acp", "external"] {
+            assert!(
+                !class_is_reclaimable("rendered_tui", Some(structured)),
+                "{structured}: a structured transport's text_chunk is evidence"
+            );
+        }
+        assert!(
+            !class_is_reclaimable("rendered_tui", None),
+            "a run whose transport was never recorded cannot prove its text_chunk is a repaint"
+        );
+        for class in [
+            "lifecycle",
+            "semantic",
+            "pane_activity",
+            "unparsed",
+            "note",
+            "blank",
+            "torn",
+        ] {
+            assert!(!class_is_reclaimable(class, Some("rmux")), "{class}");
+        }
+    }
+
+    /// Every byte on disk lands in exactly one class, including the two shapes
+    /// the first cut lost: a blank record, and a final record with no
+    /// terminating newline (orgasmic:TASK-FZB6T.1 finding 2).
+    #[test]
+    fn blank_and_torn_records_are_accounted_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-torn.jsonl");
+        let mut content = String::new();
+        content.push_str("{\"seq\":0,\"kind\":\"lifecycle\",\"event\":{\"phase\":\"acquire\"}}\n");
+        content.push('\n');
+        content.push_str("   \n");
+        content.push_str(
+            "{\"seq\":1,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chunk\"}}\n",
+        );
+        // Torn: the process died mid-line, so there is no trailing newline.
+        content.push_str("{\"seq\":2,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_ch");
+        std::fs::write(&path, &content).unwrap();
+
+        let totals = inspect_session_file(&path).unwrap();
+        let accounted: u64 = totals.values().map(|class| class.bytes).sum();
+        assert_eq!(
+            accounted,
+            content.len() as u64,
+            "every byte on disk must land in exactly one class: {totals:?}"
+        );
+        assert_eq!(totals["blank"].lines, 2);
+        assert_eq!(totals["blank"].bytes, 1 + 4);
+        assert_eq!(totals["torn"].lines, 1);
+        assert!(
+            !class_is_reclaimable("torn", Some("rmux")),
+            "a record that may have been cut off mid-write is never reclaimed"
+        );
+        assert_eq!(totals["rendered_tui"].lines, 1);
+        assert_eq!(totals["lifecycle"].lines, 1);
     }
 
     /// The dry run must account for reclaimable bytes exactly, and change
