@@ -1192,3 +1192,4 @@ signature so the red run reaches that assertion independently.
 - fmt, clippy -D warnings, focused crate tests. Run gates with the TASK-NTNK0
   PATH correction and QUOTE =required_test_tooling_is_present=. Do NOT run the
   billed harness test (TASK-099T6); do NOT loop the full workspace suite.
+

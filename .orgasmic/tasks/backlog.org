@@ -1996,3 +1996,96 @@ the state, but it means the recovery path is also compromised by the same fault.
   lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
   transaction so dispatch-close is one commit).
 
+* BACKLOG TASK-Q8JEV The installed-harness spinner guard goes silent if Claude ships a sub-1-MiB launcher    :testing:daemon:
+:PROPERTIES:
+:DEPENDS_ON: TASK-4CSMY
+:ID: TASK-Q8JEV
+:PRIORITY: P3
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+** Description
+
+=status_spinner_glyphs_cover_the_installed_claude_frame_set= ignores candidate
+binaries smaller than 1 MiB (=supervisor.rs:10540-10576=) and skips entirely
+when no qualifying binary exists (=:10718-10724=).
+
+Both choices are correct today and were deliberate: the floor stops a tiny
+=claude= PATH shim — which the rmux dispatch environment really does put ahead of
+the real binary (TASK-NTNK0) — from tripping the needle-absent FAILURE, and the
+skip avoids reddening every claude-less host including CI.
+
+The residual, in the round-4 reviewers words: if Anthropic later ships a real
+sub-1-MiB launcher rather than a symlink to the bundled executable, THIS AUDIT
+BECOMES SILENT. The guard would skip, the table would stop being checked against
+the harness, and the failure mode is the one TASK-4CSMY.2 exists to prevent — a
+stale allowlist that kills healthy workers — with nothing noticing.
+
+Measured on this host at review time: =~/.local/bin/claude= canonicalizes to a
+256,908,272-byte executable, so the floor does not skip it today.
+
+** Options, per the reviewer
+
+- a hermetic fixture: pin a captured copy of the frame arrays as test data so the
+  audit runs everywhere and the installed-binary check becomes a bonus;
+- a dedicated claude-present canary that fails loudly when the guard skips on a
+  host where claude IS installed but no candidate qualified;
+- revisit the floor: identify the product by something other than size.
+
+** Acceptance
+
+- The audit cannot go silent on a host where Claude Code is installed.
+- A tiny PATH shim still does not trip a false failure (do not regress
+  TASK-NTNK0s interaction).
+- Claude-less hosts, including CI, stay green without a ToolRequirement.
+
+* BACKLOG TASK-KF223 Two allowlisted status glyphs are capture-derived and unguarded against role drift    :daemon:drivers:
+:PROPERTIES:
+:DEPENDS_ON: TASK-4CSMY
+:ID: TASK-KF223
+:PRIORITY: P3
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+** Description
+
+=STATUS_SPINNER_GLYPHS= now holds eight glyphs. Six are extracted from the
+installed claude binary and are covered by
+=status_spinner_glyphs_cover_the_installed_claude_frame_set=. Two are NOT:
+
+- =U+25CF= — claude, from a live pane capture. The binarys frame array does not
+  contain it, so the guard cannot check it. The TASK-4CSMY.2 author noted ~10
+  other =U+25CF= sites in the binary and judged that chasing which code path
+  paints it was out of scope for a false-kill fix.
+- =U+25E6= — codex, from the round-3 reviewers live pane capture. Never
+  extracted from any binary.
+
+Neither is a defect today: both have real measured live-pane provenance, and
+they are in the table for good reason. The gap is that if either harness changes
+the ROLE of that glyph — from a status row to a transcript bullet — nothing
+notices, and the failure direction flips to a false RESCUE: an at-rest pane whose
+transcript starts with that glyph would be classified Working and survive to the
+four-hour ceiling.
+
+That is exactly the defect class TASK-JQ8AV.1 and TASK-4CSMY.1 were both raised
+to close, surviving in the two places the new audit cannot reach.
+
+** Work
+
+- Trace the =U+25CF= paint path in the claude binary and, if it is extractable,
+  fold it into the same guard.
+- Decide how the codex glyph gets refreshed — a periodic re-capture under a named
+  task, or extraction from the codex binary if its status row is reachable the
+  same way. Note the round-3 reviewer captured it live from a real codex pane, so
+  a repeatable capture recipe is feasible; measuring it costs a codex run, not a
+  billed claude run.
+- If neither is extractable, say so in the table comment next to those two
+  entries, so the next reader knows which glyphs are audited and which are
+  trusted.
+
+** Acceptance
+
+- Every entry in =STATUS_SPINNER_GLYPHS= is either machine-audited against its
+  harness or explicitly annotated as capture-only with its capture date.
+- No regression to the false-kill direction: a real live status row must still
+  be recognised.

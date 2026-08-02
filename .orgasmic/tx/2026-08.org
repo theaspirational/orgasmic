@@ -2833,3 +2833,150 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-02 Sun 23:10:14 reviewer.reported TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4204
+:TIME:         [2026-08-02 Sun 23:10:14]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:RUN_ID:       run-20260802T230112-54770735662940c8aeea66e25ff51dc3
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 23:10:52 reviewer.done TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4205
+:TIME:         [2026-08-02 Sun 23:10:52]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:REASON:       SHIP, no findings, after four rounds on one mechanism. The round-3 blocker is closed: U+2736 accepted, U+2217 no longer claimed as measured, positive controls independent of the production table, and the installed-binary guard fails closed once it identifies a real claude binary. The reviewer re-ran the extraction read-only and confirmed 6 escaped occurrences with ZERO literal UTF-8, corroborating the JS-escape trap, and corrected the cited byte offset — 238701938 points 8 bytes into the unique match that starts at 238701930, though the extractor does not depend on it. It verified the tautology is closed (removing U+2736 now fails WITHOUT relying on the installed binary) and that the real-pane arm is load-bearing. Two residuals were explicitly classified as separate follow-ups rather than round five: a future sub-1-MiB claude launcher would make the audit silent, and the two capture-derived glyphs remain unguarded. Its closing operational note is the one to carry: source shippability is not evidence the installed daemon has these commits — keep the 3600s tmux stall override until the runtime is confirmed rebuilt.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         8m
+:REVIEWED_DIFF: 9a97ba5..1effe66
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      SHIP
+:FINDINGS:     none
+:CLOSED_TX:    tx-20260802-orgasmic-4180
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:10:53 reviewer.done TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4206
+:TIME:         [2026-08-02 Sun 23:10:53]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:REASON:       SHIP, no findings, after four rounds on one mechanism. The round-3 blocker is closed: U+2736 accepted, U+2217 no longer claimed as measured, positive controls independent of the production table, and the installed-binary guard fails closed once it identifies a real claude binary. The reviewer re-ran the extraction read-only and confirmed 6 escaped occurrences with ZERO literal UTF-8, corroborating the JS-escape trap, and corrected the cited byte offset — 238701938 points 8 bytes into the unique match that starts at 238701930, though the extractor does not depend on it. It verified the tautology is closed (removing U+2736 now fails WITHOUT relying on the installed binary) and that the real-pane arm is load-bearing. Two residuals were explicitly classified as separate follow-ups rather than round five: a future sub-1-MiB claude launcher would make the audit silent, and the two capture-derived glyphs remain unguarded. Its closing operational note is the one to carry: source shippability is not evidence the installed daemon has these commits — keep the 3600s tmux stall override until the runtime is confirmed rebuilt.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         8m
+:REVIEWED_DIFF: 9a97ba5..1effe66
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      SHIP
+:FINDINGS:     none
+:CLOSED_TX:    tx-20260802-orgasmic-4180
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:10:53 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4207
+:TIME:         [2026-08-02 Sun 23:10:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:10:53 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4208
+:TIME:         [2026-08-02 Sun 23:10:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-JQ8AV to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:11:11 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4209
+:TIME:         [2026-08-02 Sun 23:11:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       SHIP verdict, round-4 independent review tx-20260802-orgasmic-4205, no findings. Four rounds: the tmux pane liveness channel and generalised open-turn consult landed (7d9c60c), a BLOCK SHIP on free-form classification was closed by TASK-JQ8AV.1, a second BLOCK SHIP on column-0 admitting completed assistant rows was closed by TASK-4CSMY.1, and a third on the incomplete spinner allowlist — a false KILL — was closed by TASK-4CSMY.2, which also made the table auditable against the installed binary so it cannot drift silently again. Gates green throughout; both injection proofs replay red-then-green. NOTE: the fix is not in the running daemon (57e35de), so the 3600s tmux stall override stays mandatory until the runtime is rebuilt.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:11:12 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4210
+:TIME:         [2026-08-02 Sun 23:11:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       SHIP verdict, round-4 independent review tx-20260802-orgasmic-4206, no findings. Its own fix round TASK-JQ8AV.1 closed all three original findings (position-aware pane contract, post-probe revalidation, owned probe subprocesses with deadline and kill/reap), and the two later supervisor rounds hardened the same mechanism. The one declared residual it could not fix in scope became TASK-T7KSH, now independently confirmed.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:11:29 task.created TASK-Q8JEV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4211
+:TIME:         [2026-08-02 Sun 23:11:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q8JEV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Raised by the round-4 reviewer (tx-4205) as an explicit follow-up rather than a round-five finding. The 1 MiB floor exists to stop tiny PATH shims being mistaken for the product; a real small launcher would fall through the same floor.
+:END:
+
+* TX 2026-08-02 Sun 23:11:56 task.created TASK-KF223
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4212
+:TIME:         [2026-08-02 Sun 23:11:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KF223
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Raised by the round-4 reviewer (tx-4205) as an explicit follow-up rather than a round-five finding, and independently flagged as residual risk 2 by the TASK-4CSMY.2 author.
+:END:
