@@ -11,199 +11,248 @@
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-07-30/31: one containment failure, three merges, board clear.
-Nothing is running — =dispatch-status= is empty, in_review is empty.
+Session 2026-08-02/03: two dispatches closed, two reviewers running, and a
+measurement that invalidates how this project has been reading its own test
+suite.
 
 THE ONE THING TO KNOW
-A daemon *unit test* spawned real, billed agents that outlived it. TASK-95SGV.2's
-test built a =StageWorker { driver: "acp-stdio", harness: "hermes" }= and guarded
-the spawn with "unreachable without a hermes binary" — true on CI, false here.
-Twelve-plus =hermes acp= sessions survived as PPID-1 orphans and worked =main= for
-25+ minutes (repeated cargo tests, =cargo clean=, a probe commit, and one orphan
-running an unscoped =kill -9= sweep across the machine). They self-replicated
-while the unsafe test sat on main as =f215bb7=, each orphan re-running the test
-that spawns orphans, and stopped at the hermetic merge =b510b30=. The structural
-fix landed as TASK-3NJ9K; the residual gap is TASK-3TQ0R.
+A red suite here is not evidence about your diff until you have spent 8 seconds
+disproving the machine. Twice tonight, on two different trees, a full
+=cargo test -p orgasmic-daemon --lib= returned 14 failures and took 660-820s
+against a 43-86s comparable — and both times all 14 passed when re-run one at a
+time against the SAME already-built binary in the SAME worktree, in 8 seconds
+total. The cause was =syspolicyd= at 586% CPU, the scan chain that has
+hard-rebooted this Mac twice. Two beliefs recorded in =gotchas.org= one commit
+earlier turned out to be wrong: the Developer Tools grant does NOT prevent the
+burst (Warp holds it, and the burst happened anyway), and the trigger is test
+EXECUTION, not compilation (a full rebuild ran at 0-64%).
 
-Two rules that came out of it, both cheap and both earned:
-- A VANISHED TX ENTRY MEANS REVERTED, NOT LOST. =tx-20260730-orgasmic-3988=
-  left =.orgasmic/tx/2026-07.org= and =dispatch-close= refused, because an
-  orphan's =git checkout HEAD -- ...= reverted the daemon's *uncommitted* writes.
-  It returned verbatim once the orphans were dead. Kill first, re-read, never
-  hand-author a replacement.
-- OWNERSHIP IS PROVABLE, so prove it. Every ACP session logs its dispatch prompt
-  in =~/.hermes/logs/agent.log=. Do not pattern-match =ps=. The standing hermes
-  gateway (=hermes_cli.main gateway run=) is NOT task-owned — spare it.
+The second thing, which cost real work today: A TMUX DISPATCH ON THE INSTALLED
+DAEMON DIES ON THE WALL CLOCK NO MATTER HOW MUCH WORK IT IS DOING. The runtime
+is =57e35de=, which has JQ8AV's rmux pane-liveness channel but not TASK-4CSMY's
+tmux one. TASK-FZB6T.1's worker committed 4,004 good lines at 14:52:39Z and was
+killed at 15:00:36Z, eight minutes later, with its entire report unwritten. The
+work was salvaged off the branch; the report is gone for good. Dispatch over
+rmux until the runtime is rebuilt.
+
+Both of those are the same lesson in different clothes: the thing that looked
+like a code problem was the environment, and the cheap control existed in both
+cases. Run it first.
 
 ** Done so far
-Session 2026-07-30/31. Older sessions compacted out; their durable measurements
-already live in =.orgasmic/gotchas.org= and =decisions.org=.
+Session 2026-08-02/03. Two dispatches closed, one of them salvaged off a dead
+worker; two reviewers now running; and one finding that invalidates every
+full-suite number this project has quoted tonight.
+
+READ THIS FIRST: THE SUITE CANNOT BE TRUSTED ON THIS HOST, AND THE CONTROL IS 8
+SECONDS. Two full =cargo test -p orgasmic-daemon --lib= runs tonight returned 14
+failures each (637/651 on =d1a41c1=, 659/674 on =512d636=) and took 659.90s and
+820.47s against a 42.9-85.9s comparable. Both times, re-running those same 14
+ONE AT A TIME against the SAME already-built binary in the SAME worktree gave
+14/14 green in 8 seconds. The discriminator was =syspolicyd= at 586% CPU with
+load average 11.41 — the scan chain in =gotchas.org= that hard-rebooted this
+machine at 20:01:36 on 2026-08-02. Killing the suite dropped it to 75% within
+seconds. Never attribute a red here to a diff without the isolation rerun:
+
+: env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME \
+:   target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1
+
+Two corrections to the =gotchas.org= entry written in =d1a41c1=, both measured:
+- THE DEVELOPER TOOLS GRANT DOES NOT PREVENT THE BURST. =dev.warp.Warp-Stable=
+  holds =kTCCServiceDeveloperTool=2=, the run was hosted under Warp, and
+  syspolicyd still hit 586%. The grant was added at 21:59 on 08-02, after that
+  days reboot, so tonight was the first time it was ever under load.
+- THE TRIGGER IS TEST EXECUTION, NOT COMPILATION. A full rebuild of the daemon,
+  core and cli test binaries at =jobs=4= ran with syspolicyd at 0-64%; the test
+  run that followed pinned it at 586%. The old entry blamed build scripts and
+  proc-macro dylibs, which is where the last two investigations looked.
 
 LANDED
-- TASK-95SGV.1 (merge =f55cf6e=) — cleanup reservations release on every refusal.
-- TASK-95SGV.2 (merge =b510b30=) — the ordinary dispatch endpoint proves its
-  cleanup conflict provider-free. The first cut of this test caused the orphan
-  incident; the merged version spawns nothing.
-- TASK-RKTH1 (merge =5e6b993=) — tmux packs a whole command line into ONE imsg
-  capped at 16 KiB, and the compiled prompt rode in that argv, so a large brief
-  died as tmux's =command too long= and surfaced as an opaque =500 failed to
-  acquire worker run=. Oversized launches now go through a 0600 self-unlinking
-  launcher script: tmux sees a short path, the harness still gets the prompt as
-  one byte-exact argv element. Measured: 16 000 bytes of argv spawns, 20 000 does
-  not.
-- TASK-3NJ9K (merge =75fe95f=) — daemon driver resolution goes through
-  =crate::driver_resolution=: a pass-through normally, a default-deny fence under
-  =cfg(test)=. Two tiers, because resolving and launching differ. Resolution
-  keeps a mux allowance for live tmux/rmux coverage that never launches;
-  =resolve_launch_driver= (five call sites) refuses a mux address whose harness
-  that mode would exec. The second tier came out of manager review: the worker's
-  mode-only allowance would have passed =tmux=/=claude=, and the dispatch path
-  stages a placeholder both mux modes swap for the real binary.
-- TASK-CB6GQ (merge =9b80744=) — =node body set --section= appended when the
-  section was missing, so any typo minted a permanent heading, and no CLI verb
-  could remove one though =remove_section= existed in core, in =NodeEditOp= and
-  on the route. Editing and creating are now distinct ops, =--create= is how a
-  new section says so, =node body unset --section= removes one, and an absent
-  section is named instead of collapsing to =org file update failed=. A parity
-  test asserts every daemon edit op is reachable from some CLI verb.
+- TASK-JQ8AV.1 (merge =7ade8af=, closed =tx-4070=) — the prior session merged it
+  and died before closing, leaving the dispatch open with the work already on
+  main. Position-aware pane status contract (last 12 non-blank rows, column 0,
+  measured marker shapes) with real at-rest tmux AND rmux false-rescue arms;
+  post-probe revalidation of lifecycle/identity/precedence/progress; probe
+  subprocesses funnelled through an owned process group with a 2s child deadline
+  and kill+reap.
+- TASK-FZB6T.1 (merge =91ff72c=, closed =tx-4079=) — SALVAGED. The worker
+  committed 4,004 lines at 14:52:39Z and was killed eight minutes later at the
+  3600s stall ceiling without ever calling =dispatch finalize=; =tx-4069= had
+  recorded it orphaned. The branch was intact. Nine reviewer findings closed: a
+  confirmed archive/compact/rollback transaction with a plan-digest manifest,
+  transport-aware reclaimability, paging before classification, a payload budget
+  over the serialized event, tombstones terminal per run IDENTITY (device+inode)
+  rather than per path, per-project dirty state, snapshot admission through
+  session-directory authority, the catalog mutex released across filesystem
+  work, and exact =run show <id>= by exact lookup.
+
+WHY THAT LOSS HAPPENED, because it will happen again otherwise: the installed
+daemon is =57e35de=, which carries JQ8AVs *rmux* pane-liveness channel but not
+TASK-4CSMYs *tmux* one. A tmux dispatch on this daemon has no progress signal
+at all and dies on the wall clock regardless of how much work it is doing. Use
+rmux until the runtime is rebuilt.
+
+GATES on =91ff72c=: fmt clean; clippy -D warnings clean; core lib 158/0; cli
+green; =run_inventory_wire= 2/0; daemon lib 659/674 with all 14 reds green in
+isolation. All FOUR FZB6T injection proofs PASS red-then-green byte-identical
+(=TASK-FZB6T=, =TASK-FZB6T.1=, =-redraw=, =-corruption=).
+
+The one manager check worth repeating: =verify/TASK-FZB6T/injection.patch= was
+REGENERATED by this diff (82 lines), and a re-cut injection patch is the easiest
+place for a proof to be silently weakened. It was read against the original
+before the close — it removes the same cache-hit branch, translated into the new
+four-phase =refresh_dir=, and =expect-red=, =cmd= and =README= are untouched.
 
 FILED
-- TASK-3TQ0R (P2) — =cfg(test)= does not reach =crates/orgasmic-daemon/tests/=.
-  Audited: nothing there spawns today, so it is a structural gap, not a leak.
+- TASK-T7KSH (P2) — =inspect_rmux_binary= execs an unbounded child on the
+  daemons rmux probe path, defeating the child deadline JQ8AV.1 just installed.
+  The author MEASURED it (5.012s sweep against a 2s deadline, 120s test
+  teardown) and left it only because it is outside that tasks write scope. The
+  shipped regression deliberately answers =-V= normally, so it cannot catch this.
+- TASK-WPC6G (P2) — =gotchas.org= is off the node write surface entirely, so
+  every entry in it is a hand edit in violation of the write rule. Found by
+  trying to record the corrections above through the CLI and finding no verb.
 
-GATES on =9b80744=: daemon lib 640, drivers 313, core 156, CLI 201, node
-round-trip 8; fmt clean, clippy -D warnings clean. verify TASK-3NJ9K / RKTH1 /
-KPMFK / 95SGV.2 / CB6GQ all PASS.
-
-Three proofs were strengthened rather than merely kept green: =verify/TASK-3NJ9K=
-now injects BOTH fence tiers; =verify/TASK-KPMFK= is pinned in full again after
-the stub removed the =codex app-server= race that had forced it to be truncated;
-=verify/TASK-CB6GQ= runs its two binaries with OR'd exit codes, because chaining
-them with =&&= would have stopped at the first failure and pinned half a proof.
-
-LEDGER REPAIR: =tx-20260731-orgasmic-4025= re-records a manager observation that
-never reached the project ledger. It was written from inside a dispatch worktree
-in the small hours of 07-30, so it landed in that worktree's frozen =.orgasmic=
-snapshot (gotcha =0a054b3=) and survived only in a git stash; the live ledger for
-that day starts at 3973 and the entry claimed 3931.
-
-RUNTIME REINSTALLED FROM SOURCE [2026-08-02 Sun] — =~/.orgasmic/bin/orgasmic= now
-runs =57e35de=, closing the 55-commit gap (=tx-20260802-orgasmic-4036=). Built with
-=scripts/package-runtime.sh= under the stable =orgasmic dev codesign= identity and
-installed as a local bundle, so =install.json= stays =mode: bundle= and the TCC grant
-survived: the Documents-hosted projects index unchanged (6 projects, 550 tasks,
-parse_errors 0, no permission errors in =daemon.err.log=).
-
-Two traps were live on this path and both are structural, not luck:
-- =install.sh= SKIPS the unpack when =runtimes/<version>-<target>/= already exists.
-  The version string does NOT change between local builds, so a reinstall silently
-  installs nothing unless the old dir is moved aside first (=.bak-20260802a= here).
-- Its trailing =orgasmic status= auto-spawns a competing daemon onto the drained
-  port. =ORGASMIC_INSTALL_SKIP_STATUS=1= is required while the LaunchAgent is out.
-
-Proof was behavioural, never the version string: =/api/runs/history= (the route
-TASK-FZB6T added) answered 404 before and 200 after, and the running daemon's exec
-inode equals the freshly installed =bin/orgasmic= inode — the check that would have
-caught the 2026-07-29 no-op, where launchd restarted the OLD materialized binary
-with a fresh boot_id. TASK-RKTH1's oversized-brief fix is now in the running daemon
-(present, not re-exercised).
+TASK-STWVB re-framed rather than extended: it has now been confounded by three
+separate environment axes (89%-full disk, worktree identity, host scan load),
+each of which produced a stable-looking failure set that read as a regression.
+Its first deliverable is a gate that gives a defensible verdict on a loaded
+machine, not a per-test root cause.
 
 ** Next likely actions
-1. TASK-4CSMY (P1, backlog) — give tmux a coalesced =pane_activity= and
-   generalise TASK-JQ8AV's open-turn consult beyond rmux. Still the SHIP BLOCKER
-   for the tmux default flip, and the reason every long tmux dispatch must carry
-   =--governance-json '{"stall_timeout_secs":3600}'=.
-2. TASK-A55J7 (P1, backlog) — refuse to dispatch when no model resolves, and
+1. WAIT FOR THE TWO REVIEWERS, then close their dispatches and act on the
+   verdicts. This is the only thing genuinely in flight; everything else below
+   is ordered behind it because it depends on those verdicts.
+
+2. REBUILD AND REINSTALL THE RUNTIME FROM SOURCE — but only after the verdicts.
+   The operator authorized this explicitly 2026-08-03 ("free to rebuild and
+   restart the daemon from source when needed"), and it was DELIBERATELY NOT
+   DONE tonight. Reason: the installed daemon is =57e35de=, and everything
+   merged since is unreviewed. Reinstalling now would put an unreviewed
+   run-catalog and session-storage rewrite — deletion code that rewrites the
+   daemons own evidence of what workers did — into the daemon that manages the
+   operators six real projects. The cost of waiting is that tmux dispatches
+   stay unsafe; the cost of not waiting is the operators run history. Waiting
+   was the right trade, but it EXPIRES the moment the reviews come back clean,
+   because until the rebuild lands, TASK-4CSMYs whole point (tmux safety) is
+   unverifiable in practice and every dispatch has to go over rmux.
+   Recipe and its four traps: memory =orgasmic-runtime-reinstall=; the sharp one
+   is that =install.sh= SKIPS the unpack when =runtimes/<version>-<target>/=
+   already exists and the version string does not change between local builds,
+   so move the old dir aside first, and pass =ORGASMIC_INSTALL_SKIP_STATUS=1=.
+
+3. TASK-A55J7 (P1, backlog) — refuse to dispatch when no model resolves, and
    persist resolved model/effort on RunMeta, the dispatch tx, run list and
    dispatch-status. Resolution is exactly =--model= > task drawer > REFUSE; the
-   operator has ruled out a project-level default.
-3. TASK-0JY7M (P1, todo) — ask once per session for agent selection, and state
-   driver/harness/model/effort back after every dispatch.
-4. REVIEW POSTURE, the one decision this session deliberately did not take.
-   TASK-JQ8AV and TASK-FZB6T are now in IN_REVIEW rather than IN_PROGRESS, which
-   is what is actually true: merged (=4fc57fe=, =1b726f6=), no live worker,
-   accepted on manager-replayed injection proofs and green gates alone, neither
-   author having reported. Either dispatch reviewers over them or review-close
-   them deliberately — but the board should not drift back to reading as if the
-   work were still being written. FZB6T is the one to review first: its rescued
-   refactor changed the run-catalog concurrency model and its author never
-   described it.
-5. TASK-3TQ0R (P2, backlog) — extend the fence past =cfg(test)= to daemon
-   integration tests. Not urgent (nothing there spawns today) but it is the last
-   place the orphan class can still be written by accident.
-6. TASK-STWVB (P2, in_progress) now carries a second axis: the suite's flakes are
-   worktree-sensitive, not only load-sensitive. Identical code in two worktrees
-   measured 42.9s/clean against 85.9s/red. Any full-suite number quoted anywhere
-   needs the worktree held constant to mean anything.
+   operator has ruled out a project-level default. Still the standing reason
+   every dispatch must pass =--model= explicitly and echo the four values back.
+
+4. TASK-0JY7M (P1, todo) — ask once per session for agent selection, and state
+   driver/harness/model/effort back after every dispatch. Asked and answered
+   this session by hand: reviewers on codex/gpt-5.6-sol/high, implementers on
+   claude/opus-5/high.
+
+5. TASK-T7KSH (P2, backlog, filed today) — the unbounded =inspect_rmux_binary=
+   child. Sharper than its priority suggests right now, because rmux is
+   currently the ONLY safe dispatch transport on the installed daemon, and this
+   is a hole on the rmux probe path specifically.
+
+6. TASK-STWVB (P2) — now re-framed. Its first deliverable is a gate that returns
+   a defensible verdict on a loaded machine; the per-test root cause is second.
+   The 8-second isolation control recorded in Done-so-far is most of a design.
+
+7. TASK-WPC6G (P2, filed today) — put =gotchas.org= on the node write surface.
+   Small, and it removes a standing rule violation that every session currently
+   has to either commit or drop knowledge over.
+
+8. TASK-TJKFC (P1, in_progress) — partial implementation, no worker, untouched
+   for several sessions. Worth a deliberate decision: finish it or move it back
+   to todo rather than letting it sit in IN_PROGRESS claiming to be underway.
 
 ** In flight
-Nothing running. =dispatch-status= is empty, no =hermes acp= or harness
-processes are alive, no tmux or rmux server is up, and =git worktree list= shows
-only the repo root — every dispatch worktree from this session has been removed
-and its branch kept, so no worker history was lost.
+TWO REVIEWERS RUNNING, both =rmux= / =codex= / =gpt-5.6-sol= / =high= with
+=--governance-json {"stall_timeout_secs":3600}=, read scopes disjoint:
 
-The board, after this session squared it with reality:
+- =tx-20260802-orgasmic-4077= — TASK-4CSMY + TASK-JQ8AV over
+  =crates/orgasmic-daemon/src/supervisor.rs= (=9017514..HEAD=, 1,472 insertions).
+  One reviewer for two tasks because it is one mechanism: 4CSMY carries the
+  unactioned BLOCK SHIP =tx-4055= and JQ8AV.1 is the fix round for both.
+  Worktree =.orgasmic/tmp/dispatch/task-4CSMY-review/worktree=.
+- =tx-20260802-orgasmic-4081= — TASK-FZB6T over the run catalog
+  (3,549 insertions incl. a new 1,158-line =run_history.rs=). Worktree
+  =.orgasmic/tmp/dispatch/task-FZB6T-review/worktree=.
+
+Both briefs are preserved at =.orgasmic/tmp/brief-supervisor-review.md= and
+=.orgasmic/tmp/brief-runcatalog-review.md=. Both carry the host warning and the
+instruction to isolate-rerun any red before believing it; both are told to call
+=orgasmic dispatch finalize= explicitly, since that is the exact step whose
+absence cost the FZB6T.1 report today.
+
+THE BOARD
 - IN_PROGRESS (2): TASK-TJKFC (P1, partial implementation, no worker) and
-  TASK-STWVB (P2, the flake work, no worker).
-- IN_REVIEW (2): TASK-JQ8AV and TASK-FZB6T — merged, unreviewed, no live worker.
-  See Next likely actions item 4; this is a pending decision, not pending work.
-- TASK-95SGV closed done: parent fix =bf555ae= plus both subtasks merged, nothing
-  outstanding.
+  TASK-STWVB (P2, the flake work, no worker). Neither has a live worker.
+- IN_REVIEW (3): TASK-JQ8AV, TASK-FZB6T, TASK-4CSMY — all three merged, all
+  three under a live reviewer as of this handoff.
+- Both fix subtasks (TASK-JQ8AV.1, TASK-FZB6T.1) are DONE.
+- TODO (7) and BACKLOG (~47) untouched this session, plus the two new filings.
 
-Incident forensics are no longer in an ephemeral scratchpad. They live at
-=~/.orgasmic/incidents/2026-07-30-orphaned-acp/= (3.3 MB, 22 files) with a
-README that stands alone: pre-kill =ps=, per-PID cwd/fd/descendants, the six
-=hermes-snap-*= env captures, the 4,282-line =agent.log= window that proves
-orphan ownership, and the repo/ledger state from before the kills.
+WHEN THE REVIEWERS REPORT, the close sequence is =manager dispatch-close
+--started-tx <the tx above> --status done=, then act on the verdict. A SHIP
+verdict on all three is what unblocks the runtime rebuild below; a NEEDS FIXES
+mints a fix subtask exactly as JQ8AV.1 and FZB6T.1 were minted.
 
 ** Divergence / Risks
-RUNTIME AND REPO ARE IN SYNC. =~/.orgasmic/bin/orgasmic= runs =57e35de= as of
-[2026-08-02 Sun]; rollback is =runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260802a=,
-the =ee1f855= build. The trap this swap leaves behind: the version string did NOT
-change across it — both builds call themselves =0.0.15-dev.1= — so version, boot_id
-and =orgasmic status= cannot tell the two apart. Discriminate with
-=current/runtime-manifest.json='s =commit=, or a new-code endpoint probe.
+THE SUITE HAS NO TRUSTWORTHY FULL-RUN SIGNAL ON THIS HOST, and this is the risk
+that contaminates every other judgement on the board. Measured twice tonight on
+two different trees: 14 failures in-suite, 14/14 green in 8 seconds in
+isolation, while =syspolicyd= sat at 586% CPU. Anyone who quotes a suite count
+without naming the worktree AND the host state is quoting noise. The control is
+cheap and it is in Done-so-far — use it before believing any red. This machine
+has hard-rebooted twice from this chain (=WindowServer-2026-07-29-112228.ips=,
+=WindowServer-2026-08-02-200136.ips=), so it is not only a measurement problem.
+If you run the suite unattended, guard it: sample =ps -o pcpu= -p <syspolicyd>=
+every 10s and kill the cargo run if it holds above ~400% for a minute.
 
-TMUX IS THE DEFAULT AND IS STILL NOT SAFE. =pane_activity= is emitted by
-=modes/rmux.rs= and nothing else, and TASK-JQ8AV's stall rescue is gated on
-=transport == "rmux"=, so on tmux both pane channels are blind and a
-provider-bound think at ~0% cpu is released at 600s. Until TASK-4CSMY lands,
-=--governance-json '{"stall_timeout_secs":3600}'= is mandatory on every
-long-thinking tmux dispatch. Not optional.
+THE RUNTIME IS DELIBERATELY BEHIND THE REPO. =~/.orgasmic/bin/orgasmic= runs
+=57e35de=; main is well past it. This is a decision, not drift — see Next
+action 2. Consequences while it holds:
+- TMUX DISPATCHES ARE UNSAFE. =pane_activity= reaches the installed daemon from
+  =modes/rmux.rs= only, and JQ8AV's open-turn consult is gated on
+  =transport == "rmux"= there, so on tmux both pane channels are blind and the
+  run dies on the wall clock. This is not theoretical: it destroyed the
+  TASK-FZB6T.1 report today, eight minutes after that worker committed 4,004
+  good lines. DISPATCH OVER RMUX until the rebuild lands.
+- TASK-4CSMY cannot be validated in practice, only in tests, because the fix is
+  not in the running daemon.
+- The version string will NOT change across the rebuild — both builds call
+  themselves =0.0.15-dev.1= — so version, boot_id and =orgasmic status= cannot
+  tell old from new. Discriminate with the =commit= field in
+  =current/runtime-manifest.json=, or a new-code endpoint probe. Rollback is
+  =runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260802a= (the =ee1f855= build).
+
+THREE MERGED CHANGES HAVE NEVER BEEN INDEPENDENTLY READ, which is what the two
+live reviewers exist to fix. Until they report, treat main as unreviewed:
+- TASK-FZB6T.1 is the sharp one. Its author was killed before reporting, so
+  unlike every other change on this board it carries NO self-assessment and NO
+  declared residual risks. It rewrote the run-catalog concurrency model and it
+  is deletion code. If run enumeration, boot reattach, =run history compact= or
+  the session writer misbehaves, start there.
+- TASK-JQ8AV.1 at least declared six residual risks; the first became
+  TASK-T7KSH and the rest are carried in the reviewer's brief.
 
 NOTHING ENFORCES THE MODEL. Resolution is =--model= > task drawer > harness
 default, and the harness default wins silently — which is how three dispatches
 once ran on claude-fable-5 while everyone believed opus-5. Until TASK-A55J7,
 pass =--model= explicitly and echo driver/harness/model/effort back.
 
-THE INTEGRATION SUITE IS OUTSIDE THE FENCE. =cfg(test)= covers lib unit tests
-only; =tests/dispatch_preflight.rs= really does POST =acp-stdio=/=claude= at a
-live daemon. Audited 2026-07-30: every such test engineers a host-independent
-credential refusal, so none spawns. The risk is that the safety is supplied per
-test rather than structurally — the exact shape of the comment that caused the
-incident. TASK-3TQ0R.
-
-TWO CHANGES REACHED MAIN WITH NO WORKER REPORT AND NO INDEPENDENT REVIEW.
-TASK-JQ8AV and TASK-FZB6T, now parked in IN_REVIEW so the board says so. Their
-injection proofs are evidence about the one defect each names and about nothing
-else in the diff. FZB6T is the sharp case — it changed the run-catalog
-concurrency model and its author never described it. If run enumeration, boot
-reattach or the session writer misbehaves, start there.
-
-THE FLAKE SET HAS TWO AXES, AND A FULL-SUITE NUMBER MEANS NOTHING WITHOUT BOTH
-HELD CONSTANT. Load is the known one. The second, measured 2026-07-31 and
-recorded on TASK-STWVB, is the WORKTREE: identical code at =75fe95f= ran
-42.9s/640-clean in one worktree and 85.9s with a failure in another, on a quiet
-machine, sequentially. So never quote a suite count without naming the worktree,
-and never attribute a red to a diff without re-running the BASE code in the SAME
-worktree — that control costs one checkout and one run, and during TASK-CB6GQ it
-was the only thing separating "my change broke the suite" from "this worktree is
-slow", after four consecutive reds that looked exactly like a regression.
-Cause unidentified; leftover mux state was ruled out. TASK-STWVB owns it.
+THE INTEGRATION SUITE IS OUTSIDE THE cfg(test) FENCE. =tests/dispatch_preflight.rs=
+really does POST =acp-stdio=/=claude= at a live daemon. Audited 2026-07-30:
+every such test engineers a host-independent credential refusal, so none spawns
+today. The safety is supplied per test rather than structurally, which is the
+exact shape of the comment that caused the 2026-07-30 orphan incident.
+TASK-3TQ0R owns it.
 
 LATENT, not currently biting: the daemon probes =claude auth status= for
 =loggedIn=, and the standalone CLI reads the macOS Keychain by account — so it
 answers =authMethod: none= whenever =USER= is absent, however valid the login.
-The LaunchAgent plist sets only =ORGASMIC_HOME= and =PATH=. Not a proxy problem:
-=ANTHROPIC_BASE_URL= lives only inside shell functions and never reaches the
-daemon.
+The LaunchAgent plist sets only =ORGASMIC_HOME= and =PATH=.

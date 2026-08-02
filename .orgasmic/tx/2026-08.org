@@ -830,3 +830,68 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 21:37:13 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4083
+:TIME:         [2026-08-02 Sun 21:37:13]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-02 Sun 21:37:29 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4084
+:TIME:         [2026-08-02 Sun 21:37:29]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-02 Sun 21:37:49 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4085
+:TIME:         [2026-08-02 Sun 21:37:49]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-02 Sun 21:38:41 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4086
+:TIME:         [2026-08-02 Sun 21:38:41]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-02 Sun 21:39:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4087
+:TIME:         [2026-08-02 Sun 21:39:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
