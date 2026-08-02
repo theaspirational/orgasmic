@@ -5201,16 +5201,54 @@ fn open_turn_status_row(raw: &str) -> bool {
 /// (`◦ Working (4m 11s • esc to interrupt)`, flush left, third from the
 /// non-blank bottom). See [`interrupt_hint_status_row`] for why that arm does
 /// not gate on this list.
-// orgasmic:TASK-4CSMY.1
+///
+/// # The claude frames are EXTRACTED, not guessed
+///
+/// TASK-4CSMY.1 filled the animated siblings from inference and got them
+/// wrong in both directions: it omitted `✶` (U+2736), a real frame, and it
+/// carried `∗` (U+2217), which claude never paints. Omitting a real frame is
+/// the expensive direction — a turn frozen on it is read as a wedge and a
+/// healthy worker dies at the stall deadline, which is TASK-JQ8AV verbatim.
+///
+/// So the six claude frames below come out of the INSTALLED harness binary.
+/// Re-derive them with:
+///
+/// ```text
+/// # `command -v claude` if no shell function shadows it.
+/// bin=$(readlink -f ~/.local/bin/claude)
+/// LC_ALL=C grep -a -o \
+///   'TERM==="xterm-ghostty")return\[[^]]*\];return\[[^]]*\]' "$bin"
+/// ```
+///
+/// Against Claude Code 2.1.220 (`~/.local/share/claude/versions/2.1.220`, a
+/// 245 MiB bundled-JS executable; the match is at byte offset 238701938) that
+/// prints one line, byte for byte:
+///
+/// ```text
+/// TERM==="xterm-ghostty")return["\xB7","\u2722","\u2733","\u2736","\u273B","\u273B"];
+///                        return["\xB7","\u2722","\u2733","\u2736","\u273B","\u273D"]
+/// ```
+///
+/// (wrapped here; the binary emits it unwrapped). The escapes are the
+/// binary's own — it ships the frames as JS source text, never as UTF-8 — so
+/// a grep for the literal glyph finds nothing. Decoded, both sequences open
+/// `· ✢ ✳ ✶ ✻` and close on `✻` under ghostty, `✽` everywhere else: six
+/// frames, two sequences, differing only in the last slot.
+/// `status_spinner_glyphs_cover_the_installed_claude_frame_set` runs
+/// that same extraction as a test and fails when this table stops being a
+/// superset of it, so the next drift in claude's frame set is loud instead of
+/// silent. `●` and `◦` are not in the array and are not expected to be: they
+/// come from live pane captures, above.
+// orgasmic:TASK-4CSMY.1,TASK-4CSMY.2
 const STATUS_SPINNER_GLYPHS: &[char] = &[
-    '\u{25CF}', // ● measured, claude
-    '\u{273D}', // ✽ measured, claude
-    '\u{00B7}', // · frame sibling
-    '\u{2217}', // ∗ frame sibling
-    '\u{2722}', // ✢ frame sibling
-    '\u{2733}', // ✳ frame sibling
-    '\u{273B}', // ✻ frame sibling
-    '\u{25E6}', // ◦ measured, codex
+    '\u{25CF}', // ● measured, claude live pane
+    '\u{00B7}', // · claude frame 0
+    '\u{2722}', // ✢ claude frame 1
+    '\u{2733}', // ✳ claude frame 2
+    '\u{2736}', // ✶ claude frame 3
+    '\u{273B}', // ✻ claude frame 4 (and frame 5 under ghostty)
+    '\u{273D}', // ✽ claude frame 5, also measured, claude live pane
+    '\u{25E6}', // ◦ measured, codex live pane
 ];
 
 /// Glyphs MEASURED leading a TRANSCRIPT row — a completed assistant message, a
@@ -10356,6 +10394,33 @@ mod tests {
         "  ⎿  crates/orgasmic-daemon/src/supervisor.rs\n"
     );
 
+    /// The two frame sequences claude ANIMATES, transcribed from the
+    /// installed harness binary rather than inferred from a capture.
+    ///
+    /// Extraction and provenance live on [`STATUS_SPINNER_GLYPHS`]; this is
+    /// the same bytes in Rust. Order is the binary's own — ghostty first,
+    /// then everything else — and the repeated `✻` in the ghostty tail is
+    /// verbatim, not a transcription slip.
+    ///
+    /// The point of naming them HERE, separately from the table, is that a
+    /// test which walks the table can only prove the table's own entries are
+    /// accepted. It passes on an INCOMPLETE table, which is how U+2736 went
+    /// missing through a full review round. This const is the independent
+    /// side of the comparison, and
+    /// `status_spinner_glyphs_cover_the_installed_claude_frame_set` keeps it
+    /// honest against the binary on disk.
+    // orgasmic:TASK-4CSMY.2
+    const MEASURED_CLAUDE_SPINNER_FRAMES: &[&[char]] = &[
+        // TERM=xterm-ghostty
+        &[
+            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273B}',
+        ],
+        // every other terminal
+        &[
+            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273D}',
+        ],
+    ];
+
     /// TASK-JQ8AV, the classifier against the MEASURED live statuslines.
     ///
     /// Four captures, two dates, two transports: 2026-08-02 tmux (the two rows
@@ -10418,12 +10483,311 @@ mod tests {
             );
         }
 
+        // TASK-4CSMY.2, the positive control the loop above cannot be: it
+        // walks the table, so a table MISSING a frame satisfies it. These
+        // frames are named from the binary, not from the table.
+        for sequence in MEASURED_CLAUDE_SPINNER_FRAMES {
+            for glyph in *sequence {
+                let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
+                assert!(
+                    pane_open_turn_marker(&row).is_some(),
+                    "claude animates this frame, so it must open a turn: {row}"
+                );
+                let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
+                assert_eq!(
+                    pane_open_turn_marker(&screen).as_deref(),
+                    Some(row.as_str()),
+                    "claude frame inside a measured screen: {row}"
+                );
+            }
+        }
+
+        // U+2736 by name, because it is the one this fix exists for: it is a
+        // real frame in BOTH sequences and TASK-4CSMY.1's allowlist rejected
+        // it, so a turn frozen on it read as a wedge. Same row as the
+        // incident capture, repainted one frame over.
+        let frame_2736 = "✶ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
+        assert_eq!(
+            pane_open_turn_marker(frame_2736).as_deref(),
+            Some(frame_2736),
+            "U+2736 leads a live claude statusline: {frame_2736}"
+        );
+        let screen_2736 = format!("{MEASURED_TRANSCRIPT}\n{frame_2736}\n\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(
+            pane_open_turn_marker(&screen_2736).as_deref(),
+            Some(frame_2736)
+        );
+        // And U+2217 `∗`, which TASK-4CSMY.1 carried as a "frame sibling", is
+        // in neither sequence and no longer in the table. Nothing asserts it
+        // must be rejected — an unmeasured glyph is not a measured negative —
+        // but it must not be silently re-added either.
+        assert!(!STATUS_SPINNER_GLYPHS.contains(&'\u{2217}'));
+
         // The last match in the region wins: the live statusline sits below
         // anything older the region may still hold.
         let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
         let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
         let stacked = format!("{incident}\nsome transcript text\n{live}");
         assert_eq!(pane_open_turn_marker(&stacked).as_deref(), Some(live));
+    }
+
+    /// The needle both this test and the recipe on [`STATUS_SPINNER_GLYPHS`]
+    /// search for. Keep them identical: the comment is how a human re-derives
+    /// what this test checks, and a comment that drifts from the test is
+    /// worth less than no comment.
+    const CLAUDE_FRAME_NEEDLE: &str = "TERM===\"xterm-ghostty\")return[";
+
+    /// Claude Code ships as one bundled-JS executable of a few hundred MiB.
+    /// A shim, a wrapper script, or a `claude` on PATH that is really
+    /// something else is orders of magnitude smaller, and this is what keeps
+    /// the audit from indicting one.
+    const SMALLEST_PLAUSIBLE_CLAUDE_BINARY: u64 = 1 << 20;
+
+    /// Every installed claude harness this host can see, deduplicated by
+    /// canonical path.
+    ///
+    /// PATH first, because that is the binary a worker actually launches,
+    /// then the installer's own location in case a test has pinned PATH to a
+    /// stub set.
+    fn installed_claude_binaries() -> Vec<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        let mut push = |path: PathBuf| {
+            let Ok(resolved) = path.canonicalize() else {
+                return;
+            };
+            let Ok(meta) = std::fs::metadata(&resolved) else {
+                return;
+            };
+            if !meta.is_file() || meta.len() < SMALLEST_PLAUSIBLE_CLAUDE_BINARY {
+                return;
+            }
+            if !candidates.contains(&resolved) {
+                candidates.push(resolved);
+            }
+        };
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                push(dir.join("claude"));
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            push(PathBuf::from(home).join(".local/bin/claude"));
+        }
+        candidates
+    }
+
+    /// The byte offset of `needle` in `path`, streamed so a 245 MiB harness
+    /// never lands in the test process's heap.
+    fn find_needle_offset(path: &Path, needle: &str) -> Option<u64> {
+        use std::io::Read;
+
+        const CHUNK: usize = 1 << 20;
+        let mut file = std::fs::File::open(path).ok()?;
+        let carry = needle.len().saturating_sub(1);
+        let mut buf = vec![0u8; carry + CHUNK];
+        let mut filled = 0usize;
+        let mut base = 0u64;
+        loop {
+            let read = file.read(&mut buf[filled..]).ok()?;
+            if read == 0 {
+                return None;
+            }
+            filled += read;
+            if let Some(at) = buf[..filled]
+                .windows(needle.len())
+                .position(|window| window == needle.as_bytes())
+            {
+                return Some(base + at as u64);
+            }
+            if filled > carry {
+                let dropped = filled - carry;
+                buf.copy_within(dropped..filled, 0);
+                base += dropped as u64;
+                filled = carry;
+            }
+        }
+    }
+
+    /// Decode one JS array literal of single-character double-quoted strings
+    /// — `["\xB7","✢",…]` — returning its chars and the byte index just
+    /// past the closing bracket.
+    ///
+    /// Deliberately narrow. Anything the frame arrays do not actually use
+    /// returns `None`, which surfaces as a loud extraction failure rather
+    /// than as a quietly short frame list.
+    fn decode_js_char_array(text: &str) -> Option<(Vec<char>, usize)> {
+        let bytes = text.as_bytes();
+        if bytes.first() != Some(&b'[') {
+            return None;
+        }
+        let mut at = 1usize;
+        let mut frames = Vec::new();
+        loop {
+            match bytes.get(at)? {
+                b']' => return Some((frames, at + 1)),
+                b',' => at += 1,
+                b'"' => {
+                    at += 1;
+                    let mut item = String::new();
+                    loop {
+                        match bytes.get(at)? {
+                            b'"' => {
+                                at += 1;
+                                break;
+                            }
+                            b'\\' => {
+                                let (glyph, used) = decode_js_escape(text.get(at..)?)?;
+                                item.push(glyph);
+                                at += used;
+                            }
+                            _ => {
+                                let glyph = text.get(at..)?.chars().next()?;
+                                item.push(glyph);
+                                at += glyph.len_utf8();
+                            }
+                        }
+                    }
+                    // A spinner frame is exactly one glyph. Two would mean we
+                    // are reading a different array than we think we are.
+                    let mut glyphs = item.chars();
+                    let glyph = glyphs.next()?;
+                    if glyphs.next().is_some() {
+                        return None;
+                    }
+                    frames.push(glyph);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// `\xHH` and `\uHHHH`, the only two forms the bundler emits here.
+    fn decode_js_escape(rest: &str) -> Option<(char, usize)> {
+        let (digits, used) = match rest.as_bytes().get(1)? {
+            b'x' => (rest.get(2..4)?, 4),
+            b'u' => (rest.get(2..6)?, 6),
+            _ => return None,
+        };
+        let code = u32::from_str_radix(digits, 16).ok()?;
+        Some((char::from_u32(code)?, used))
+    }
+
+    /// The `[ghostty, everything-else]` frame sequences the binary at `path`
+    /// animates, or `None` if its spinner no longer has the shape the recipe
+    /// on [`STATUS_SPINNER_GLYPHS`] describes.
+    fn extract_claude_spinner_frames(path: &Path) -> Option<Vec<Vec<char>>> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let offset = find_needle_offset(path, CLAUDE_FRAME_NEEDLE)?;
+        let mut file = std::fs::File::open(path).ok()?;
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        // Both arrays plus the `;return` between them fit in well under 512
+        // bytes; the source region is pure ASCII, so lossy decoding can only
+        // damage a boundary we do not read.
+        let mut raw = vec![0u8; 512];
+        let read = file.read(&mut raw).ok()?;
+        raw.truncate(read);
+        let window = String::from_utf8_lossy(&raw).into_owned();
+
+        // `CLAUDE_FRAME_NEEDLE` ends ON the opening bracket.
+        let arrays = window.get(CLAUDE_FRAME_NEEDLE.len() - 1..)?;
+        let (ghostty, used) = decode_js_char_array(arrays)?;
+        let (fallback, _) = decode_js_char_array(arrays.get(used..)?.strip_prefix(";return")?)?;
+        Some(vec![ghostty, fallback])
+    }
+
+    /// TASK-4CSMY.2, the completeness guard — and the deliverable that
+    /// outlives the one-character fix.
+    ///
+    /// Round 2 of this mechanism replaced "any punctuation glyph" with
+    /// [`STATUS_SPINNER_GLYPHS`], which closed a false-RESCUE hole and opened
+    /// a false-KILL one by omitting `✶` U+2736. Nothing in the suite could
+    /// tell: the real-pane arms hard-code a glyph each, and the table walk in
+    /// `pane_open_turn_marker_recognizes_the_measured_statuslines` proves
+    /// only that entries ALREADY IN the table are accepted. A table missing a
+    /// frame passed every one of them, and the cost of that omission is a
+    /// healthy worker stall-released mid-turn.
+    ///
+    /// So this compares the table against the harness on disk rather than
+    /// against another in-tree assertion. It runs the same extraction the
+    /// recipe on [`STATUS_SPINNER_GLYPHS`] documents, over the same needle,
+    /// and fails when claude animates a frame we would reject.
+    ///
+    /// Failure modes, deliberately split:
+    ///
+    /// - **No claude installed** — skip. There is nothing to compare against,
+    ///   and a host with no harness runs no workers. This skip is NOT wired
+    ///   into `required_test_tooling_is_present`: adding a `claude`
+    ///   requirement would turn the sentinel red on every host without Claude
+    ///   Code, CI included, which is a tooling-policy change well outside a
+    ///   classifier fix. The trade is real and stated: on a claude-less host
+    ///   this guard is silent.
+    /// - **Installed, but the spinner no longer has this shape** — FAIL. It
+    ///   is indistinguishable from the drift this exists to catch, and a skip
+    ///   there rebuilds exactly the hole. The message carries the recipe.
+    /// - **Installed, extracted, table does not cover it** — FAIL. The point.
+    /// - **Installed, extracted, table covers it, but the in-tree
+    ///   transcription is stale** — FAIL, with a message that says the
+    ///   classifier is still safe and only the citation needs re-cutting.
+    // orgasmic:TASK-4CSMY.2
+    #[tokio::test]
+    async fn status_spinner_glyphs_cover_the_installed_claude_frame_set() {
+        const TEST: &str = "status_spinner_glyphs_cover_the_installed_claude_frame_set";
+        // PATH is process-global and other tests pin it to stub sets.
+        let _environment = test_environment_lock().lock().await;
+
+        let binaries = installed_claude_binaries();
+        if skip_test_if_missing(TEST, &[("claude", !binaries.is_empty())]) {
+            return;
+        }
+
+        for binary in &binaries {
+            let Some(extracted) = extract_claude_spinner_frames(binary) else {
+                panic!(
+                    "{TEST}: {} is an installed claude harness but its spinner frames are no \
+                     longer where the recipe on STATUS_SPINNER_GLYPHS looks for them \
+                     (needle {CLAUDE_FRAME_NEEDLE:?}). Either claude reshaped that code or the \
+                     recipe rotted; re-derive by hand with\n  \
+                     LC_ALL=C grep -a -o 'TERM===\"xterm-ghostty\")return\\[[^]]*\\];return\\[[^]]*\\]' {}\n\
+                     and update STATUS_SPINNER_GLYPHS, MEASURED_CLAUDE_SPINNER_FRAMES and \
+                     CLAUDE_FRAME_NEEDLE together. Do NOT relax this to a skip: an unreadable \
+                     harness is not a harness that agrees with us.",
+                    binary.display(),
+                    binary.display(),
+                );
+            };
+
+            // The one that matters. A frame we reject is a live turn read as
+            // a wedge, which is TASK-JQ8AV.
+            for sequence in &extracted {
+                for glyph in sequence {
+                    assert!(
+                        STATUS_SPINNER_GLYPHS.contains(glyph),
+                        "{TEST}: {} animates U+{:04X} '{glyph}' and STATUS_SPINNER_GLYPHS does \
+                         not carry it, so a turn frozen on that frame classifies as a wedge and \
+                         the worker is stall-released. Add it to the table.",
+                        binary.display(),
+                        *glyph as u32,
+                    );
+                }
+            }
+
+            // Cheaper failure, same test: the classifier is safe, the
+            // citation is not.
+            let cited = MEASURED_CLAUDE_SPINNER_FRAMES
+                .iter()
+                .map(|sequence| sequence.to_vec())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                extracted,
+                cited,
+                "{TEST}: STATUS_SPINNER_GLYPHS still covers every frame {} animates, so the \
+                 classifier is safe — but the in-tree transcription no longer matches the \
+                 binary. Re-cut MEASURED_CLAUDE_SPINNER_FRAMES and the quoted output on \
+                 STATUS_SPINNER_GLYPHS.",
+                binary.display(),
+            );
+        }
     }
 
     /// A pane at rest shows none of it. This is the wedge's shape, and an
@@ -10760,11 +11124,15 @@ mod tests {
         wait_for_event_count(&sup, &resp.run_id, 1).await;
         let session = rmux_session_name(&resp.identity);
 
-        // The incident statusline verbatim, then a genuine network wait:
-        // `exec 3<>/dev/tcp` holds an ESTABLISHED connection and `read`
+        // The incident statusline, repainted on frame U+2736 `✶` — the frame
+        // TASK-4CSMY.1's allowlist REJECTED, and the one this arm exists to
+        // prove a real pane survives. Its tmux twin still paints the
+        // incident's own `✽`; two arms sharing one glyph is precisely how the
+        // missing frame passed a full review round. Then a genuine network
+        // wait: `exec 3<>/dev/tcp` holds an ESTABLISHED connection and `read`
         // blocks on it at ~0% cpu.
         let think_stub = format!(
-            "printf '✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
+            "printf '✶ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
              exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
         );
         spawn_probe_pane_stub(&socket, &session, "/bin/bash", &think_stub);
