@@ -670,3 +670,163 @@
 :TARGET:       .orgasmic/gotchas.org
 :REASON:       Corrected the syspolicyd gotcha by hand (no node write surface exists — TASK-WPC6G): the Developer Tools grant is MEASURED not to prevent the scan burst (Warp holds kTCCServiceDeveloperTool=2 and syspolicyd still hit 586%), and the trigger is test EXECUTION not compilation (rebuild 0-64%, test run 586%). Added the 8-second isolation control and the unattended-run guard.
 :END:
+
+* TX 2026-08-02 Sun 21:34:15 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4076
+:TIME:         [2026-08-02 Sun 21:34:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       TASK-JQ8AV.1 landed (merge 7ade8af), which is the precondition the BLOCK SHIP reviewer finding tx-20260802-orgasmic-4055 named: the free-form classifier is replaced by a position-aware contract with real at-rest tmux AND rmux false-rescue arms. 4CSMY is merged at 7d9c60c with no independent verdict, so it belongs in review, not in progress.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 21:34:25 manager.dispatch_started TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4077
+:TIME:         [2026-08-02 Sun 21:34:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRANCH:       task-4csmy-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-review/brief-supervisor-review.md
+:STARTED_AT:   [2026-08-02 Sun 21:34:25]
+:LIVENESS:     512d636047e97545a0d5b75d993f8ccec60be0b0
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Both merged with no independent review. TASK-4CSMY carries an unactioned BLOCK SHIP (tx-4055) whose stated precondition — JQ8AV.1's classifier hardening — has now landed; TASK-JQ8AV's own fix round landed in the same commit. One reviewer, one diff (9017514..HEAD on supervisor.rs), because it is one mechanism. rmux rather than tmux deliberately: the installed daemon is 57e35de, which has JQ8AV's rmux pane-liveness channel but NOT 4CSMY's tmux one, and a tmux dispatch on this daemon dies on the wall-clock ceiling regardless of progress — which is exactly how the FZB6T.1 report was lost today.
+:END:
+
+* TX 2026-08-02 Sun 21:34:25 run.created TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4078
+:TIME:         [2026-08-02 Sun 21:34:25]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4CSMY_TASK-JQ8AV-reviewer-20260802T213425.jsonl
+:REASON:       Both merged with no independent review. TASK-4CSMY carries an unactioned BLOCK SHIP (tx-4055) whose stated precondition — JQ8AV.1's classifier hardening — has now landed; TASK-JQ8AV's own fix round landed in the same commit. One reviewer, one diff (9017514..HEAD on supervisor.rs), because it is one mechanism. rmux rather than tmux deliberately: the installed daemon is 57e35de, which has JQ8AV's rmux pane-liveness channel but NOT 4CSMY's tmux one, and a tmux dispatch on this daemon dies on the wall-clock ceiling regardless of progress — which is exactly how the FZB6T.1 report was lost today.
+:RUN_ID:       run-20260802T213425-bca13bc01bb14618aa936684d3f25b8f
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-review/brief-supervisor-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-supervisor-review/brief-supervisor-review-4b77c4adfe58469e9c3b942f54c6d597-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-supervisor-review/brief-supervisor-review-4b77c4adfe58469e9c3b942f54c6d597-stdout.log
+:DISPATCH_ATTEMPT: 4b77c4adfe58469e9c3b942f54c6d597
+:DISPATCH_TX:  tx-20260802-orgasmic-4077
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 21:35:45 implementer.done TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4079
+:TIME:         [2026-08-02 Sun 21:35:45]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:REASON:       SALVAGED, not reported. The worker committed 9bee827 at 14:52:39Z and was killed eight minutes later at the 3600s stall ceiling without calling dispatch finalize (tx-4069 orphaned it); the running daemon is 57e35de, which predates 4CSMY's tmux pane-liveness channel, so a tmux dispatch has no progress signal and dies on wall clock regardless of work done. Manager verified the branch, merged it as 91ff72c, and ran the gates the author never got to report. All nine reviewer findings are closed in the diff. The regenerated verify/TASK-FZB6T/injection.patch was read against the original and reintroduces the same cache-hit defect translated into the new four-phase refresh_dir, so the proof was not weakened. The 14 daemon-lib reds are machine-level syspolicyd scan pressure, not this diff: none is in run_catalog/run_history/session, and all 14 pass in isolation. NOT a ship verdict — TASK-FZB6T stays IN_REVIEW and this code has still never been read by anyone but its author and the manager.
+:WORKER_SESSION: session_01Ebdn2ZJT2Xu6LPcBfjdvzs
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 9bee827a1aff0bc326f18368869bf92f150745bb
+:MERGE_SHA:    91ff72c
+:BRANCH:       task-fzb6t.1-impl
+:WALL:         52m
+:REVIEWED_DIFF: 483eaae..91ff72c
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:SALVAGED:     true
+:GATES:        fmt clean; clippy -D warnings clean; core lib 158/0; cli green; run_inventory_wire 2/0; daemon lib 659/674 with all 14 failures GREEN in isolation (8s); all four FZB6T injection proofs PASS red-then-green byte-identical
+:CLOSED_TX:    tx-20260802-orgasmic-4058
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 21:35:46 task.state_transitioned TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4080
+:TIME:         [2026-08-02 Sun 21:35:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-FZB6T.1 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 21:35:54 manager.dispatch_started TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4081
+:TIME:         [2026-08-02 Sun 21:35:54]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRANCH:       task-fzb6t-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-review/brief-runcatalog-review.md
+:STARTED_AT:   [2026-08-02 Sun 21:35:54]
+:LIVENESS:     512d636047e97545a0d5b75d993f8ccec60be0b0
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: TASK-FZB6T.1 closed nine reviewer findings across 3,549 lines and its author was killed before reporting, so this code has no self-assessment, no declared residual risks, and no independent read at all. It rewrote the run-catalog concurrency model and it is deletion code that rewrites session evidence — the two properties that make an unread diff most dangerous. rmux rather than tmux for the same reason the last dispatch died on tmux.
+:END:
+
+* TX 2026-08-02 Sun 21:35:54 run.created TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4082
+:TIME:         [2026-08-02 Sun 21:35:54]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T-reviewer-20260802T213554.jsonl
+:REASON:       TASK-FZB6T.1 closed nine reviewer findings across 3,549 lines and its author was killed before reporting, so this code has no self-assessment, no declared residual risks, and no independent read at all. It rewrote the run-catalog concurrency model and it is deletion code that rewrites session evidence — the two properties that make an unread diff most dangerous. rmux rather than tmux for the same reason the last dispatch died on tmux.
+:RUN_ID:       run-20260802T213554-d08c3a8f5bd84753a5f1674d83b9ac18
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-review/brief-runcatalog-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-runcatalog-review/brief-runcatalog-review-7d0bac4a0df44e9e871a293ac51ff1e0-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-runcatalog-review/brief-runcatalog-review-7d0bac4a0df44e9e871a293ac51ff1e0-stdout.log
+:DISPATCH_ATTEMPT: 7d0bac4a0df44e9e871a293ac51ff1e0
+:DISPATCH_TX:  tx-20260802-orgasmic-4081
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:

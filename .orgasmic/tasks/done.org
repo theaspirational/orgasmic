@@ -19403,3 +19403,69 @@ the unblocking work for TASK-4CSMY as well as for TASK-JQ8AV.
 The full reviewer report is preserved in the TASK-JQ8AV reviewer dispatch
 artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3942=.
 
+* DONE TASK-FZB6T.1 Fix reviewer findings: complete safe run-catalog retention and maintenance
+:PROPERTIES:
+:ID: TASK-FZB6T.1
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**, crates/orgasmic-daemon/**, crates/orgasmic-cli/**, verify/TASK-FZB6T/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Independent reviewer run =run-20260729T214845-d18c4ba57c824b7f81487e3dc788add8=
+(tmux / codex / gpt-5.6-sol / high) returned NEEDS FIXES on TASK-FZB6T.
+
+The three injection proofs cover their narrow predicates, but the reviewer
+found nine remaining acceptance and safety gaps:
+
+1. History maintenance implements dry-run only; no confirmed recoverable
+   archive/compaction transaction exists.
+2. History inspection marks every =text_chunk= reclaimable, including
+   structured ACP/subprocess evidence, and exact byte accounting misses
+   torn/blank records.
+3. A failed-recoverable run restores per-poll board/session rescans, and all
+   terminal records are classified before paging.
+4. Semantic retention bounds individual strings rather than the serialized
+   event/subtree, allowing unbounded many-small-string or deep payloads.
+5. A tombstoned run can become attachable again when its old path is reused.
+6. Snapshot dirty/throttle state is global instead of per project, and cold
+   boot rebuilds are not persisted by the production path.
+7. Semantically corrupt in-root snapshot entries can survive refresh without a
+   real direct-child session file.
+8. The synchronous catalog holds its global mutex across blocking filesystem
+   work from async request and writer paths.
+9. Exact =run show <id>= cannot resolve terminal runs older than the default
+   list window.
+
+** Acceptance
+
+- Implement a confirmed, dry-run-first maintenance transaction with a stable
+  manifest, transport-aware reclaimability, recoverable archive or atomic
+  rewrite, explicit confirmation, rollback, corruption and partial-write tests.
+- Preserve structured ACP/subprocess evidence; reclaim only proven rendered
+  pane payloads and account every input byte exactly, including blank and torn
+  final records.
+- Bound the serialized semantic event/subtree as a whole and replace over-budget
+  or over-depth content with digest, byte count and a truthful source reference.
+- Make recovery links catalog-authoritative, page/filter before classification,
+  avoid per-poll session rescans, and make exact-id lookup direct.
+- Make tombstones terminal for a run identity unless a durable worktree
+  identity proves continuity; add remove-plus-recreate coverage.
+- Validate loaded snapshot entries as direct regular =.jsonl= children through
+  session-directory authority and current file identity.
+- Track dirty/save throttling per canonical project, persist production cold
+  rebuilds, and gather filesystem state outside the catalog mutex and async hot
+  path before a short compare-and-swap/map commit.
+- Add regressions for multiple projects, semantic snapshot corruption, path
+  traversal/wrong-parent/missing files, deep/composite payloads, old exact-id
+  lookup, and bounded concurrent refresh/write behavior.
+- Re-run all three TASK-FZB6T injection proofs, focused crate tests, fmt, and
+  clippy with warnings denied. Do not run any billed harness test.
+
+** Reviewer Evidence
+
+The full reviewer report is preserved in the TASK-FZB6T reviewer dispatch
+artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3941=.
+
