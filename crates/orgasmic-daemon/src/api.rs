@@ -7355,18 +7355,23 @@ async fn post_run_history_compact(
         })));
     };
 
-    let mut fenced = Vec::with_capacity(plan.files.len());
-    for file in &plan.files {
-        state
-            .writer
-            .fence_session(file.session_path.clone())
-            .await
-            .map_err(|error| {
-                ApiError::internal(format!("fence session writer before compaction: {error}"))
-            })?;
-        fenced.push(file.session_path.clone());
-    }
-    let fenced = crate::run_history::FencedSessions::new(fenced);
+    // orgasmic:TASK-FZB6T.3 finding 1 — a LEASE, held for the whole
+    // transaction, not a one-shot handle close. While it is held every append
+    // for these paths queues in the writer before it opens anything, so no line
+    // can land on the inode the rename is about to orphan.
+    let lease = state
+        .writer
+        .lease_sessions(
+            plan.files
+                .iter()
+                .map(|file| file.session_path.clone())
+                .collect(),
+        )
+        .await
+        .map_err(|error| {
+            ApiError::internal(format!("hold session writer across compaction: {error}"))
+        })?;
+    let fenced = crate::run_history::FencedSessions::new(lease.paths().to_vec());
 
     let report = {
         let catalog = catalog.clone();
@@ -7386,6 +7391,9 @@ async fn post_run_history_compact(
         .await
         .map_err(|error| ApiError::internal(format!("run history compaction failed: {error}")))?
     };
+    // Released only now: the rename is committed and the journal is written, so
+    // a queued append lands in the replacement.
+    lease.release().await;
 
     let report = report.map_err(|error| match error {
         crate::run_history::CompactionError::ConfirmationRequired { .. }
@@ -7421,7 +7429,9 @@ async fn post_run_history_rollback(
         .await
         .map_err(|error| ApiError::internal(format!("read compaction manifest: {error}")))?
     };
-    fence_sessions_for_rollback(&state, &paths).await;
+    let lease = state.writer.lease_sessions(paths).await.map_err(|error| {
+        ApiError::internal(format!("hold session writer across rollback: {error}"))
+    })?;
 
     let report = tokio::task::spawn_blocking(move || {
         let report = crate::run_history::rollback_compaction(&root, &manifest_id);
@@ -7434,6 +7444,7 @@ async fn post_run_history_rollback(
     })
     .await
     .map_err(|error| ApiError::internal(format!("run history rollback failed: {error}")))?;
+    lease.release().await;
 
     let report = report.map_err(|error| match error {
         crate::run_history::CompactionError::ManifestNotFound { .. } => {
@@ -7442,14 +7453,6 @@ async fn post_run_history_rollback(
         other => ApiError::bad_request(other.to_string()),
     })?;
     Ok(Json(json!({ "report": report })))
-}
-
-/// Restoring a session file makes the writer's cached append handle stale for
-/// exactly the same reason compaction does.
-async fn fence_sessions_for_rollback(state: &ApiState, paths: &[PathBuf]) {
-    for path in paths {
-        let _ = state.writer.fence_session(path.clone()).await;
-    }
 }
 
 async fn get_run(

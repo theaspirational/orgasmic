@@ -149,15 +149,22 @@ impl CompactionPlan {
     }
 }
 
-/// Session paths whose cached session-writer append handle the caller has
-/// closed.
+/// Session paths the caller holds an exclusive session-writer LEASE on, for the
+/// whole of this transaction.
 ///
 /// orgasmic:TASK-FZB6T.2 finding 3 — a `rename` over a path the writer holds
 /// open leaves the writer appending to an orphaned inode, and every line it
-/// writes afterwards is lost. The transaction cannot close that handle itself
-/// (the writer is a daemon task), so the caller proves it did: a planned file
-/// that is not in this set is refused, not compacted. An empty set therefore
-/// compacts nothing, which is the correct fail-closed default.
+/// writes afterwards is lost.
+///
+/// orgasmic:TASK-FZB6T.3 finding 1 — closing the handle once was not enough:
+/// the next append reopened the same path, so an append landing between the
+/// final fingerprint check and the `rename` still hit the doomed inode, and the
+/// archive predated it so rollback could not recover it either. The caller now
+/// proves a HELD lease ([`crate::writer::SessionLease`]): while it is held the
+/// writer defers appends for these paths before opening anything, and releases
+/// them only after the rename and the journal are done. A planned file that is
+/// not in this set is refused, not compacted. An empty set therefore compacts
+/// nothing, which is the correct fail-closed default.
 #[derive(Debug, Clone, Default)]
 pub struct FencedSessions {
     paths: BTreeSet<PathBuf>,
@@ -1915,6 +1922,175 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
 
+    /// orgasmic:TASK-FZB6T.3 finding 1 — the fence was not exclusion, and this
+    /// is the window it left open.
+    ///
+    /// `FenceSession` dropped the cached handle ONCE; the next append reopened
+    /// the same path. So an append issued after the transaction's final
+    /// fingerprint check and before its `rename` landed on the ORIGINAL inode —
+    /// which the rename immediately orphaned. The replacement did not contain
+    /// that line and the archive PREDATED it, so "rollback restores it byte for
+    /// byte" was false for exactly this window. It is a real lifecycle edge: a
+    /// persisted terminal driver event can make a file eligible BEFORE the
+    /// supervisor appends its final `Lifecycle::Release`.
+    ///
+    /// The append here is SCHEDULED at that instant — issued from the
+    /// transaction's own `AfterStage` boundary, which sits between the staged
+    /// journal write and the pre-rename identity check — and the test does not
+    /// proceed until the writer has provably taken it, so there is no sleep and
+    /// no race to lose. Both halves of the required outcome are asserted:
+    ///
+    /// 1. with a lease held, the final lifecycle line lands in the REPLACEMENT;
+    /// 2. with no lease, a write that reaches the file at the same instant makes
+    ///    the transaction REFUSE, leaving the original untouched.
+    #[tokio::test]
+    async fn an_append_at_the_pre_rename_instant_lands_in_the_replacement() {
+        use crate::writer::{SessionAppend, WriterHandle};
+        use orgasmic_core::session::RuntimeIdentity;
+
+        let held = board();
+        let path = write_session(&held.sessions, "run-lease", "rmux", 12, true);
+        let original = std::fs::read(&path).unwrap();
+        let plan = plan_compaction(&held.root, &indexed(&held));
+        let token = plan.manifest_id.clone();
+        assert_eq!(plan.files.len(), 1);
+
+        let writer: WriterHandle =
+            crate::writer::spawn_with_catalog(crate::events::EventBus::new(), None);
+        let lease = writer.lease_sessions(vec![path.clone()]).await.unwrap();
+        let fenced = FencedSessions::new(lease.paths().to_vec());
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let result_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(result_tx)));
+        let runtime = tokio::runtime::Handle::current();
+        let schedule_append = {
+            let writer = writer.clone();
+            let path = path.clone();
+            move |point: FaultPoint, _: &Path| -> Option<Fault> {
+                if point != FaultPoint::AfterStage {
+                    return None;
+                }
+                let before = writer.deferred_session_appends();
+                let append = SessionAppend {
+                    run_id: "run-lease".to_string(),
+                    session_path: path.clone(),
+                    identity: RuntimeIdentity {
+                        run_id: "run-lease".to_string(),
+                        runtime_id: "runtime-run-lease".to_string(),
+                        boot_id: "boot-compact".to_string(),
+                    },
+                    authority: None,
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "release",
+                        "reason": "supervisor finished after the file became eligible",
+                        "outcome": ReleaseOutcome::Completed,
+                    }),
+                };
+                let issuing = writer.clone();
+                let result_tx = std::sync::Arc::clone(&result_tx);
+                runtime.spawn(async move {
+                    let outcome = issuing.append_session(append).await;
+                    if let Some(tx) = result_tx.lock().unwrap().take() {
+                        let _ = tx.send(outcome.map(|ok| ok.seq));
+                    }
+                });
+                // Do not leave this boundary until the writer has PROVABLY
+                // taken the append and queued it behind the lease. That is what
+                // makes this a scheduled pre-rename append rather than a hope.
+                while writer.deferred_session_appends() == before {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                None
+            }
+        };
+
+        let report = {
+            let token = token.clone();
+            tokio::task::spawn_blocking(move || {
+                apply_compaction_with(plan, Some(&token), &fenced, &schedule_append)
+            })
+            .await
+            .unwrap()
+            .unwrap()
+        };
+        assert!(report.complete);
+        assert!(matches!(
+            report.results[0].outcome,
+            CompactionFileOutcome::Compacted { .. }
+        ));
+
+        // The append is still queued: the transaction ran to completion without
+        // it ever reaching the doomed inode.
+        assert_eq!(writer.deferred_session_appends(), 1);
+        lease.release().await;
+        result_rx
+            .await
+            .unwrap()
+            .expect("the deferred append must run once the lease is released");
+
+        let compacted = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            compacted.contains("orgasmic-run-history-compacted"),
+            "this must be the replacement, not the orphaned original"
+        );
+        assert!(
+            !compacted.contains("\"text_chunk\""),
+            "the replacement must be the compacted generation"
+        );
+        assert_eq!(
+            compacted
+                .lines()
+                .filter(|line| line.contains("\"phase\":\"release\""))
+                .count(),
+            2,
+            "the final lifecycle line must land IN the replacement: {compacted}"
+        );
+        assert!(compacted.contains("supervisor finished after the file became eligible"));
+
+        // ---- the other half: no lease, so the transaction must REFUSE. ------
+        let unheld = board();
+        let path = write_session(&unheld.sessions, "run-unheld", "rmux", 12, true);
+        let original_unheld = std::fs::read(&path).unwrap();
+        let plan = plan_compaction(&unheld.root, &indexed(&unheld));
+        let token = plan.manifest_id.clone();
+        let fenced = FencedSessions::new(vec![path.clone()]);
+        let write_at_pre_rename = {
+            let path = path.clone();
+            move |point: FaultPoint, _: &Path| -> Option<Fault> {
+                if point == FaultPoint::AfterStage {
+                    let mut file = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(&path)
+                        .unwrap();
+                    file.write_all(b"{\"kind\":\"lifecycle\",\"event\":{\"phase\":\"release\"}}\n")
+                        .unwrap();
+                }
+                None
+            }
+        };
+        let report =
+            apply_compaction_with(plan, Some(&token), &fenced, &write_at_pre_rename).unwrap();
+        let CompactionFileOutcome::Failed { error, stage } = &report.results[0].outcome else {
+            panic!(
+                "an append at the pre-rename instant must refuse: {:?}",
+                report.results[0].outcome
+            );
+        };
+        assert!(
+            error.contains("changed while the replacement was being staged"),
+            "{error}"
+        );
+        assert_eq!(stage, "staged");
+        assert_eq!(report.reclaimed_bytes, 0);
+        let live = std::fs::read(&path).unwrap();
+        assert!(
+            live.starts_with(&original_unheld),
+            "the original must be untouched by a refused transaction"
+        );
+        assert!(!original.is_empty());
+    }
+
     /// Read the manifest one transaction wrote, as JSON.
     fn manifest_value(board: &Board, manifest_id: &str) -> serde_json::Value {
         let path = board
@@ -2144,7 +2320,7 @@ mod tests {
             .collect();
         let expected: Vec<&str> = rebuilt
             .lines()
-            .filter(|line| !(line.contains("\"text_chunk\"") && !line.contains("truX")))
+            .filter(|line| !line.contains("\"text_chunk\"") || line.contains("truX"))
             .collect();
         assert_eq!(kept, expected);
     }

@@ -186,10 +186,17 @@ enum WriterCommand {
         req: TransactionRequest,
         reply: oneshot::Sender<Result<TxAppendResult>>,
     },
-    /// Drop the cached append handle for one session path
-    /// (orgasmic:TASK-FZB6T.2 finding 3).
-    FenceSession {
-        session_path: PathBuf,
+    /// Take an exclusive hold on a set of session paths
+    /// (orgasmic:TASK-FZB6T.3 finding 1). Drops each path's cached append
+    /// handle and marks it held; every later append for a held path is DEFERRED
+    /// before it opens anything.
+    LeaseSessions {
+        paths: Vec<PathBuf>,
+        reply: oneshot::Sender<Result<()>>,
+    },
+    /// Release a hold and run the appends that queued behind it, in order.
+    ReleaseSessions {
+        paths: Vec<PathBuf>,
         reply: oneshot::Sender<()>,
     },
     Shutdown {
@@ -299,8 +306,79 @@ pub struct WriterHandle {
     /// Head-of-line write, published by the writer task so a shutdown that
     /// gives up can name what it gave up on.
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
+    /// Appends currently queued behind a session lease
+    /// (orgasmic:TASK-FZB6T.3 finding 1). Read only by the regression that
+    /// schedules an append at the pre-rename instant; the writer publishes it
+    /// unconditionally so the two builds cannot diverge.
+    #[cfg_attr(not(test), allow(dead_code))]
+    deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
+}
+
+/// An exclusive hold on a set of session paths, held for the whole of a
+/// maintenance transaction and released when it completes
+/// (orgasmic:TASK-FZB6T.3 finding 1).
+///
+/// Releasing runs the appends that queued behind it. Dropping without
+/// [`Self::release`] still releases — a lease that outlived its transaction
+/// would block a run's lifecycle appends forever — but the drop path cannot
+/// wait for the writer to acknowledge, so a caller that has an `await` to spend
+/// should spend it.
+pub struct SessionLease {
+    tx: mpsc::Sender<WriterCommand>,
+    paths: Vec<PathBuf>,
+    released: bool,
+}
+
+impl SessionLease {
+    /// The paths this lease holds, which is exactly the set a transaction may
+    /// prove it excluded.
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.paths
+    }
+
+    /// Release the hold and wait for the writer to drain the appends that
+    /// queued behind it.
+    pub async fn release(mut self) {
+        self.released = true;
+        let paths = std::mem::take(&mut self.paths);
+        let (reply, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(WriterCommand::ReleaseSessions { paths, reply })
+            .await
+            .is_ok()
+        {
+            let _ = rx.await;
+        }
+    }
+}
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        if self.released || self.paths.is_empty() {
+            return;
+        }
+        let paths = std::mem::take(&mut self.paths);
+        let (reply, _rx) = oneshot::channel();
+        let command = WriterCommand::ReleaseSessions { paths, reply };
+        match self.tx.try_send(command) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(command)) => {
+                // The channel is backed up. Handing the release to the runtime
+                // is the only way left to guarantee the lease does not outlive
+                // this value.
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let tx = self.tx.clone();
+                    handle.spawn(async move {
+                        let _ = tx.send(command).await;
+                    });
+                }
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -540,29 +618,58 @@ impl WriterHandle {
         rx.await.map_err(|_| anyhow!("writer reply dropped"))?
     }
 
-    /// Close the cached append handle for one session path, so a maintenance
-    /// pass may replace the file it names.
+    /// Take an exclusive hold on a set of session paths for the whole of a
+    /// maintenance transaction.
     ///
     /// orgasmic:TASK-FZB6T.2 finding 3 — `run history compact` replaces a
     /// session file by renaming a rewritten sibling over it. The writer caches
     /// one open append handle per run, and a rename leaves that handle pointing
     /// at an ORPHANED INODE: every lifecycle line written afterwards goes to a
-    /// file with no name and is lost. Closing the handle first means the next
-    /// append re-opens by path and lands in whatever file the path now holds.
+    /// file with no name and is lost.
+    ///
+    /// orgasmic:TASK-FZB6T.3 finding 1 — closing the handle ONCE was not
+    /// exclusion. The next append simply reopened the same path, so an append
+    /// that landed between the transaction's final fingerprint check and its
+    /// `rename` went to the original inode, which the rename immediately
+    /// orphaned. The replacement excluded that line and the archive PREDATED
+    /// it, so rollback could not recover it either — the "restored byte for
+    /// byte" argument does not hold for a byte the archive never saw. It is a
+    /// real lifecycle edge: a persisted terminal driver event can make a file
+    /// eligible BEFORE the supervisor appends its final `Lifecycle::Release`.
+    ///
+    /// A lease is exclusion. While it is held, an append for a held path is
+    /// DEFERRED before it opens anything, and it runs — against whatever file
+    /// the path holds once the transaction is done — when the lease is
+    /// released. The final lifecycle line therefore lands in the replacement
+    /// instead of in an orphan.
     ///
     /// Ordered behind every write already queued, because it travels the same
-    /// channel — so a fence is also a barrier against the appends in flight
-    /// when maintenance asked for it.
-    pub async fn fence_session(&self, session_path: PathBuf) -> Result<()> {
+    /// channel, so the lease is also a barrier against the appends in flight
+    /// when maintenance asked for it. A path already held by another lease is
+    /// refused rather than shared.
+    pub async fn lease_sessions(&self, paths: Vec<PathBuf>) -> Result<SessionLease> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(WriterCommand::FenceSession {
-                session_path,
+            .send(WriterCommand::LeaseSessions {
+                paths: paths.clone(),
                 reply,
             })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
-        rx.await.map_err(|_| anyhow!("writer reply dropped"))
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        Ok(SessionLease {
+            tx: self.tx.clone(),
+            paths,
+            released: false,
+        })
+    }
+
+    /// How many appends are currently queued behind a lease. Test-visible so a
+    /// regression can act exactly at the pre-rename instant without sleeping.
+    #[cfg(test)]
+    pub(crate) fn deferred_session_appends(&self) -> usize {
+        self.deferred_appends
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Atomic read-modify-write through the writer flock.
@@ -692,17 +799,20 @@ pub fn spawn_with_catalog(
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
     let in_flight = Arc::new(std::sync::Mutex::new(None));
+    let deferred_appends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     tokio::spawn(writer_loop(
         rx,
         events,
         Arc::clone(&idempotency),
         Arc::clone(&in_flight),
         catalog,
+        Arc::clone(&deferred_appends),
     ));
     WriterHandle {
         tx,
         idempotency,
         in_flight,
+        deferred_appends,
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
     }
@@ -741,11 +851,17 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
             tx_type: None,
             path: Some(req.path.clone()),
         },
-        WriterCommand::FenceSession { session_path, .. } => PendingWrite {
-            kind: "fence_session".to_string(),
+        WriterCommand::LeaseSessions { paths, .. } => PendingWrite {
+            kind: "lease_sessions".to_string(),
             run_id: None,
             tx_type: None,
-            path: Some(session_path.clone()),
+            path: paths.first().cloned(),
+        },
+        WriterCommand::ReleaseSessions { paths, .. } => PendingWrite {
+            kind: "release_sessions".to_string(),
+            run_id: None,
+            tx_type: None,
+            path: paths.first().cloned(),
         },
         WriterCommand::Shutdown { .. } => PendingWrite {
             kind: "shutdown".to_string(),
@@ -774,15 +890,28 @@ fn injected_write_stall(pending: &PendingWrite) -> Option<std::time::Duration> {
         .then(|| std::time::Duration::from_millis(millis))
 }
 
+/// One append queued behind a session lease, with the caller still waiting on
+/// its reply (orgasmic:TASK-FZB6T.3 finding 1).
+struct DeferredSessionAppend {
+    req: SessionAppend,
+    reply: oneshot::Sender<Result<SessionAppendResult>>,
+}
+
 async fn writer_loop(
     mut rx: mpsc::Receiver<WriterCommand>,
     events: EventBus,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
     catalog: Option<crate::run_catalog::RunCatalog>,
+    deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
 ) {
+    use std::sync::atomic::Ordering;
+
     let mut tx_handles: HashMap<PathBuf, CachedTxWriter> = HashMap::new();
     let mut session_handles: HashMap<String, SessionWriter> = HashMap::new();
+    // Session paths a maintenance transaction currently holds.
+    let mut leased: HashSet<PathBuf> = HashSet::new();
+    let mut deferred: Vec<DeferredSessionAppend> = Vec::new();
     let mut seq_cache = ProjectTxSeqCache::default();
     let mut cmd = rx.recv().await;
     while let Some(current) = cmd.take() {
@@ -825,61 +954,17 @@ async fn writer_loop(
                 }
             }
             WriterCommand::Session { req, reply } => {
-                let SessionAppend {
-                    run_id,
-                    session_path,
-                    identity,
-                    authority,
-                    kind,
-                    event,
-                } = req;
-                // Lifecycle envelopes carry a `phase` tag (acquire/release/…).
-                // Captured before the append moves `event` so run-liveness
-                // consumers get a dedicated signal alongside the firehose.
-                let lifecycle_phase = (kind == SessionEventKind::Lifecycle)
-                    .then(|| {
-                        event
-                            .get("phase")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .flatten();
-                let result = append_session_inner(
-                    &mut session_handles,
-                    &run_id,
-                    &session_path,
-                    identity,
-                    authority,
-                    kind,
-                    event,
-                );
-                if let Ok(ref ok) = result {
-                    events.publish(
-                        Topic::Run,
-                        EventPayload::RunEvent {
-                            run_id: run_id.clone(),
-                            seq: ok.seq,
-                        },
-                    );
-                    if let Some(phase) = lifecycle_phase {
-                        // orgasmic:TASK-FZB6T — the catalog update runs through
-                        // this boundary, before the event is published, so no
-                        // consumer woken by the lifecycle event can read a
-                        // catalog entry that predates the write it was told
-                        // about.
-                        if let Some(catalog) = catalog.as_ref() {
-                            catalog.invalidate_session(&session_path);
-                        }
-                        events.publish(
-                            Topic::Run,
-                            EventPayload::RunLifecycle {
-                                run_id: run_id.clone(),
-                                phase,
-                            },
-                        );
-                    }
+                // orgasmic:TASK-FZB6T.3 finding 1 — the check is here, BEFORE
+                // anything is opened. A held path's append waits for the
+                // transaction that holds it and then lands in whatever file the
+                // path holds, instead of racing a rename onto an inode the
+                // rename is about to orphan.
+                if leased.contains(&req.session_path) {
+                    deferred.push(DeferredSessionAppend { req, reply });
+                    deferred_appends.store(deferred.len(), Ordering::SeqCst);
+                } else {
+                    run_session_append(&mut session_handles, &events, catalog.as_ref(), req, reply);
                 }
-                let _ = reply.send(result);
             }
             WriterCommand::Rewrite { req, reply } => {
                 let result = rewrite_file_inner(&req);
@@ -972,16 +1057,67 @@ async fn writer_loop(
                 }
                 let _ = reply.send(result);
             }
-            WriterCommand::FenceSession {
-                session_path,
-                reply,
-            } => {
-                session_handles.retain(|_, writer| writer.path() != session_path);
+            WriterCommand::LeaseSessions { paths, reply } => {
+                // Two transactions holding the same path would each believe it
+                // had exclusion. Refuse rather than share.
+                let held = paths.iter().find(|path| leased.contains(*path)).cloned();
+                match held {
+                    Some(path) => {
+                        let _ = reply.send(Err(anyhow!(
+                            "session {} is already held by a maintenance lease",
+                            path.display()
+                        )));
+                    }
+                    None => {
+                        for path in paths {
+                            session_handles.retain(|_, writer| writer.path() != path);
+                            leased.insert(path);
+                        }
+                        let _ = reply.send(Ok(()));
+                    }
+                }
+            }
+            WriterCommand::ReleaseSessions { paths, reply } => {
+                for path in &paths {
+                    leased.remove(path);
+                }
+                // Arrival order, so a run's lifecycle lines stay in the order
+                // the supervisor wrote them.
+                let mut still_held = Vec::new();
+                let mut ready = Vec::new();
+                for entry in deferred.drain(..) {
+                    if leased.contains(&entry.req.session_path) {
+                        still_held.push(entry);
+                    } else {
+                        ready.push(entry);
+                    }
+                }
+                deferred = still_held;
+                deferred_appends.store(deferred.len(), Ordering::SeqCst);
                 let _ = reply.send(());
+                for entry in ready {
+                    run_session_append(
+                        &mut session_handles,
+                        &events,
+                        catalog.as_ref(),
+                        entry.req,
+                        entry.reply,
+                    );
+                }
             }
             WriterCommand::Shutdown { reply } => {
                 tx_handles.clear();
                 session_handles.clear();
+                // A deferred append is not written on the way out: the file it
+                // names may be mid-transaction, and reporting the loss is more
+                // honest than appending to whatever inode happens to be there.
+                for entry in deferred.drain(..) {
+                    let _ = entry.reply.send(Err(anyhow!(
+                        "writer shut down while a maintenance lease held {}",
+                        entry.req.session_path.display()
+                    )));
+                }
+                deferred_appends.store(0, Ordering::SeqCst);
                 *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 let _ = reply.send(());
                 break;
@@ -992,6 +1128,75 @@ async fn writer_loop(
             cmd = rx.recv().await;
         }
     }
+}
+
+/// Run one session append and publish what it produced.
+///
+/// Extracted so the same path serves an append that arrives while nothing holds
+/// its file and one that queued behind a session lease
+/// (orgasmic:TASK-FZB6T.3 finding 1) — a deferred append must be the SAME write,
+/// not a second implementation of it.
+fn run_session_append(
+    session_handles: &mut HashMap<String, SessionWriter>,
+    events: &EventBus,
+    catalog: Option<&crate::run_catalog::RunCatalog>,
+    req: SessionAppend,
+    reply: oneshot::Sender<Result<SessionAppendResult>>,
+) {
+    let SessionAppend {
+        run_id,
+        session_path,
+        identity,
+        authority,
+        kind,
+        event,
+    } = req;
+    // Lifecycle envelopes carry a `phase` tag (acquire/release/…). Captured
+    // before the append moves `event` so run-liveness consumers get a dedicated
+    // signal alongside the firehose.
+    let lifecycle_phase = (kind == SessionEventKind::Lifecycle)
+        .then(|| {
+            event
+                .get("phase")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .flatten();
+    let result = append_session_inner(
+        session_handles,
+        &run_id,
+        &session_path,
+        identity,
+        authority,
+        kind,
+        event,
+    );
+    if let Ok(ref ok) = result {
+        events.publish(
+            Topic::Run,
+            EventPayload::RunEvent {
+                run_id: run_id.clone(),
+                seq: ok.seq,
+            },
+        );
+        if let Some(phase) = lifecycle_phase {
+            // orgasmic:TASK-FZB6T — the catalog update runs through this
+            // boundary, before the event is published, so no consumer woken by
+            // the lifecycle event can read a catalog entry that predates the
+            // write it was told about.
+            if let Some(catalog) = catalog {
+                catalog.invalidate_session(&session_path);
+            }
+            events.publish(
+                Topic::Run,
+                EventPayload::RunLifecycle {
+                    run_id: run_id.clone(),
+                    phase,
+                },
+            );
+        }
+    }
+    let _ = reply.send(result);
 }
 
 struct PendingTxBatchItem {
