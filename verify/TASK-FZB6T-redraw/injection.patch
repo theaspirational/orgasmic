@@ -1,18 +1,41 @@
 diff --git a/crates/orgasmic-core/src/session.rs b/crates/orgasmic-core/src/session.rs
-index 75938b5..281033c 100644
+index ea06f4a..d5f77ca 100644
 --- a/crates/orgasmic-core/src/session.rs
 +++ b/crates/orgasmic-core/src/session.rs
-@@ -180,12 +180,7 @@ impl SessionWriter {
-     /// and note envelopes are supervisor-authored authority and are written
-     /// verbatim.
+@@ -230,31 +230,16 @@ impl SessionWriter {
+     /// bounds one such event; it does not forbid a million of them, and the
+     /// zero-persisted-redraw rule is a ban rather than a budget.
      pub fn append(&mut self, kind: SessionEventKind, event: Value) -> Result<u64, SessionError> {
+-        if kind == SessionEventKind::DriverEvent {
+-            if let Some(transport) = self.transport.as_deref() {
+-                if transport_is_pane(transport)
+-                    && event.get("type").and_then(Value::as_str) == Some("text_chunk")
+-                {
+-                    return Err(SessionError::RenderedPanePayloadRefused {
+-                        transport: transport.to_string(),
+-                    });
+-                }
+-            }
+-        }
+-        // A run states its transport in its own `RunMeta` line, so the writer
+-        // is fenced from that line onward — including a writer reopened by a
+-        // restarted daemon, which learns it from the file at `open`.
++        // INJECTED (TASK-FZB6T / TASK-FZB6T.2 finding 5): the whole storage
++        // lock is gone. No pane refusal ahead of the cap, and no cap — driver
++        // payloads are persisted verbatim, which is the storage shape that
++        // produced the 2.239 GiB of legacy history this task exists to stop
++        // repeating.
+         if kind == SessionEventKind::Lifecycle {
+             if let Some(transport) = run_meta_transport(&event) {
+                 self.transport = Some(transport);
+             }
+         }
 -        let event = match kind {
 -            SessionEventKind::DriverEvent => {
 -                bound_driver_event_payload(event, DRIVER_EVENT_PAYLOAD_CAP_BYTES).value
 -            }
 -            _ => event,
 -        };
-+        // INJECTED (TASK-FZB6T): driver payloads are persisted verbatim.
          let envelope = SessionEnvelope {
              seq: self.seq,
              time: Utc::now(),
