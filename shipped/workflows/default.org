@@ -56,8 +56,9 @@ manager review the produced diff before landing or moving the task onward.
 
 Risky work is staged. Grill or plan before implementation, dispatch the
 implementation with the resulting constraints, and run an independent reviewer
-pass before treating the result as shippable. Use a premium tier for these
-stages when judgment, safety, or difficult debugging matters.
+pass before treating the result as shippable. Independent means a different
+harness family from the implementer, not merely a second run. Use a premium tier
+for these stages when judgment, safety, or difficult debugging matters.
 
 Delegation runs on committed history. `manager dispatch` builds the worker a
 worktree from a git ref, so anything uncommitted in the manager's tree is
@@ -70,9 +71,17 @@ verdict on code it never read. The entry router's dispatch rule carries the
 
 Proceed by default. Committing to a branch, creating a worktree, and running
 gates are not decisions and never need permission; the entry router's human
-checkpoints section states the class that does.
+checkpoints section states the class that does, and the single question it
+sanctions - the once-per-session agent selection ask, at the first dispatch.
+Answer it once and the rest of the session runs unprompted.
 
-Use per-dispatch `--model` and `--effort` overrides when a task needs explicit
-transport options. Choose `--mode` and `--harness` from `orgasmic manager drivers`
-(or project config). Omit model/effort to use harness defaults; explicit values
-pass through unvalidated.
+Selection follows the tier. Take `--mode` and `--harness` from `orgasmic manager
+drivers`; `--model` and `--effort` are the harness's own vocabulary and pass
+through unvalidated, which is why no model identifier is stored anywhere in
+orgasmic. Ordinary and trivial work may run at the harness default effort.
+Review and risky stages carry an explicit `--effort` - that is what the premium
+tier above means in flags, and it makes an unset effort something a person chose
+rather than something nobody noticed. The reviewer also runs on a different
+harness family than the implementer whose work it reads. The entry router's
+agent selection section holds both rules and the question that supplies the
+preference.
