@@ -186,6 +186,12 @@ enum WriterCommand {
         req: TransactionRequest,
         reply: oneshot::Sender<Result<TxAppendResult>>,
     },
+    /// Drop the cached append handle for one session path
+    /// (orgasmic:TASK-FZB6T.2 finding 3).
+    FenceSession {
+        session_path: PathBuf,
+        reply: oneshot::Sender<()>,
+    },
     Shutdown {
         reply: oneshot::Sender<()>,
     },
@@ -534,6 +540,31 @@ impl WriterHandle {
         rx.await.map_err(|_| anyhow!("writer reply dropped"))?
     }
 
+    /// Close the cached append handle for one session path, so a maintenance
+    /// pass may replace the file it names.
+    ///
+    /// orgasmic:TASK-FZB6T.2 finding 3 — `run history compact` replaces a
+    /// session file by renaming a rewritten sibling over it. The writer caches
+    /// one open append handle per run, and a rename leaves that handle pointing
+    /// at an ORPHANED INODE: every lifecycle line written afterwards goes to a
+    /// file with no name and is lost. Closing the handle first means the next
+    /// append re-opens by path and lands in whatever file the path now holds.
+    ///
+    /// Ordered behind every write already queued, because it travels the same
+    /// channel — so a fence is also a barrier against the appends in flight
+    /// when maintenance asked for it.
+    pub async fn fence_session(&self, session_path: PathBuf) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(WriterCommand::FenceSession {
+                session_path,
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("writer task is gone"))?;
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))
+    }
+
     /// Atomic read-modify-write through the writer flock.
     ///
     /// Use this when a caller's "read current value, mutate, write back"
@@ -709,6 +740,12 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
             run_id: None,
             tx_type: None,
             path: Some(req.path.clone()),
+        },
+        WriterCommand::FenceSession { session_path, .. } => PendingWrite {
+            kind: "fence_session".to_string(),
+            run_id: None,
+            tx_type: None,
+            path: Some(session_path.clone()),
         },
         WriterCommand::Shutdown { .. } => PendingWrite {
             kind: "shutdown".to_string(),
@@ -934,6 +971,13 @@ async fn writer_loop(
                     );
                 }
                 let _ = reply.send(result);
+            }
+            WriterCommand::FenceSession {
+                session_path,
+                reply,
+            } => {
+                session_handles.retain(|_, writer| writer.path() != session_path);
+                let _ = reply.send(());
             }
             WriterCommand::Shutdown { reply } => {
                 tx_handles.clear();
