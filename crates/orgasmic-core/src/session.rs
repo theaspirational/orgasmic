@@ -1807,7 +1807,8 @@ mod tests {
 
         let grew = std::fs::metadata(&path).unwrap().len() - before;
         assert_eq!(
-            grew, 0,
+            grew,
+            0,
             "a redraw chunk persisted to JSONL: 64 rendered repaints of {} bytes each grew \
              the session file by {grew} bytes; a pane transport must persist ZERO of them",
             scrollback.len()

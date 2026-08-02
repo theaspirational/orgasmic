@@ -1441,14 +1441,12 @@ pub(crate) fn entry_from_scan(
 ) -> RunCatalogEntry {
     let compact = compact_envelopes(latest_run_segment(&scan.envelopes));
     let semantics = derive_semantics(&compact, scan.final_envelope_retained);
-    let run_meta = semantics
-        .run_meta_recorded
-        .then(|| {
-            (
-                semantics.run_meta_project.clone(),
-                semantics.run_meta_worktree.clone(),
-            )
-        });
+    let run_meta = semantics.run_meta_recorded.then(|| {
+        (
+            semantics.run_meta_project.clone(),
+            semantics.run_meta_worktree.clone(),
+        )
+    });
     RunCatalogEntry {
         run_id: semantics.run_id,
         runtime_id: semantics.runtime_id,
@@ -3373,7 +3371,8 @@ mod tests {
         // Duplicate keys resolve the way a parse of the same line resolves
         // them — last wins — so the accounting can never disagree with what a
         // reader of the record would see.
-        let duplicated = br#"{"kind":"driver_event","event":{"type":"text_chunk","type":"tool_result"}}"#;
+        let duplicated =
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","type":"tool_result"}}"#;
         assert_eq!(classify_history_line(duplicated), "semantic");
         let parsed: Value = serde_json::from_slice(duplicated).unwrap();
         assert_eq!(parsed["event"]["type"].as_str(), Some("tool_result"));

@@ -745,16 +745,17 @@ pub(crate) fn apply_compaction_with(
     }
 
     let results: Vec<CompactionFileResult> = manifest.files.iter().map(result_of).collect();
-    let (reclaimed_records, reclaimed_bytes) = results.iter().fold((0, 0), |(records, bytes), r| {
-        match &r.outcome {
-            CompactionFileOutcome::Compacted {
-                reclaimed_records,
-                reclaimed_bytes,
-                ..
-            } => (records + reclaimed_records, bytes + reclaimed_bytes),
-            _ => (records, bytes),
-        }
-    });
+    let (reclaimed_records, reclaimed_bytes) =
+        results
+            .iter()
+            .fold((0, 0), |(records, bytes), r| match &r.outcome {
+                CompactionFileOutcome::Compacted {
+                    reclaimed_records,
+                    reclaimed_bytes,
+                    ..
+                } => (records + reclaimed_records, bytes + reclaimed_bytes),
+                _ => (records, bytes),
+            });
     Ok(CompactionReport {
         dry_run: false,
         confirm_token: plan.manifest_id.clone(),
@@ -868,24 +869,19 @@ fn compact_one_file(
     manifest_id: &str,
     fenced: &FencedSessions,
     fault: &FaultInjector<'_>,
-    journal: &mut dyn FnMut(
-        CompactionFileStage,
-        Option<String>,
-    ) -> std::io::Result<()>,
+    journal: &mut dyn FnMut(CompactionFileStage, Option<String>) -> std::io::Result<()>,
 ) -> Result<(), CompactionError> {
     let path = planned.session_path.as_path();
 
     // Everything in this closure refuses BEFORE anything is written, so the
     // durable stage stays `Planned` and the file is untouched.
-    let refuse = |reason: String,
-                  journal: &mut dyn FnMut(
-        CompactionFileStage,
-        Option<String>,
-    ) -> std::io::Result<()>|
-     -> Result<(), CompactionError> {
-        journal(CompactionFileStage::Planned, Some(reason))
-            .map_err(|error| CompactionError::JournalFailed(error.to_string()))
-    };
+    let refuse =
+        |reason: String,
+         journal: &mut dyn FnMut(CompactionFileStage, Option<String>) -> std::io::Result<()>|
+         -> Result<(), CompactionError> {
+            journal(CompactionFileStage::Planned, Some(reason))
+                .map_err(|error| CompactionError::JournalFailed(error.to_string()))
+        };
 
     if !fenced.contains(path) {
         return refuse(
@@ -1431,9 +1427,7 @@ pub fn rollback_compaction(
             continue;
         }
         let staging = staging_path(&record.session_path);
-        if let Err(error) =
-            write_and_sync(&staging, &bytes).and_then(|()| sync_dir_of(&staging))
-        {
+        if let Err(error) = write_and_sync(&staging, &bytes).and_then(|()| sync_dir_of(&staging)) {
             let _ = std::fs::remove_file(&staging);
             report.failed.insert(key, error.to_string());
             continue;
@@ -2144,13 +2138,9 @@ mod tests {
             let token = plan.manifest_id.clone();
             let fenced = fence_all(&plan);
 
-            let error = apply_compaction_with(
-                plan,
-                Some(&token),
-                &fenced,
-                &fault_at(point, Fault::Crash),
-            )
-            .unwrap_err();
+            let error =
+                apply_compaction_with(plan, Some(&token), &fenced, &fault_at(point, Fault::Crash))
+                    .unwrap_err();
             assert!(
                 error.to_string().contains("injected crash"),
                 "{point:?}: {error}"
@@ -2246,15 +2236,10 @@ mod tests {
         let fenced = fence_all(&plan);
         assert_eq!(plan.files.len(), 2);
 
-        let error = apply_compaction_with(
-            plan,
-            Some(&token),
-            &fenced,
-            &|point, path| {
-                (point == FaultPoint::ResultJournalWrite && path == first)
-                    .then(|| Fault::Io("no space left on device".to_string()))
-            },
-        )
+        let error = apply_compaction_with(plan, Some(&token), &fenced, &|point, path| {
+            (point == FaultPoint::ResultJournalWrite && path == first)
+                .then(|| Fault::Io("no space left on device".to_string()))
+        })
         .unwrap_err();
         assert!(
             matches!(error, CompactionError::JournalFailed(_)),
