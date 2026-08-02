@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         10cfd39c2cd7e08abcf7e243fc7c7fedbff20cc8
+:LIVENESS:         aa8f1fb90e772d3cb51c72301465f8ba5cce7498
 :LIVENESS_AT:      [2026-08-03 Mon]
 :UPDATED_AT:       [2026-08-03 Mon]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -128,6 +128,37 @@ SELF-INFLICTED LEDGER NOISE, recorded so nobody hunts it: 11
 =manager.action= entries targeting =.orgasmic/healthcheck= are mine. A monitor
 probed writer liveness BY WRITING, which was a bad design given the ledger is
 append-only. The replacement detects writer death by reading the daemon log.
+ADDENDUM, later the same session:
+
+- TASK-4CSMY.2 (merge =1effe66=, close =tx-4176=) — closed the round-3 BLOCK
+  SHIP. The glyph was the footnote; the deliverable is that the table is now
+  AUDITED AGAINST ITS SOURCE. The old positive control walked
+  =STATUS_SPINNER_GLYPHS= and asserted the table accepted its own entries — a
+  tautology, and exactly how the missing frame survived a review round. New
+  controls name the frames independently of the table, and a guard streams the
+  installed claude binary, decodes both JS array literals and asserts superset.
+  The author re-ran the extraction itself at byte offset 238701938 and recorded
+  a trap: the binary ships the frames as JS ESCAPES, never UTF-8, so grepping
+  the glyph returns nothing and a future re-derivation could conclude wrongly.
+  Manager gates: 147/0 supervisor in 36.10s with the sentinel green and zero
+  skip hits; both proofs PASS.
+
+- FZB6T round-2 review (=tx-4193=): NEEDS FIXES, 3 HIGH blocking. TWO ARE THE
+  PREVIOUS ROUNDS OWN DOING. The fence->rename TOCTOU it declared an
+  acceptable residual is blocking, because THE ARCHIVE PREDATES THE APPEND IT IS
+  CLAIMED TO RECOVER. And the manifest =results= -> =files= change shipped with
+  no version and no compatibility decoder, so a current runtime reading an old
+  manifest and an old runtime reading a new one BOTH report a successful
+  rollback having restored nothing. Third: the structural scanner does not
+  validate JSON, so a record with a truncated literal is classified and deleted
+  without being proven valid.
+
+- A LIMIT IN THE MANAGERS OWN VERIFICATION, worth carrying forward: the re-cut
+  =verify/TASK-FZB6T.1= injection PASSES a red-then-green replay — this manager
+  ran it and it passed — while never reaching the semantic-validation
+  assertions it claims to pin, because an earlier path assertion panics first.
+  A passing replay proves the red HAPPENS, not that it is the RIGHT red. Treat
+  =orgasmic verify= PASS as necessary, never sufficient, for a re-cut artifact.
 
 ** Next likely actions
 1. WAIT FOR THE TWO IN-FLIGHT DISPATCHES, close them, and act on the verdicts.
@@ -193,38 +224,45 @@ append-only. The replacement detects writer death by reading the daemon log.
     knowledge over.
 
 ** In flight
-TWO DISPATCHES RUNNING, both =rmux= with a =3600s= stall override:
+THREE DISPATCHES RUNNING, all =rmux= with a =3600s= stall override:
 
-- =tx-20260802-orgasmic-4158= — TASK-4CSMY.2 implementer,
-  claude / claude-opus-5 / high. Closing the round-3 BLOCK SHIP: the spinner
-  allowlist omits a real claude frame. Scoped to the COMPLETENESS GUARD, not the
-  one glyph — the current tests cannot distinguish a complete allowlist from an
-  incomplete one, so the next frame-set drift lands just as silently.
-- =tx-20260802-orgasmic-4167= — TASK-FZB6T reviewer,
-  codex / gpt-5.6-sol / high, round 2. Briefed on the three sharpest spots: the
-  new flock/fence exclusion and its author-declared surviving fence->rename
-  TOCTOU; the re-pinned redraw artifact, whose red signature the author changed
-  deliberately and asked a reviewer to confirm; and dec_BBPW4, three design
-  answers the continuation explicitly did not re-litigate.
+- =tx-20260802-orgasmic-4180= — TASK-4CSMY + TASK-JQ8AV reviewer, ROUND 4,
+  codex / gpt-5.6-sol / high. Reviewing the delta =b35f01f=. Briefed that the
+  question after four rounds is not "is the glyph fixed" but "can this drift
+  silently again", and told plainly that SHIP is the expected outcome if the
+  block is closed, with non-blocking findings becoming their own tasks rather
+  than round five.
+- =tx-20260802-orgasmic-4198= — TASK-FZB6T.3 implementer,
+  claude / claude-opus-5 / high. Three HIGH blockers from the round-2 review.
+- =tx-20260802-orgasmic-4190= — TASK-YGB1R + TASK-TW3N3 + TASK-4YX1K
+  implementer, claude / claude-opus-5 / high. One dispatch because all three
+  rewrite the same two files (=shipped/workflows/default.org= 35 lines,
+  =shipped/entry/router.org= 84 lines) and are one argument about where the
+  human checkpoint goes. Prose-only, near-zero cargo, which is why a third
+  worker was safe on this host.
 
-Briefs for every dispatch this session are preserved under =.orgasmic/tmp/=
-(=brief-*-fix.md=, =brief-*-review*.md=, =brief-fzb6t2-continue.md=).
+Every brief this session is preserved under =.orgasmic/tmp/= (=brief-*-fix.md=,
+=brief-*-review*.md=, =brief-fzb6t2-continue.md=, =brief-workflow-trio.md=).
 
 THE BOARD
-- IN_PROGRESS (2): TASK-TJKFC (P1, partial, no worker) and TASK-STWVB (P2, the
-  flake work, no worker). Neither has a live worker; both predate this session.
-- IN_REVIEW (3): TASK-4CSMY and TASK-JQ8AV (awaiting the 4CSMY.2 fix, then a
-  round-4 review), TASK-FZB6T (under its round-2 reviewer now).
-- DONE this session: TASK-JQ8AV.1, TASK-FZB6T.1, TASK-4CSMY.1, TASK-FZB6T.2.
-- TODO: TASK-4CSMY.2 is dispatched; the seven process tasks are untouched.
-- BACKLOG gained TASK-BX5SR, TASK-T7KSH, TASK-WPC6G, TASK-NTNK0 and lost
+- IN_REVIEW (2): TASK-4CSMY and TASK-JQ8AV, under the round-4 reviewer.
+- IN_PROGRESS: TASK-TJKFC (P1, partial, no worker, predates this session),
+  TASK-STWVB (P2, the flake work, no worker), TASK-FZB6T (fix round 3 running),
+  TASK-FZB6T.3, and the three workflow tasks.
+- DONE this session: TASK-JQ8AV.1, TASK-FZB6T.1, TASK-4CSMY.1, TASK-FZB6T.2,
+  TASK-4CSMY.2.
+- BACKLOG gained TASK-BX5SR, TASK-T7KSH, TASK-WPC6G, TASK-NTNK0; lost
   TASK-15MJN and TASK-XHP43 to cancellation.
 
-WHEN A WORKER REPORTS the sequence is: read =*last.txt=, merge its branch, run
-the gates YOURSELF (the author's numbers are a claim), then
-=manager dispatch-close --started-tx <tx> --status done=. Note that a
-continuation or a second review round CANNOT use the derived branch name — the
-first run holds it — so pass =--branch= explicitly.
+WHEN A WORKER REPORTS: read =*last.txt=, merge its branch, RUN THE GATES
+YOURSELF (the author's numbers are a claim), then
+=manager dispatch-close --started-tx <tx> --status done=. Two mechanics that
+cost time tonight and are not obvious:
+- a continuation or a second review round CANNOT use the derived branch name —
+  the first run holds it — so pass =--branch= explicitly;
+- =dispatch-close= can append its tx and still fail the lifecycle update; the
+  next =orgasmic manager= command reconciles it. If that happens repeatedly,
+  suspect a DEAD WRITER (TASK-BX5SR) rather than contention.
 
 ** Divergence / Risks
 THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY. Measured tonight: one
