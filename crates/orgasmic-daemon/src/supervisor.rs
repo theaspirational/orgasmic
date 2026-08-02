@@ -3322,19 +3322,41 @@ impl Supervisor {
         // what is running under the run right now. Only the stall clock asks —
         // `max_run_duration` is an absolute ceiling by design, and idle is
         // about operator input, not work.
-        let missing_evidence = if revalidated.reason == STALL_TIMEOUT_REASON {
-            let target = {
+        let (revalidated, missing_evidence) = if revalidated.reason == STALL_TIMEOUT_REASON {
+            let observed = {
                 let g = self.inner.lock().await;
-                g.runs.get(&revalidated.run_id).map(|rec| WorkProbeTarget {
-                    transport: rec.transport.clone(),
-                    identity: rec.identity.clone(),
-                    pid: rec.early_exit_watcher_pid,
+                g.runs.get(&revalidated.run_id).map(|rec| {
+                    (
+                        WorkProbeTarget {
+                            transport: rec.transport.clone(),
+                            identity: rec.identity.clone(),
+                            pid: rec.early_exit_watcher_pid,
+                        },
+                        rec.last_progress_at,
+                    )
                 })
             };
-            let Some(target) = target else {
+            let Some((target, progress_before_probe)) = observed else {
                 return;
             };
-            match self.observe_work_evidence(target).await {
+            let probed_identity = target.identity.clone();
+            let evidence = self.observe_work_evidence(target).await;
+            // orgasmic:TASK-JQ8AV.1 — the probe is an await that DROPS the
+            // supervisor lock for up to `WORK_PROBE_TIMEOUT`, and the pre-probe
+            // revalidation above happened before it. Everything it established
+            // has to be established again: the run may have been released and a
+            // replacement acquired under the same id, a terminal outcome may
+            // have landed, another timeout may now win precedence, and — the
+            // case the reviewer named — real progress may have arrived while
+            // the probe was in flight, which must cancel the release rather
+            // than be overwritten by it.
+            let Some(revalidated) = self
+                .revalidate_after_probe(&revalidated, &probed_identity, progress_before_probe)
+                .await
+            else {
+                return;
+            };
+            match evidence {
                 WorkEvidence::Working { detail } => {
                     // Credit the probe as the progress event the transport
                     // could not emit, and leave the run alone. A run whose work
@@ -3352,11 +3374,11 @@ impl Supervisor {
                     );
                     return;
                 }
-                WorkEvidence::Idle { detail } => Some(detail),
-                WorkEvidence::Unknown => None,
+                WorkEvidence::Idle { detail } => (revalidated, Some(detail)),
+                WorkEvidence::Unknown => (revalidated, None),
             }
         } else {
-            None
+            (revalidated, None)
         };
         warn!(
             run_id = %revalidated.run_id,
@@ -3414,6 +3436,50 @@ impl Supervisor {
                 );
             }
         }
+    }
+
+    /// Re-establish, after the work probe's await, everything the pre-probe
+    /// validation established — and refuse the release if any of it moved.
+    ///
+    /// Four independent things are checked, because the probe drops the
+    /// supervisor lock and each of them can change under it:
+    ///
+    /// - **lifecycle**: the run is still in the map, and [`timed_out_run`]
+    ///   still yields a candidate (which is where `terminal_outcome` is
+    ///   consulted, so a run that finished during the probe is no longer a
+    ///   candidate);
+    /// - **identity**: the record still carries the identity the probe was
+    ///   given. A release and a re-acquire under the same `run_id` would
+    ///   otherwise let one run's pane evidence decide another run's death;
+    /// - **precedence**: the winning reason is still the one the probe was run
+    ///   for. `max_run_duration` and `idle_timeout` are not probed at all, and
+    ///   must not inherit a stall probe's verdict;
+    /// - **progress**: `last_progress_at` has not moved. Any progress during
+    ///   the probe cancels the release outright — even in the corner where the
+    ///   clock is still expired against the new timestamp, because a run that
+    ///   just made progress is not the wedge this sweep set out to kill, and
+    ///   the next sweep will re-decide in 50 ms with fresh evidence.
+    ///
+    /// Returns the FRESH candidate rather than the stale one so the reason
+    /// string quotes the elapsed time actually observed at release.
+    // orgasmic:TASK-JQ8AV.1
+    async fn revalidate_after_probe(
+        &self,
+        candidate: &RunTimeoutCandidate,
+        probed_identity: &RuntimeIdentity,
+        progress_before_probe: Instant,
+    ) -> Option<RunTimeoutCandidate> {
+        let now = Instant::now();
+        let g = self.inner.lock().await;
+        let rec = g.runs.get(&candidate.run_id)?;
+        if !same_runtime_identity(&rec.identity, probed_identity) {
+            return None;
+        }
+        if rec.last_progress_at != progress_before_probe {
+            return None;
+        }
+        let revalidated = timed_out_run(&candidate.run_id, rec, now)?;
+        (revalidated.reason == candidate.reason).then_some(revalidated)
     }
 
     /// Record a worker-declared terminal verb without releasing the lease
@@ -4514,6 +4580,15 @@ fn spawn_run_timeout_monitor(supervisor: Supervisor) {
     }));
 }
 
+/// Whole-tuple identity equality.
+///
+/// Field-by-field rather than `==` because `RuntimeIdentity` derives no
+/// `PartialEq` and lives in `orgasmic-core`, which this change does not own.
+// orgasmic:TASK-JQ8AV.1
+fn same_runtime_identity(a: &RuntimeIdentity, b: &RuntimeIdentity) -> bool {
+    a.run_id == b.run_id && a.runtime_id == b.runtime_id && a.boot_id == b.boot_id
+}
+
 fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeoutCandidate> {
     if rec.terminal_outcome.is_some() {
         return None;
@@ -4830,6 +4905,110 @@ fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<
     Some(cmd)
 }
 
+/// How long any ONE probe subprocess may run before the daemon kills it.
+///
+/// Smaller than [`WORK_PROBE_TIMEOUT`] on purpose, because the two bound
+/// different things. `WORK_PROBE_TIMEOUT` stops the SUPERVISOR waiting; it
+/// cannot stop the probe, because `spawn_blocking` is not cancellable. So
+/// before this deadline existed, a wedged `rmux`, `tmux` or `ps` child outlived
+/// the timeout holding a blocking-pool thread and a live subprocess — and the
+/// stall sweep re-runs every [`RUN_TIMEOUT_CHECK_INTERVAL`], leaking one of each
+/// per sweep for as long as the mux stayed wedged. This is the bound that
+/// actually ends both.
+///
+/// Two seconds is an order of magnitude above what these calls take when the
+/// mux is healthy (a local `display-message` or `capture-pane` round trip) and
+/// well inside the 5 s the supervisor is prepared to wait for the whole probe.
+// orgasmic:TASK-JQ8AV.1
+const PROBE_CHILD_DEADLINE: Duration = Duration::from_secs(2);
+
+/// How often the deadline loop asks whether the probe child has exited.
+const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Run a probe subprocess as an OWNED child under an OS-level deadline, and
+/// return its stdout only if it exited successfully inside that deadline.
+///
+/// Every probe subprocess goes through here — both muxes' `display-message` and
+/// `capture-pane`, and the `ps` table — so "probe children are bounded, killed
+/// and reaped" is true by construction for each transport rather than by
+/// repetition at four call sites.
+///
+/// Three things this does that `Command::output()` did not:
+///
+/// - the child gets its OWN PROCESS GROUP, so the kill below takes whatever it
+///   spawned too (an rmux client that forked a server, a shell around `ps`);
+/// - the deadline is enforced against the child, not against an `await` the
+///   child cannot see;
+/// - the child is REAPED after the kill. `kill` only signals; without the
+///   `wait` the corpse is a zombie held for the daemon's whole lifetime.
+///
+/// stdout is drained on a helper thread rather than after the wait: a child
+/// that fills the pipe buffer blocks on write, and a deadline loop that is not
+/// reading would kill a child that was making progress.
+// orgasmic:TASK-JQ8AV.1
+fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let stdout = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut stdout) = stdout {
+            use std::io::Read as _;
+            let _ = stdout.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let expires_at = std::time::Instant::now() + deadline;
+    let exited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(_) => break None,
+        }
+        if std::time::Instant::now() >= expires_at {
+            break None;
+        }
+        std::thread::sleep(PROBE_CHILD_POLL_INTERVAL);
+    };
+    let Some(status) = exited else {
+        kill_probe_child(&mut child);
+        let _ = child.wait();
+        // The reader cannot outlive the kill: the pipe's only writer is gone,
+        // so the read returns EOF.
+        let _ = reader.join();
+        return None;
+    };
+    let stdout = reader.join().unwrap_or_default();
+    status.success().then_some(stdout)
+}
+
+/// SIGKILL the probe child's process group, then the child itself as a
+/// fallback. Not SIGTERM: a wedged mux client is exactly the process that does
+/// not act on a catchable signal, and there is nothing here worth draining.
+#[cfg(unix)]
+// orgasmic:TASK-JQ8AV.1
+fn kill_probe_child(child: &mut std::process::Child) {
+    if let Ok(pid) = libc::pid_t::try_from(child.id()) {
+        // Negative pid addresses the process group, which `process_group(0)`
+        // made equal to the child's own pid.
+        // SAFETY: `kill` on a pid this process spawned and has not reaped;
+        // it touches no memory owned by this process.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
+
+#[cfg(not(unix))]
+fn kill_probe_child(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+
 /// `<mux> display-message -p -t <session> '#{pane_pid}'` — the pane's root
 /// process (the shell the harness runs in), whose descendants are the harness
 /// and everything the harness spawned.
@@ -4839,14 +5018,10 @@ fn pane_pid(
     socket: Option<&std::path::Path>,
 ) -> Option<u32> {
     let session = mux.session_name(identity);
-    let output = pane_probe_command(mux, socket)?
-        .args(["display-message", "-p", "-t", &session, "#{pane_pid}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+    let mut cmd = pane_probe_command(mux, socket)?;
+    cmd.args(["display-message", "-p", "-t", &session, "#{pane_pid}"]);
+    let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
+    String::from_utf8_lossy(&stdout).trim().parse().ok()
 }
 
 /// `<mux> capture-pane -p -t <session>` — the pane's current *screen content*,
@@ -4859,67 +5034,205 @@ fn pane_content(
     socket: Option<&std::path::Path>,
 ) -> Option<String> {
     let session = mux.session_name(identity);
-    let output = pane_probe_command(mux, socket)?
-        .args(["capture-pane", "-p", "-t", &session])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    let mut cmd = pane_probe_command(mux, socket)?;
+    cmd.args(["capture-pane", "-p", "-t", &session]);
+    let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
+    Some(String::from_utf8_lossy(&stdout).into_owned())
 }
 
-/// The harness TUI's open-turn statusline, if the captured pane shows one.
+/// How many trailing NON-BLANK capture rows are the pane's status region — the
+/// only part of a capture in which an open-turn marker counts.
 ///
-/// Both accepted shapes are measured, not guessed (2026-07-29):
+/// MEASURED 2026-08-02, two independent live claude panes captured mid-turn off
+/// the real tmux server at the geometry every dispatch gets
+/// (`TMUX_SESSION_COLS`×`TMUX_SESSION_ROWS` = 200×50). Both showed the same
+/// tail, and the row numbers are absolute rows of the 50-row capture:
 ///
-/// - claude in-turn, live: `● Moonwalking… (20m 4s · ↓ 46.3k tokens)`; the
-///   incident capture: `✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking
-///   with high effort)`. Anchor: a leading non-alphanumeric spinner glyph,
-///   then `… (`, then either a `↓ … tokens` stream counter or an elapsed
-///   time starting with a digit.
-/// - the generic TUI interrupt hint (`esc to interrupt`, codex-style),
-///   case-insensitive, for harnesses whose spinner line differs.
+/// ```text
+/// 44  ● Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more with high effort)
+/// 45
+/// 46  ────────────────────────────────────────────────────────────  prompt box
+/// 47  ❯
+/// 48  ────────────────────────────────────────────────────────────
+/// 49    ● ~/…/task-fzb6t.1-impl | o ⇢75k | 150k/1000k ███░░░░░ | 33% 2h7m
+/// 50    ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent
+/// ```
 ///
-/// A claude pane at rest was measured to show none of these: the prompt box,
-/// the `● ~/path | …` status bar (glyph but no `… (`), and collapsed
-/// transcript lines (`⏺ Thinking for 8m 28s, …` — ellipsis but no `… (`) all
-/// fall through. The last match wins because the live statusline sits at the
-/// bottom of the screen, below any transcript text that might quote one.
+/// The live statusline is the SIXTH non-blank row from the bottom in both, and
+/// every row above it is transcript. Counting NON-BLANK rows rather than
+/// absolute ones is not a convenience: `capture-pane -p` was measured the same
+/// day to return exactly `pane_height` rows, blank-padded, so a harness that has
+/// printed three lines has its status row at absolute row 3 with 47 blanks under
+/// it, and an absolute-row rule would read the two shapes differently.
+///
+/// Twelve is double the measured depth — headroom for a one-line footer, a typed
+/// prompt line or an extra hint row — and still excludes the transcript body,
+/// which is where a stale or quoted marker lives.
+// orgasmic:TASK-JQ8AV.1
+const PANE_STATUS_REGION_ROWS: usize = 12;
+
+/// Cap on the marker text carried into a release reason and a log line.
+const PANE_MARKER_MAX_CHARS: usize = 120;
+
+/// The harness TUI's open-turn statusline, if the captured pane's STATUS REGION
+/// shows one.
+///
+/// Position and shape both bind, and the predecessor had neither. It asked
+/// whether ANY line of the WHOLE capture contained `esc to interrupt`, or
+/// contained `… (` somewhere after a leading glyph — so an at-rest pane whose
+/// prompt, transcript or tool output merely carried those bytes was classified
+/// `Working` on every expired stall sweep and survived to the
+/// `max_run_duration` ceiling instead of dying at the stall deadline. The
+/// adversarial case is not exotic: a worker discussing this very code prints
+/// `Esc to interrupt` on its own pane.
+///
+/// What binds now:
+///
+/// 1. the row must be in the status region ([`PANE_STATUS_REGION_ROWS`]);
+/// 2. the row must start at column 0 (see [`open_turn_status_row`]);
+/// 3. the row must match a measured marker shape end to end
+///    ([`spinner_status_row`] or [`interrupt_hint_status_row`]).
+///
+/// The last match in the region wins: the live statusline sits below anything
+/// older the region may still hold.
 ///
 /// The claim this encodes is deliberately bounded: a TUI frozen mid-turn with
 /// the statusline burned on screen is rescued sweep after sweep, but only
 /// until `max_run_duration` — "turn open" past that ceiling is its own
 /// timeout class, not immortality.
-// orgasmic:TASK-JQ8AV
+// orgasmic:TASK-JQ8AV,TASK-JQ8AV.1
 fn pane_open_turn_marker(pane: &str) -> Option<String> {
-    let mut marker = None;
-    for raw in pane.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.to_lowercase().contains("esc to interrupt") {
-            marker = Some(line);
-            continue;
-        }
-        let mut chars = line.chars();
-        let Some(glyph) = chars.next() else {
-            continue;
-        };
-        if glyph.is_alphanumeric() || chars.next() != Some(' ') {
-            continue;
-        }
-        let Some((_, after)) = line.split_once("… (") else {
-            continue;
-        };
-        let streaming = after.contains('↓') && after.contains("tokens");
-        let elapsed = after.chars().next().is_some_and(|c| c.is_ascii_digit());
-        if streaming || elapsed {
-            marker = Some(line);
+    let rows: Vec<&str> = pane.lines().filter(|row| !row.trim().is_empty()).collect();
+    let region = &rows[rows.len().saturating_sub(PANE_STATUS_REGION_ROWS)..];
+    region
+        .iter()
+        .rev()
+        .find(|row| open_turn_status_row(row))
+        .map(|row| row.trim().chars().take(PANE_MARKER_MAX_CHARS).collect())
+}
+
+/// One captured row against the measured status-row contract.
+///
+/// The column-0 rule is the single most load-bearing line here. MEASURED
+/// 2026-08-02 on the live panes above: the TUI paints its status row flush left
+/// (`● Contemplating…` at column 0) while every transcript body, tool result
+/// (`  ⎿  …`), collapsed-thinking line (`  Thought for 26s, …`) and footer row
+/// is indented by two spaces — and `capture-pane` preserves leading whitespace,
+/// trimming only trailing. So this is what stops a pane that ECHOES marker text
+/// — `cat` of a fixture, a grep hit, a diff of this file — from rescuing itself,
+/// which is the exact case the reviewer found and the exact case the previous
+/// tmux wedge arm could not catch.
+// orgasmic:TASK-JQ8AV.1
+fn open_turn_status_row(raw: &str) -> bool {
+    if raw.starts_with([' ', '\t']) {
+        return false;
+    }
+    let line = raw.trim_end();
+    spinner_status_row(line) || interrupt_hint_status_row(line)
+}
+
+/// `<glyph> <Verb…> (<progress>…` — the claude-family spinner row.
+///
+/// MEASURED shapes: `● Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more
+/// with high effort)` and `● Grooving… (1m 22s · ↓ 4.1k tokens)` (2026-08-02,
+/// live tmux panes); `● Moonwalking… (20m 4s · ↓ 46.3k tokens)` and
+/// `✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)`
+/// (2026-07-29, the incident captures).
+///
+/// The tightening over the predecessor is the EXACTLY-ONE-TOKEN verb. The old
+/// rule asked only whether `… (` appeared ANYWHERE after a leading glyph, so
+/// `⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)` — an
+/// at-rest transcript row — read as a live turn. All five measured verbs are a
+/// single gerund; prose in front of the ellipsis is not a statusline.
+// orgasmic:TASK-JQ8AV.1
+fn spinner_status_row(line: &str) -> bool {
+    let mut chars = line.char_indices();
+    let Some((_, glyph)) = chars.next() else {
+        return false;
+    };
+    if glyph.is_alphanumeric() || glyph.is_whitespace() {
+        return false;
+    }
+    let Some((space_at, ' ')) = chars.next() else {
+        return false;
+    };
+    let rest = &line[space_at + 1..];
+    let Some(verb_end) = rest.find(' ') else {
+        return false;
+    };
+    let verb = &rest[..verb_end];
+    // A bare `…` is the transcript's own ellipsis, not a spinner verb.
+    if !verb.ends_with('…') || verb.chars().count() < 2 {
+        return false;
+    }
+    let Some(body) = rest[verb_end..].trim_start().strip_prefix('(') else {
+        return false;
+    };
+    status_body_shows_progress(body)
+}
+
+/// `Working (7s • Esc to interrupt)` — the generic TUI interrupt hint, for
+/// harnesses whose spinner row differs (codex-style).
+///
+/// The hint must be a SEGMENT of the row's trailing status group, behind a
+/// status LABEL — not sixteen bytes found somewhere in a line. The predecessor
+/// asked `line.to_lowercase().contains("esc to interrupt")`, with no shape and
+/// no position: finding 1 in its purest form.
+// orgasmic:TASK-JQ8AV.1
+fn interrupt_hint_status_row(line: &str) -> bool {
+    let Some(head) = line.strip_suffix(')') else {
+        return false;
+    };
+    let Some(open) = head.rfind('(') else {
+        return false;
+    };
+    // A status label, not a sentence: measured `Working (…)`, plus room for a
+    // leading spinner glyph. Prose that happens to end in a parenthetical is
+    // not a status row.
+    if head[..open].split_whitespace().count() > 2 {
+        return false;
+    }
+    head[open + 1..]
+        .split(['·', '•', '|'])
+        .any(|segment| segment.trim().eq_ignore_ascii_case("esc to interrupt"))
+}
+
+/// The parenthesised status body has to carry live progress: a `↓ … tokens`
+/// stream counter or an elapsed clock. Both are measured; a parenthesis with
+/// neither is prose.
+///
+/// Deliberately tolerant of a MISSING closing paren, unlike
+/// [`interrupt_hint_status_row`]: a spinner row wide enough to be truncated by
+/// the pane still carries its evidence in the part that survived, and a missed
+/// rescue here re-creates the incident this channel exists to prevent.
+// orgasmic:TASK-JQ8AV.1
+fn status_body_shows_progress(body: &str) -> bool {
+    let body = body.trim_start();
+    let body = body.strip_suffix(')').unwrap_or(body);
+    if body.contains('↓') && body.contains("tokens") {
+        return true;
+    }
+    body.split([' ', '·', '•'])
+        .next()
+        .is_some_and(looks_like_elapsed)
+}
+
+/// `2s`, `31s`, `2m`, `3m41s`, `20m` — digits and `h`/`m`/`s` only, opening with
+/// a digit and carrying at least one unit.
+// orgasmic:TASK-JQ8AV.1
+fn looks_like_elapsed(token: &str) -> bool {
+    if !token.starts_with(|c: char| c.is_ascii_digit()) {
+        return false;
+    }
+    let mut saw_unit = false;
+    for ch in token.chars() {
+        match ch {
+            '0'..='9' => {}
+            'h' | 'm' | 's' => saw_unit = true,
+            _ => return false,
         }
     }
-    marker.map(|line| line.chars().take(120).collect())
+    saw_unit
 }
 
 /// `(pid, ppid, %cpu)` for every process on the box, in one `ps` call.
@@ -4930,17 +5243,17 @@ fn pane_open_turn_marker(pane: &str) -> Option<String> {
 /// why the sum is taken over the whole subtree, where the freshly spawned,
 /// short-lived, CPU-bound children (cargo, rustc) report accurately.
 fn process_cpu_table() -> Option<Vec<(u32, u32, f32)>> {
-    let output = Command::new("ps")
-        .args(["ax", "-o", "pid=,ppid=,pcpu="])
+    // Deadlined and owned like the mux calls: `ps` on a box with a wedged
+    // filesystem or an exhausted process table is one of the children the
+    // reviewer's finding 3 was about.
+    // orgasmic:TASK-JQ8AV.1
+    let mut cmd = Command::new("ps");
+    cmd.args(["ax", "-o", "pid=,ppid=,pcpu="])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let table: Vec<(u32, u32, f32)> = String::from_utf8_lossy(&output.stdout)
+        .stderr(Stdio::null());
+    let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
+    let table: Vec<(u32, u32, f32)> = String::from_utf8_lossy(&stdout)
         .lines()
         .filter_map(|line| {
             let mut parts = line.split_whitespace();
@@ -7419,6 +7732,53 @@ mod tests {
         }
     }
 
+    /// A probe that HOLDS the sweep open, so a test can act inside the window
+    /// the real probe leaves open (TASK-JQ8AV.1 finding 2).
+    ///
+    /// `observe` runs on the blocking pool, so blocking it here blocks nothing
+    /// the test needs: the supervisor lock is released for the whole await, and
+    /// the test's own tasks run normally. It answers `Idle` — a probe that
+    /// found nothing is the only case where the race matters, because it is the
+    /// only one that goes on to release.
+    struct HeldWorkProbe {
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl HeldWorkProbe {
+        /// `(probe, entered_rx, release_tx)`.
+        fn new() -> (
+            Arc<Self>,
+            std::sync::mpsc::Receiver<()>,
+            std::sync::mpsc::SyncSender<()>,
+        ) {
+            let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+            let (release_tx, release) = std::sync::mpsc::sync_channel(1);
+            (
+                Arc::new(Self {
+                    entered,
+                    release: std::sync::Mutex::new(release),
+                }),
+                entered_rx,
+                release_tx,
+            )
+        }
+    }
+
+    impl WorkEvidenceProbe for HeldWorkProbe {
+        fn observe(&self, _target: &WorkProbeTarget) -> WorkEvidence {
+            let _ = self.entered.send(());
+            let _ = self
+                .release
+                .lock()
+                .expect("held probe lock is never poisoned")
+                .recv_timeout(Duration::from_secs(10));
+            WorkEvidence::Idle {
+                detail: "held probe found nothing".into(),
+            }
+        }
+    }
+
     /// A supervisor whose only releaser is the test itself.
     ///
     /// Use this whenever a test ages a run past a timeout and then drives
@@ -8806,6 +9166,101 @@ mod tests {
         assert_release_reason(&session_path, "stall_timeout_exceeded");
     }
 
+    /// TASK-JQ8AV.1 finding 2: progress that arrives WHILE the work probe is
+    /// being awaited must cancel the release.
+    ///
+    /// The probe is the one await on the release path that drops the supervisor
+    /// lock, and it may hold it open for [`WORK_PROBE_TIMEOUT`]. Every check
+    /// before it — lifecycle, identity, precedence, expiry — was made against a
+    /// record from before that window, and none of them was made again. So a
+    /// run that produced real work in the five seconds the daemon spent asking
+    /// whether it had produced any was killed for producing none.
+    ///
+    /// Driven through the PRODUCTION progress path (`transition_state` → driver
+    /// event → `apply_driver_event_to_record`), not by poking the record, so
+    /// this proves what a live worker's tool call would do.
+    #[tokio::test]
+    async fn progress_during_the_work_probe_cancels_the_stall_release() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = TmuxTuiDriver;
+        let req = manual_req("TASK-PROBE-RACE", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        let before = event_count(&sup, &resp.run_id).await;
+
+        let (probe, entered, release) = HeldWorkProbe::new();
+        sup.set_work_probe(probe);
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+
+        let sweep = {
+            let sup = sup.clone();
+            tokio::spawn(async move { sup.release_first_timed_out_run().await })
+        };
+        // The sweep is now inside the probe, past every pre-probe check.
+        tokio::task::spawn_blocking(move || entered.recv_timeout(Duration::from_secs(10)))
+            .await
+            .expect("probe-entry wait task")
+            .expect("the sweep must reach the work probe");
+
+        sup.transition_state(
+            &resp.run_id,
+            TransitionRequest {
+                from: "ready".into(),
+                to: "in_progress".into(),
+                reason: "work arrived while the probe was in flight".into(),
+            },
+            &resp.identity,
+        )
+        .await
+        .unwrap();
+        wait_for_event_count(&sup, &resp.run_id, before + 1).await;
+
+        let _ = release.send(());
+        sweep.await.expect("sweep task");
+
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "progress during the probe must cancel the release, got {:?}",
+            release_reason(&session_path)
+        );
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+    }
+
+    /// The other half of the same guard, so it cannot degenerate into "never
+    /// release": the SAME held probe, the same window, and nothing happening in
+    /// it — the wedge still dies on schedule.
+    #[tokio::test]
+    async fn a_quiet_run_still_dies_when_nothing_arrives_during_the_probe() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = TmuxTuiDriver;
+        let req = manual_req("TASK-PROBE-RACE-CONTROL", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        let (probe, entered, release) = HeldWorkProbe::new();
+        sup.set_work_probe(probe);
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+
+        let sweep = {
+            let sup = sup.clone();
+            tokio::spawn(async move { sup.release_first_timed_out_run().await })
+        };
+        tokio::task::spawn_blocking(move || entered.recv_timeout(Duration::from_secs(10)))
+            .await
+            .expect("probe-entry wait task")
+            .expect("the sweep must reach the work probe");
+        let _ = release.send(());
+        sweep.await.expect("sweep task");
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(reason.split(':').next(), Some("stall_timeout_exceeded"));
+        assert!(
+            reason.contains("held probe found nothing"),
+            "the probe's finding must still reach the tombstone: {reason}"
+        );
+    }
+
     /// `Some(0)` disables both detectors: an interactive (manager) run parked
     /// at its prompt for far longer than every default threshold must survive
     /// the timeout sweep instead of being reaped as "stalled".
@@ -9428,6 +9883,218 @@ mod tests {
         assert!((cpu - 95.1).abs() < 0.01, "summed subtree cpu: {cpu}");
     }
 
+    /// Is `pid` still a process this box knows about? `kill -0` is the
+    /// liveness question that also sees a ZOMBIE — a killed-but-unreaped child
+    /// still answers it — which is exactly what makes it the right question
+    /// here: finding 3 is about children that are killed and then held.
+    #[cfg(unix)]
+    fn pid_is_present(pid: u32) -> bool {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 performs the permission/existence check only.
+        unsafe { libc::kill(pid, 0) == 0 }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pid_to_disappear(pid: u32, budget: Duration) -> bool {
+        let deadline = Instant::now() + budget;
+        while Instant::now() < deadline {
+            if !pid_is_present(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        !pid_is_present(pid)
+    }
+
+    /// TASK-JQ8AV.1 finding 3, at the funnel every probe subprocess goes
+    /// through: a child that never exits is KILLED and REAPED at the deadline,
+    /// and the caller is not held past it.
+    ///
+    /// `Command::output()` — what all four probe call sites used before — waits
+    /// forever. [`WORK_PROBE_TIMEOUT`] stopped the supervisor awaiting, but
+    /// `spawn_blocking` is not cancellable, so the child and the pool thread
+    /// both survived it; the sweep re-runs every
+    /// [`RUN_TIMEOUT_CHECK_INTERVAL`], so a wedged mux leaked one of each per
+    /// sweep.
+    ///
+    /// The grandchild is what makes this a process-GROUP proof: `sh` execs
+    /// nothing, it forks `sleep`, so killing only the direct child would leave
+    /// the sleeper orphaned and running.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline() {
+        let pidfile = tempfile::TempDir::new().expect("tempdir");
+        let grandchild_pidfile = pidfile.path().join("grandchild.pid");
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(format!(
+                "sleep 120 & echo $! > {}; wait",
+                grandchild_pidfile.display()
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let deadline = Duration::from_millis(400);
+        let started = Instant::now();
+        let (out, child_pids) = tokio::task::spawn_blocking(move || {
+            // The pids are read back out of the probe's own child, so the
+            // assertions below name CONCRETE processes the daemon spawned, not
+            // a pattern match over `ps`.
+            let out = probe_command_stdout(cmd, deadline);
+            let grandchild = std::fs::read_to_string(&grandchild_pidfile)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok());
+            (out, grandchild)
+        })
+        .await
+        .expect("probe task");
+        let elapsed = started.elapsed();
+
+        assert!(out.is_none(), "a killed child must not report success");
+        assert!(
+            elapsed < deadline + Duration::from_secs(3),
+            "the probe must return at its child deadline, took {elapsed:?}"
+        );
+        let grandchild = child_pids.expect("the stub recorded its `sleep` pid");
+        assert!(
+            wait_for_pid_to_disappear(grandchild, Duration::from_secs(5)).await,
+            "the child's whole process group must be gone; pid {grandchild} survived"
+        );
+    }
+
+    /// The same finding at the SUPERVISOR, on the real probe, for BOTH pane
+    /// transports: a mux binary that never answers must not hold the stall
+    /// sweep and must not leave a process behind.
+    ///
+    /// Each arm points the production `pane_probe_command` at a binary that
+    /// hangs — `RMUX_SDK_DAEMON_BINARY` for rmux (the documented override
+    /// `probe_rmux_binary` already honors), a PATH shim for tmux (which resolves
+    /// `tmux` by name). Every other line of the path is the real one:
+    /// `ProcessSubtreeCpuProbe::observe` → `work_probe_root_pid` → `pane_pid` →
+    /// `probe_command_stdout`.
+    ///
+    /// Bounded latency is asserted BELOW [`WORK_PROBE_TIMEOUT`] on purpose: at
+    /// or above it the assertion would pass on the outer timeout alone and
+    /// prove nothing about the child deadline.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport() {
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+
+        for (transport, mux) in [("rmux", PaneMux::Rmux), ("tmux", PaneMux::Tmux)] {
+            let dir = tempfile::TempDir::new().expect("tempdir");
+            let shim = dir.path().join("tmux");
+            let armed = dir.path().join("armed");
+            let pidfile = dir.path().join("child.pid");
+            // A mux that WEDGES, which is not the same as a binary that hangs
+            // on everything: `-V` is answered locally and never contacts a
+            // server, so it keeps working — what wedges is the verb that talks
+            // to the server, which is exactly the call the probe makes.
+            // Answering `-V` also keeps the daemon's binary resolution
+            // (`probe_rmux_binary`, which execs it) out of the timed section;
+            // see the residual risk note on that call.
+            //
+            // The first exec of a newly created executable is serialized
+            // through syspolicy on macOS (`.orgasmic/gotchas.org`), and that
+            // latency must not land inside the timed section either — so the
+            // shim exits immediately until the test arms it, and the test execs
+            // it once first.
+            std::fs::write(
+                &shim,
+                format!(
+                    "#!/bin/sh\n\
+                     for a in \"$@\"; do [ \"$a\" = -V ] && {{ echo 'rmux {version}'; exit 0; }}; \
+                     done\n\
+                     [ -f {armed} ] || exit 0\n\
+                     echo $$ > {pidfile}\n\
+                     exec sleep 120\n",
+                    version = orgasmic_drivers::modes::rmux::RMUX_REQUIRED_VERSION,
+                    armed = armed.display(),
+                    pidfile = pidfile.display(),
+                ),
+            )
+            .expect("write hanging mux shim");
+            std::fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+                .expect("chmod shim");
+            assert!(
+                Command::new(&shim)
+                    .status()
+                    .expect("warm the shim")
+                    .success(),
+                "the warm-up exec must succeed before the timed section"
+            );
+
+            // Install the override for this arm only, and restore it after.
+            let saved_rmux = std::env::var_os("RMUX_SDK_DAEMON_BINARY");
+            let saved_path = std::env::var_os("PATH").unwrap_or_default();
+            match mux {
+                PaneMux::Rmux => std::env::set_var("RMUX_SDK_DAEMON_BINARY", &shim),
+                // Keep the system dirs on the test PATH (`.orgasmic/gotchas.org`:
+                // a bare tempdir PATH breaks every concurrent test that spawns
+                // a tool).
+                PaneMux::Tmux => std::env::set_var(
+                    "PATH",
+                    format!("{}:{}", dir.path().display(), saved_path.to_string_lossy()),
+                ),
+            }
+            std::fs::write(&armed, "").expect("arm the shim");
+
+            let (sup, session_dir, _w) = make_unmonitored_supervisor();
+            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+            let driver = TmuxTuiDriver;
+            let req = manual_req(
+                &format!("TASK-HUNG-{transport}"),
+                session_dir.path(),
+                Some(1),
+                None,
+            );
+            let resp = sup.acquire(&driver, req).await.unwrap();
+            // A pane transport carries no wrapper pid, so the probe's FIRST act
+            // is the mux call that is about to hang.
+            {
+                let mut g = sup.inner.lock().await;
+                let rec = g.runs.get_mut(&resp.run_id).expect("run exists");
+                rec.transport = transport.to_string();
+                rec.early_exit_watcher_pid = None;
+            }
+            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+
+            let started = Instant::now();
+            sup.release_first_timed_out_run().await;
+            let elapsed = started.elapsed();
+
+            let hung_child = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|raw| raw.trim().parse::<u32>().ok());
+
+            match mux {
+                PaneMux::Rmux => match saved_rmux {
+                    Some(value) => std::env::set_var("RMUX_SDK_DAEMON_BINARY", value),
+                    None => std::env::remove_var("RMUX_SDK_DAEMON_BINARY"),
+                },
+                PaneMux::Tmux => std::env::set_var("PATH", &saved_path),
+            }
+
+            let hung_child = hung_child.unwrap_or_else(|| {
+                panic!("{transport}: the probe never reached the hanging mux binary")
+            });
+            assert!(
+                elapsed < WORK_PROBE_TIMEOUT,
+                "{transport}: the sweep must be bounded by the CHILD deadline, not by \
+                 WORK_PROBE_TIMEOUT; took {elapsed:?}"
+            );
+            assert!(
+                wait_for_pid_to_disappear(hung_child, Duration::from_secs(5)).await,
+                "{transport}: the hung probe child must be killed and reaped; pid \
+                 {hung_child} survived"
+            );
+        }
+    }
+
     fn probe_identity() -> RuntimeIdentity {
         RuntimeIdentity {
             run_id: "run-probe".into(),
@@ -9436,40 +10103,227 @@ mod tests {
         }
     }
 
-    /// TASK-JQ8AV, the classifier against the MEASURED captures — both
-    /// in-turn shapes are verbatim from real panes (2026-07-29), and the
-    /// at-rest material is what a throwaway claude TUI actually showed.
+    /// The tail every claude pane carries whether or not a turn is open —
+    /// prompt box, status bar, mode footer.
+    ///
+    /// MEASURED 2026-08-02, absolute rows 46-50 of two independent live panes
+    /// captured off the real tmux server at the dispatch geometry (200×50).
+    /// The two-space indent on the last two rows is verbatim and load-bearing:
+    /// it is half of why the column-0 rule separates chrome from statusline.
+    const MEASURED_AT_REST_TAIL: &str = concat!(
+        "────────────────────────────────────────────────────────────\n",
+        "❯ \n",
+        "────────────────────────────────────────────────────────────\n",
+        "  ● ~/Documents/code/tools/orgasmic | task-jq8av.1-impl | 0k/1000k\n",
+        "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent"
+    );
+
+    /// A transcript body, measured from the same captures: an assistant
+    /// message at column 0, collapsed thinking and tool results indented by
+    /// two.
+    const MEASURED_TRANSCRIPT: &str = concat!(
+        "⏺ I'll start by reading the task's source of truth.\n",
+        "\n",
+        "  Thought for 26s, searched for 3 patterns, ran 3 shell commands\n",
+        "\n",
+        "⏺ Now the measurement work required by finding 1.\n",
+        "  ⎿  crates/orgasmic-daemon/src/supervisor.rs\n"
+    );
+
+    /// TASK-JQ8AV, the classifier against the MEASURED live statuslines.
+    ///
+    /// Four captures, two dates, two transports: 2026-08-02 tmux (the two rows
+    /// [`PANE_STATUS_REGION_ROWS`] documents) and 2026-07-29 rmux (the incident
+    /// capture and this fleet's own harness). Tightening the contract must not
+    /// cost any of them — a classifier so strict it misses a real turn
+    /// re-creates the incident that three healthy workers died in.
     #[test]
     fn pane_open_turn_marker_recognizes_the_measured_statuslines() {
-        // In-turn, live capture of this fleet's own harness.
-        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
-        assert_eq!(pane_open_turn_marker(live).as_deref(), Some(live));
-        // In-turn, the incident capture: the statusline the three killed
-        // workers' panes were showing while the clock read them as wedged.
-        let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
-        assert_eq!(pane_open_turn_marker(incident).as_deref(), Some(incident));
+        let measured = [
+            // 2026-08-02, live tmux pane, absolute row 44.
+            "● Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more with high effort)",
+            // 2026-08-02, the second live tmux pane, absolute row 44.
+            "● Grooving… (1m 22s · ↓ 4.1k tokens)",
+            // 2026-07-29, live rmux capture of this fleet's own harness.
+            "● Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+            // 2026-07-29, the incident capture: what the three killed workers'
+            // panes were showing while the clock read them as wedged.
+            "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)",
+        ];
+        for row in measured {
+            assert_eq!(
+                pane_open_turn_marker(row).as_deref(),
+                Some(row),
+                "measured live statusline must classify as an open turn: {row}"
+            );
+            // And it still does with the rest of a real screen around it.
+            let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
+            assert_eq!(
+                pane_open_turn_marker(&screen).as_deref(),
+                Some(row),
+                "measured statusline in a measured screen: {row}"
+            );
+        }
+
         // Elapsed-only spinner: a turn open before the first token arrives.
         assert!(pane_open_turn_marker("· Considering… (2s)").is_some());
         // The generic TUI interrupt hint, any case (codex-style spinners).
         assert!(pane_open_turn_marker("Working (7s • Esc to interrupt)").is_some());
+        // The same hint carried inside a claude-shaped spinner row.
+        assert!(pane_open_turn_marker("● Herding… (5s · esc to interrupt)").is_some());
 
-        // At-rest pane furniture must all fall through: an at-rest harness is
-        // the wedge's shape, and must not be rescued by its own chrome. The
-        // status bar has the glyph anchor but no `… (`; the collapsed
-        // transcript line has an ellipsis but no `… (`; the banner's second
-        // char is not a space; the bare prompt has nothing after the glyph.
-        let at_rest = " ▐▛███▜▌   Claude Code v2.1.220\n\
-                       ▝▜█████▛▘  Fable 5 with high effort · Claude Max\n\
-                       ❯ \n\
-                       ● ~/Documents/code/tools/orgasmic | Fable 5 ⇢75k | 0k/1000k\n\
-                       ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent\n\
-                       ⏺ Thinking for 8m 28s, running 12 shell commands…";
-        assert_eq!(pane_open_turn_marker(at_rest), None);
-
-        // The last match wins: the live statusline sits at the bottom of the
-        // screen, below any transcript text that might quote an older one.
+        // The last match in the region wins: the live statusline sits below
+        // anything older the region may still hold.
+        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
+        let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
         let stacked = format!("{incident}\nsome transcript text\n{live}");
         assert_eq!(pane_open_turn_marker(&stacked).as_deref(), Some(live));
+    }
+
+    /// A pane at rest shows none of it. This is the wedge's shape, and an
+    /// at-rest harness must never be rescued by its own chrome.
+    #[test]
+    fn pane_open_turn_marker_ignores_a_clean_at_rest_pane() {
+        let at_rest = format!("{MEASURED_TRANSCRIPT}\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(pane_open_turn_marker(&at_rest), None);
+
+        // Row by row, so a failure names the piece of furniture that broke.
+        for row in [
+            // Status bar: glyph anchor, but no verb and no progress body.
+            "● ~/Documents/code/tools/orgasmic | Fable 5 ⇢75k | 0k/1000k",
+            // Collapsed transcript: an ellipsis, but not a spinner verb.
+            "⏺ Thinking for 8m 28s, running 12 shell commands…",
+            // Mode footer: ends in a parenthetical that is not the hint.
+            "⏵⏵ auto mode on (shift+tab to cycle)",
+            // Banner rows: second char is not a space.
+            " ▐▛███▜▌   Claude Code v2.1.220",
+            "▝▜█████▛▘  Fable 5 with high effort · Claude Max",
+            // The bare prompt.
+            "❯ ",
+            "────────────────────────────────────────────────────────────",
+        ] {
+            assert_eq!(
+                pane_open_turn_marker(row),
+                None,
+                "at-rest pane furniture must not rescue a wedge: {row}"
+            );
+        }
+    }
+
+    /// TASK-JQ8AV.1 finding 1, position half: a marker-shaped row that is real
+    /// but STALE — left behind higher up the screen — is not a live turn.
+    ///
+    /// Only the status region counts, and the region is measured
+    /// ([`PANE_STATUS_REGION_ROWS`]).
+    #[test]
+    fn pane_open_turn_marker_ignores_marker_shaped_rows_outside_the_status_region() {
+        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
+        let filler: String = (0..PANE_STATUS_REGION_ROWS)
+            .map(|n| format!("⏺ transcript line {n}\n"))
+            .collect();
+
+        // Inside the region, it still rescues.
+        let near = format!("{live}\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(pane_open_turn_marker(&near).as_deref(), Some(live));
+
+        // Pushed above the region by transcript that arrived after it, it does
+        // not. Blank rows do not count toward the depth: `capture-pane -p`
+        // blank-pads every capture to the pane height.
+        let stale = format!("{live}\n\n\n{filler}{MEASURED_AT_REST_TAIL}");
+        assert_eq!(
+            pane_open_turn_marker(&stale),
+            None,
+            "a stale statusline above the status region is not a live turn"
+        );
+    }
+
+    /// TASK-JQ8AV.1 finding 1, shape half — and the case the reviewer of
+    /// TASK-4CSMY called a BLOCK SHIP: an at-rest pane whose prompt, transcript
+    /// or tool output merely CONTAINS marker-shaped text.
+    ///
+    /// The adversarial case is not exotic. Every row below is something a
+    /// worker reviewing this very code prints on its own pane, and under the
+    /// free-form predecessor each one classified the pane `Working` on every
+    /// expired stall sweep — so the run survived to the 14,400 s
+    /// `max_run_duration` ceiling instead of dying at 600 s.
+    #[test]
+    fn pane_open_turn_marker_ignores_echoed_and_quoted_marker_text() {
+        for row in [
+            // Tool output echoing the incident capture verbatim — `cat` of a
+            // fixture, a grep hit, a diff of this file. Indented, as all tool
+            // results are.
+            "  ⎿  ✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)",
+            "  ⎿  Working (7s • Esc to interrupt)",
+            "     ● Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+            // Assistant prose that merely mentions the hint.
+            "⏺ Any pane whose text contains Esc to interrupt used to be rescued.",
+            "⏺ The classifier matched `esc to interrupt` anywhere in the capture",
+            // Prose that also happens to end in a parenthetical.
+            "⏺ The old rule matched anything after a glyph (that was the bug)",
+            "⏺ Reviewers flagged the free-form branch (see the tx entry)",
+            // A quoted statusline inside an assistant sentence: glyph, space,
+            // and a `… (` further along — the exact predecessor hole.
+            "⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+            "⏺ It showed Quantumizing… (3m41s · ↓13.1k tokens) at the time",
+            // A parenthesised body with no progress in it at all.
+            "● Rendering… (no tokens, no clock)",
+        ] {
+            assert_eq!(
+                pane_open_turn_marker(row),
+                None,
+                "echoed or quoted marker text must not rescue an at-rest pane: {row}"
+            );
+            // …and not when it is sitting in a whole at-rest screen either.
+            let screen = format!("{MEASURED_TRANSCRIPT}{row}\n{MEASURED_AT_REST_TAIL}");
+            assert_eq!(
+                pane_open_turn_marker(&screen),
+                None,
+                "echoed marker text inside an at-rest screen: {row}"
+            );
+        }
+    }
+
+    /// A capture is bytes off a terminal, so the classifier has to be total:
+    /// empty, blank, unterminated, replacement-charactered and truncated
+    /// captures must all answer, and none of them may panic.
+    #[test]
+    fn pane_open_turn_marker_survives_malformed_and_truncated_captures() {
+        for pane in [
+            "",
+            "\n",
+            "   \n\t\n   ",
+            // `String::from_utf8_lossy` on a capture cut mid-codepoint.
+            "● Contempl\u{fffd}\u{fffd}",
+            "\u{fffd}\u{fffd}\u{fffd}",
+            // Marker punctuation with nothing behind it.
+            "…",
+            "● …",
+            "● (",
+            "● Contemplating… (",
+            "● Contemplating… ()",
+            "(esc to interrupt",
+            "()",
+            // A row that is one enormous unbroken token.
+            "●",
+        ] {
+            assert_eq!(
+                pane_open_turn_marker(pane),
+                None,
+                "malformed capture must classify as no open turn: {pane:?}"
+            );
+        }
+
+        // A very long row neither panics nor escapes the reason-string cap.
+        let long = format!("● Contemplating… (2m 31s · {})", "x".repeat(4_000));
+        let marker = pane_open_turn_marker(&long).expect("a long but well-formed statusline");
+        assert_eq!(marker.chars().count(), PANE_MARKER_MAX_CHARS);
+
+        // Deliberate tolerance, stated as a test so it cannot rot: a spinner
+        // row TRUNCATED by the pane keeps its rescue, because a missed rescue
+        // re-creates the incident this channel exists to prevent.
+        assert!(pane_open_turn_marker("● Contemplating… (2m 31s · ↓ 7.1k tok").is_some());
+        // Padding inside the status body is spacing, not a different shape.
+        assert!(pane_open_turn_marker("● Contemplating… ( 2m 31s )").is_some());
     }
 
     /// Create the run's pane on the test-owned rmux server, running `script`
@@ -9815,6 +10669,194 @@ mod tests {
             "the reason must say the pane was consulted and came up empty: {reason}"
         );
 
+        kill_tmux_probe_pane_stub(&session);
+    }
+
+    /// An AT-REST pane that carries marker-shaped text everywhere a real one
+    /// would — painted by a shell that then sleeps, so the pane is genuinely at
+    /// rest, the subtree is genuinely quiet, and there is no connection
+    /// anywhere.
+    ///
+    /// This is the pane neither wedge arm could build. Both used a blank
+    /// `sleep 300` pane, which cannot catch a false rescue BY CONSTRUCTION: a
+    /// pane that is at rest AND carries marker-shaped bytes is the case the
+    /// TASK-4CSMY reviewer called a BLOCK SHIP, and it was untested on either
+    /// transport.
+    ///
+    /// The rows are the measured screen with the adversarial text spread across
+    /// all three places it really appears:
+    ///
+    /// - row 1 is a REAL statusline, stale — it must fall outside the status
+    ///   region ([`PANE_STATUS_REGION_ROWS`]) because fifteen rows follow it;
+    /// - rows 5-6 are tool results echoing the incident capture and the
+    ///   interrupt hint verbatim, indented as every tool result is;
+    /// - rows 7-9 are assistant prose quoting both, one of which ends in a
+    ///   parenthetical and one of which quotes a whole statusline mid-sentence.
+    ///
+    /// `printf '%s\n'` per row rather than one format string: the rows carry
+    /// `%` and `\`, which printf would eat.
+    #[cfg(unix)]
+    const AT_REST_PANE_QUOTING_MARKERS: &str = concat!(
+        "printf '%s\\n'",
+        " '● Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
+        " '⏺ Reading crates/orgasmic-daemon/src/supervisor.rs'",
+        " '  ⎿  Read 240 lines'",
+        " '⏺ The reviewer says free-form matching rescues at-rest wedges.'",
+        " '  ⎿  ✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'",
+        " '  ⎿  Working (7s • Esc to interrupt)'",
+        " '⏺ Any pane containing Esc to interrupt used to be rescued.'",
+        " '⏺ The old rule matched anything after a glyph (that was the bug)'",
+        " '⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
+        " '⏺ Thinking for 8m 28s, running 12 shell commands…'",
+        " '  Thought for 26s, searched for 3 patterns, ran 3 shell commands'",
+        " '────────────────────────────────────────────────────────────'",
+        " '❯ '",
+        " '────────────────────────────────────────────────────────────'",
+        " '  ● ~/Documents/code/tools/orgasmic | task-jq8av.1-impl | 0k/1000k'",
+        " '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent'",
+        "; sleep 300"
+    );
+
+    /// The last row [`AT_REST_PANE_QUOTING_MARKERS`] paints — waiting for it is
+    /// what makes "the screen is fully painted" true rather than likely.
+    #[cfg(unix)]
+    const AT_REST_PANE_LAST_ROW: &str = "bypass permissions on (shift+tab to cycle)";
+
+    #[cfg(unix)]
+    async fn wait_for_pane_text(
+        mux: PaneMux,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+        needle: &str,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(pane) = pane_content(mux, identity, socket) {
+                if pane.contains(needle) {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never painted {needle:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The shared body of the two adversarial arms: given a run whose pane is
+    /// showing [`AT_REST_PANE_QUOTING_MARKERS`], the classifier must read no
+    /// open turn and the sweep must release the run on schedule.
+    ///
+    /// Three expired budgets, not one: a false rescue is unbounded — it repeats
+    /// on every sweep to the `max_run_duration` ceiling — so a single survived
+    /// sweep would not distinguish the fix from a lucky first pass.
+    #[cfg(unix)]
+    async fn assert_quoted_marker_pane_is_not_rescued(
+        sup: &Supervisor,
+        mux: PaneMux,
+        run_id: &str,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+        session_path: &Path,
+    ) {
+        wait_for_pane_text(mux, identity, socket, AT_REST_PANE_LAST_ROW).await;
+        let pane = pane_content(mux, identity, socket).expect("capture the painted pane");
+        assert!(
+            pane.contains("Esc to interrupt") && pane.contains("Quantumizing…"),
+            "the fixture must really carry marker text, or this proves nothing:\n{pane}"
+        );
+        assert_eq!(
+            pane_open_turn_marker(&pane),
+            None,
+            "an at-rest pane that merely QUOTES marker text is not an open turn:\n{pane}"
+        );
+
+        age_run(sup, run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(sup, run_id).await,
+            "an at-rest pane quoting marker text must not rescue a wedge"
+        );
+        let reason = release_reason(session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no open-turn statusline in pane capture"),
+            "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+    }
+
+    /// TASK-JQ8AV.1 finding 1 on a REAL rmux pane: at rest, quoting the incident
+    /// text, and it dies on schedule.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued() {
+        const TEST: &str = "an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued";
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
+            return;
+        }
+        let server = own_rmux_server_for_tests();
+        let socket = server.endpoint_path().to_path_buf();
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_rmux_socket(&socket)));
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-QUOTED-MARKERS-RMUX", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = rmux_session_name(&resp.identity);
+
+        spawn_probe_pane_stub(&socket, &session, "/bin/sh", AT_REST_PANE_QUOTING_MARKERS);
+        assert_quoted_marker_pane_is_not_rescued(
+            &sup,
+            PaneMux::Rmux,
+            &resp.run_id,
+            &resp.identity,
+            Some(&socket),
+            &session_path,
+        )
+        .await;
+        kill_probe_pane_stub(&socket, &session);
+    }
+
+    /// The same proof on a REAL tmux pane — the transport TASK-4CSMY made the
+    /// shipped default, and the one whose reviewer blocked on this.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued() {
+        const TEST: &str = "an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued";
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(TEST, &[("tmux", tmux_spawn_usable_for_test().await)]) {
+            return;
+        }
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-QUOTED-MARKERS-TMUX", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = tmux::tmux_session_name(&resp.identity);
+
+        spawn_tmux_probe_pane_stub(&session, "/bin/sh", AT_REST_PANE_QUOTING_MARKERS);
+        assert_quoted_marker_pane_is_not_rescued(
+            &sup,
+            PaneMux::Tmux,
+            &resp.run_id,
+            &resp.identity,
+            None,
+            &session_path,
+        )
+        .await;
         kill_tmux_probe_pane_stub(&session);
     }
 
