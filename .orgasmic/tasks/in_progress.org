@@ -934,3 +934,76 @@ correctness.
 Logs kept for this session at the scratchpad paths named in the tx; the
 per-test panics are in each run's =suite.log=.
 
+* IN_PROGRESS TASK-YGB1R Replace workflow tier adjectives with derivable escalating triggers :workflow:runtime:process:
+:PROPERTIES:
+:ID: TASK-YGB1R
+:PRIORITY: P1
+:END:
+
+Problem: `shipped/workflows/default.org` classifies work with bare adjectives — "trivial", "ordinary", "risky". Those are subjective enough that an agent already in execution momentum resolves them in whichever direction keeps it moving. On TASK-KWSTJ a P0 daemon-recovery change touching ~900 lines across orgasmic-core, orgasmic-daemon, orgasmic-cli and the UI read as manager-direct without the classification ever being contested.
+
+Replace the adjectives with triggers a reader cannot argue with, while keeping the three-tier shape.
+
+Work:
+1. Define concrete escalating triggers, at minimum: task priority (P0/P1 is never trivial); blast-radius paths (daemon recovery, supervisor, boot, auth, dispatch lease, writer durability); breadth (crate count / file count / net line count over a stated threshold); and presence of a `depends_on` chain or an umbrella parent.
+2. Any trigger firing means the work is at least `ordinary`; two or more, or a safety/auth path, means `risky`.
+3. Keep the tiers as guidance for *how much process*, not a hard gate — the point is to remove the judgement call about which tier applies, not to remove judgement about how to work.
+4. Where a trigger is derivable from the task heading itself (priority, tags, depends_on), surface it: an agent reading `orgasmic task get` should see the floor tier without recomputing it.
+5. Reconcile with the manager-implementer clause in `shipped/entry/router.org` so router and workflow do not drift.
+
+Non-goal: an exhaustive rubric. Four or five unambiguous triggers beat twenty debatable ones, and long prose dilutes the instruction it is meant to strengthen.
+
+Acceptance:
+- two agents reading the same task heading reach the same floor tier
+- the P0/multi-crate/recovery-path shape that produced this task classifies as at least `ordinary` with no interpretation
+- the fast path for genuinely small work stays fast
+
+* IN_PROGRESS TASK-TW3N3 Document and guard the committed-history precondition for worker dispatch :workflow:dispatch:docs:
+:PROPERTIES:
+:ID: TASK-TW3N3
+:PRIORITY: P1
+:END:
+
+Problem: the workflow tells a manager to delegate ordinary work and to run an independent reviewer pass on risky work, but never says that delegation only works on committed history. `orgasmic manager dispatch` builds the worker a git worktree from a ref, so a dispatched implementer or reviewer sees exactly nothing of the manager's uncommitted edits. A reviewer dispatched against an uncommitted patch reports a clean review of code it never read.
+
+This compounds a known sibling trap already recorded for `.orgasmic/` state: a worker in its own worktree also cannot see the live daemon's uncommitted writes to the manager's `.orgasmic/tx`, tasks, and decisions, so reviewers give false negatives on graph changes too.
+
+The two together mean delegation is quietly useless at exactly the moment a manager-implementer reaches for it — after doing the work, wanting a second opinion before landing.
+
+Work:
+1. State the precondition explicitly in `shipped/entry/router.org` and `shipped/workflows/default.org`: commit to a branch before dispatching any worker that must see your changes, and pass that ref as `--from`.
+2. Document the `.orgasmic/` blindspot in the same place, with the verification workaround (check graph state through the daemon CLI rather than through the worktree's files).
+3. Consider a guard rather than only prose: when `manager dispatch` is invoked with a dirty worktree in the project root, warn (or refuse without an explicit override) naming the uncommitted paths the worker will not see.
+4. Add the reviewer-specific case to whatever grill/review dispatch guidance exists — a review dispatch with nothing committed is the highest-cost version of this mistake, because it returns a confident wrong answer.
+
+Acceptance:
+- an agent following the router can dispatch a reviewer that actually reads the intended diff, without discovering the constraint by being surprised
+- a dispatch that would silently review the wrong tree is either blocked or loudly flagged
+- the `.orgasmic/` blindspot and the uncommitted-source blindspot are documented as one coherent constraint, not two folk facts
+
+* IN_PROGRESS TASK-4YX1K Default to proceeding; confirm only for irreversible or outward-facing actions :workflow:runtime:process:
+:PROPERTIES:
+:ID: TASK-4YX1K
+:DEPENDS_ON: TASK-YGB1R
+:PRIORITY:   P1
+:END:
+
+Problem: the runtime tells a manager what work to do and how much process to apply, but says nothing about when to stop and ask a human. Agents fill that vacuum with timidity. Observed 2026-07-25: a manager finished TASK-KWSTJ, correctly identified that a reviewer cannot see uncommitted source, and then asked the user for permission to commit to a local branch — a reversible, machine-local step that was already the precondition for a review the user had asked for. The question contained no decision. It cost a round-trip and stalled the work.
+
+This is the mirror image of TASK-3CM0Q. That task stops an agent from silently proceeding through a decision that is genuinely the user's. This one stops an agent from interrupting on something that is not a decision at all. An agent without an explicit line between them oscillates: the same session skipped a real tier decision, was corrected, then over-corrected into asking about a mechanical step. Both failures are the human checkpoint landing in the wrong place, and neither is fixed by telling the agent to "use judgement".
+
+Work:
+1. State the default in `shipped/entry/router.org` and `shipped/workflows/default.org`: proceed. Asking is the exception and needs a reason that names which property of the action triggers it.
+2. Define confirmation triggers by property, not by feeling. Confirm when an action is hard to reverse, leaves the machine, or spends someone else's resources — pushing to a remote, publishing a release or artifact, force-pushing or rewriting history, deleting or rewriting operator session/run history, touching the LaunchAgent or a live production daemon, or anything that mutates a shared or external service.
+3. Name the proceed class just as explicitly, because a bare "proceed by default" will not survive contact with a cautious agent: committing to a local branch, creating and removing worktrees, running gates and test suites, reading anything, and `.orgasmic/` state writes through the CLI.
+4. Cover the standing-authorization case: once a user has approved a plan, the mechanical steps that plan obviously entails do not each need their own approval. Re-asking inside an approved plan is itself the defect.
+5. Say what to do instead of asking when an agent is unsure but the action is in the proceed class: act, then report what was done plainly enough to be reversed.
+
+Non-goal: expanding autonomy on the confirm class. This narrows *where* the human is asked, it does not reduce *whether* they are asked about the things that matter.
+
+Acceptance:
+- committing to a branch, creating a worktree, or running gates never produces a permission question
+- pushing, publishing, force-pushing, or touching the live daemon still does
+- the router text distinguishes the two classes by a stated property, so an agent reaching an unlisted action can classify it rather than guess
+- reads coherently against TASK-3CM0Q: one task puts a checkpoint where a decision exists, this one removes checkpoints where none does
+

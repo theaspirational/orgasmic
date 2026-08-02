@@ -2460,3 +2460,179 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 23:03:04 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4182
+:TIME:         [2026-08-02 Sun 23:03:04]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Writer fencing is only a one-shot handle drop; an append between the final identity check and rename is orphaned and absent from the earlier archive.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:SOURCE:       writer.rs:543,api.rs:7358,run_history.rs:993
+:END:
+
+* TX 2026-08-02 Sun 23:03:05 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4183
+:TIME:         [2026-08-02 Sun 23:03:05]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       The journal schema replaced results with defaulted files without compatibility; old and new runtimes silently deserialize the other format as an empty rollback and restore nothing.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:SOURCE:       run_history.rs:283,1277,1355
+:END:
+
+* TX 2026-08-02 Sun 23:03:05 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4184
+:TIME:         [2026-08-02 Sun 23:03:05]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       The structural classifier accepts invalid JSON primitives and escapes, classifies malformed text_chunk records as reclaimable, and build_compacted deletes their raw bytes.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:SOURCE:       run_catalog.rs:1861,1913,run_history.rs:1163
+:END:
+
+* TX 2026-08-02 Sun 23:03:05 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4185
+:TIME:         [2026-08-02 Sun 23:03:05]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Terminal tombstones survive only inside the disposable catalog; an absent or rejected snapshot rebuild verifies any recreated same-project path and revives the attach candidate.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         correctness
+:SOURCE:       run_catalog.rs:38,596,1223,1435
+:END:
+
+* TX 2026-08-02 Sun 23:03:05 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4186
+:TIME:         [2026-08-02 Sun 23:03:05]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       The re-cut FZB6T.1 injection removes semantic validation but its snapshot test aborts in the earlier path-corruption loop, so the red proof never reaches the semantic cases it claims to pin.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         test
+:SOURCE:       verify/TASK-FZB6T.1/injection.patch:8,run_catalog.rs:2675
+:END:
+
+* TX 2026-08-02 Sun 23:04:48 task.state_transitioned TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4187
+:TIME:         [2026-08-02 Sun 23:04:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-YGB1R to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:04:49 task.state_transitioned TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4188
+:TIME:         [2026-08-02 Sun 23:04:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-TW3N3 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:04:49 task.state_transitioned TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4189
+:TIME:         [2026-08-02 Sun 23:04:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4YX1K to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:04:50 manager.dispatch_started TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4190
+:TIME:         [2026-08-02 Sun 23:04:50]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ygb1r/worktree
+:BRANCH:       task-ygb1r-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-workflow-trio/brief-workflow-trio.md
+:STARTED_AT:   [2026-08-02 Sun 23:04:50]
+:LIVENESS:     7ff0aaa5961c7da496d4e6b882e4a39bdf4b3f2f
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Three P1 process tasks that all rewrite the same two files (shipped/workflows/default.org 35 lines, shipped/entry/router.org 84 lines), so splitting them would mean three sequential rewrites of the same text. They are one argument about where the human checkpoint goes: derivable tier triggers, the proceed/confirm classes, and the committed-history precondition for dispatch. Prose-only scope, disjoint from both live reviewers, and the brief carries this session's own first-hand evidence for all three.
+:END:
+
+* TX 2026-08-02 Sun 23:04:50 run.created TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4191
+:TIME:         [2026-08-02 Sun 23:04:50]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-YGB1R_TASK-TW3N3_TASK-4YX1K-implementer-20260802T230450.jsonl
+:REASON:       Three P1 process tasks that all rewrite the same two files (shipped/workflows/default.org 35 lines, shipped/entry/router.org 84 lines), so splitting them would mean three sequential rewrites of the same text. They are one argument about where the human checkpoint goes: derivable tier triggers, the proceed/confirm classes, and the committed-history precondition for dispatch. Prose-only scope, disjoint from both live reviewers, and the brief carries this session's own first-hand evidence for all three.
+:RUN_ID:       run-20260802T230450-7924b094a02e4d23913bd7bf3e5de310
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ygb1r/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-workflow-trio/brief-workflow-trio.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-workflow-trio/brief-workflow-trio-dc230ba0c1594ec98bf24aca5792fd3d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-workflow-trio/brief-workflow-trio-dc230ba0c1594ec98bf24aca5792fd3d-stdout.log
+:DISPATCH_ATTEMPT: dc230ba0c1594ec98bf24aca5792fd3d
+:DISPATCH_TX:  tx-20260802-orgasmic-4190
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
