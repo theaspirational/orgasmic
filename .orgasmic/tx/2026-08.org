@@ -3281,3 +3281,59 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 23:50:55 implementer.done TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4230
+:TIME:         [2026-08-02 Sun 23:50:55]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:REASON:       All five round-2 findings closed with real machinery rather than narrowed residuals. The fence became a lease held ACROSS the rename — a Session command for a leased path is deferred before anything is opened and runs after the rename and journal write — with a regression that spins on the writer's deferred count rather than sleeping, so it is provably a pre-rename append, and asserts both halves. The manifest is versioned with both shapes decoding, and a plan naming files with no per-file record in ANY readable shape is now refused, which is exactly the shape each runtime saw of the other's and called a successful rollback. The scanner validates per RFC 8259 and is cross-checked against serde_json in BOTH directions, so hardening did not quietly stop reclaiming real payload. dec_BBPW4 took a side: tombstones persist outside the disposable cache, merged never replaced. The split injection was confirmed from the red log rather than inferred. It also fixed six daemon tests that were RED ON MAIN before it started — broken by TASK-FZB6T.2, which I merged and closed — proven by checking 1393e06 into a scratch worktree and reproducing identical panics. My own gate missed that because I ran focused filters to spare the machine; that tradeoff has now been paid once and is recorded.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 9fff4a2
+:MERGE_SHA:    84e4257
+:BRANCH:       task-fzb6t.3-impl
+:WALL:         37m
+:REVIEWED_DIFF: 0bdfaed..84e4257
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; FULL daemon lib 689/695 with all 6 failures GREEN in isolation (2s, live-mux/process-probe class); core lib 158/0; required_test_tooling_is_present GREEN; author reported 695/0 on a quieter machine
+:CLOSED_TX:    tx-20260802-orgasmic-4198
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:50:55 task.state_transitioned TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4231
+:TIME:         [2026-08-02 Sun 23:50:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-FZB6T.3 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:51:12 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4232
+:TIME:         [2026-08-02 Sun 23:51:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-FZB6T.3 landed (merge 84e4257); round-3 review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
