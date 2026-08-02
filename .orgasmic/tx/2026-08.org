@@ -964,3 +964,385 @@
 :FROM_STATE:   backlog
 :TO_STATE:     cancelled
 :END:
+
+* TX 2026-08-02 Sun 21:50:13 reviewer.finding TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4093
+:TIME:         [2026-08-02 Sun 21:50:13]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:5126
+:REASON:       HIGH correctness — BLOCKS SHIP: the position-aware classifier still accepts completed assistant rows because measured Claude transcript glyph ⏺ is column-zero while spinner_status_row accepts any punctuation glyph and interrupt_hint_status_row accepts any two-token label. An at-rest final line ⏺ Considering… (2s) or ⏺ Working (7s • Esc to interrupt) inside the last 12 rows is Working on every sweep to the four-hour ceiling. Restrict glyph/label roles and add real rmux+tmux forged-in-region wedge regressions.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:BLOCKS_SHIP:  true
+:REVIEWED_DIFF: 9017514..7ade8af
+:END:
+
+* TX 2026-08-02 Sun 21:50:14 reviewer.finding TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4094
+:TIME:         [2026-08-02 Sun 21:50:14]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       crates/orgasmic-drivers/src/modes/rmux.rs:234
+:REASON:       MEDIUM correctness — not an independent tmux-default blocker: rmux pane probing still calls probe_rmux_binary, whose inspect_rmux_binary executes rmux -V with unbounded Command::output. The outer spawn_blocking timeout cannot cancel or reap it, confirming the declared residual as a live hole in the same process-ownership defect class. Bound, group-kill, reap, and regression-test -V discovery in its own task.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:BLOCKS_SHIP:  false
+:REVIEWED_DIFF: 9017514..7ade8af
+:END:
+
+* TX 2026-08-02 Sun 21:50:14 reviewer.finding TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4095
+:TIME:         [2026-08-02 Sun 21:50:14]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:4985
+:REASON:       MEDIUM correctness — not an independent tmux-default blocker: probe_command_stdout stops its deadline when the direct child exits, then joins the stdout reader without a bound. A successful child whose descendant inherited stdout leaves the reader, blocking task, and descendant alive; the existing test covers only a parent that never exits. Share one absolute drain deadline, kill the stored group on drain timeout, and add a successful-parent/background-descendant PID regression.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:BLOCKS_SHIP:  false
+:REVIEWED_DIFF: 9017514..7ade8af
+:END:
+
+* TX 2026-08-02 Sun 21:50:44 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4096
+:TIME:         [2026-08-02 Sun 21:50:44]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_catalog.rs:1528-1547 and run_history.rs:587-602: the byte probe takes the first nested type, so a pane semantic record with an inner type=text_chunk is classified rendered_tui and deleted; parse the outer event.type structurally and fail closed.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:END:
+
+* TX 2026-08-02 Sun 21:50:45 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4097
+:TIME:         [2026-08-02 Sun 21:50:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_history.rs:379-436,513-531,720-755: per-file manifest write failures are ignored and committed rewrites are not durably journaled; a crash or full disk can leave a rewritten file absent from rollback state.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:END:
+
+* TX 2026-08-02 Sun 21:50:45 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4098
+:TIME:         [2026-08-02 Sun 21:50:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_history.rs:465-531,574-620,720-755 and writer.rs:748,790-845: compaction checks identity once, ignores the planned SHA, rereads the archive after building, and rollback overwrites without proving the current generation; concurrent append or path reuse can lose evidence.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:END:
+
+* TX 2026-08-02 Sun 21:50:45 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4099
+:TIME:         [2026-08-02 Sun 21:50:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_catalog.rs:608-666,1039-1060 and run_history.rs:208-245: snapshot admission validates only path and fingerprint, then compaction trusts cached terminal and transport semantics; valid-JSON semantic corruption can authorize deletion from a live or ACP file.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:END:
+
+* TX 2026-08-02 Sun 21:50:45 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4100
+:TIME:         [2026-08-02 Sun 21:50:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       session.rs:182-200,576-595,1624-1660: the writer accepts pane text_chunk and persists a bounded head plus digest; the regression asserts less than 8 KiB rather than zero, so repeated repaint events can still grow JSONL without bound.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         test
+:END:
+
+* TX 2026-08-02 Sun 21:50:46 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4101
+:TIME:         [2026-08-02 Sun 21:50:46]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_catalog.rs:787-833,883-915: stale paths capture no invalidation and commit removes entries and counters unconditionally; an older refresh can evict a newer rebuild or write and reset the per-path generation.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         correctness
+:END:
+
+* TX 2026-08-02 Sun 21:50:46 reviewer.finding TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4102
+:TIME:         [2026-08-02 Sun 21:50:46]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       run_catalog.rs:1097-1141: tombstones revive on device and inode equality even though inodes are reusable, while tombstones without an identity can never recover after a legitimate volume return; use immutable worktree authority or make tombstones terminal.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         design
+:END:
+
+* TX 2026-08-02 Sun 21:50:51 reviewer.reported TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4103
+:TIME:         [2026-08-02 Sun 21:50:51]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:RUN_ID:       run-20260802T213425-bca13bc01bb14618aa936684d3f25b8f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 21:51:55 reviewer.done TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4104
+:TIME:         [2026-08-02 Sun 21:51:55]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:REASON:       Reviewer returned NEEDS FIXES with one BLOCK SHIP: the position-aware classifier still accepts an at-rest completed Claude assistant row, because the measured transcript glyph U+23FA is itself at column 0 while spinner_status_row accepts any punctuation glyph and interrupt_hint_status_row accepts any two-token label — so a final line of the form 'glyph Considering... (2s)' inside the last 12 non-blank rows is credited Working to the four-hour ceiling. The shipped real-pane regressions miss it by construction. Both verify artifacts PASS, fmt and clippy clean, 12/12 focused tests pass. It also independently corroborated the manager's machine-load classification and MEASURED a live codex status row, retiring the author's 'codex unmeasured' residual.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         16m
+:REVIEWED_DIFF: 9017514..7ade8af
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     1 HIGH blocking (classifier still accepts a completed assistant row), 2 MEDIUM non-blocking (unbounded rmux -V child; unbounded stdout drain after a successful parent)
+:CLOSED_TX:    tx-20260802-orgasmic-4077
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 21:51:56 reviewer.done TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4105
+:TIME:         [2026-08-02 Sun 21:51:56]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:REASON:       Reviewer returned NEEDS FIXES with one BLOCK SHIP: the position-aware classifier still accepts an at-rest completed Claude assistant row, because the measured transcript glyph U+23FA is itself at column 0 while spinner_status_row accepts any punctuation glyph and interrupt_hint_status_row accepts any two-token label — so a final line of the form 'glyph Considering... (2s)' inside the last 12 non-blank rows is credited Working to the four-hour ceiling. The shipped real-pane regressions miss it by construction. Both verify artifacts PASS, fmt and clippy clean, 12/12 focused tests pass. It also independently corroborated the manager's machine-load classification and MEASURED a live codex status row, retiring the author's 'codex unmeasured' residual.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         16m
+:REVIEWED_DIFF: 9017514..7ade8af
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     1 HIGH blocking (classifier still accepts a completed assistant row), 2 MEDIUM non-blocking (unbounded rmux -V child; unbounded stdout drain after a successful parent)
+:CLOSED_TX:    tx-20260802-orgasmic-4077
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 21:51:56 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4106
+:TIME:         [2026-08-02 Sun 21:51:56]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 21:51:56 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4107
+:TIME:         [2026-08-02 Sun 21:51:56]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-JQ8AV to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 21:52:51 reviewer.reported TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4108
+:TIME:         [2026-08-02 Sun 21:52:51]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:RUN_ID:       run-20260802T213554-d08c3a8f5bd84753a5f1674d83b9ac18
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 21:52:56 task.created TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4109
+:TIME:         [2026-08-02 Sun 21:52:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Reviewer run-20260802T213425 (rmux/codex/gpt-5.6-sol/high) returned NEEDS FIXES with one BLOCK SHIP on TASK-4CSMY and one MEDIUM on TASK-JQ8AV sharing the same file. The third finding is already filed as TASK-T7KSH (different crate, different write scope).
+:END:
+
+* TX 2026-08-02 Sun 21:52:57 task.property_updated TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4110
+:TIME:         [2026-08-02 Sun 21:52:57]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4104 reviewer verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-02 Sun 21:53:25 reviewer.done TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4111
+:TIME:         [2026-08-02 Sun 21:53:25]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Reviewer returned NEEDS FIXES on the salvaged fix round. The sharpest finding is that deletion authority is derived rather than reproven: classify_history_line takes the first byte occurrence of 'type' in the first 64 KiB rather than proving event.type, so a pane semantic event whose nested payload carries type=text_chunk before its outer type is classified rendered_tui and dropped whole. It also proved the stale-eviction path is a genuine lost-update/ABA window — stale paths capture no invalidation generation and the commit removes the counter — which the manager had read as safe. It DID independently compare the original and regenerated injection patch and confirmed the regenerated one still injects the same defect.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         15m
+:REVIEWED_DIFF: 1b726f6~1..512d636
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES
+:FINDINGS:     5 HIGH blocking (nested-type misclassification deletes evidence; non-durable maintenance journal; no writer fence or digest check across compaction; snapshot semantic fields trusted as deletion authority; pane redraw bounded not forbidden), 2 MEDIUM (stale-eviction ABA; inode-only tombstone revival)
+:INJECTION_REPLAY: not independently executed — reviewer boundary forbids mutating commands; manager's four PASSes remain the only execution evidence
+:CLOSED_TX:    tx-20260802-orgasmic-4081
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 21:53:26 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4112
+:TIME:         [2026-08-02 Sun 21:53:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 21:54:15 task.created TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4113
+:TIME:         [2026-08-02 Sun 21:54:15]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Reviewer run-20260802T213554 (rmux/codex/gpt-5.6-sol/high) returned NEEDS FIXES on the salvaged TASK-FZB6T.1 round: five HIGH blocking findings and two MEDIUM, unified by deletion authority being derived from cached catalog state rather than reproven from current bytes.
+:END:
+
+* TX 2026-08-02 Sun 21:54:15 task.property_updated TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4114
+:TIME:         [2026-08-02 Sun 21:54:15]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4111 reviewer verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-02 Sun 21:54:28 task.edited TASK-T7KSH
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4115
+:TIME:         [2026-08-02 Sun 21:54:28]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T7KSH
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-T7KSH
+:NODE_ID:      TASK-T7KSH
+:END:
+
+* TX 2026-08-02 Sun 21:54:44 task.property_updated TASK-FZB6T.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4116
+:TIME:         [2026-08-02 Sun 21:54:44]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Narrowed from crates/**: TASK-4CSMY.1 runs in parallel and owns crates/orgasmic-daemon/src/supervisor.rs. Disjoint scopes are what let the two fix rounds run at once per the manager-dispatch convention.
+:WRITE_SCOPE:  crates/orgasmic-core/src/session.rs, crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/writer.rs, crates/orgasmic-daemon/src/api.rs, crates/orgasmic-cli/src/main.rs, verify/TASK-FZB6T/, verify/TASK-FZB6T.1/, verify/TASK-FZB6T-redraw/, verify/TASK-FZB6T-corruption/
+:END:
