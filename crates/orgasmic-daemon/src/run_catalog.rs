@@ -1851,13 +1851,26 @@ impl<'a> JsonScan<'a> {
         (self.peek()? == byte).then(|| self.pos += 1)
     }
 
-    /// Consume one JSON string.
+    /// Consume exactly `want`, or refuse.
+    fn eat_exact(&mut self, want: &[u8]) -> Option<()> {
+        (self.bytes.get(self.pos..self.pos.checked_add(want.len())?) == Some(want))
+            .then(|| self.pos += want.len())
+    }
+
+    /// Consume one JSON string, VALIDATING it.
     ///
     /// Returns its raw contents when they are a plain, short token usable as a
     /// discriminator, and `Some(None)` when the string is well formed but
     /// escaped or oversized — consumed correctly, never trusted. No
     /// discriminator this module matches contains an escape, so refusing to
     /// decode them costs nothing and keeps the scan allocation-free.
+    ///
+    /// orgasmic:TASK-FZB6T.3 finding 3 — "consumed correctly" used to mean
+    /// "consumed until the next unescaped quote": an unescaped control byte and
+    /// an escape sequence no JSON reader accepts both passed. A line the scan
+    /// accepted was therefore not necessarily a line `serde_json` accepts, and
+    /// the maintenance pass deletes on this verdict. Every rule RFC 8259 puts on
+    /// a string is now checked here.
     fn string(&mut self) -> Option<Option<&'a [u8]>> {
         self.eat(b'"')?;
         let start = self.pos;
@@ -1867,12 +1880,12 @@ impl<'a> JsonScan<'a> {
             self.pos += 1;
             match byte {
                 b'"' => break,
+                // A raw control character is not legal inside a JSON string.
+                // `serde_json` refuses one; so does this.
+                0x00..=0x1f => return None,
                 b'\\' => {
                     escaped = true;
-                    // Consume the escaped byte: a `\"` must not end the string,
-                    // and `\uXXXX`'s hex digits are ordinary bytes.
-                    self.bytes.get(self.pos)?;
-                    self.pos += 1;
+                    self.escape()?;
                 }
                 _ => {}
             }
@@ -1881,7 +1894,85 @@ impl<'a> JsonScan<'a> {
         Some((!escaped && raw.len() <= SCAN_MAX_DISCRIMINATOR_BYTES).then_some(raw))
     }
 
-    /// Structurally consume one JSON value of any shape.
+    /// Consume one escape sequence whose `\` was already read.
+    fn escape(&mut self) -> Option<()> {
+        let byte = *self.bytes.get(self.pos)?;
+        self.pos += 1;
+        match byte {
+            b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => Some(()),
+            b'u' => {
+                let first = self.hex4()?;
+                // A high surrogate is legal only as the first half of a pair
+                // and a low surrogate only as the second — the rule
+                // `serde_json` applies, so the class this reports stays the
+                // class a parse of the same line would report.
+                if (0xd800..0xdc00).contains(&first) {
+                    self.eat_exact(br"\u")?;
+                    (0xdc00..0xe000).contains(&self.hex4()?).then_some(())
+                } else if (0xdc00..0xe000).contains(&first) {
+                    None
+                } else {
+                    Some(())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Consume exactly four hex digits and return their value.
+    fn hex4(&mut self) -> Option<u32> {
+        let mut value = 0_u32;
+        for _ in 0..4 {
+            let byte = *self.bytes.get(self.pos)?;
+            self.pos += 1;
+            value = value * 16 + char::from(byte).to_digit(16)?;
+        }
+        Some(value)
+    }
+
+    /// One or more decimal digits.
+    fn digits(&mut self) -> Option<()> {
+        let start = self.pos;
+        while self.bytes.get(self.pos).is_some_and(u8::is_ascii_digit) {
+            self.pos += 1;
+        }
+        (self.pos > start).then_some(())
+    }
+
+    /// Consume one JSON number, per RFC 8259: an optional `-`, an integer part
+    /// with no leading zeros, an optional fraction, an optional exponent.
+    fn number(&mut self) -> Option<()> {
+        if self.bytes.get(self.pos) == Some(&b'-') {
+            self.pos += 1;
+        }
+        match self.bytes.get(self.pos)? {
+            b'0' => self.pos += 1,
+            b'1'..=b'9' => self.digits()?,
+            _ => return None,
+        }
+        if self.bytes.get(self.pos) == Some(&b'.') {
+            self.pos += 1;
+            self.digits()?;
+        }
+        if matches!(self.bytes.get(self.pos), Some(b'e' | b'E')) {
+            self.pos += 1;
+            if matches!(self.bytes.get(self.pos), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            self.digits()?;
+        }
+        Some(())
+    }
+
+    /// Structurally consume one JSON value of any shape, VALIDATING it.
+    ///
+    /// orgasmic:TASK-FZB6T.3 finding 3 — the primitive arm used to accept any
+    /// non-empty run of bytes up to the next structural character, so `truX`,
+    /// `01`, `-`, `NaN` and `+1` were all "values". A record carrying one of
+    /// them is INVALID JSON that this scan nonetheless classified
+    /// `rendered_tui`, and the maintenance pass then dropped its raw bytes. The
+    /// three primitive shapes JSON actually has are now each parsed by their own
+    /// grammar, so a line this returns `Some` for is a line a parser accepts.
     fn skip_value(&mut self, depth: usize) -> Option<()> {
         if depth > SCAN_MAX_DEPTH {
             return None;
@@ -1910,18 +2001,11 @@ impl<'a> JsonScan<'a> {
                     }
                 }
             }
-            // A number or a `true`/`false`/`null` literal: one token, ended by
-            // structure or whitespace.
-            _ => {
-                let start = self.pos;
-                while let Some(byte) = self.bytes.get(self.pos) {
-                    if matches!(byte, b',' | b'}' | b']') || byte.is_ascii_whitespace() {
-                        break;
-                    }
-                    self.pos += 1;
-                }
-                (self.pos > start).then_some(())
-            }
+            b't' => self.eat_exact(b"true"),
+            b'f' => self.eat_exact(b"false"),
+            b'n' => self.eat_exact(b"null"),
+            b'-' | b'0'..=b'9' => self.number(),
+            _ => None,
         }
     }
 
@@ -1987,6 +2071,11 @@ impl<'a> JsonScan<'a> {
 /// Read one line's envelope discriminators, or `None` when the line is not a
 /// single well-formed JSON object.
 fn scan_envelope_discriminators(line: &[u8]) -> Option<EnvelopeDiscriminators> {
+    // orgasmic:TASK-FZB6T.3 finding 3 — JSON is defined over text. A line
+    // holding a byte sequence that is not UTF-8 is not a record any reader can
+    // decode, so it is not a record this accounting may authorize deleting. One
+    // validated pass, no allocation.
+    std::str::from_utf8(line).ok()?;
     let mut scan = JsonScan::new(line);
     scan.eat(b'{')?;
     let mut kind = None;
@@ -3520,8 +3609,125 @@ mod tests {
 
         // And the honest rendered-TUI shape still classifies, with whitespace
         // and escapes in the payload.
-        let real_redraw = br#" {"seq":1, "kind":"driver_event", "event":{"stream":"stdout","chunk":"[H[2J\"quoted\"","type":"text_chunk"}} "#;
+        //
+        // orgasmic:TASK-FZB6T.3 finding 3 — this fixture used to carry RAW
+        // `ESC` bytes, which no JSON reader accepts inside a string and which
+        // the session writer never emits; it passed only because the scan did
+        // not validate. The escaped form is what is actually on disk, and the
+        // assertion below pins the fixture to what a parser accepts so it
+        // cannot drift back.
+        let real_redraw = br#" {"seq":1, "kind":"driver_event", "event":{"stream":"stdout","chunk":"\u001b[H\u001b[2J\"quoted\"","type":"text_chunk"}} "#;
+        assert!(serde_json::from_slice::<Value>(real_redraw.trim_ascii()).is_ok());
         assert_eq!(classify_history_line(real_redraw), "rendered_tui");
+    }
+
+    /// orgasmic:TASK-FZB6T.3 finding 3 — the scan VALIDATES; it does not merely
+    /// navigate.
+    ///
+    /// The structural reader closed the nested-key collision and then accepted
+    /// any non-empty primitive token as a value, any escape sequence as an
+    /// escape, and any byte inside a string as content. So
+    /// `{"kind":"driver_event","event":{"type":"text_chunk","payload":truX}}` —
+    /// which no JSON reader accepts — was classified `rendered_tui`, and a
+    /// maintenance pass then deleted its bytes. A record whose validity cannot
+    /// be proven is exactly the record that must not be deleted on this
+    /// accounting's say-so.
+    ///
+    /// Every case is cross-checked against `serde_json`: the claim is not
+    /// "the scan rejects these", it is "the scan and a real parser agree", which
+    /// is the only version of the claim that stays true as the corpus changes.
+    #[test]
+    fn a_record_this_scan_cannot_prove_valid_is_never_reclaimable() {
+        // Each case is INVALID JSON wearing a reclaimable envelope's clothes.
+        let invalid: Vec<Vec<u8>> = vec![
+            // The reviewer's case: a truncated `true` literal.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","payload":truX}}"#.to_vec(),
+            // The other two literals, equally truncated.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":fals}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":nul}}"#.to_vec(),
+            // Not a literal at all.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":NaN}}"#.to_vec(),
+            // Numbers that are not JSON numbers: leading zero, bare sign,
+            // trailing point, leading point, empty exponent, hex.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":01}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":-}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":1.}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":.5}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":1e}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":0x1f}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":+1}}"#.to_vec(),
+            // An escape sequence no JSON reader accepts.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\x41"}}"#.to_vec(),
+            // A `\u` escape with too few hex digits, and one that is not hex.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\u01"}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\u00zz"}}"#.to_vec(),
+            // A lone high surrogate and a lone low surrogate.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\ud83d!"}}"#.to_vec(),
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\udc00"}}"#.to_vec(),
+            // A raw control byte inside a string, which is what a half-written
+            // legacy pane payload actually looks like on disk.
+            [
+                &br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":""#[..],
+                &[0x01][..],
+                &br#""}}"#[..],
+            ]
+            .concat(),
+            // A raw newline inside a string.
+            [
+                &br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":""#[..],
+                &[b'\n'][..],
+                &br#""}}"#[..],
+            ]
+            .concat(),
+            // Bytes that are not UTF-8 at all: JSON is defined over text.
+            [
+                &br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":""#[..],
+                &[0xff, 0xfe][..],
+                &br#""}}"#[..],
+            ]
+            .concat(),
+        ];
+        for case in &invalid {
+            let rendered = String::from_utf8_lossy(case).to_string();
+            assert!(
+                serde_json::from_slice::<Value>(case).is_err(),
+                "fixture is not actually invalid JSON: {rendered}"
+            );
+            assert_eq!(
+                classify_history_line(case),
+                "unparsed",
+                "an invalid record must not be classified as reclaimable payload: {rendered}"
+            );
+            assert!(
+                !class_is_reclaimable(classify_history_line(case), Some("rmux")),
+                "{rendered}"
+            );
+        }
+
+        // The mirror half, and the reason this cannot just refuse everything:
+        // every VALID shape the same grammar produces still classifies, so
+        // hardening the scan did not quietly stop reclaiming real payload.
+        let valid: Vec<&[u8]> = vec![
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":true,"b":false,"c":null}}"#,
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","a":-0.5e+10,"b":0,"c":12}}"#,
+            // A surrogate PAIR, which is legal, alongside every escape JSON
+            // defines.
+            br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":"\ud83d\ude00\/\b\f\n\r\t\\\""}}"#,
+            "{\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chunk\",\"chunk\":\"héllo ✓\"}}"
+                .as_bytes(),
+        ];
+        for case in valid {
+            let rendered = String::from_utf8_lossy(case).to_string();
+            assert!(
+                serde_json::from_slice::<Value>(case).is_ok(),
+                "fixture is not actually valid JSON: {rendered}"
+            );
+            assert_eq!(
+                classify_history_line(case),
+                "rendered_tui",
+                "a valid rendered pane payload must still be reclaimable: {rendered}"
+            );
+        }
     }
 
     /// Every byte on disk lands in exactly one class, including the two shapes
