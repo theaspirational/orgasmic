@@ -19469,3 +19469,85 @@ found nine remaining acceptance and safety gaps:
 The full reviewer report is preserved in the TASK-FZB6T reviewer dispatch
 artifacts and =reviewer.done= tx =tx-20260729-orgasmic-3941=.
 
+* DONE TASK-4CSMY.1 Fix reviewer findings: glyph/role-aware marker recognition and a bounded stdout drain
+:PROPERTIES:
+:ID: TASK-4CSMY.1
+:IMPLEMENTS: TASK-4CSMY
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs, verify/TASK-4CSMY/, verify/TASK-JQ8AV/
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Second review round on the pane evidence channel. Reviewer verdict NEEDS FIXES —
+BLOCK SHIP (=tx-20260802-orgasmic-4104=). Two findings land in
+=supervisor.rs=; the third is TASK-T7KSH and is NOT in this scope.
+
+*FINDING 1 — HIGH, BLOCKS SHIP.* =supervisor.rs:5126-5131,5148-5171,5182-5197=.
+
+The hardened classifier still accepts a COMPLETED assistant row as a live status
+row. TASK-JQ8AV.1 measured that transcript bodies, tool results and footers are
+indented two spaces and made column 0 the discriminator — but the measured
+Claude assistant bullet =U+23FA= is ITSELF at column 0
+(=supervisor.rs:10121-10130=), and:
+
+- =spinner_status_row= accepts ANY punctuation glyph, not a known status glyph;
+- =interrupt_hint_status_row= accepts ANY at-most-two-token label.
+
+So an at-rest final assistant line of the shape =<bullet> Considering… (2s)= or
+=<bullet> Working (7s • Esc to interrupt)=, inside the last 12 non-blank rows,
+returns =Some=; the subtree CPU probe then credits the wedge =Working= on every
+expired sweep until the four-hour ceiling. This is precisely the
+wedge-dies-on-schedule violation the FIRST block (=tx-4055=) was raised about,
+surviving the fix that was supposed to close it.
+
+WHY THE SHIPPED REGRESSIONS MISS IT, which is the part worth reading before
+writing new ones (=supervisor.rs:10675-10718=): the existing at-rest arms put
+their exact marker ABOVE the region, indent their tool echoes, and prefix their
+assistant quote with prose. Every one of them avoids the forged-IN-region case
+by construction. That case is what the previous block asked for and it is still
+untested.
+
+*FINDING 2 — MEDIUM, does not independently block.*
+=supervisor.rs:4949-4986=. =probe_command_stdout= enforces its deadline only
+until the DIRECT child exits. If that child exits successfully after spawning a
+descendant that inherited stdout, line 4985 joins the reader thread with no
+deadline and never kills the stored process group. The supervisor returns
+=Unknown= after its outer timeout, but the blocking task, the reader thread and
+the descendant all survive — the same leak class TASK-JQ8AV.1 set out to close,
+through the one door it left open. The existing group test
+(=supervisor.rs:9911-9966=) covers a direct child that NEVER exits, not a
+successful parent whose descendant holds the pipe.
+
+** Acceptance
+
+- Marker recognition is glyph- and ROLE-aware, not punctuation-shaped. Reject
+  the measured assistant/action bullets (Claude =U+23FA=, codex transcript
+  bullet) and admit only measured status combinations. Note the reviewer
+  MEASURED a live codex status row during this review — =-o- Working (4m 11s
+  esc to interrupt)=, flush left, third from the non-blank bottom — so codex is
+  now a confirmed true positive that must keep working, not an unmeasured guess.
+- Regressions for the forged-IN-region case on BOTH real transports: a bare
+  =<bullet> Considering… (2s)= and a bare =<bullet> Working (7s Esc to
+  interrupt)= inside the final 12 non-blank rows of an at-rest pane, proving the
+  run dies on the FIRST expired sweep rather than surviving to the ceiling.
+- Stdout draining shares the probe absolute deadline. If the direct child exits
+  but the drain does not finish, kill the stored group, close and reap, and only
+  then join. A successful-parent/background-descendant test records the
+  descendant pid and proves both bounded return AND its disappearance.
+- =verify/TASK-JQ8AV= and =verify/TASK-4CSMY= keep replaying red-then-green. If
+  a fix rewrites a hunk either patch depends on, RE-CUT it and say so explicitly
+  — a silently weakened injection proof is invisible from then on.
+- fmt, clippy -D warnings, and focused daemon tests green. Do NOT run the billed
+  harness test (TASK-099T6), and do NOT loop the full workspace suite on this
+  host — see the syspolicyd entry in gotchas.org and use the 8-second isolation
+  control before believing any red.
+
+** Reviewer Evidence
+
+Full report in the TASK-4CSMY review dispatch artifacts; =reviewer.done= tx
+=tx-20260802-orgasmic-4104=. Both verify artifacts PASSED, fmt/clippy clean,
+12/12 focused tests green — the findings are source-proven contract holes, not
+test failures.
+

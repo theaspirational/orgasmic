@@ -1478,3 +1478,112 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 22:00:28 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4123
+:TIME:         [2026-08-02 Sun 22:00:28]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_BBPW4
+:NODE_ID:      dec_BBPW4
+:END:
+
+* TX 2026-08-02 Sun 22:14:52 implementer.reported TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4124
+:TIME:         [2026-08-02 Sun 22:14:52]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:RUN_ID:       run-20260802T215600-61908757916a43eeacfd62d3c638ccba
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.1/worktree
+:SHA:          607a7515ff41e274f0dc61db2c00c9c245fae52e
+:END:
+
+* TX 2026-08-02 Sun 22:16:50 task.created TASK-NTNK0
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4125
+:TIME:         [2026-08-02 Sun 22:16:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NTNK0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Hit independently by two different workers in the same session: the TASK-FZB6T reviewer (codex) and the TASK-4CSMY.1 implementer (claude), both dispatched over rmux. It makes every green test count reported from an rmux dispatch quietly incomplete.
+:END:
+
+* TX 2026-08-02 Sun 22:17:36 task.edited TASK-NTNK0
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4126
+:TIME:         [2026-08-02 Sun 22:17:36]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NTNK0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-NTNK0
+:NODE_ID:      TASK-NTNK0
+:END:
+
+* TX 2026-08-02 Sun 22:17:42 task.edited TASK-NTNK0
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4127
+:TIME:         [2026-08-02 Sun 22:17:42]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-NTNK0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-NTNK0
+:NODE_ID:      TASK-NTNK0
+:END:
+
+* TX 2026-08-02 Sun 22:20:21 implementer.done TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4128
+:TIME:         [2026-08-02 Sun 22:20:21]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:REASON:       Both reviewer findings closed in supervisor.rs. Marker recognition is now role-aware: STATUS_SPINNER_GLYPHS and TRANSCRIPT_ROLE_GLYPHS replace 'any punctuation glyph' and 'any two-token label', so a completed assistant row at column 0 no longer rescues a wedge. probe_command_stdout shares one absolute deadline with its drain and kills+reaps the group before joining. The author re-measured independently on the live pane of the SIBLING FZB6T.2 worker — a pane neither it nor the reviewer wrote — and confirmed both halves of the reviewer premise. It proved each fix red-first, and the drain red run left a real orphaned sleep 120 reparented to init, i.e. the leak observed rather than argued. Neither verify artifact needed a re-cut, measured by identical hunk offsets with and without the change; manager re-ran both replays independently and both PASS. One criterion partially unmet and declared: the codex TRANSCRIPT bullet is not rejected because it exists nowhere in the repo to measure — the author chose a denylist on that arm so the failure direction is a missed rescue rather than a false kill.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 607a751
+:MERGE_SHA:    2a55d98
+:BRANCH:       task-4csmy.1-impl
+:WALL:         42m
+:REVIEWED_DIFF: 0bc81d7..2a55d98
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; 13/13 focused supervisor tests incl. required_test_tooling_is_present (so the tmux-gated arms genuinely ran); orgasmic verify TASK-JQ8AV PASS; orgasmic verify TASK-4CSMY PASS
+:CLOSED_TX:    tx-20260802-orgasmic-4118
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 22:20:22 task.state_transitioned TASK-4CSMY.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4129
+:TIME:         [2026-08-02 Sun 22:20:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-4CSMY.1 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

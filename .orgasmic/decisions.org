@@ -2316,3 +2316,71 @@ same fence, held across a restart.
   holder is alive, because there is no pid to fall back on. The holder is told
   (`renew` answers `unknown`) and says so on stderr, but it is not fenced during
   that window.
+
+* dec_BBPW4 Run-history maintenance proves deletion authority from current session bytes
+:PROPERTIES:
+:ID: dec_BBPW4
+:IMPLEMENTS: TASK-FZB6T
+:END:
+
+** Context
+The TASK-FZB6T compact run catalog documents itself as disposable derived state
+that is "never authority", and `run history compact` then used that same cached
+state — `entry.is_terminal`, `entry.transport` — as permission to rewrite and
+archive session evidence. The TASK-FZB6T review (reviewer.done tx
+tx-20260802-orgasmic-4111) found five HIGH defects that are all instances of the
+same contradiction, and raised three questions that had to be settled before any
+of them could be fixed.
+
+** Decision
+
+*** 1. `run-catalog.json` is disposable derived state, and is never deletion authority
+The catalog stays a cache. Maintenance uses it for ONE thing: the candidate path
+list. Every fact that authorizes an irreversible operation — the run is
+terminal, the transport is a pane transport, these exact records are reclaimable
+— is rederived by `plan_compaction` and again by the apply pass from the session
+file's CURRENT bytes, through the same `entry_from_scan` derivation the
+inventory uses. A snapshot entry is additionally admitted only when its own
+retained `lifecycle_envelopes` rederive the semantic fields it claims, so a
+valid-JSON but semantically corrupt record is refused and rebuilt rather than
+believed.
+
+*** 2. A tombstoned worktree never revives
+`WorktreeAuthority::Tombstoned` is terminal, full stop. The dev+inode revival
+path is removed rather than strengthened. Inode numbers are reusable, so the old
+rule could be satisfied by an unrelated checkout, and a returned volume with
+renumbered inodes could never satisfy it — it was unsound in one direction and
+useless in the other. A run whose recorded worktree is gone is not recoverable
+under that worktree; the recovery path is a new run, not a revived attach
+candidate. No "temporarily unavailable" state is introduced: it would be a third
+state with no consumer.
+
+*** 3. The maintenance transaction owns its own exclusion, and fences the writer
+Exclusion has an owner: an exclusive `flock` on
+`.orgasmic/tmp/run-history-archive/maintenance.lock`, taken for the whole
+forward pass and for rollback. It serializes compact against compact, compact
+against rollback, and does so across processes, not merely across tasks in one
+daemon. Against the session writer, the transaction calls a fence callback the
+daemon wires to the writer task, which drops the cached append handle for that
+run before the rename — so the rename can never leave the writer appending to an
+orphaned inode.
+
+** The rule this states
+Where authority cannot be proven from the current bytes, REFUSE rather than
+delete. A refused compaction costs a re-scan; a wrong one costs the only record
+of what a worker did. Applied concretely: an unclassifiable record is never
+reclaimed, a plan whose reclaimable digest no longer matches is skipped, a file
+whose identity moved between plan and commit is skipped, and a rollback whose
+destination does not hold a byte image this transaction recorded is refused.
+
+** Consequences
+- Planning costs one bounded lifecycle scan plus one whole-file scan per
+  candidate, instead of a catalog lookup. Maintenance is an explicit operator
+  command, so that cost is paid where it is affordable.
+- `classify_history_line` becomes a structural single-pass JSON scan proving the
+  envelope `kind` and the outer `event.type`, and classifies `unparsed` when it
+  cannot prove them. A nested `"type":"text_chunk"` inside a tool payload no
+  longer misclassifies its record as reclaimable.
+- The pane redraw ban moves from a byte budget to a refusal: a `text_chunk`
+  offered to a `SessionWriter` whose run recorded a pane transport is rejected,
+  not bounded.
