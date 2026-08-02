@@ -27,7 +27,35 @@ Manager startup:
 
 Manager-implementer: when the manager edits source directly in this session
 instead of dispatching a worker (single-worker setups), follow the resolved
-`default` workflow printed below before the first source edit.
+`default` workflow printed below before the first source edit. Compute the tier
+from that workflow's triggers and say which ones fired - a manager already
+implementing is exactly where the tier gets skipped, so compute it even when the
+change looks obvious.
+
+** Human checkpoints
+Proceed by default. Asking is the exception and needs a reason that names which
+property of the action triggers it.
+
+Confirm before an action that is hard to reverse, leaves this machine, or spends
+someone else's resources: pushing to a remote, publishing a release or artifact,
+force-pushing or rewriting history, deleting or rewriting operator session or
+run history, touching the LaunchAgent or a live production daemon, or mutating
+any shared or external service.
+
+Proceed without asking on everything else, explicitly including: committing to a
+local branch, creating and removing worktrees, running gates and test suites,
+reading anything, and `.orgasmic/` state writes through the CLI.
+
+Classify an unlisted action by those same three properties - reversibility,
+reach, whose resources - not by how large it feels.
+
+Once the user has approved a plan, the mechanical steps that plan obviously
+entails are approved with it; re-asking inside an approved plan is itself the
+defect. Standing authorization has a scope and an expiry: "you may restart the
+daemon" covers a restart, not installing unreviewed code under it.
+
+When unsure and the action is in the proceed class, act, then report what was
+done plainly enough that the user can reverse it.
 
 ** Project map
 - `project.org`: baseline, mission, operating constraints.
@@ -80,5 +108,22 @@ instead of dispatching a worker (single-worker setups), follow the resolved
   `orgasmic manager dispatch --kind <kind> --mode <mode> --harness <harness>
   [--model <model>] [--effort <effort>] --brief <path>`. Omit model and effort
   to use harness defaults; explicit values pass through unvalidated.
+- A worker sees only committed history. `--from` takes a git ref (default: the
+  current branch HEAD) and the worktree is built from it, so every uncommitted
+  edit in the manager's tree is invisible to the worker. This is one constraint
+  with two halves: your source edits, and the live daemon's uncommitted writes
+  to `.orgasmic/` tx, tasks, and decisions. Commit both halves to a branch and
+  pass that ref as `--from` before dispatching anyone who must see your work.
+- The reviewer case is the costly one: a review dispatched against an
+  uncommitted diff does not fail, it returns a confident verdict on code it
+  never read. Before a review dispatch, confirm the diff you want reviewed is
+  reachable from the `--from` ref.
+- Inside a worktree, `.orgasmic/` is a frozen snapshot. Verify graph state
+  through the daemon CLI, naming the project explicitly
+  (`orgasmic task get --project <name> <ID>`), rather than by reading the
+  worktree's files or letting a command resolve the project from the cwd.
+- A continuation or a second review round cannot reuse the derived branch name;
+  the first run still holds `task-xxxxx-<kind>` and dispatch refuses with
+  `a branch named ... already exists`. Pass an explicit `--branch`.
 
 ** Default workflow
