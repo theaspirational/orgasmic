@@ -2324,3 +2324,58 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-02 Sun 22:56:14 implementer.reported TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4175
+:TIME:         [2026-08-02 Sun 22:56:14]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:RUN_ID:       run-20260802T224125-cb32013545ba471da1fb18bedc8ea9a8
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4csmy.2/worktree
+:SHA:          b35f01f250e6ef2676df887e03f6309353363926
+:END:
+
+* TX 2026-08-02 Sun 23:00:20 implementer.done TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4176
+:TIME:         [2026-08-02 Sun 23:00:20]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:REASON:       Round-3 BLOCK SHIP closed, and the deliverable is the guard rather than the glyph. The author re-ran the binary extraction independently (byte offset 238701938) rather than trusting the reviewer or the manager, and recorded a trap worth keeping: the frames ship as JS escapes, never UTF-8, so grepping the glyph itself returns nothing — a plausible way for a future re-derivation to conclude wrongly. It swept all six other U+2736 sites to confirm the frame arrays are the only spinner. The old positive control was a tautology (it walked the table and asserted the table's own entries), which is precisely how the missing frame survived a review round; the new controls name the frames independently of the table, and a completeness guard streams the installed binary, decodes both sequences and asserts superset. All four of the guard's paths were exercised on this host, including a 1 MiB size floor so the rmux PATH shim cannot trip the needle-absent failure. A real rmux pane now paints the frame and it is proven load-bearing. Gates run with the TASK-NTNK0 PATH correction and the sentinel quoted. No unmet criteria; four residual risks declared.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: b35f01f
+:MERGE_SHA:    1effe66
+:BRANCH:       task-4csmy.2-impl
+:WALL:         46m
+:REVIEWED_DIFF: 9a97ba5..1effe66
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; supervisor module 147/0 in 36.10s single-threaded with required_test_tooling_is_present GREEN and zero skip/warning hits; status_spinner_glyphs_cover_the_installed_claude_frame_set GREEN; verify TASK-JQ8AV PASS; verify TASK-4CSMY PASS; verify/ untouched
+:CLOSED_TX:    tx-20260802-orgasmic-4158
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:00:20 task.state_transitioned TASK-4CSMY.2
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4177
+:TIME:         [2026-08-02 Sun 23:00:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-4CSMY.2 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
