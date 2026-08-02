@@ -311,3 +311,238 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-02 Sun 13:48:20 reviewer.finding TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4055
+:TIME:         [2026-08-02 Sun 13:48:20]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:4902
+:REASON:       HIGH correctness — BLOCKS SHIP: PaneMux now routes tmux captures into pane_open_turn_marker, but this branch accepts any visible line containing Esc to interrupt and lines 4913-4919 accept loose spinner prose anywhere in the capture. An at-rest tmux pane showing prompt, transcript, or tool output with those bytes is classified Working every sweep until the 4-hour max duration, violating the wedge-dies-on-schedule acceptance. TASK-JQ8AV.1 explicitly requires classifier hardening before TASK-4CSMY broadens to tmux; land that hardening first and add real-tmux stale, arbitrary-prose, and forged-marker regressions.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:BLOCKS_SHIP:  true
+:REVIEWED_DIFF: 9017514..7d9c60c
+:END:
+
+* TX 2026-08-02 Sun 13:49:56 reviewer.reported TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4056
+:TIME:         [2026-08-02 Sun 13:49:56]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:RUN_ID:       run-20260802T133215-ec3730d4717a4ca595ee0f9a9bd715a4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:END:
+
+* TX 2026-08-02 Sun 14:00:35 task.state_transitioned TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4057
+:TIME:         [2026-08-02 Sun 14:00:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 14:00:36 manager.dispatch_started TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4058
+:TIME:         [2026-08-02 Sun 14:00:36]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.1/worktree
+:BRANCH:       task-fzb6t.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-FZB6T.1/task-FZB6T.1-brief.md
+:STARTED_AT:   [2026-08-02 Sun 14:00:36]
+:LIVENESS:     483eaae46df2805b3d70e11ebf64bfe262a59c0a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Fix round for 9 reviewer findings on the merged run catalog (1b726f6). Deviating from the matrix fixer row (medium): these are not findings that name a line and a direction — finding 8 requires restructuring the catalog's locking so filesystem work leaves the mutex and the async hot path, and findings 5/7 are stale-identity correctness traps. That is design work, so opus-5/high.
+:END:
+
+* TX 2026-08-02 Sun 14:00:36 run.created TASK-FZB6T.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4059
+:TIME:         [2026-08-02 Sun 14:00:36]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.1-implementer-20260802T140036.jsonl
+:REASON:       Fix round for 9 reviewer findings on the merged run catalog (1b726f6). Deviating from the matrix fixer row (medium): these are not findings that name a line and a direction — finding 8 requires restructuring the catalog's locking so filesystem work leaves the mutex and the async hot path, and findings 5/7 are stale-identity correctness traps. That is design work, so opus-5/high.
+:RUN_ID:       run-20260802T140036-98fa029c8e4a4c76add05471d94f46bb
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.1/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-FZB6T.1/task-FZB6T.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-FZB6T.1/task-FZB6T.1-003651dc85ee4ddbad01b1f9f071c9db-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-FZB6T.1/task-FZB6T.1-003651dc85ee4ddbad01b1f9f071c9db-stdout.log
+:DISPATCH_ATTEMPT: 003651dc85ee4ddbad01b1f9f071c9db
+:DISPATCH_TX:  tx-20260802-orgasmic-4058
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 14:01:54 reviewer.done TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4060
+:TIME:         [2026-08-02 Sun 14:01:54]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260802-orgasmic-4053
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 14:01:57 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4061
+:TIME:         [2026-08-02 Sun 14:01:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4CSMY to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 14:02:25 task.edited TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4062
+:TIME:         [2026-08-02 Sun 14:02:25]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-JQ8AV.1
+:NODE_ID:      TASK-JQ8AV.1
+:END:
+
+* TX 2026-08-02 Sun 14:03:09 task.state_transitioned TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4063
+:TIME:         [2026-08-02 Sun 14:03:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-JQ8AV.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 14:03:10 manager.dispatch_started TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4064
+:TIME:         [2026-08-02 Sun 14:03:10]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-jq8av.1/worktree
+:BRANCH:       task-jq8av.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-JQ8AV.1/task-JQ8AV.1-brief.md
+:STARTED_AT:   [2026-08-02 Sun 14:03:10]
+:LIVENESS:     483eaae46df2805b3d70e11ebf64bfe262a59c0a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Unblocks the TASK-4CSMY BLOCK SHIP (tx-20260802-orgasmic-4055): 4CSMY routed tmux through JQ8AV's free-form marker classifier, so an at-rest tmux pane containing 'Esc to interrupt' now survives to the 4h ceiling instead of dying at 600s. Deviating from the matrix fixer row (medium): finding 1 requires MEASURING where real harnesses put their status row and designing a position-aware contract, which is discovery, not applying a named fix.
+:END:
+
+* TX 2026-08-02 Sun 14:03:10 run.created TASK-JQ8AV.1
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4065
+:TIME:         [2026-08-02 Sun 14:03:10]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-JQ8AV.1-implementer-20260802T140310.jsonl
+:REASON:       Unblocks the TASK-4CSMY BLOCK SHIP (tx-20260802-orgasmic-4055): 4CSMY routed tmux through JQ8AV's free-form marker classifier, so an at-rest tmux pane containing 'Esc to interrupt' now survives to the 4h ceiling instead of dying at 600s. Deviating from the matrix fixer row (medium): finding 1 requires MEASURING where real harnesses put their status row and designing a position-aware contract, which is discovery, not applying a named fix.
+:RUN_ID:       run-20260802T140310-7f380a1a5360475d9a0091ecadc38cd1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-jq8av.1/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-JQ8AV.1/task-JQ8AV.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-JQ8AV.1/task-JQ8AV.1-fba01d56f0c5445995135350f8975059-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-JQ8AV.1/task-JQ8AV.1-fba01d56f0c5445995135350f8975059-stdout.log
+:DISPATCH_ATTEMPT: fba01d56f0c5445995135350f8975059
+:DISPATCH_TX:  tx-20260802-orgasmic-4064
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-02 Sun 14:03:53 task.edited TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4066
+:TIME:         [2026-08-02 Sun 14:03:53]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-4CSMY
+:NODE_ID:      TASK-4CSMY
+:END:
+
+* TX 2026-08-02 Sun 14:04:18 task.created TASK-8XPRR
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4067
+:TIME:         [2026-08-02 Sun 14:04:18]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8XPRR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Observed by the TASK-4CSMY reviewer: 112 inactive orgasmic-pane-* dirs in five clusters, no open handles, no surviving cat processes. Its own acquire/release smoke and Drop-path test each added zero, so this is test-teardown residue, not a per-run daemon leak — but it accumulates unbounded.
+:END:
