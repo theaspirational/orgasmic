@@ -3175,3 +3175,109 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       TASK-TW3N3 item 3, split out because it is a Rust change and that task's write scope was prose-only. Its acceptance criterion — a dispatch that would silently review the wrong tree is blocked or loudly flagged — is currently met only in prose, so nothing enforces it.
 :END:
+
+* TX 2026-08-02 Sun 23:42:41 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4224
+:TIME:         [2026-08-02 Sun 23:42:41]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_BBPW4
+:NODE_ID:      dec_BBPW4
+:END:
+
+* TX 2026-08-02 Sun 23:42:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4225
+:TIME:         [2026-08-02 Sun 23:42:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_BBPW4
+:NODE_ID:      dec_BBPW4
+:END:
+
+* TX 2026-08-02 Sun 23:45:54 implementer.reported TASK-FZB6T.3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4226
+:TIME:         [2026-08-02 Sun 23:45:54]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.3
+:RUN_ID:       run-20260802T230900-8ff494157641457ca825af0793b838a6
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.3/worktree
+:SHA:          9fff4a26ba4a2832f5263a9aec055ce484d074bf
+:END:
+
+* TX 2026-08-02 Sun 23:46:04 task.state_transitioned TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4227
+:TIME:         [2026-08-02 Sun 23:46:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-0JY7M to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-02 Sun 23:46:04 manager.dispatch_started TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4228
+:TIME:         [2026-08-02 Sun 23:46:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0jy7m/worktree
+:BRANCH:       task-0jy7m-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-0jy7m/brief-0jy7m.md
+:STARTED_AT:   [2026-08-02 Sun 23:46:04]
+:LIVENESS:     35e10c203a3a60819050132e1bf8cc274a3e22e2
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Unblocked: its dependency TASK-JQARS is DONE, and item 5 (reconcile with TASK-4YX1K) is now a concrete job against text that landed an hour ago rather than a forward reference. Prose-only scope in the two shipped files, disjoint from the live FZB6T.3 worker on the daemon crates. Briefed with this session's own evidence for item 3, including the outcome that cross-family review caught four blocking defects the implementers missed.
+:END:
+
+* TX 2026-08-02 Sun 23:46:05 run.created TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4229
+:TIME:         [2026-08-02 Sun 23:46:05]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-0JY7M-implementer-20260802T234604.jsonl
+:REASON:       Unblocked: its dependency TASK-JQARS is DONE, and item 5 (reconcile with TASK-4YX1K) is now a concrete job against text that landed an hour ago rather than a forward reference. Prose-only scope in the two shipped files, disjoint from the live FZB6T.3 worker on the daemon crates. Briefed with this session's own evidence for item 3, including the outcome that cross-family review caught four blocking defects the implementers missed.
+:RUN_ID:       run-20260802T234604-a4e13ba8dda84d85996a2e567e7fce93
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0jy7m/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-0jy7m/brief-0jy7m.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-0jy7m/brief-0jy7m-bcd1a3028b2743438d345c71f5210deb-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-0jy7m/brief-0jy7m-bcd1a3028b2743438d345c71f5210deb-stdout.log
+:DISPATCH_ATTEMPT: bcd1a3028b2743438d345c71f5210deb
+:DISPATCH_TX:  tx-20260802-orgasmic-4228
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:

@@ -2384,3 +2384,82 @@ destination does not hold a byte image this transaction recorded is refused.
 - The pane redraw ban moves from a byte budget to a refusal: a `text_chunk`
   offered to a `SessionWriter` whose run recorded a pane transport is rejected,
   not bounded.
+** Tombstone durability (revises Decision item 2)
+`WorktreeAuthority::Tombstoned` is terminal, full stop. The dev+inode revival
+path is removed rather than strengthened. Inode numbers are reusable, so the old
+rule could be satisfied by an unrelated checkout, and a returned volume with
+renumbered inodes could never satisfy it — it was unsound in one direction and
+useless in the other. A run whose recorded worktree is gone is not recoverable
+under that worktree; the recovery path is a new run, not a revived attach
+candidate. No "temporarily unavailable" state is introduced: it would be a third
+state with no consumer.
+
+WHICH SIDE OF THE CONTRADICTION THIS TAKES (TASK-FZB6T.3 finding 4). Item 1 and
+this item could not both be true while the tombstone lived only in the catalog.
+The catalog is explicitly disposable, so an absent, corrupt or foreign-version
+snapshot is rebuilt from session bytes — and session bytes record a worktree
+PATH, not a worktree identity. So `prune -> tombstone -> catalog loss -> path
+reuse` re-derived `Verified` from whatever same-project checkout now answers to
+that path, and a dead run became an attach candidate again.
+
+The side taken is the first one the reviewer named: terminal tombstones are
+PERSISTED IN AUTHORITATIVE STATE OUTSIDE THE CACHE. The catalog stays disposable
+and stays derived — every way of losing it still takes the same answer, rebuild
+from the session files — and the one fact a rebuild cannot reproduce no longer
+lives only there. `.orgasmic/run-tombstones.json` records, per project, every run
+whose recorded worktree has been observed gone. It is AUTHORITY, not cache:
+losing it loses a terminal fact no rebuild recovers, which is exactly the
+distinction that makes the catalog safe to discard. It is merged rather than
+replaced on every write, because a last-writer-wins overwrite would delete a
+terminal fact another daemon recorded; a tombstone is only ever added. A ledger
+this build cannot vouch for is refused, and refusing it does NOT mean "rebuild
+from session bytes" — session bytes are precisely what cannot answer this
+question — it means every run it named stays unproven, which fails closed.
+
+Snapshot semantic validation covers `worktree_authority` too: an entry claiming
+`Verified` with no worktree recorded, `Unrecorded` while recording one, or a
+verdict for a project its own record disowns is refused rather than loaded, so a
+snapshot that passes every other check cannot carry a verdict contradicting the
+record it sits on.
+** Exclusion, manifest format, and validation (revises Decision item 3)
+Item 3 said the transaction "fences the writer": it called a callback that
+dropped the cached append handle for that run before the rename. That is not
+exclusion (TASK-FZB6T.3 finding 1). The handle was dropped ONCE and the next
+append reopened the same path, so an append landing between the transaction's
+final fingerprint check and its `rename` hit the ORIGINAL inode, which the rename
+immediately orphaned. The replacement excluded that line and the archive PREDATED
+it, so "rollback restores it byte for byte" was false for exactly that window. It
+is a realistic lifecycle edge, not a theoretical one: a persisted terminal driver
+event can make a file eligible BEFORE the supervisor appends its final
+`Lifecycle::Release`.
+
+Exclusion is now a LEASE the writer owns, held for the whole transaction and
+released only after the rename and the journal write. While a lease is held, an
+append for a leased path is DEFERRED in the writer BEFORE anything is opened, and
+runs against whatever file the path holds once the lease releases — so the final
+lifecycle line lands in the replacement rather than in an orphan. A path already
+leased is refused rather than shared. Rollback takes the same lease for the same
+reason.
+
+The durable manifest is versioned. Format 1 named per-file state in `results`;
+format 2 named it in `files`, with no version and no compatibility decoder, and
+both fields default — so each runtime read the other's manifest as an empty file
+list, restored nothing, and reported SUCCESS in both directions at once. For the
+one mechanism whose whole justification is that deletion is recoverable, a silent
+successful-empty rollback is the worst available outcome. So: the format is
+stated; a format this build does not know is refused loudly rather than read;
+format 1's `results` are decoded, with the digests that shape never recorded
+re-derived from the archive and the manifest's own embedded plan; every write
+emits `results` alongside `files` so a runtime predating `files` still finds the
+archived originals; and a manifest whose plan names files but which carries no
+per-file record in any readable shape is refused, never reported as a successful
+rollback of nothing.
+
+The structural classifier VALIDATES rather than navigates (TASK-FZB6T.3 finding
+3). Accepting any non-empty primitive token as a value meant
+`{"kind":"driver_event","event":{"type":"text_chunk","payload":truX}}` — which no
+JSON reader accepts — classified `rendered_tui` and had its bytes dropped. Every
+primitive now has its own grammar, strings refuse raw control bytes, undefined
+escapes and lone surrogates, and the line is proven UTF-8 before the scan starts.
+A record whose validity cannot be proven from its current bytes is `unparsed`,
+and `unparsed` is never reclaimable.

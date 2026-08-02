@@ -50,39 +50,6 @@ Acceptance:
 - the check names the deciding node, not just the path
 - removal is offered, never performed silently
 
-* TODO TASK-0JY7M Ask once per session for agent selection, and default reviewers off the author's harness family :workflow:dispatch:process:
-:PROPERTIES:
-:ID: TASK-0JY7M
-:DEPENDS_ON: TASK-JQARS
-:PRIORITY:   P1
-:END:
-
-Problem: dec_WDR5K item 9 states that "per-kind model preference is manager judgment per dispatch, not configuration", and removes every model and effort identifier from orgasmic code and config. That is a deliberate and correct constraint — it is what makes vendor model bumps require no orgasmic change. But it leaves the manager with no way to learn what the operator actually wants, and nothing in the runtime prompts it to find out.
-
-Observed 2026-07-25 on TASK-KWSTJ: a manager dispatching a reviewer for its own P0 daemon-recovery change chose `acp-stdio` + `claude` by taking the first entry of the `SUPPORTED` array, passed no model and no effort, and never asked the operator anything. Three separate defects in one dispatch:
-- the transport pair was decided by source ordering, not judgment
-- effort was left at harness default for a review the workflow itself says warrants a premium tier
-- the reviewer ran on the same model family as the author of the code under review
-
-The third is the structural one. A reviewer sharing the implementer's model family shares its priors and its blind spots, which is most of what an independent pass is for. That is a runtime policy question, not manager taste, and it should not be re-derived per dispatch by whoever happens to be holding the session.
-
-Because configuration was removed by design, a session-level ask is the only durable channel left. This is an elicitation that *removes* downstream friction, so it does not conflict with TASK-4YX1K's default-to-proceeding rule: ask once, cheaply, then stop asking.
-
-Work:
-1. The manager asks the operator once per session for agent-selection preference — harness family, and effort posture for review and risky stages — at the first dispatch, not at session start, so a session that never dispatches never asks.
-2. Carry the answer for the session so subsequent dispatches do not re-ask. Decide whether it persists beyond the session, respecting item 9: an operator's *harness family* preference is not model knowledge, but a pinned model identifier would be, and must stay per-dispatch.
-3. Encode reviewer independence as runtime policy: a reviewer dispatch defaults to a different harness family than the run under review, and the manager states its reason when it does not. Where the implementer harness is unknown, ask rather than defaulting to the manager's own family.
-4. Fold in the premium-tier rule already in `shipped/workflows/default.org` — review and risky stages should carry an explicit effort, so leaving it unset is a visible choice rather than an oversight.
-5. Reconcile with TASK-4YX1K so the two read as one policy: this is the sanctioned once-per-session elicitation; everything downstream of it proceeds without asking.
-
-Non-goal: reintroducing worker templates or any stored model catalog. dec_WDR5K stands. This is about the manager acquiring a preference at runtime, not about orgasmic storing model knowledge.
-
-Acceptance:
-- a manager cannot complete its first dispatch of a session without either an operator preference or an explicit recorded reason for the default it chose
-- a reviewer defaults to a different harness family than the code's author
-- review and risky-stage dispatches carry an explicit effort
-- no model identifier enters orgasmic config or code
-
 * TODO TASK-XCJYC Rename non-ACP transports and reserve acp-* for the real protocol :drivers:cli:naming:
 :PROPERTIES:
 :ID: TASK-XCJYC
