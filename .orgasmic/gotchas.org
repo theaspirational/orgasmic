@@ -627,12 +627,22 @@ flight). The governance override stays necessary until the runtime is
 REINSTALLED with this change; a stall kill of a worker whose pane shows the
 statusline after that reinstall is a real bug in the pane channel.
 
-THE EXIT CONDITION IS =rmux= ONLY (manager, 2026-07-29 integration). The pane
-consult is gated on =target.transport == "rmux"=, so on a =tmux= transport the
-channel never runs and the 600s kill is exactly as it was before JQ8AV. This
-matters now that tmux is the shipped default driver: keep the governance
-override on every long-thinking =tmux= dispatch until TASK-4CSMY generalises
-the consult to all pane transports.
+THE EXIT CONDITION NOW COVERS tmux IN TREE, BUT NOT YET IN THE INSTALLED
+RUNTIME (manager, 2026-08-02 integration). TASK-4CSMY (merge =7d9c60c=) landed
+both halves the tmux transport was missing: =modes/tmux.rs= now publishes the
+coalesced =pane_activity= (via =pipe-pane= into a private FIFO, counted in raw
+BYTES per RWCRN.1), and the open-turn consult is keyed on =PaneMux= rather than
+=transport == "rmux"=, so it runs on any pane transport while =acp-*= stays
+excluded by construction. A third blindness was found in the same pass and
+fixed: a tmux run carries =pid: None=, so =work_probe_root_pid= never resolved
+and the *cpu* channel was blind too — "every channel blind" was literal.
+
+So the rule is now about the RUNTIME, not the code: keep
+=--governance-json '{"stall_timeout_secs":3600}'= on every long-thinking =tmux=
+dispatch until =~/.orgasmic/bin/orgasmic= is reinstalled at =7d9c60c= or later.
+The runtime installed 2026-08-02 is =57e35de=, which predates this merge. After
+that reinstall, a stall-kill of a tmux worker whose pane shows the open-turn
+statusline is a REAL bug in this channel — report it, do not route around it.
 
 ** =$RMUX= outranks =RMUX_TMPDIR=, so a socket-root pin alone cannot steer rmux inside a worker
 Measured 2026-07-29 (TASK-SZJ2B), from inside a worker pane, deterministic:

@@ -1476,94 +1476,6 @@ From TASK-7QM8M (2026-07-29), the deliberate rule-1 boundary: a truncated sessio
 
 Reported by the user 2026-07-29 from a running app build: the desktop window renders the top-level error boundary ("Something went wrong!" / "Hide Error") with the minified message `undefined is not an object (evaluating 't.sections.map')` and nothing behind the banner — so a top-level view dies during render, not an isolated panel. `t` is a bundler-renamed local; the real signal is `.sections.map` reached on undefined. Unguarded call sites of that shape today: ui/src/components/orgdoc/NodeDocEditor.tsx:41 (`toDraft`, `doc.sections.map`) and :63 (`effectiveFields`), and ui/src/components/PromptStudioView.tsx:423 (`layered.sections.map`); the same pass should look at `doc.properties.map` (NodeDocEditor.tsx:42) and `parseOrgSourceNodes(...).sections.find` (node-views/orgNodes.ts:89,111). Wanted: which payload actually produces the undefined and why (daemon response shape, render-before-load, or version skew between app and daemon), a fix at that source rather than a `?.` at the call site, a regression test for the payload shape that crashed, and enough context in the error boundary (view or component name) that the next minified crash is diagnosable without guessing. Reproduction is unknown — first ask the user which screen they were on.
 
-* BACKLOG TASK-4CSMY The pane open-turn evidence channel is rmux-only, so tmux dispatches stay exposed to the 600s stall-kill    :dispatch:daemon:hardening:
-:PROPERTIES:
-:ID: TASK-4CSMY
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs
-:END:
-
-
-=== WIDENED at filing (manager, 2026-07-29): the primary channel is missing too
-
-Further measurement while scoping the tmux default switch. The gap is not only
-JQ8AV's rescue channel — the PRIMARY pane-liveness channel is absent on tmux:
-
-- =pane_activity= is emitted by =crates/orgasmic-drivers/src/modes/rmux.rs=
-  and by nothing else. A grep for the event across =crates/orgasmic-drivers/src/=
-  returns rmux hits only.
-- =modes/tmux.rs= (4668 lines) sends =DriverEvent::Ready=,
-  =TransitionState=, =ToolCall= and the fatal-error paths. There is no
-  continuous pane-output event of any kind.
-
-So on a tmux transport the stall clock sees driver events only when the worker
-happens to call a tool or change state. Between those, evidence falls back to
-the subtree CPU probe alone. A CPU-hot stretch (a long =cargo test= under the
-pane) is still classified Working, so the common long-tool case survives. The
-fatal case is the provider-bound think: low CPU, no tool calls, no pane event,
-and — because JQ8AV's consult is gated on =transport == "rmux"= — no rescue
-either. That is a 600s kill of a healthy worker with every channel blind.
-
-This is why TASK-RWCRN's history matters: rmux only became safe when it grew
-=pane_activity=. tmux has never had that, so it is where rmux was BEFORE the
-fix, not merely missing the JQ8AV refinement.
-
-ORDERING CONSEQUENCE. The operator has directed that tmux become the shipped
-default driver, on the sound reasoning that a first-time user may have only
-tmux. That makes this task a SHIP BLOCKER rather than a hardening nicety: with
-the default flipped and this unfixed, the users least equipped to diagnose it
-get healthy workers killed at ten minutes. Land this before the default flips;
-dogfood on tmux in the meantime with
-=--governance-json '{"stall_timeout_secs":3600}'= on every long-thinking
-dispatch.
-
-Work item 0, ahead of the others: give the tmux driver a coalesced
-=pane_activity= equivalent to rmux's, with rmux's live tests ported
-(=live_rmux_pane_publishes_pane_activity_while_it_writes= and the
-newline-free-redraw variant) onto a test-owned tmux server. Only then does the
-open-turn-statusline consult of items 1-3 become a refinement rather than the
-sole channel.
-
-** Description
-TASK-JQ8AV landed a third work-evidence channel: at the stall deadline, when
-subtree CPU is below the work threshold, the probe captures the pane and looks
-for the TUI's open-turn statusline. A provider-bound turn is then classified
-=Working= instead of being stall-killed.
-
-That channel is gated on =target.transport == "rmux"= (supervisor.rs, in
-=ProcessSubtreeCpuProbe=). On a =tmux= transport the consult never runs, so the
-classification falls back to CPU alone — which is exactly the state that killed
-FZB6T, RB1ZN and SZJ2B at 600.1s during long claude-opus-5 high-effort thinks.
-
-This matters now because the operator has directed that orgasmic ship =tmux= as
-the default driver (first users may have only tmux installed, so tmux is what
-must be hardened). Dispatching opus-5 high-effort work over tmux before this
-lands reproduces the original incident.
-
-=== Work
-1. Generalise the pane consult from rmux to any pane transport. =rmux= and
-   =tmux= share the =capture-pane -p -t <session>= surface, so the marker
-   classifier (=pane_open_turn_marker=) is reusable verbatim; what differs is
-   the binary, the session-name derivation, and the socket/endpoint flag.
-2. Keep the fail-closed ordering JK66P set and JQ8AV preserved: pane unreadable
-   must never rescue a run, only report =pane capture unavailable=. The channel
-   may flip Idle->Working and nothing else.
-3. Extend the acceptance test to the tmux transport. JQ8AV's
-   =a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=
-   drives a REAL pane on a test-owned server; the tmux half needs the same
-   shape on a test-owned tmux server, not a stubbed capture.
-4. Do NOT widen the rescue to non-pane transports. acp-* transports already
-   stream turn events into the stall clock and need no pane channel.
-
-=== Acceptance
-- A network-waiting provider-bound turn on a =tmux= transport survives repeated
-  expired stall budgets, proven with a real tmux pane.
-- An at-rest, connectionless wedge on =tmux= still dies on schedule, with a
-  reason naming both empty channels.
-- The rmux behaviour JQ8AV shipped is unchanged (its verify artifact still
-  replays red-then-green).
-- A shipped injection proof under verify/, per the project bar.
-
 * BACKLOG TASK-JQ8AV.1 Fix reviewer findings: trustworthy pane evidence and bounded stall probes
 :PROPERTIES:
 :ID: TASK-JQ8AV.1
@@ -1794,3 +1706,44 @@ TASK-3NJ9K fence: =crates/orgasmic-daemon/src/driver_resolution.rs=, merged
 Original incident: =tx-20260730-orgasmic-3992=. Integration reach:
 =crates/orgasmic-daemon/tests/dispatch_preflight.rs= around line 200.
 
+* BACKLOG TASK-GGWW2 serve's SIGTERM handler races Daemon::run's return, so the graceful-shutdown test flakes    :daemon:flake:
+:PROPERTIES:
+:ID: TASK-GGWW2
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-cli/src/daemon_lifecycle.rs
+:END:
+
+** Description
+`sigterm_exits_through_graceful_shutdown_rather_than_default_disposition`
+(`crates/orgasmic-cli/tests/daemon_lifecycle.rs:319`) fails intermittently with
+"serve died on SIGTERM's default disposition".
+
+Root cause is documented in the test's own comment and is TASK-Q07Y5's shape:
+`serve` registers its SIGTERM handler AFTER `Daemon::run` returns, so a signal
+delivered in that window hits the default disposition and kills the process.
+
+MEASURED [2026-08-02] by the TASK-4CSMY implementer, as the base-commit control
+the flake convention requires — isolated runs, one worktree held constant:
+
+| tree | isolated runs | failures |
+|------|---------------|----------|
+| base 9017514 | 8 | 3 |
+| with TASK-4CSMY | 5 | 1 |
+
+So it is pre-existing and load/timing sensitive, not a regression. It was NOT
+added to `verify/flake-registry.toml` at the time, correctly: that file requires
+an OPEN owning task, and an entry with no owner is a permanent exemption.
+
+** Work
+1. Register the panic in `verify/flake-registry.toml` against this task id, so
+   the suite classifies it rather than reporting an unexplained REAL red.
+2. Fix the race: install the SIGTERM handler before `Daemon::run` can return,
+   so there is no window in which the default disposition applies.
+3. Remove the registry entry in the same change that fixes it — a registered
+   flake outliving its fix is the next person's false signal.
+
+** Acceptance
+- The handler is installed before the window opens; no ordering-dependent gap
+  remains between `Daemon::run` returning and the handler being live.
+- The test passes 20 consecutive isolated runs in one worktree.
+- `verify/flake-registry.toml` carries no entry for this test once fixed.
