@@ -3337,3 +3337,54 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-02 Sun 23:51:58 manager.dispatch_started TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4233
+:TIME:         [2026-08-02 Sun 23:51:58]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRANCH:       task-fzb6t-review-r3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:STARTED_AT:   [2026-08-02 Sun 23:51:58]
+:LIVENESS:     318e2dee4d6fcb6568cbf7c4c149b55ad31b52e9
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Round 3. All five round-2 findings claimed closed with real machinery. Briefed to press on the new durable state the tombstone ledger introduces (corruption, concurrency, growth), on whether the manifest re-derivation reproduces the bytes actually written or merely usually, and on whether anything else in this chain would only surface in a full-suite run — since a regression from TASK-FZB6T.2 survived the author, the reviewer and the manager because all three ran focused filters.
+:END:
+
+* TX 2026-08-02 Sun 23:51:59 run.created TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4234
+:TIME:         [2026-08-02 Sun 23:51:59]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T-reviewer-20260802T235158.jsonl
+:REASON:       Round 3. All five round-2 findings claimed closed with real machinery. Briefed to press on the new durable state the tombstone ledger introduces (corruption, concurrency, growth), on whether the manifest re-derivation reproduces the bytes actually written or merely usually, and on whether anything else in this chain would only surface in a full-suite run — since a regression from TASK-FZB6T.2 survived the author, the reviewer and the manager because all three ran focused filters.
+:RUN_ID:       run-20260802T235158-f6cae37c5eb04c8b9c2bba2608c717f4
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-a2b6937657bc453ca3039d61dfc7e407-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-a2b6937657bc453ca3039d61dfc7e407-stdout.log
+:DISPATCH_ATTEMPT: a2b6937657bc453ca3039d61dfc7e407
+:DISPATCH_TX:  tx-20260802-orgasmic-4233
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
