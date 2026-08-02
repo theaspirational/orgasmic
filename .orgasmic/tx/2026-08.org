@@ -2379,3 +2379,84 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-02 Sun 23:01:11 task.state_transitioned TASK-4CSMY
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4178
+:TIME:         [2026-08-02 Sun 23:01:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-4CSMY.2 landed (merge 1effe66); round-4 review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:01:11 task.state_transitioned TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4179
+:TIME:         [2026-08-02 Sun 23:01:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQ8AV
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-4CSMY.2 landed (merge 1effe66); round-4 review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:01:12 manager.dispatch_started TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4180
+:TIME:         [2026-08-02 Sun 23:01:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRANCH:       task-4csmy-review-r4
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-rereview-r4/brief-supervisor-rereview-r4.md
+:STARTED_AT:   [2026-08-02 Sun 23:01:12]
+:LIVENESS:     8b2cdb814fefa6bd4005087a94049b4fa2a7a26a
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Round 4. The round-3 BLOCK SHIP is claimed closed and the fix is scoped to a completeness guard rather than the one glyph. Briefed on the question that actually matters after four rounds — can this drift silently again — and told plainly that SHIP is the expected outcome if the block is closed, with non-blocking findings becoming their own tasks rather than round five.
+:END:
+
+* TX 2026-08-02 Sun 23:01:12 run.created TASK-4CSMY TASK-JQ8AV
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4181
+:TIME:         [2026-08-02 Sun 23:01:12]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4CSMY TASK-JQ8AV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4CSMY_TASK-JQ8AV-reviewer-20260802T230112.jsonl
+:REASON:       Round 4. The round-3 BLOCK SHIP is claimed closed and the fix is scoped to a completeness guard rather than the one glyph. Briefed on the question that actually matters after four rounds — can this drift silently again — and told plainly that SHIP is the expected outcome if the block is closed, with non-blocking findings becoming their own tasks rather than round five.
+:RUN_ID:       run-20260802T230112-54770735662940c8aeea66e25ff51dc3
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4CSMY-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-supervisor-rereview-r4/brief-supervisor-rereview-r4.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-supervisor-rereview-r4/brief-supervisor-rereview-r4-c0b3767430004fdb80c0bd1fe482a85b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-supervisor-rereview-r4/brief-supervisor-rereview-r4-c0b3767430004fdb80c0bd1fe482a85b-stdout.log
+:DISPATCH_ATTEMPT: c0b3767430004fdb80c0bd1fe482a85b
+:DISPATCH_TX:  tx-20260802-orgasmic-4180
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
