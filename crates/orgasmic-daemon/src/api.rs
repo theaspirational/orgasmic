@@ -22441,10 +22441,14 @@ pub(crate) mod tests {
         writer
             .append(
                 SessionEventKind::DriverEvent,
-                serde_json::to_value(DriverEvent::TextChunk {
-                    stream: orgasmic_core::TextStream::Assistant,
-                    chunk: "## Report\nfenced reattach fixture".into(),
+                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
+                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
+                // writer now REFUSES a pane `text_chunk` outright. This fixture
+                // used to persist one, which is a shape neither the real drivers
+                // nor the writer can produce; it models the real one instead.
+                serde_json::to_value(DriverEvent::PaneActivity {
                     seq: 0,
+                    bytes: "## Report\nfenced reattach fixture".len() as u64,
                 })
                 .unwrap(),
             )
@@ -23571,10 +23575,14 @@ pub(crate) mod tests {
         writer
             .append(
                 SessionEventKind::DriverEvent,
-                serde_json::to_value(DriverEvent::TextChunk {
-                    stream: orgasmic_core::TextStream::Assistant,
-                    chunk: "## Report\nboot reattach watcher smoke".into(),
+                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
+                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
+                // writer now REFUSES a pane `text_chunk` outright. This fixture
+                // used to persist one, which is a shape neither the real drivers
+                // nor the writer can produce; it models the real one instead.
+                serde_json::to_value(DriverEvent::PaneActivity {
                     seq: 0,
+                    bytes: "## Report\nboot reattach watcher smoke".len() as u64,
                 })
                 .unwrap(),
             )
