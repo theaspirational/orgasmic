@@ -1,7 +1,8 @@
 diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
+index 08f0c11..a02b4b1 100644
 --- a/crates/orgasmic-daemon/src/run_catalog.rs
 +++ b/crates/orgasmic-daemon/src/run_catalog.rs
-@@ -1037,26 +1037,11 @@
+@@ -1074,29 +1074,11 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
  ///
  /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
  fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
@@ -24,7 +25,10 @@ diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/
 -    if !metadata.is_file() || metadata.file_type().is_symlink() {
 -        return false;
 -    }
--    SessionFileFingerprint::of(&metadata) == entry.fingerprint
+-    if SessionFileFingerprint::of(&metadata) != entry.fingerprint {
+-        return false;
+-    }
+-    snapshot_entry_semantics_are_self_consistent(entry)
 +    // INJECTED (TASK-FZB6T.1): the pre-fix rule — anything under the project
 +    // root is admitted, with no session-directory authority, no traversal
 +    // check, and no current file identity check.
@@ -32,22 +36,35 @@ diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/
 +    entry.session_path.starts_with(project_root)
  }
  
- /// One filesystem observation of the path a cached authority verdict names.
-@@ -1126,13 +1111,10 @@
-                 verified_identity: *identity,
-             })
-         }
--        WorktreeAuthority::Tombstoned {
--            verified_identity, ..
--        } => {
--            // A tombstone with no verified identity was already gone at first
--            // index; nothing can prove continuity for it.
--            let identity = (*verified_identity)?;
--            if probe.current != Some(identity) {
-+        WorktreeAuthority::Tombstoned { .. } => {
-+            // INJECTED (TASK-FZB6T.1): existence at the recorded path is enough
-+            // to revive a tombstone, whatever directory now answers to it.
-+            if !probe.exists {
-                 return None;
-             }
-             match verify_worktree_authority(project_id, run_meta) {
+ /// Whether an entry's semantic claims are reproduced by its own source
+@@ -1143,8 +1125,10 @@ struct AuthorityProbe {
+ fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
+     let path = match authority {
+         WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
+-        WorktreeAuthority::Tombstoned { .. }
+-        | WorktreeAuthority::Mismatched { .. }
++        // INJECTED (TASK-FZB6T.1): a tombstone is probed again, so a directory
++        // that later appears at the recorded path can revive it.
++        WorktreeAuthority::Tombstoned { recorded, .. } => recorded.as_path(),
++        WorktreeAuthority::Mismatched { .. }
+         | WorktreeAuthority::Unrecorded
+         | WorktreeAuthority::Unidentified => return None,
+     };
+@@ -1175,6 +1159,17 @@ fn reverify_authority(
+     previous: &WorktreeAuthority,
+     probe: AuthorityProbe,
+ ) -> Option<WorktreeAuthority> {
++    // INJECTED (TASK-FZB6T.1): existence at the recorded path is enough to
++    // revive a tombstone, whatever directory now answers to it.
++    if let WorktreeAuthority::Tombstoned { recorded, .. } = previous {
++        if !probe.exists {
++            return None;
++        }
++        return Some(WorktreeAuthority::Verified {
++            worktree: recorded.clone(),
++            identity: probe.current,
++        });
++    }
+     let WorktreeAuthority::Verified { worktree, identity } = previous else {
+         return None;
+     };
