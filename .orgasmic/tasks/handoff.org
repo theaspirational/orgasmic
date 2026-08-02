@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         9adfc99413a170e5f6289be4b86fdbe221a90a9a
+:LIVENESS:         56819e754766a7545e2b055fa5707d2b6c63ca7e
 :LIVENESS_AT:      [2026-08-03 Mon]
 :UPDATED_AT:       [2026-08-03 Mon]
 :GOAL_ID:          goal-20260728-drive-the-whole
