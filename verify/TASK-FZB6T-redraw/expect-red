@@ -1,18 +1,23 @@
-# Pinned from the real red run of 2026-07-29 with the injection applied.
+# Re-pinned from the real red run of 2026-08-03 with the re-cut injection
+# applied (TASK-FZB6T.2 finding 5). The previous pin was 2026-07-29.
 #
-# The injection removes the payload cap from `SessionWriter::append`: driver
-# events are persisted verbatim, which is the storage shape that produced the
-# 2.239 GiB of legacy history this task exists to stop repeating.
+# The injection removes the whole storage lock from `SessionWriter::append`:
+# both the pane `text_chunk` refusal and the payload cap, so driver events are
+# persisted verbatim — the storage shape that produced the 2.239 GiB of legacy
+# history this task exists to stop repeating.
 exit: 101
 
-# THE REDRAW LOCK. A 4.6 MB rendered repaint handed to the writer as a
-# `text_chunk` grows the session file by 5.8 MB. The whole point of the cap is
-# that the writer is a choke point no driver can route around: what reaches it
-# is bounded whether or not the driver believed it was sending payload.
-contains: a redraw chunk persisted to JSONL
+# THE REDRAW LOCK. This string CHANGED with the finding-5 fix, and the change is
+# the point. The lock used to be a byte ceiling, so the red was the file having
+# grown by 5.8 MB. But the criterion is ZERO persisted redraw, and a ceiling
+# forbids one repaint while permitting a million. The lock is now a REFUSAL, so
+# what fails first under the injection is the writer accepting a pane
+# transport's rendered payload at all — before any byte is measured. Pinning the
+# old growth message would pin an assertion the test no longer reaches.
+contains: the writer must refuse a pane transport's rendered payload
 
-# THE ACP HALF. Three multi-megabyte tool-result / assistant payloads land in
-# the file verbatim — 14.4 MB for five events.
+# THE ACP HALF, unchanged. Three multi-megabyte tool-result / assistant payloads
+# land in the file verbatim — 14.4 MB for five events.
 contains: three multi-megabyte payloads must not reach the file
 
 # Both, and only these two.
