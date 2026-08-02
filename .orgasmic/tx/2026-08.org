@@ -2980,3 +2980,198 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Raised by the round-4 reviewer (tx-4205) as an explicit follow-up rather than a round-five finding, and independently flagged as residual risk 2 by the TASK-4CSMY.2 author.
 :END:
+
+* TX 2026-08-02 Sun 23:12:19 implementer.reported TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4213
+:TIME:         [2026-08-02 Sun 23:12:19]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R TASK-TW3N3 TASK-4YX1K
+:RUN_ID:       run-20260802T230450-7924b094a02e4d23913bd7bf3e5de310
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ygb1r/worktree
+:SHA:          8b26885e2c10998449086de977439dd8c189381f
+:END:
+
+* TX 2026-08-02 Sun 23:14:39 implementer.done TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4214
+:TIME:         [2026-08-02 Sun 23:14:39]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:REASON:       Three P1 process tasks landed as one coherent text rather than three appends to the same 119 lines. YGB1R gives four countable triggers and a floor rule, deletes the 'if the tier is unclear, ask the user' escape hatch that was the mechanism it existed to remove, and states plainly that the tier is computed so there is no decision to bring the user. 4YX1K defines the confirm class by property with the proceed class named explicitly, and carries the scope-and-expiry nuance verbatim. TW3N3 states the committed-history precondition as one constraint with two halves and adds the branch-collision trap this session hit twice. The calibration table is the check that matters: the rule classifies its own dispatch as ordinary, which is exactly how it was run. Three criteria are unmet and declared — YGB1R item 4 needs TASK-3CM0Q's verb to emit a computed tier, TW3N3 item 3's dispatch guard is Rust and out of scope (filed separately), and TW3N3 item 4 had no grill/review file to extend. The author also corrected the brief: my calibration example described TASK-15MJN as a duplicate cancellation, which is what I DID to it, not what its heading says; it calibrated against the live heading and that mismatch surfaced a real defect in its trigger-2 wording.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 8b26885
+:MERGE_SHA:    2c24bb3
+:BRANCH:       task-ygb1r-impl
+:WALL:         20m
+:REVIEWED_DIFF: 1393e06..2c24bb3
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        core fixtures 26/0 incl. parses_shipped_schema_files; cli entry 3/0; cli doctor 2/0; author's staged-ORGASMIC_HOME render check byte-identical (the manager's live 'orgasmic entry' check does NOT validate this text, because the live daemon serves the INSTALLED shipped content at 57e35de)
+:CLOSED_TX:    tx-20260802-orgasmic-4190
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:14:39 implementer.done TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4215
+:TIME:         [2026-08-02 Sun 23:14:39]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:REASON:       Three P1 process tasks landed as one coherent text rather than three appends to the same 119 lines. YGB1R gives four countable triggers and a floor rule, deletes the 'if the tier is unclear, ask the user' escape hatch that was the mechanism it existed to remove, and states plainly that the tier is computed so there is no decision to bring the user. 4YX1K defines the confirm class by property with the proceed class named explicitly, and carries the scope-and-expiry nuance verbatim. TW3N3 states the committed-history precondition as one constraint with two halves and adds the branch-collision trap this session hit twice. The calibration table is the check that matters: the rule classifies its own dispatch as ordinary, which is exactly how it was run. Three criteria are unmet and declared — YGB1R item 4 needs TASK-3CM0Q's verb to emit a computed tier, TW3N3 item 3's dispatch guard is Rust and out of scope (filed separately), and TW3N3 item 4 had no grill/review file to extend. The author also corrected the brief: my calibration example described TASK-15MJN as a duplicate cancellation, which is what I DID to it, not what its heading says; it calibrated against the live heading and that mismatch surfaced a real defect in its trigger-2 wording.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 8b26885
+:MERGE_SHA:    2c24bb3
+:BRANCH:       task-ygb1r-impl
+:WALL:         20m
+:REVIEWED_DIFF: 1393e06..2c24bb3
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        core fixtures 26/0 incl. parses_shipped_schema_files; cli entry 3/0; cli doctor 2/0; author's staged-ORGASMIC_HOME render check byte-identical (the manager's live 'orgasmic entry' check does NOT validate this text, because the live daemon serves the INSTALLED shipped content at 57e35de)
+:CLOSED_TX:    tx-20260802-orgasmic-4190
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:14:40 implementer.done TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4216
+:TIME:         [2026-08-02 Sun 23:14:40]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:REASON:       Three P1 process tasks landed as one coherent text rather than three appends to the same 119 lines. YGB1R gives four countable triggers and a floor rule, deletes the 'if the tier is unclear, ask the user' escape hatch that was the mechanism it existed to remove, and states plainly that the tier is computed so there is no decision to bring the user. 4YX1K defines the confirm class by property with the proceed class named explicitly, and carries the scope-and-expiry nuance verbatim. TW3N3 states the committed-history precondition as one constraint with two halves and adds the branch-collision trap this session hit twice. The calibration table is the check that matters: the rule classifies its own dispatch as ordinary, which is exactly how it was run. Three criteria are unmet and declared — YGB1R item 4 needs TASK-3CM0Q's verb to emit a computed tier, TW3N3 item 3's dispatch guard is Rust and out of scope (filed separately), and TW3N3 item 4 had no grill/review file to extend. The author also corrected the brief: my calibration example described TASK-15MJN as a duplicate cancellation, which is what I DID to it, not what its heading says; it calibrated against the live heading and that mismatch surfaced a real defect in its trigger-2 wording.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 8b26885
+:MERGE_SHA:    2c24bb3
+:BRANCH:       task-ygb1r-impl
+:WALL:         20m
+:REVIEWED_DIFF: 1393e06..2c24bb3
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        core fixtures 26/0 incl. parses_shipped_schema_files; cli entry 3/0; cli doctor 2/0; author's staged-ORGASMIC_HOME render check byte-identical (the manager's live 'orgasmic entry' check does NOT validate this text, because the live daemon serves the INSTALLED shipped content at 57e35de)
+:CLOSED_TX:    tx-20260802-orgasmic-4190
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-02 Sun 23:14:40 task.state_transitioned TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4217
+:TIME:         [2026-08-02 Sun 23:14:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-YGB1R to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:14:40 task.state_transitioned TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4218
+:TIME:         [2026-08-02 Sun 23:14:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-TW3N3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:14:41 task.state_transitioned TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4219
+:TIME:         [2026-08-02 Sun 23:14:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-4YX1K to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-02 Sun 23:15:01 task.state_transitioned TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4220
+:TIME:         [2026-08-02 Sun 23:15:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed in merge 2c24bb3, gates green. Manager reviewed the diff per the ordinary tier the new rule assigns this very dispatch.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:15:02 task.state_transitioned TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4221
+:TIME:         [2026-08-02 Sun 23:15:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed in merge 2c24bb3, gates green. Manager reviewed the diff per the ordinary tier the new rule assigns this very dispatch.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:15:02 task.state_transitioned TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4222
+:TIME:         [2026-08-02 Sun 23:15:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed in merge 2c24bb3, gates green. Manager reviewed the diff per the ordinary tier the new rule assigns this very dispatch.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-02 Sun 23:15:03 task.created TASK-GCTMA
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4223
+:TIME:         [2026-08-02 Sun 23:15:03]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GCTMA
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-TW3N3 item 3, split out because it is a Rust change and that task's write scope was prose-only. Its acceptance criterion — a dispatch that would silently review the wrong tree is blocked or loudly flagged — is currently met only in prose, so nothing enforces it.
+:END:
