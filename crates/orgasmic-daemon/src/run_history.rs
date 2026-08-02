@@ -401,7 +401,13 @@ pub(crate) enum FaultPoint {
 }
 
 /// What an injected fault does.
+///
+/// Only the tests construct these; a production build reaches the same code
+/// through [`no_faults`], which never yields one. The type still has to exist
+/// outside `cfg(test)` because [`FaultInjector`] is in the signature the
+/// production entry point calls through.
 #[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum Fault {
     /// The next I/O at this point fails, as a full disk would.
     Io(String),

@@ -2715,7 +2715,10 @@ mod tests {
         // that mattered is the first: it presents this run as a terminal rmux
         // run, which is precisely the pair `plan_compaction` used to read as
         // permission to delete.
-        let semantic_cases: Vec<(&str, Box<dyn Fn(&mut RunCatalogEntry)>)> = vec![
+        /// One named way to corrupt a semantic field of an otherwise valid
+        /// snapshot record.
+        type SemanticCorruption = (&'static str, Box<dyn Fn(&mut RunCatalogEntry)>);
+        let semantic_cases: Vec<SemanticCorruption> = vec![
             (
                 "terminal + transport: the deletion-authority pair",
                 Box::new(|entry: &mut RunCatalogEntry| {
@@ -3032,6 +3035,144 @@ mod tests {
             catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(stats.rebuilt, 1);
         assert_eq!(catalog.len(), 1);
+    }
+
+    /// orgasmic:TASK-FZB6T.2 finding 6 — the lost-update/ABA window on stale
+    /// eviction.
+    ///
+    /// A rebuild captured a per-path generation and committed under a
+    /// compare-and-swap; a STALE path captured nothing and committed an
+    /// unconditional `remove`, then deleted the path's generation along with the
+    /// record. Both halves are bugs, and this drives both:
+    ///
+    /// 1. A refresh that observed a path absent commits AFTER the file returned
+    ///    and a newer refresh indexed it. The unconditional remove evicted that
+    ///    live record on the strength of an observation that was already stale —
+    ///    a lost update. The commit must refuse.
+    /// 2. Deleting the generation with the record reset the counter to zero, so
+    ///    a later refresh could capture 0, race an invalidation, and still read
+    ///    0 at commit — the compare-and-swap silently stops comparing anything.
+    ///    A real eviction must leave the counter where it was.
+    ///
+    /// The existing stress test (`concurrent_refresh_and_write_traffic_stays_bounded`)
+    /// cannot see either: it ends with a quiet refresh that re-derives whatever
+    /// the race dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_eviction_never_drops_a_newer_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+
+        // `anchor` exists throughout and only serves to give the unlocked work
+        // phase something to do, so the hook has a window to fire in.
+        write_session(
+            &sessions,
+            "anchor",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &root,
+            "proj-1",
+        );
+        let victim = write_session(
+            &sessions,
+            "victim",
+            4096,
+            Some(ReleaseOutcome::Completed),
+            &root,
+            "proj-1",
+        );
+
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(catalog.len(), 2);
+
+        // Move the victim's generation off zero, the way a writer's lifecycle
+        // append does, so a later reset to zero is observable.
+        catalog.invalidate_session(&victim);
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let generation_before = catalog.generation_of(&victim);
+        assert_eq!(generation_before, 1);
+        assert_eq!(catalog.len(), 2);
+
+        // --- 1. the lost update -------------------------------------------
+        //
+        // This refresh observes the victim absent and plans its eviction. While
+        // it works, the file comes back and another refresh indexes the NEW
+        // one. The eviction is now decided against a record that no longer
+        // exists, and must not run.
+        std::fs::remove_file(&victim).unwrap();
+        let racer = catalog.clone();
+        let racer_root = root.clone();
+        let racer_sessions = sessions.clone();
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = fired.clone();
+        catalog.refresh_dir_observed(
+            &sessions,
+            Some("proj-1"),
+            &root,
+            SessionScanBudget::DEFAULT,
+            &mut |_| {
+                if flag.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                write_session(
+                    &racer_sessions,
+                    "victim",
+                    8192,
+                    Some(ReleaseOutcome::Completed),
+                    &racer_root,
+                    "proj-1",
+                );
+                racer.refresh_dir(
+                    &racer_sessions,
+                    Some("proj-1"),
+                    &racer_root,
+                    SessionScanBudget::DEFAULT,
+                );
+            },
+        );
+        assert!(
+            fired.load(std::sync::atomic::Ordering::SeqCst),
+            "the interleaving never happened, so this test proved nothing"
+        );
+
+        let survivors: Vec<PathBuf> = catalog
+            .entries()
+            .into_iter()
+            .map(|entry| entry.session_path)
+            .collect();
+        assert!(
+            survivors.contains(&victim),
+            "a stale eviction dropped a record another refresh had just indexed: {survivors:?}"
+        );
+        let live = std::fs::symlink_metadata(&victim).unwrap();
+        let cached = catalog
+            .entries()
+            .into_iter()
+            .find(|entry| entry.session_path == victim)
+            .expect("the newer record survives");
+        assert_eq!(
+            cached.fingerprint,
+            SessionFileFingerprint::of(&live),
+            "the surviving record must be the newer one, not a revived corpse"
+        );
+
+        // --- 2. a real eviction keeps the generation ----------------------
+        //
+        // Nothing races this one, so the path really does go. The record
+        // leaves; the counter that guards the path does not.
+        std::fs::remove_file(&victim).unwrap();
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.evicted, 1);
+        assert_eq!(catalog.len(), 1);
+        assert!(
+            catalog.generation_of(&victim) >= generation_before,
+            "evicting a record reset its path generation to {}, so the next \
+             compare-and-swap on this path compares nothing",
+            catalog.generation_of(&victim)
+        );
     }
 
     /// Concurrent refreshes, reads and writer invalidations converge without
