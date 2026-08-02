@@ -49,6 +49,14 @@ reading anything, and `.orgasmic/` state writes through the CLI.
 Classify an unlisted action by those same three properties - reversibility,
 reach, whose resources - not by how large it feels.
 
+One question is sanctioned on top of that class, and it is an elicitation rather
+than a confirmation: the first dispatch of a session asks the operator once for
+agent selection. It earns its place by buying silence - one answer replaces a
+per-dispatch guess about harness and effort, and every dispatch after it
+proceeds without asking. The agent selection section below carries the rule.
+Read this as a lower question count, not a higher one: if it has left you asking
+more often, you have read it backwards.
+
 Once the user has approved a plan, the mechanical steps that plan obviously
 entails are approved with it; re-asking inside an approved plan is itself the
 defect. Standing authorization has a scope and an expiry: "you may restart the
@@ -125,5 +133,53 @@ done plainly enough that the user can reverse it.
 - A continuation or a second review round cannot reuse the derived branch name;
   the first run still holds `task-xxxxx-<kind>` and dispatch refuses with
   `a branch named ... already exists`. Pass an explicit `--branch`.
+
+** Agent selection
+Four values decide who runs a dispatch: kind, mode, harness, and the harness's
+own model and effort. Mode and harness are discoverable - `orgasmic manager
+drivers` prints the supported pairs and, for a harness that exposes a protocol
+catalog, its runtime option values. Model and effort belong to the harness
+vocabulary and orgasmic keeps none of it: they are chosen per dispatch, passed
+through unvalidated, and never written into config, the graph, or this text.
+
+Ask the operator once, at the first dispatch of the session rather than at
+session start, so a session that only reads and answers never asks anything. The
+later trigger is also the better-informed one: by then the task is in hand and
+`orgasmic manager drivers` has said which harnesses this host actually has, so
+the question offers real choices instead of a menu the machine may not support.
+Two of them, in one turn: which harness family to implement with, and what
+effort posture review and risky stages should carry. Carry both answers for the
+rest of the session and stop asking.
+
+The answers are session-scoped and are not stored. A pinned model identifier is
+model knowledge and stays per-dispatch; a harness family preference is not model
+knowledge, but no verb stores one, and adding a place to keep it would rebuild
+the configuration surface that keeping zero model knowledge exists to remove.
+A later manager asks its own operator once. Reporting is not storage: keep
+echoing kind, mode, harness, model and effort after every dispatch, into the
+launch message, the task evidence, and the handoff. That record says what ran;
+nothing reads it back as a setting.
+
+If no operator is there to answer, dispatch anyway and put the reason for the
+selection you chose in `--reason`, where it lands on the dispatch tx. The rule
+is not that an unasked dispatch is forbidden - it is that the first dispatch of
+a session leaves behind either an operator's answer or a stated reason, never a
+silent default. A pair taken because it was first in a list is the failure this
+replaces.
+
+Reviewer independence is runtime policy, not manager taste. A reviewer runs on a
+different harness family than the run under review. A reviewer that shares the
+author's family shares its priors and its blind spots, which is most of what an
+independent pass buys. Same-family review is still allowed, and it states its
+reason on the dispatch. Where the author's harness is unknown - a hand-written
+change, an inherited branch, a run whose record does not say - ask which family
+wrote it rather than defaulting to your own; your own is the answer most likely
+to collide with it.
+
+Review and risky-stage dispatches carry an explicit `--effort`. Omitting it does
+not mean a sensible default, it means the harness chose silently: a live run
+record reports driver and harness and has no model or effort field, so the value
+is unrecoverable afterwards (checked 2026-08-03). Leaving effort unset is
+permitted as a stated choice and not as an oversight.
 
 ** Default workflow
