@@ -1675,3 +1675,125 @@ their own residue.
 - The mechanism is named with evidence, not inferred.
 - A full suite run leaves no unbounded growth in the temp root.
 - Nothing can remove a FIFO directory belonging to a live pane.
+
+* BACKLOG TASK-T7KSH inspect_rmux_binary execs an unbounded child on the daemon's probe path, defeating the JQ8AV.1 child deadline    :drivers:rmux:hardening:
+:PROPERTIES:
+:ID: TASK-T7KSH
+:IMPLEMENTS: TASK-JQ8AV
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-drivers/**
+:END:
+
+** Description
+
+TASK-JQ8AV.1 funnelled all four supervisor probe subprocesses through
+=probe_command_stdout=, which gives each child its own process group, enforces
+=PROBE_CHILD_DEADLINE= (2s) against the CHILD, and SIGKILLs the group then reaps.
+
+One probe subprocess escapes that funnel, and it is on the production rmux path.
+=orgasmic-drivers/src/modes/rmux.rs::inspect_rmux_binary= runs
+=StdCommand::new(&path).arg("-V").output()= with no deadline. The daemon reaches
+it through =pane_probe_command= -> =probe_rmux_binary=.
+
+** Evidence
+
+Measured by the JQ8AV.1 implementer while building the hung-mux regression, not
+inferred. With a shim that wedged on EVERY invocation rather than only on the
+server-contacting verb:
+
+- the supervisor sweep took *5.012s* — the outer =WORK_PROBE_TIMEOUT=, NOT the
+  2s child deadline, proving the child was outside the funnel;
+- the test binary then took *120s to exit*, i.e. the tokio runtime was waiting on
+  a blocking task stuck in a child the funnel never saw.
+
+The shipped test was then deliberately weakened to answer =-V= normally, which
+keeps =inspect_rmux_binary= out of its timed section. That is realistic — =rmux -V=
+is answered locally and never contacts a server, so a wedged rmux SERVER does not
+hang it — but it means *the shipped regression cannot catch this*.
+
+** Why it matters
+
+A wedged or hung rmux BINARY (as opposed to a wedged server) reintroduces exactly
+what JQ8AV.1 set out to eliminate: a blocking-pool thread and a live subprocess
+leaked per sweep, at one sweep every =RUN_TIMEOUT_CHECK_INTERVAL= (50ms), for as
+long as the condition lasts. rmux is currently the transport of choice for
+dispatches on this daemon, because it is the only pane transport with a liveness
+channel in the installed runtime.
+
+The tmux path has no equivalent exposure: =real_tmux_on_path()= only stats PATH.
+
+** Acceptance
+
+- =inspect_rmux_binary= (and any sibling in orgasmic-drivers that the daemon
+  execs on a probe path) runs under an explicit deadline with kill-and-reap,
+  owning its child the way =probe_command_stdout= does.
+- A deterministic regression proves it, with a shim that wedges on EVERY
+  invocation including =-V= — the case the current test deliberately avoids.
+  Assert supervisor latency strictly below =WORK_PROBE_TIMEOUT= and that the
+  recorded child pid disappears.
+- The test binary exits promptly afterwards; a 120s teardown is itself the
+  symptom and should be asserted against.
+- fmt, clippy -D warnings, and the focused drivers + daemon tests green. Do not
+  run the billed harness test (TASK-099T6).
+
+* BACKLOG TASK-WPC6G gotchas.org is off the node write surface, so every entry in it is a rule-violating hand edit    :runtime:cli:process:
+:PROPERTIES:
+:ID: TASK-WPC6G
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-core/**, crates/orgasmic-daemon/**, crates/orgasmic-cli/**
+:END:
+
+** Description
+
+=.orgasmic/entry.org= states the write rule plainly: when =orgasmic status=
+succeeds, =.orgasmic/= state is written through =orgasmic ...= CLI commands and
+never by hand. The active goal repeats it ("never hand-edit .orgasmic state").
+
+=gotchas.org= cannot obey that rule, because it is not on the surface at all:
+
+- =orgasmic node body set|append|unset= takes =--kind= from
+  {decision, architecture, glossary, project, task, goal, handoff}. There is no
+  gotcha kind, and the file has no node =:ID:= — its headings are bare =**=
+  entries under a single =* Gotchas= parent.
+- Nothing in =crates/orgasmic-cli/src/= addresses it. The only core reference is
+  the scaffold template in =projects.rs:525=.
+
+So the only way to add a gotcha is to edit the file directly, which is exactly
+what the previous manager session did in =d1a41c1= (66 added lines, no
+=graph.gotchas.edited= tx — the tx entries in that commit are unrelated daemon
+writes that happened to be uncommitted).
+
+** Why this matters more than the usual missing-verb gap
+
+=AGENTS.md= routes every agent through =orgasmic entry=, and the entry router
+names =gotchas.org= as required reading before source edits. The
+manager-dispatch and manager-implementer paths both say to read it first. It is
+one of the highest-traffic documents in the project, and it is the one document
+no agent can write through the sanctioned path.
+
+The practical consequences are already visible:
+- gotcha edits carry no tx, so they are invisible in the ledger and cannot be
+  attributed or reverted through the normal surface;
+- they bypass the OCC/base-version check, so two concurrent writers silently
+  clobber;
+- an agent that obeys the write rule literally is forced to DROP the knowledge,
+  which is the worst outcome of the three.
+
+** Related
+
+Same class as TASK-P0Q5C (no CLI title surface for
+decision/architecture/glossary/project/handoff) and TASK-J2RZT (handoff/goal
+brought onto the node surface). This is the remaining unaddressed file.
+
+** Acceptance
+
+- =gotchas.org= is addressable through the daemon node surface with the same
+  OCC + structural guard every other node gets, and a =tx= is recorded per edit.
+- A CLI verb can append an entry and remove one by name, mirroring
+  =node body append= / =node body unset --section=.
+- The parity test that asserts every daemon edit op is reachable from some CLI
+  verb (added by TASK-CB6GQ) covers the new op.
+- Decide and record whether existing bare =**= entries get stable ids, or
+  whether entries stay addressed by heading text; a heading-text address needs a
+  duplicate-title refusal.
+- fmt, clippy -D warnings, focused daemon + cli tests green.

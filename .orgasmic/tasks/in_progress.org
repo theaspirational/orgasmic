@@ -840,6 +840,61 @@ SAME worktree. That control costs one checkout and one run. It was the only
 thing separating "my change broke the suite" from "this worktree is slow" during
 TASK-CB6GQ, where four consecutive full-suite reds on the branch looked exactly
 like a regression and were not.
+THIRD ENVIRONMENT AXIS, MEASURED [2026-08-03]: macOS =syspolicyd= scan pressure.
+And it is the same lesson this task has now learned three times — 89%-full disk
+(2026-07-26), worktree identity (2026-07-31), host scan load (now). Every one of
+them produced a *stable-looking* failure set that read as a code regression.
+
+Measured on =d1a41c1=, repo-root worktree, against the binary cargo had ALREADY
+built (=orgasmic_daemon-5f50721007a8fd8c=, so no compile in the window):
+
+| run                                    | result                  | wall    |
+|----------------------------------------|-------------------------|---------|
+| =cargo test -p orgasmic-daemon --lib=  | 637 passed / 14 FAILED  | 659.90s |
+| the same 14, one at a time, same binary| 14 passed / 0 failed    | 8s      |
+
+Comparable for that suite is 42.9-85.9s, so this run was 8-15x slowed. The
+discriminator was =syspolicyd= at 586% CPU with load average 11.41; killing the
+suite dropped it to 75% within seconds. See the syspolicyd->tccd->WindowServer
+entry in =gotchas.org=: the same chain hard-rebooted this machine at 20:01:36 on
+2026-08-02.
+
+The 14 were not the three flakes in the table above. They were every test that
+touches a live mux or probes processes:
+=explicit_reattach_{rmux,tmux}_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+=recovery_reattaches_{rmux,tmux}_session_when_handle_exists=,
+=two_recovery_chain_second_resume_uses_first_fork_session_id=,
+=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
+=a_network_waiting_{provider,tmux}_turn_...=, =an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued=,
+=a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
+=direct_child_pid_finds_wrapper_child_process=,
+=poll_direct_child_pid_prefers_worker_server_over_generic_sibling=,
+=process_subtree_cpu_probe_{does_not_mistake_a_live_idle_child_for_work,sees_a_real_cpu_burning_child}=.
+Only 4 of the 14 are in =verify/flake-registry.toml=.
+
+TWO THINGS THIS CHANGES FOR THIS TASK.
+
+1. The cheap control is now known and it costs 8 seconds. Re-run the failures
+   ONE AT A TIME AGAINST THE ALREADY-BUILT BINARY before believing any red:
+   =target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1=.
+   That is what =scripts/run-tests.sh= does after a full run; doing it directly
+   skips the 11-minute run you already know is untrustworthy. It also costs
+   almost no scan load, because re-executing an existing binary is not what
+   triggers syspolicyd.
+
+2. COMPILATION IS NOT THE TRIGGER — TEST EXECUTION IS. Measured the same night:
+   a full rebuild of the daemon, core and cli test binaries at =jobs=4= ran with
+   =syspolicyd= at 0-64%, while the earlier test RUN pinned it at 586%. The
+   gotcha attributes the burst to build scripts and proc-macro dylibs; that is
+   at best incomplete. The mux suites write and exec many short-lived shim
+   scripts per test, and that is the exec pattern that actually bursts.
+
+So this task should stop being framed as "three flakes in a table". The stable
+finding across all three axes is that the suite has NO trustworthy full-run
+signal on this host, and the acceptance criterion "green, repeatedly, at full
+parallelism" cannot currently be evaluated. Naming a per-test cause still
+matters, but the first deliverable is a gate that reports a defensible verdict
+on a loaded machine.
 ** Evidence
 
 MEASUREMENT [2026-08-02], from the TASK-4CSMY integration. Three full-suite

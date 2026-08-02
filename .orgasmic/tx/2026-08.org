@@ -618,3 +618,55 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-02 Sun 21:16:51 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4072
+:TIME:         [2026-08-02 Sun 21:16:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-08-02 Sun 21:17:27 task.created TASK-T7KSH
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4073
+:TIME:         [2026-08-02 Sun 21:17:27]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T7KSH
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Declared and MEASURED as residual risk 1 by the TASK-JQ8AV.1 implementer, and left unfixed only because it falls outside that task's crates/orgasmic-daemon/** write scope. It is a live hole in the exact defect class JQ8AV.1 closed.
+:END:
+
+* TX 2026-08-02 Sun 21:18:07 task.created TASK-WPC6G
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4074
+:TIME:         [2026-08-02 Sun 21:18:07]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WPC6G
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Found while trying to record a measured correction to the syspolicyd gotcha through the CLI: there is no verb that can. The daemon scaffolds gotchas.org but exposes no node kind for it, so the file can only be hand-edited — which .orgasmic/entry.org's write rules and the active goal both forbid.
+:END:
+
+* TX 2026-08-02 Sun 21:20:04 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260802-orgasmic-4075
+:TIME:         [2026-08-02 Sun 21:20:04]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/gotchas.org
+:REASON:       Corrected the syspolicyd gotcha by hand (no node write surface exists — TASK-WPC6G): the Developer Tools grant is MEASURED not to prevent the scan burst (Warp holds kTCCServiceDeveloperTool=2 and syspolicyd still hit 586%), and the trigger is test EXECUTION not compilation (rebuild 0-64%, test run 586%). Added the 8-second isolation control and the unattended-run guard.
+:END:

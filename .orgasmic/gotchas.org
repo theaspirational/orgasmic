@@ -667,6 +667,65 @@ cause. The installed daemon was idle for the 10 minutes before the 2026-08-02
 hang, and the TCC responsible-app census in that window read Cursor 10,
 Raycast 4, codex 3, CleanShot 3, orgasmic 2.
 
+RE-MEASURED [2026-08-03], and two things above are wrong. Recorded by hand
+because =gotchas.org= is off the node write surface (TASK-WPC6G); tx
+=tx-20260802-orgasmic-4075=.
+
+*1. THE DEVELOPER TOOLS GRANT DOES NOT PREVENT THE BURST.* The mitigation above
+was added at 21:59 on 2026-08-02, after that day's reboot, so it had never
+actually been under load until this run. It was, and it did not hold:
+
+: sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+:   "select client, auth_value from access where service='kTCCServiceDeveloperTool';"
+: com.apple.Terminal|2
+: com.openai.codex|2
+: com.todesktop.230313mzl4w4u92|2      <- Cursor
+: dev.warp.Warp-Stable|2
+
+Warp is granted, the session ran under Warp (=Warp -> zsh -> claude -> zsh ->
+bash -> cargo=), and =syspolicyd= still reached *586% CPU* with load average
+*11.41*. Killing the suite dropped it to 75% within seconds. So keep the grants
+— they cost nothing — but do NOT treat them as protection, and do not conclude
+from a quiet machine that they are working. Mechanism not established; the two
+candidates are that the Developer Tools exemption covers Gatekeeper assessment
+rather than the XProtect malware scan, and that responsibility does not
+propagate six levels down that chain.
+
+*2. COMPILATION IS NOT THE TRIGGER. TEST EXECUTION IS.* Measured back to back on
+the same machine the same night:
+
+| phase                                                   | syspolicyd |
+|---------------------------------------------------------|------------|
+| =cargo test --no-run= for daemon+core+cli, =jobs=4=       | 0-64%      |
+| running =cargo test -p orgasmic-daemon --lib=             | 586%       |
+
+The entry above blames "cargo's build scripts, dlopen'd proc-macro dylibs, and
+test binaries", which pointed the last two investigations at the build. A full
+rebuild here was quiet. What bursts is the mux-spawning suites *executing*: they
+write and exec many short-lived shim scripts per test, and that exec pattern is
+what scans. This also explains the =policy_scan_cache= census — 62 scans of ONE
+test binary is a binary being executed 62 times, not compiled 62 times.
+
+*THE CHEAP CONTROL, which costs 8 seconds and should be the reflex.* Under this
+load the daemon lib suite returned 637 passed / 14 failed in *659.90s* against a
+42.9-85.9s comparable. Re-running those same 14 one at a time against the
+ALREADY-BUILT binary, same worktree, gave *14/14 green in 8 seconds total*:
+
+: for t in <failures>; do
+:   env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME \
+:     target/debug/deps/orgasmic_daemon-<hash> --exact "$t" --test-threads=1
+: done
+
+Re-executing an existing binary adds almost no scan load, so this is safe to do
+on a machine you have just decided not to hammer. Never attribute a red to a
+diff without it. See TASK-STWVB, which has now been confounded by three
+different environment axes (89%-full disk, worktree identity, and this).
+
+*IF YOU MUST RUN THE SUITE WHILE UNATTENDED, GUARD IT.* =syspolicyd= is pid-stable
+per boot; sample =ps -o pcpu= -p <pid>= every 10s and kill the cargo run if it
+holds above ~400% for a minute. The wedge is not instantaneous — there is a
+sustained-load precursor, and one minute of it is ample warning.
+
 ** The evidence stall clock kills provider-bound turns: dispatch high-effort workers with a governance stall override
 Measured 2026-07-29 (TASK-JQ8AV): a claude-opus-5 high-effort turn thinking
 server-side for minutes produces ~0% cpu, zero pane repaints, no events — the
