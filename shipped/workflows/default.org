@@ -7,7 +7,38 @@
 :VERSION:            1
 :END:
 
-Use the smallest workflow that matches the risk and uncertainty.
+Three tiers of process: trivial, ordinary, risky. The tier is computed from the
+task, not judged from how the work feels. Compute it before the first edit.
+
+Triggers. Count how many fire:
+1. Priority. `priority` is P0 or P1.
+2. Blast radius. The change touches daemon recovery or supervision, boot, auth
+   or credentials, the dispatch lease, or writer/tx durability.
+3. Breadth. More than one crate, or more than ten files, or more than three
+   hundred net lines changed.
+4. Coupling. `depends_on` is non-empty, `parent_task` is set, or another task
+   names this one in its `depends_on`.
+
+Floor. No trigger fires: trivial. One fires: at least ordinary. Two or more
+fire, or trigger 2 lands on a safety path (auth, credentials, recovery,
+durability): risky.
+
+Exemption, so the fast path stays fast: a task that changes no tracked source
+files - cancelling a duplicate heading, retitling, re-prioritizing, recording a
+decision, moving a lifecycle stage - is trivial whatever its priority. Graph
+edits made through the CLI are not source changes.
+
+Triggers 1 and 4 are printed by `orgasmic task get`; read them off the heading
+rather than re-deriving them. Trigger 2 is usually visible in the title or
+`write_scope`. Trigger 3 is the one estimate: state it up front, then re-check
+it against the produced diff. If the real diff crossed a threshold the review
+stage runs at the higher tier even though the implementation stage did not.
+
+The floor is a floor. Raise it when something else worries you; never lower it
+because the work looked smaller once you were inside it - that is the failure
+this rule exists to prevent. Do not ask which tier applies, because it is
+computed and there is no decision for the user to make. Name the tier and the
+triggers that fired in your report so a reader can check the arithmetic.
 
 Trivial work is manager-direct. The manager may implement it in the current
 session on a cheap, fast tier. Keep the manager-implementer discipline while
@@ -25,9 +56,18 @@ implementation with the resulting constraints, and run an independent reviewer
 pass before treating the result as shippable. Use a premium tier for these
 stages when judgment, safety, or difficult debugging matters.
 
-If the tier is unclear, ask the user before spending the run. Include the
-suggested tier and the reason for it so the user can approve, downgrade, or
-upgrade deliberately.
+Delegation runs on committed history. `manager dispatch` builds the worker a
+worktree from a git ref, so anything uncommitted in the manager's tree is
+invisible to that worker - both your source edits and the live daemon's
+uncommitted `.orgasmic/` writes. Commit to a branch and pass it as `--from`
+before dispatching any worker that must see your work. A reviewer dispatched
+against an uncommitted diff is the expensive case: it returns a confident
+verdict on code it never read. The entry router's dispatch rule carries the
+`.orgasmic/` blindspot and the second-round branch collision in full.
+
+Proceed by default. Committing to a branch, creating a worktree, and running
+gates are not decisions and never need permission; the entry router's human
+checkpoints section states the class that does.
 
 Use per-dispatch `--model` and `--effort` overrides when a task needs explicit
 transport options. Choose `--mode` and `--harness` from `orgasmic manager drivers`
