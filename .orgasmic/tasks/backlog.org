@@ -2185,7 +2185,7 @@ section.
 - The guard does not fire on paths the worker legitimately does not need.
 - A regression proves both the fire and the no-fire case.
 
-* BACKLOG TASK-48SFW A worker touching the daemon lifecycle rewrites the one real LaunchAgent and kills every live dispatch    :dispatch:daemon:runtime:
+* BACKLOG TASK-48SFW Any orgasmic verb run against a staged ORGASMIC_HOME restarts the real daemon and kills every live dispatch    :dispatch:daemon:runtime:
 :PROPERTIES:
 :ID: TASK-48SFW
 :PRIORITY: P1
@@ -2289,6 +2289,62 @@ likely invitation. That instruction is still CORRECT and still necessary — the
 live daemon serves installed content, not the worktree — but it must always
 travel with the prohibition and with the safe recipe (run the worktrees own
 =target/debug/orgasmic entry= against the staged home; never start a daemon).
+ROOT CAUSE, FOUND IN SOURCE [2026-08-03 01:53Z]. Everything above this line was
+inference; this is the code path, and it corrects the earlier guidance.
+
+: ensure_running(home)                       daemon_lifecycle.rs:152
+:   -> ensure_running_local(home, _)                          :159
+:     -> start_via_selected_adapter(home)                     :419
+:       -> daemon_service::start(home) => ServiceStart::Persistent
+
+On macOS the persistent adapter WRITES AND LOADS
+=~/Library/LaunchAgents/orgasmic.daemon.plist=. That path is PER-USER. It is not
+scoped by =ORGASMIC_HOME=, and nothing in the call chain notices that the home it
+was handed is not the home the LaunchAgent already serves.
+
+So the rule is much wider than "do not run daemon lifecycle verbs":
+
+*ANY =orgasmic= VERB THAT NEEDS A DAEMON, RUN AGAINST A STAGED =ORGASMIC_HOME=,
+RESTARTS THE REAL DAEMON.* The staged home has no daemon listening, so
+=ensure_running= fires, the adapter rewrites the one real plist to point at the
+staged home, launchd reloads it, and every live run on the machine dies. The
+worker does not have to type =daemon start=. It only has to run a normal command
+with a different home.
+
+THE EVIDENCE THAT ISOLATED IT. TASK-VEGRV was live in ALL THREE outages and
+absent from both dispatches that survived. It died 4-6 minutes in each time, and
+its pane capture before the first one reads: "All four gates are passing. Now I
+need to test the render output by staging the edited files into a temporary
+ORGASMIC_HOME and running the entry command." The concurrency theory does not
+survive the data either — four concurrent workers ran from 23:09 to 23:46 with no
+outage.
+
+THE MANAGER CAUSED THIS THREE TIMES. The render check was a manager instruction,
+in a manager-authored brief, and the "safe" rewrite after the second outage was
+also a manager instruction — it still ran an =orgasmic= verb against a staged
+home, so it was not safe at all. The prohibition added after outage two forbade
+lifecycle verbs and therefore did not cover the actual trigger. Two dispatches
+survived it and I read that as the prohibition working; they survived because
+they had no render check.
+
+CORRECTED GUIDANCE, until the code refuses:
+- NEVER set =ORGASMIC_HOME= to anything other than the ambient one inside a
+  dispatch, for ANY =orgasmic= invocation.
+- A shipped-content change does NOT need a render check to be verified. The
+  parse is covered by =cargo test -p orgasmic-core --test fixtures=
+  (=parses_shipped_schema_files=), the verb and flag claims by
+  =cargo test -p orgasmic-cli --test cli_parity=, and the injection point by
+  reading =inject_default_workflow=. Ask for those instead.
+- If a rendered artifact genuinely must be inspected, it has to be produced
+  without invoking the CLI against a foreign home — read the shipped files
+  directly, or add a unit test that exercises the injector in-process.
+
+THE FIX THIS IMPLIES IS BIGGER THAN THE ORIGINAL TASK. =ensure_running= should
+refuse, or at minimum warn loudly, when the home it is asked to start differs
+from the home the installed LaunchAgent already serves. A per-user service
+mutated as a side effect of a per-home read is a trap for every caller, and the
+=install.sh= trailing-status trap already recorded in the runtime-reinstall
+memory is the same defect wearing a different hat.
 
 ** Description
 

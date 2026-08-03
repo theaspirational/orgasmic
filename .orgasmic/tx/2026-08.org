@@ -4494,3 +4494,81 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+
+* TX 2026-08-03 Mon 01:55:08 manager.dispatch_aborted TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4297
+:TIME:         [2026-08-03 Mon 01:55:08]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Third dispatch-wide outage. Root cause now confirmed IN SOURCE rather than inferred: ensure_running -> start_via_selected_adapter -> daemon_service::start, whose macOS adapter writes and loads ~/Library/LaunchAgents/orgasmic.daemon.plist — a per-user path ORGASMIC_HOME does not scope. Any orgasmic verb that needs a daemon, run against a staged home whose daemon is not up, therefore restarts the REAL daemon and kills every live run. TASK-VEGRV was live in all three outages and died 4-6 minutes in each time, exactly at its render check; the manager's own brief instructed that render check, including the supposedly safe rewrite.
+:CLOSED_TX:    tx-20260803-orgasmic-4287
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 01:55:09 manager.dispatch_aborted TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4298
+:TIME:         [2026-08-03 Mon 01:55:09]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:REASON:       Third dispatch-wide outage. Root cause now confirmed IN SOURCE rather than inferred: ensure_running -> start_via_selected_adapter -> daemon_service::start, whose macOS adapter writes and loads ~/Library/LaunchAgents/orgasmic.daemon.plist — a per-user path ORGASMIC_HOME does not scope. Any orgasmic verb that needs a daemon, run against a staged home whose daemon is not up, therefore restarts the REAL daemon and kills every live run. TASK-VEGRV was live in all three outages and died 4-6 minutes in each time, exactly at its render check; the manager's own brief instructed that render check, including the supposedly safe rewrite.
+:CLOSED_TX:    tx-20260803-orgasmic-4295
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 01:55:10 task.state_transitioned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4299
+:TIME:         [2026-08-03 Mon 01:55:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-VEGRV to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 01:55:56 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4300
+:TIME:         [2026-08-03 Mon 01:55:56]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
+
+* TX 2026-08-03 Mon 01:55:56 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4301
+:TIME:         [2026-08-03 Mon 01:55:56]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
