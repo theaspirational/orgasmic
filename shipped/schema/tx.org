@@ -123,8 +123,8 @@ Properties in addition to the required base properties:
 - :WORKTREE: absolute git worktree path
 - :BRANCH: branch name created for the dispatch
 - :BRIEF_PATH: brief file path (project-relative in committed tx); lives under =<project_root>/.orgasmic/tmp/dispatch/<task-stem>/=. Legacy alias =:CODEX_BRIEF_PATH:= is still read.
-- :MODEL: model id, for example =gpt-5.5= (legacy alias =:CODEX_MODEL:= still read)
-- :EFFORT: reasoning effort label, for example =high= or =xhigh= (legacy alias =:CODEX_EFFORT:= still read)
+- :MODEL: model id, verbatim in the harness's own vocabulary and never validated or defaulted by orgasmic (legacy alias =:CODEX_MODEL:= still read)
+- :EFFORT: reasoning effort label, verbatim in the harness's own vocabulary and never validated or defaulted by orgasmic (legacy alias =:CODEX_EFFORT:= still read)
 - :STARTED_AT: org timestamp; normally the same value as =:TIME:= for easy grepping
 - :WORKER_PID: optional detached child pid; omitted when the tx is appended before spawn (legacy alias =:CODEX_PID:= still read)
 - :GOAL_ID: optional active goal id from =goal.org=

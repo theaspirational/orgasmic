@@ -20,10 +20,14 @@ record or tx says what it picked. `orgasmic run list` reports `driver` and
 `harness` for a live run but carries no model or effort field, so an omitted
 value is not recoverable afterwards from state: it is gone.
 
-Pass all four on every dispatch. Choose them deliberately per task — a P0
-concurrency fix and a docs typo do not deserve the same tier — and say why in the
-`--reason` when the choice is unobvious. Then carry all four into every place you
-report that run: the launch message, the task's `** Evidence`, and the handoff.
+Choose all four deliberately per task — a P0 concurrency fix and a docs typo do
+not deserve the same tier — and say why in the `--reason` when the choice is
+unobvious. Review and risky-stage dispatches carry an explicit `--effort`;
+ordinary and trivial work may run at the harness default, but only as a choice
+you state, never as an omission you did not notice. Then carry all four into
+every place you report that run: the launch message, the task's `** Evidence`,
+and the handoff — reporting is not storage, and the record says what ran without
+anything reading it back as a setting.
 
 Two failures this rule exists to prevent, both observed 2026-07-26:
 - a manager dispatched a review of a P1 concurrency fix and could not afterwards
@@ -35,52 +39,126 @@ A worker claim whose author is unidentified cannot be weighed. If you find
 yourself writing "the implementer reported", name the worker id, driver, harness,
 model and effort instead.
 
-** The standing worker matrix
-Operator-set 2026-07-26; mode changed to tmux 2026-07-29. Use these unless the
-task gives you a reason to deviate, and state the reason in `--reason` when you
-do. "Choose explicitly" above still governs — this is the default you are
-choosing, not a licence to stop passing the flags.
+** Where the four values come from
+Harness and effort come from the operator, once per session. The router's
+`** Agent selection` section (`shipped/entry/router.org`) is the single source
+and this convention does not restate it: the manager asks its operator at the
+first dispatch of a session which harness family to implement with and what
+effort posture review and risky stages carry, carries both answers for the rest
+of the session, and stores neither. Where no operator is there to answer,
+dispatch anyway and put the reason in `--reason`.
 
-| stage       | --kind      | --mode | --harness | --model         | --effort |
-|-------------+-------------+--------+-----------+-----------------+----------|
-| implementer | implementer | tmux   | claude    | claude-opus-5   | high     |
-| reviewer    | reviewer    | tmux   | codex     | gpt-5.6-sol     | high     |
-| fixer       | implementer | tmux   | claude    | claude-opus-5   | medium   |
+*There is no stage table here, and there must not be one.* An earlier revision
+of this section carried a per-stage matrix pinning `--model` and `--effort`
+values, introduced as "use these unless the task gives you a reason to deviate".
+That is a stored per-stage model preference, which dec_WDR5K item 9 (zero model
+knowledge) removed from orgasmic deliberately so that a vendor model bump
+requires no orgasmic change — and it went stale in shipped content, where every
+manager reads it and nobody was looking. Model identifiers are harness
+vocabulary: chosen per dispatch, passed through unvalidated, never written into
+config, the graph, or this file. If you catch yourself adding a default model
+back, you are rebuilding the surface that rule exists to remove.
 
-Four things this encodes deliberately:
+What is durable, and stays here:
 
 *Every dispatch runs in a TUI pane.* Not acp-stdio. A pane is attachable, so the
 operator can watch a live worker and intervene; an acp-stdio worker is a black
-box until it writes its report. `--mode tmux` with `--kind reviewer` still
+box until it writes its report. A pane `--mode` with `--kind reviewer` still
 selects the reviewer persona; there is no `--worker` flag.
 
-*The pane runtime is tmux, not rmux.* Operator directive 2026-07-29: a
-first-time user is likely to have only tmux installed, so tmux is the transport
-that has to be trustworthy, and the only way it becomes trustworthy is by
-carrying our own work. Dogfooding on the transport the author does not use is
-how rmux got hardened and tmux did not.
+*The reviewer runs a different harness family from the implementer.* Adversarial
+review by the same model that wrote the code shares its priors and its blind
+spots, which is most of what an independent pass buys. This is runtime policy,
+not manager taste — the router states it — so do not "simplify" it by matching
+them. Same-family review is allowed and states its reason on the dispatch.
 
-*Until TASK-4CSMY lands, every long-thinking tmux dispatch carries*
-`--governance-json '{"stall_timeout_secs":3600}'`. This is not optional and it
-is not the retired TASK-RWCRN workaround below. `pane_activity` is emitted by
-the rmux driver and by nothing else, and TASK-JQ8AV's open-turn-statusline
-rescue is gated on `transport == "rmux"`, so on tmux BOTH pane channels are
-blind: a provider-bound think at ~0% cpu with no tool calls is released at
-600 s exactly as in the original incident. `max_run_duration` still bounds the
-run. Drop the override the moment TASK-4CSMY ships tmux `pane_activity`, and
-not before.
+*A fix pass may carry less effort than the pass that produced its findings.* A
+fixer works from findings that already name the file, the line and the
+direction; the expensive reasoning was spent producing them. Reserve the top
+tier for the passes that have to discover something. Which tier that is, is the
+operator's session answer, not a number this file pins.
 
-*The reviewer is a different vendor from the implementer.* Adversarial review by
-the same model that wrote the code shares its blind spots. Keeping claude on the
-implement side and codex on the review side is the point of the split, so do not
-"simplify" it by matching them.
+*** Choosing a transport: ask for the properties, not the mode name
+Two independent properties decide whether a pane transport is safe for long
+work, and a mode name tells you neither. Ask for both, of the runtime you are
+actually dispatching on.
 
-*The fixer drops to medium.* A fix pass works from findings that already name the
-file, the line and the direction — the expensive reasoning was spent producing
-them. Reserve high effort for the passes that have to discover something.
+**** Property one: a liveness channel the stall clock can see
+The supervisor releases
+a run after `stall_timeout_secs` (600 s by default) with no work evidence, and
+on a pane transport there are exactly two channels that can supply it: the
+driver's coalesced `pane_activity` event while the pane writes, and, at the
+deadline when subtree CPU is below the work threshold, a capture of the pane
+looking for the harness's open-turn statusline. A transport missing both kills
+healthy workers in a long provider-bound think — ~0 % cpu, no tool calls,
+nothing to see — at exactly ten minutes. That incident has now happened twice,
+on rmux before TASK-RWCRN and on tmux before TASK-4CSMY, and both times the
+transport was the shipped default at the time.
 
-Before dispatching in a pane mode, confirm the pane runtime responds (`tmux ls`,
-or `rmux ls` when deviating to rmux) and that the daemon's launchd PATH reaches
+So the first question before a dispatch is not "which mode is current" but *does
+the runtime I am dispatching on publish pane liveness for this transport* — and
+the runtime is the installed daemon, not the source tree. A merged commit is not
+an installed one; the daemon binary running the stall clock is what decides, and
+it can be older than `HEAD` by any amount. `orgasmic --version` against the
+installed binary, read next to when the channel landed, is the check; the source
+tree cannot answer it.
+
+**** Property two: a mux process that will outlive the dispatch
+A liveness channel is necessary and it is not sufficient. The stall clock
+protects a healthy worker from being released for looking idle; nothing protects
+a healthy worker from the mux daemon underneath it exiting. When that happens
+the panes go with it, the supervisor fails to release the drivers, flags the
+runs `manager.dispatch_orphaned`, and every worker that had not committed loses
+its work — there is no stall to detect, because from the daemon's side the runs
+simply ended.
+
+Measured, and this is the second failure mode rather than a variant of the
+first (TASK-4DTBZ, rmux transport survival): at `2026-08-03T00:03:10Z` the rmux
+daemon died under three concurrent dispatches and killed all three inside 24
+milliseconds — two implementers with uncommitted work and a reviewer that lost
+its entire run. It had cycled its pid at least three times in that one session,
+and it leaves no trace to find afterwards: no crash report, and its error log had
+not been written to in a week.
+
+**** Reading both properties at once
+The two properties can point at different transports, and on 2026-08-03 they did
+— which is the case worth understanding, not the dates in it. rmux was chosen
+for every dispatch that session precisely *because* it was the only transport
+carrying a liveness channel on the installed daemon: tmux gained one in
+TASK-4CSMY (merged 2026-08-02), which landed after that daemon was built, so a
+long-thinking tmux dispatch there was still released at ten minutes unless it
+carried `--governance-json '{"stall_timeout_secs":3600}'` with `max_run_duration`
+still bounding the run. So the transport that satisfied property one was the one
+that failed property two, and the transport that would have satisfied property
+two was blind on property one. Whichever way a manager turned, one live failure
+mode was in the path.
+
+What that means for a manager is not "prefer transport X". It is:
+
+- Read both properties against the installed runtime before each session's first
+  dispatch, and say in `--reason` which one you accepted the risk on. Neither
+  property is a standing fact about a mode; both move when the daemon is rebuilt
+  or the mux is restarted.
+- When property one is unmet, raise `stall_timeout_secs` and no more — dropping
+  the guard entirely leaves only the four-hour ceiling. Drop the override once
+  the channel is installed, and not before.
+- When property two is the one you cannot guarantee — and today you never can,
+  for either mux — the mitigation is not in the flags. Tell the worker in its
+  brief to commit as soon as it has anything worth keeping, because a commit is
+  the only worker output that survives its pane disappearing. Prefer fewer
+  concurrent dispatches on one mux for the same reason: a mux death is
+  correlated across every pane it owns, so three parallel runs are one failure,
+  not three independent ones.
+
+The operator's standing direction on which transport to harden is tmux
+(2026-07-29): a first-time user is likely to have only tmux, so tmux is the
+transport that has to be trustworthy, and the way it becomes trustworthy is by
+carrying our own work. That is a reason to dogfood tmux, not a reason to dispatch
+onto a blind stall clock — pair it with the override until the runtime carries
+the channel.
+
+Before dispatching in a pane mode, confirm the pane runtime responds (`tmux ls`
+/ `rmux ls` for the mode you chose) and that the daemon's launchd PATH reaches
 that binary; a dispatch that cannot find it fails at spawn rather than reporting
 a missing tool. Note also that pane sessions are not currently reaped — check
 `tmux ls` / `rmux ls` for accumulation and kill stale `orgasmic-*-run-*`
@@ -112,8 +190,10 @@ implementation observed newline-terminated lines, so a TUI that redraws in place
 with ANSI/CR and never emits LF produced no `pane_activity` at all and was still
 released at 600 s — exactly the full-screen harnesses the event exists to
 protect. The driver now drains `PaneOutputStream` and counts chunk lengths;
-pane content is still never persisted. tmux dispatches do not yet have any
-liveness signal (TASK-XHP43) and remain unprotected past 600 s.
+pane content is still never persisted. tmux emits the same event on the same
+raw-byte contract (TASK-4CSMY, which superseded and cancelled TASK-XHP43) — in
+the source; whether the runtime you are dispatching on carries it is the
+installed-binary question above.
 
 An orphaned dispatch also blocks re-dispatch: `manager.dispatch_orphaned` is not
 in `scan_open_dispatches`'s terminal set, so the next attempt fails with
@@ -168,10 +248,11 @@ If you die before the dispatch finishes, the next manager:
 
 ** Dispatching a worker via the =orgasmic manager dispatch= CLI
 When code work needs implementing, dispatch a worker per task in an isolated git
-worktree, through the daemon's dispatch endpoint. Set `--model` and `--effort`
-explicitly on every dispatch (they pass through verbatim) — see the rule above;
-they are optional to the CLI, not to you. The stage defaults are in the standing
-worker matrix; the example below shows the shape, not the choice.
+worktree, through the daemon's dispatch endpoint. `--model` and `--effort` pass
+through verbatim and are the operator's session answer, not a default this file
+holds — see "Where the four values come from" above and the router's
+`** Agent selection`. The example below shows the shape; every value in it is a
+placeholder, not a choice.
 
 For `--mode` and `--harness`, run `orgasmic manager drivers`. It prints every
 supported pair, which of them run unattended, and what each one requires on this
@@ -190,10 +271,10 @@ check the rest of the invocation too.
    orgasmic manager dispatch \
      --task TASK-NNN \
      --kind implementer \
-     --mode rmux \
-     --harness claude \
-     --model claude-opus-5 \
-     --effort high \
+     --mode <mode> \
+     --harness <harness> \
+     --model <model> \
+     --effort <effort> \
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
