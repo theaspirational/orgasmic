@@ -20,6 +20,8 @@ pub mod node_kind;
 pub mod org;
 pub mod paths;
 pub mod projects;
+// orgasmic:dec_WDR5K — residue left behind by hard cutovers
+pub mod retired;
 pub mod sandbox;
 pub mod schema;
 pub mod schema_examples;
@@ -63,6 +65,7 @@ pub use paths::{
     DispatchAttemptArtifacts, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE,
     TASKS_DIR, TASK_FILE_NAMES,
 };
+pub use retired::{RetiredContent, RETIRED_CONTENT};
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{
     ArchEdge, ArchEdgeKind, ArchEdgeTarget, ArchNode, ArchitectureNode, ArtifactNode,

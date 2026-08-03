@@ -904,11 +904,17 @@ impl Daemon {
                 "unrecognized key in orgasmic config.yaml (ignored)"
             );
         }
-        let legacy_workers = home.user().join("workers");
-        if legacy_workers.is_dir() {
+        // orgasmic:dec_WDR5K
+        // The residue table is shared with `orgasmic doctor` and the entry
+        // router precisely because this log line is the signal no agent ever
+        // reads (TASK-8ED6V); it stays for the operator tailing a boot, but it
+        // is no longer the only place the knowledge lives.
+        for retired in orgasmic_core::retired::present(&home) {
             warn!(
-                path = %legacy_workers.display(),
-                "legacy user/workers directory ignored; worker templates were retired"
+                path = %retired.path(&home).display(),
+                deciding_node = retired.deciding_node,
+                "retired content ignored: {} (see `orgasmic doctor`)",
+                retired.summary
             );
         }
         let boot = Arc::new(BootIdentity::new());
