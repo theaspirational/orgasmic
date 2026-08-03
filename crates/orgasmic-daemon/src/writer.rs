@@ -670,7 +670,12 @@ impl WriterHandle {
     /// channel, so the lease is also a barrier against the appends in flight
     /// when maintenance asked for it. A path already held by another lease is
     /// refused rather than shared.
-    pub async fn lease_sessions(&self, paths: Vec<PathBuf>) -> Result<SessionLease> {
+    /// orgasmic:TASK-FZB6T.4 finding 1 — deliberately `pub(crate)`, and the
+    /// only production caller is [`Self::with_detached_session_lease`]. Handing
+    /// a bare lease to a request handler is how it acquired the request's
+    /// lifetime twice; making that shape unreachable from outside this module's
+    /// crate is cheaper than remembering not to write it a third time.
+    pub(crate) async fn lease_sessions(&self, paths: Vec<PathBuf>) -> Result<SessionLease> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::LeaseSessions {
