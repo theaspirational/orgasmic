@@ -19825,6 +19825,33 @@ Work item 0, ahead of the others: give the tmux driver a coalesced
 newline-free-redraw variant) onto a test-owned tmux server. Only then does the
 open-turn-statusline consult of items 1-3 become a refinement rather than the
 sole channel.
+PRODUCTION CONFIRMATION [2026-08-03], and this is what closes the loop the task
+was opened for.
+
+The runtime was rebuilt at =05e1813= and a TASK-8ED6V implementer dispatched on
+*tmux* — the first tmux dispatch on a daemon that actually contains this channel.
+Its session JSONL carries:
+
+: driver_event/pane_activity   {"bytes": 10867, "seq": 3, "type": "pane_activity"}
+
+Counted 2 events at +45s and 4 at +105s, increasing, with the run =[run-live]= and
+=DRIVER=tmux=. So the channel is not merely compiled in — IT REPORTS, on the
+transport it was written for, in production.
+
+WHY THIS MATTERS BEYOND THE TASK. Until this measurement, tmux dispatches on this
+host had no progress signal at all, and a provider-bound think was released at the
+stall budget regardless of how much work it was doing. That is what destroyed the
+TASK-FZB6T.1 worker report on 2026-08-02: it committed 4,004 good lines and was
+killed eight minutes later with its entire report unwritten.
+
+CONSEQUENCE FOR THE STANDING MITIGATION. The mandatory
+=--governance-json {"stall_timeout_secs":3600}= on long tmux dispatches existed
+only because the channel was blind. It now reports, so the override can be
+retired for tmux — but retire it DELIBERATELY: the measurement above proves the
+channel emits, and does not yet prove that a genuinely at-rest wedge still dies on
+schedule under the new classifier in production. A short confirmation run that
+lets a stall budget actually expire on a live tmux pane would close that half.
+Until someone does it, keeping the override costs nothing.
 
 ** Description
 TASK-JQ8AV landed a third work-evidence channel: at the stall deadline, when
