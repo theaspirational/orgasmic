@@ -7386,9 +7386,9 @@ async fn post_run_history_compact(
             })
             .await
             .map_err(|error| match error {
-                crate::writer::LeasedTransactionError::Lease(error) => ApiError::internal(format!(
-                    "hold session writer across compaction: {error}"
-                )),
+                crate::writer::LeasedTransactionError::Lease(error) => {
+                    ApiError::internal(format!("hold session writer across compaction: {error}"))
+                }
                 crate::writer::LeasedTransactionError::Transaction(error) => {
                     ApiError::internal(format!("run history compaction failed: {error}"))
                 }

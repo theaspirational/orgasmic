@@ -3378,7 +3378,8 @@ mod tests {
         project(&worktree, "proj-1");
 
         let rebuilt = RunCatalog::new();
-        let stats = rebuilt.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let stats =
+            rebuilt.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(stats.tombstones_reasserted, 1);
         assert_eq!(stats.tombstones_unprovable, 0);
         let entry = rebuilt.entries().remove(0);
@@ -4611,7 +4612,8 @@ mod tests {
                 line.insert(*boundary, byte);
                 let parses = serde_json::from_slice::<Value>(&line).is_ok();
                 assert_eq!(
-                    parses, json_permits,
+                    parses,
+                    json_permits,
                     "serde_json disagrees with RFC 8259 for 0x{byte:02x} at {boundary}: {}",
                     String::from_utf8_lossy(&line)
                 );
@@ -4648,7 +4650,10 @@ mod tests {
                 "unparsed",
                 "0x{byte:02x} between tokens must fail the scan closed"
             );
-            assert!(!class_is_reclaimable(classify_history_line(&line), Some("rmux")));
+            assert!(!class_is_reclaimable(
+                classify_history_line(&line),
+                Some("rmux")
+            ));
         }
 
         // Trailing-content site: the same predicate guards the bytes AFTER the
