@@ -5490,3 +5490,84 @@
 :REASON:       edited task node TASK-4CSMY
 :NODE_ID:      TASK-4CSMY
 :END:
+
+* TX 2026-08-03 Mon 03:28:54 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4354
+:TIME:         [2026-08-03 Mon 03:28:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Moving out of IN_PROGRESS before re-dispatch: it has had no worker for several sessions and IN_PROGRESS was misreporting it as underway. The preflight half is landed and verified live; what remains is the atomic-abort half.
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 03:28:54 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4355
+:TIME:         [2026-08-03 Mon 03:28:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-TJKFC to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 03:28:55 manager.dispatch_started TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4356
+:TIME:         [2026-08-03 Mon 03:28:55]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tjkfc/worktree
+:BRANCH:       task-tjkfc-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-tjkfc/brief-tjkfc.md
+:STARTED_AT:   [2026-08-03 Mon 03:28:55]
+:LIVENESS:     33d41b83c647acd698bbf1a2b250f4cbd200614b
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0, and the last substantial in_progress item. Scoped to the atomic-abort half only — the preflight gate, the three harness probes and the decided design question are all landed and must not be re-litigated. Briefed with the constraint the run-catalog chain paid five rounds to learn: wire the abort into the existing lease, dispatch record and cleanup path rather than building an abort subsystem, and say so instead of building if it seems to need new machinery.
+:END:
+
+* TX 2026-08-03 Mon 03:28:55 run.created TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4357
+:TIME:         [2026-08-03 Mon 03:28:55]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-TJKFC-implementer-20260803T032855.jsonl
+:REASON:       P0, and the last substantial in_progress item. Scoped to the atomic-abort half only — the preflight gate, the three harness probes and the decided design question are all landed and must not be re-litigated. Briefed with the constraint the run-catalog chain paid five rounds to learn: wire the abort into the existing lease, dispatch record and cleanup path rather than building an abort subsystem, and say so instead of building if it seems to need new machinery.
+:RUN_ID:       run-20260803T032855-a1772376f13e46b9956460cff50dbd72
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tjkfc/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-tjkfc/brief-tjkfc.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-tjkfc/brief-tjkfc-48bb785d58cd44f6986a1bdbd6b638f0-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-tjkfc/brief-tjkfc-48bb785d58cd44f6986a1bdbd6b638f0-stdout.log
+:DISPATCH_ATTEMPT: 48bb785d58cd44f6986a1bdbd6b638f0
+:DISPATCH_TX:  tx-20260803-orgasmic-4356
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
