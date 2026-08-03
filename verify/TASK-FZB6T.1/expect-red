@@ -1,9 +1,19 @@
-# Pinned from the real red run of 2026-08-02 with the injection applied.
+# Re-pinned from the real red run of 2026-08-03 with the re-cut injection
+# applied (TASK-FZB6T.5 finding 2). The previous pin was 2026-08-02; the
+# signature is unchanged and the injection grew one hunk.
 #
 # The injection restores both pre-fix rules: a tombstone is revived by mere
 # existence at the recorded path, and a snapshot entry is admitted by
 # `starts_with(project_root)` with no session-directory authority, no traversal
 # check, and no file-identity check.
+#
+# WHY THE RE-CUT. The revival rule is now defended twice. TASK-FZB6T.5 finding 2
+# wired the durable tombstone ledger into the catalog's cache-hit path, so the
+# ledger re-tombstoned the revived entry on the same refresh pass and the first
+# test below PASSED under the old injection — a false green that would have
+# stopped proving the .1 rule at all. The third hunk removes that later
+# mechanism from the recheck path, which is the tree state this defect was
+# observed in, so the rule under test is isolated again.
 exit: 101
 
 # A PRUNED WORKTREE COMES BACK FROM THE DEAD. The recorded path is reused by an

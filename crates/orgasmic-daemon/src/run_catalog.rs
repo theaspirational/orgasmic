@@ -522,13 +522,16 @@ pub struct CatalogRefreshStats {
     pub unreadable_sessions: u64,
     /// Entries dropped because their session file is gone.
     pub evicted: u64,
-    /// Worktree authority verdicts re-verified against the filesystem.
+    /// Cached worktree authority verdicts that changed: re-verified against the
+    /// filesystem, or overruled by the durable tombstone ledger
+    /// (orgasmic:TASK-FZB6T.5 finding 2 — the ledger reaches this path too, and
+    /// the two ledger counters below now count cache hits as well as rebuilds).
     pub authority_reverified: u64,
-    /// Rebuilt entries whose re-derived `Verified` verdict was overruled by the
-    /// durable tombstone ledger (orgasmic:TASK-FZB6T.3 finding 4).
+    /// Entries whose `Verified` verdict was overruled by the durable tombstone
+    /// ledger (orgasmic:TASK-FZB6T.3 finding 4), rebuilt or cached.
     pub tombstones_reasserted: u64,
-    /// Entries whose re-derived `Verified` verdict could not be checked at all,
-    /// because the durable tombstone ledger was unreadable or foreign-version
+    /// Entries, rebuilt or cached, whose `Verified` verdict could not be checked
+    /// at all because the durable tombstone ledger was unreadable or foreign-version
     /// (orgasmic:TASK-FZB6T.4 finding 2). Non-zero means the board is being
     /// served fail-closed and an operator has a ledger to repair.
     pub tombstones_unprovable: u64,
@@ -931,17 +934,6 @@ impl RunCatalog {
             };
             built.push((planned, entry));
         }
-        let mut authority_updates: Vec<(PlannedRecheck, WorktreeAuthority)> = Vec::new();
-        for planned in recheck {
-            during_work(self);
-            let Some(probe) = probe_authority_path(&planned.previous) else {
-                continue;
-            };
-            if let Some(refreshed) = reverify_authority(&planned.previous, probe) {
-                authority_updates.push((planned, refreshed));
-            }
-        }
-
         // orgasmic:TASK-FZB6T.3 finding 4 / dec_BBPW4 item 2 — the tombstone is
         // durable, and this is where the cache is reconciled against it. A
         // rebuilt entry re-derives `Verified` from whatever directory now
@@ -971,30 +963,59 @@ impl RunCatalog {
         }
         let mut ledger_grew = false;
         for (_, entry) in &mut built {
-            match (
+            if let Some(overruled) = reconcile_authority_with_ledger(
                 &entry.worktree_authority,
                 ledger_unusable.is_some(),
-                ledger.contains(&entry.run_id),
+                &ledger,
+                &entry.run_id,
+                project_id,
             ) {
-                (WorktreeAuthority::Verified { worktree, .. }, true, _) => {
-                    entry.worktree_authority = WorktreeAuthority::Unprovable {
-                        recorded: worktree.clone(),
-                    };
-                    stats.tombstones_unprovable += 1;
-                }
-                (WorktreeAuthority::Verified { worktree, .. }, false, true) => {
-                    entry.worktree_authority = WorktreeAuthority::Tombstoned {
-                        recorded: worktree.clone(),
-                        verified_identity: None,
-                    };
-                    stats.tombstones_reasserted += 1;
-                }
-                (WorktreeAuthority::Tombstoned { recorded, .. }, false, false) => {
-                    ledger_grew |= ledger.record(&entry.run_id, recorded);
-                }
-                _ => {}
+                count_ledger_overrule(&overruled, &mut stats);
+                entry.worktree_authority = overruled;
+            }
+            if let (WorktreeAuthority::Tombstoned { recorded, .. }, None) =
+                (&entry.worktree_authority, &ledger_unusable)
+            {
+                ledger_grew |= ledger.record(&entry.run_id, recorded);
             }
         }
+
+        // orgasmic:TASK-FZB6T.5 finding 2 — the OTHER output path, which used to
+        // skip all of the above. `refresh_dir` routes every unchanged
+        // fingerprint into `recheck`, so on a restart — where the whole point of
+        // the catalog is that nothing is rebuilt — the ledger was consulted for
+        // nothing at all. A crash that left an older `Verified` snapshot beside
+        // a later durable tombstone gave a cache hit the ledger never overruled;
+        // a newly unreadable ledger left cached entries `Verified` instead of
+        // `Unprovable`; and a REPAIRED ledger could not clear an `Unprovable`
+        // within one catalog instance. The filesystem probe answers first,
+        // exactly as before, and then the same ledger rule the rebuilt entries
+        // get is applied to its answer.
+        let mut authority_updates: Vec<(PlannedRecheck, WorktreeAuthority)> = Vec::new();
+        for planned in recheck {
+            during_work(self);
+            let probed = probe_authority_path(&planned.previous)
+                .and_then(|probe| reverify_authority(&planned.previous, probe));
+            let derived = probed.as_ref().unwrap_or(&planned.previous);
+            let updated = match reconcile_authority_with_ledger(
+                derived,
+                ledger_unusable.is_some(),
+                &ledger,
+                &planned.run_id,
+                project_id,
+            ) {
+                Some(overruled) => {
+                    count_ledger_overrule(&overruled, &mut stats);
+                    Some(overruled)
+                }
+                None => probed,
+            };
+            let Some(updated) = updated else {
+                continue;
+            };
+            authority_updates.push((planned, updated));
+        }
+
         for (planned, refreshed) in &authority_updates {
             if let WorktreeAuthority::Tombstoned { recorded, .. } = refreshed {
                 ledger_grew |= ledger.record(&planned.run_id, recorded);
@@ -1607,6 +1628,80 @@ fn reverify_authority(
         recorded: worktree.clone(),
         verified_identity: *identity,
     })
+}
+
+/// Overrule one derived worktree-authority verdict with the durable tombstone
+/// ledger. `None` means the verdict stands.
+///
+/// orgasmic:TASK-FZB6T.5 finding 2 — ONE rule, and both of [`RunCatalog::refresh_dir`]'s
+/// output paths run it. It used to be written inline over the rebuilt entries
+/// only, so a cache hit never consulted the ledger: the durable terminal fact
+/// applied exactly where it was least needed (an entry re-derived from bytes
+/// this pass just read) and not at all where the catalog spends its life.
+///
+/// The four transitions, and each is the ledger answering a question the
+/// filesystem cannot:
+///
+/// - the ledger cannot be READ, so a `Verified` path is not proven attachable;
+/// - the ledger names this run, so a re-derived or cached `Verified` is a
+///   revived dead run and the tombstone overrules it (dec_BBPW4 item 2);
+/// - the ledger names a run whose verdict was `Unprovable`, which is the same
+///   overrule through the state that stood in for it;
+/// - the ledger reads again and does NOT name this run, so the fact that could
+///   not be checked has been checked: `Unprovable` was a statement about the
+///   LEDGER, and it is re-derived exactly as a rebuild would derive it. Only
+///   that arm needs the project id, and without one it stays refused rather
+///   than being cleared by a missing fact.
+fn reconcile_authority_with_ledger(
+    verdict: &WorktreeAuthority,
+    ledger_unusable: bool,
+    ledger: &TombstoneLedger,
+    run_id: &str,
+    project_id: Option<&str>,
+) -> Option<WorktreeAuthority> {
+    match (verdict, ledger_unusable, ledger.contains(run_id)) {
+        (WorktreeAuthority::Verified { worktree, .. }, true, _) => {
+            Some(WorktreeAuthority::Unprovable {
+                recorded: worktree.clone(),
+            })
+        }
+        (WorktreeAuthority::Verified { worktree, .. }, false, true) => {
+            Some(WorktreeAuthority::Tombstoned {
+                recorded: worktree.clone(),
+                verified_identity: None,
+            })
+        }
+        (WorktreeAuthority::Unprovable { recorded }, false, true) => {
+            Some(WorktreeAuthority::Tombstoned {
+                recorded: recorded.clone(),
+                verified_identity: None,
+            })
+        }
+        (WorktreeAuthority::Unprovable { recorded }, false, false) => {
+            let project_id = project_id?;
+            // `Unprovable` is only ever minted from `Verified`, and `Verified`
+            // means the recorded `RunMeta` project WAS this project — which is
+            // also what a snapshot entry carrying this verdict has to prove to
+            // be admitted. So this re-derivation is the rebuild's, on the
+            // rebuild's inputs.
+            Some(verify_worktree_authority(
+                Some(project_id),
+                Some((Some(project_id.to_string()), Some(recorded.clone()))),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Count one ledger overrule under the stat that names it, for either output
+/// path. A non-zero `tombstones_unprovable` is how an operator learns the board
+/// is being served fail-closed.
+fn count_ledger_overrule(overruled: &WorktreeAuthority, stats: &mut CatalogRefreshStats) {
+    match overruled {
+        WorktreeAuthority::Unprovable { .. } => stats.tombstones_unprovable += 1,
+        WorktreeAuthority::Tombstoned { .. } => stats.tombstones_reasserted += 1,
+        _ => {}
+    }
 }
 
 /// Decide worktree authority from the recorded `RunMeta` and the filesystem.
@@ -3286,6 +3381,149 @@ mod tests {
             assert_eq!(stats.tombstones_reasserted, 1, "{damage}");
             assert!(repaired.entries()[0].worktree_authority.is_tombstoned());
         }
+    }
+
+    /// One project, one non-terminal run, one worktree that stays on disk.
+    ///
+    /// orgasmic:TASK-FZB6T.5 finding 2 — the session file never changes again,
+    /// so every refresh after the first is a CACHE HIT, which is the path the
+    /// three regressions below are about. Each of them holds ONE `RunCatalog`
+    /// across the damage and the repair: the previous regression deleted the
+    /// snapshot and constructed a new catalog on both sides, so it never
+    /// exercised a cache hit at all and missed all three cases.
+    fn cache_hit_board(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let root = dir.join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let worktree = dir.join("wt");
+        project(&worktree, "proj-1");
+        write_session(&sessions, "run-wt", 4096, None, &worktree, "proj-1");
+        (root, sessions, worktree)
+    }
+
+    /// Refresh and prove it answered from the cache. A rebuild must never be
+    /// able to stand in for the wiring under test.
+    fn refresh_cache_hit(
+        catalog: &RunCatalog,
+        sessions: &Path,
+        root: &Path,
+        what: &str,
+    ) -> CatalogRefreshStats {
+        let stats = catalog.refresh_dir(sessions, Some("proj-1"), root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.rebuilt, 0, "{what}: nothing may be re-derived");
+        assert_eq!(stats.cache_hits, 1, "{what}: this is the cache-hit path");
+        stats
+    }
+
+    /// orgasmic:TASK-FZB6T.5 finding 2, case 1 — a ledger that goes unreadable
+    /// under a live catalog leaves its cached verdicts UNPROVEN.
+    ///
+    /// Phase 3 applied `Unprovable` to freshly rebuilt entries only. A cache
+    /// hit's sole source of change is the filesystem probe, and the probe
+    /// answers a different question: the worktree is still there, so it returns
+    /// no update and the entry stayed `Verified` — an attach candidate offered
+    /// on the strength of an authority this daemon can no longer read.
+    #[test]
+    fn a_ledger_that_goes_unreadable_unproves_a_cached_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, sessions, worktree) = cache_hit_board(dir.path());
+        let catalog = RunCatalog::new();
+        let indexed =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(indexed.rebuilt, 1, "the one-time index");
+        assert_eq!(catalog.entries()[0].worktree_authority.label(), "verified");
+
+        std::fs::write(root.join(TOMBSTONE_REL_PATH), b"{\"tombstoned\": {\"run-").unwrap();
+        let stats = refresh_cache_hit(&catalog, &sessions, &root, "newly unreadable ledger");
+        assert_eq!(
+            stats.tombstones_unprovable, 1,
+            "a cached Verified must not survive a ledger that cannot be read"
+        );
+        let authority = catalog.entries().remove(0).worktree_authority;
+        assert_eq!(authority.label(), "unprovable", "{authority:?}");
+        assert!(authority.blocks_attach());
+        assert!(
+            worktree.is_dir(),
+            "and the filesystem probe had nothing to say: the path is still there"
+        );
+    }
+
+    /// orgasmic:TASK-FZB6T.5 finding 2, case 2 — a durable tombstone overrules a
+    /// CACHED `Verified`, not only a re-derived one.
+    ///
+    /// The ledger is a shared file with a lock precisely because somebody else
+    /// writes it: the other daemon, the other refresh pass, the operator. Here
+    /// the recorded worktree is still on disk, so the probe has nothing to say
+    /// and never did — only the ledger knows this run is dead. The boot shape
+    /// the reviewer names is the same defect: a crash that leaves an older
+    /// `Verified` snapshot beside a later durable tombstone gives a cache hit
+    /// the ledger never overrules.
+    #[test]
+    fn a_durable_tombstone_overrules_a_cached_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, sessions, worktree) = cache_hit_board(dir.path());
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(catalog.entries()[0].worktree_authority.label(), "verified");
+
+        let mut ledger = TombstoneLedger::default();
+        assert!(ledger.record("run-wt", &worktree));
+        ledger.save(&root).unwrap();
+
+        let stats = refresh_cache_hit(&catalog, &sessions, &root, "durable tombstone");
+        assert_eq!(
+            stats.tombstones_reasserted, 1,
+            "the durable tombstone must overrule the cached verdict"
+        );
+        let authority = catalog.entries().remove(0).worktree_authority;
+        assert!(authority.is_tombstoned(), "{authority:?}");
+        assert!(
+            authority.verified_worktree().is_none(),
+            "a dead run must not be offered as an attach candidate"
+        );
+        assert!(
+            worktree.is_dir(),
+            "and it did so with the recorded path still present"
+        );
+    }
+
+    /// orgasmic:TASK-FZB6T.5 finding 2, case 3 — repairing the ledger clears an
+    /// `Unprovable` WITHIN the catalog instance that minted it.
+    ///
+    /// `Unprovable` is a statement about the ledger, not about the path, so it
+    /// is deliberately never probed — which left a cached one stuck for the
+    /// daemon's lifetime. It is a refusal, not a tombstone: once the ledger
+    /// answers again, the verdict it stood in for is re-derived exactly as a
+    /// rebuild would derive it, and an operator's repair takes effect without a
+    /// restart.
+    #[test]
+    fn repairing_the_ledger_clears_an_unprovable_cache_hit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, sessions, _worktree) = cache_hit_board(dir.path());
+        let ledger_path = root.join(TOMBSTONE_REL_PATH);
+        std::fs::write(&ledger_path, b"{\"tombstoned\": {\"run-").unwrap();
+
+        // Minted on the rebuild path, which already worked, and then CACHED —
+        // this is the state a daemon boots into with a damaged ledger.
+        let catalog = RunCatalog::new();
+        let indexed =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(indexed.rebuilt, 1);
+        assert_eq!(indexed.tombstones_unprovable, 1);
+        assert_eq!(
+            catalog.entries()[0].worktree_authority.label(),
+            "unprovable"
+        );
+
+        std::fs::write(&ledger_path, br#"{"version":1,"tombstoned":{}}"#).unwrap();
+        let stats = refresh_cache_hit(&catalog, &sessions, &root, "repaired ledger");
+        assert_eq!(stats.tombstones_unprovable, 0);
+        assert_eq!(stats.tombstones_reasserted, 0);
+        assert_eq!(
+            catalog.entries()[0].worktree_authority.label(),
+            "verified",
+            "repairing the authority must restore the verdict it could not check"
+        );
     }
 
     /// orgasmic:TASK-FZB6T.4 finding 2 — the read-merge-write is serialized, so

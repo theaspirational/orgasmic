@@ -7432,10 +7432,17 @@ async fn post_run_history_rollback(
     // orgasmic:TASK-FZB6T.4 finding 1 — same detached owner as the forward
     // pass. Rollback renames over live paths too, so a handler-scoped lease left
     // the same window open here.
+    //
+    // orgasmic:TASK-FZB6T.5 finding 3 — and the leased paths are handed to the
+    // transaction as the FENCE, exactly as the forward pass hands its own. The
+    // manifest is read here, before the maintenance lock; `rollback_compaction`
+    // decodes it again after taking that lock, and anything the second decode
+    // names that this lease does not cover is refused rather than renamed.
+    let fenced = crate::run_history::FencedSessions::new(paths.clone());
     let report = state
         .writer
         .with_detached_session_lease(paths, move || {
-            let report = crate::run_history::rollback_compaction(&root, &manifest_id);
+            let report = crate::run_history::rollback_compaction(&root, &manifest_id, &fenced);
             if let Ok(report) = &report {
                 for path in &report.restored {
                     catalog.invalidate_session(path);
@@ -9936,6 +9943,23 @@ fn boot_reattach_candidate(
     // External registrations are daemon-local presence records with no
     // attachable runtime. Re-registration is their only recovery path.
     if entry.external_registration {
+        return None;
+    }
+    // orgasmic:TASK-FZB6T.5 finding 1 — the SAME refusal `/api/runs` already
+    // applies (`WorktreeAuthority::blocks_attach`, used by the polled inventory
+    // pass). Boot used to reattach the recorded worktree without consulting the
+    // authority at all, so a durably tombstoned run — or one whose ledger is
+    // unreadable and therefore `Unprovable` — was auto-reattached across a
+    // restart into a worktree the inventory refuses to probe. The two paths
+    // reattach the same runs; they cannot answer this differently.
+    if entry.worktree_authority.blocks_attach() {
+        tracing::info!(
+            session_path = %session_path.display(),
+            run_id = %first.run_id,
+            authority = %entry.worktree_authority.label(),
+            reason = entry.worktree_authority.authority_error().unwrap_or_default(),
+            "boot reattach: recorded worktree authority blocks attach; skipped"
+        );
         return None;
     }
 
@@ -20844,6 +20868,61 @@ pub(crate) mod tests {
             "enumeration cost must be the same at both payload sizes"
         );
         assert_eq!(small_warm.catalog_cache_hits, 197);
+    }
+
+    /// orgasmic:TASK-FZB6T.5 finding 1 — boot reattach must refuse exactly the
+    /// authority `/api/runs` refuses.
+    ///
+    /// `WorktreeAuthority::blocks_attach` was correct and the polled inventory
+    /// used it; `boot_reattach_candidate` checked truncation, terminal state and
+    /// external registration and then returned the recorded worktree without
+    /// consulting the authority at all. So a restart auto-reattached a run whose
+    /// worktree is durably gone — and one whose ledger is unreadable and
+    /// therefore `Unprovable` — straight into `Supervisor::reattach`, while the
+    /// inventory endpoint refused to so much as probe it. The two paths reattach
+    /// the same runs from the same catalog entries; they cannot answer this
+    /// differently.
+    #[test]
+    fn boot_reattach_refuses_the_authority_the_inventory_refuses() {
+        let board = catalog_board(1);
+        let roots = std::slice::from_ref(&board.root);
+        // ONE catalog across all three states, which is what a boot pass has:
+        // the candidates below are cache hits, not re-derivations.
+        let catalog = crate::run_catalog::RunCatalog::new();
+
+        let live = collect_boot_reattach_candidates(&catalog, roots);
+        assert!(
+            live.iter().any(|c| c.run_id == "run-008"),
+            "the fixture's pruned-worktree run must start out reattachable"
+        );
+
+        // Tombstoned: the recorded worktree is gone, which is terminal for the
+        // run identity. No reattach can succeed under it.
+        std::fs::remove_dir_all(&board.pruned_worktree).unwrap();
+        let tombstoned = collect_boot_reattach_candidates(&catalog, roots);
+        assert!(
+            !tombstoned.iter().any(|c| c.run_id == "run-008"),
+            "a durably tombstoned run must not be auto-reattached across a restart"
+        );
+        assert_eq!(
+            tombstoned.len(),
+            live.len() - 1,
+            "and only that one: the live runs still reattach"
+        );
+
+        // Unprovable: the ledger that would prove any of them attachable cannot
+        // be read, so none of them is proven attachable.
+        std::fs::write(
+            board.root.join(crate::run_catalog::TOMBSTONE_REL_PATH),
+            b"{\"tombstoned\": {\"run-",
+        )
+        .unwrap();
+        let unprovable = collect_boot_reattach_candidates(&catalog, roots);
+        assert!(
+            unprovable.is_empty(),
+            "an unreadable authority must not be read as permission to reattach: {:?}",
+            unprovable.iter().map(|c| &c.run_id).collect::<Vec<_>>()
+        );
     }
 
     /// A pruned worktree must not be an eternal attach candidate.

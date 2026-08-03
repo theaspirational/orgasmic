@@ -1,8 +1,36 @@
 diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
-index b468610..29f7a7c 100644
+index b568056..b488c7e 100644
 --- a/crates/orgasmic-daemon/src/run_catalog.rs
 +++ b/crates/orgasmic-daemon/src/run_catalog.rs
-@@ -1214,29 +1214,11 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
+@@ -994,19 +994,14 @@ impl RunCatalog {
+             let probed = probe_authority_path(&planned.previous)
+                 .and_then(|probe| reverify_authority(&planned.previous, probe));
+             let derived = probed.as_ref().unwrap_or(&planned.previous);
+-            let updated = match reconcile_authority_with_ledger(
+-                derived,
+-                ledger_unusable.is_some(),
+-                &ledger,
+-                &planned.run_id,
+-                project_id,
+-            ) {
+-                Some(overruled) => {
+-                    count_ledger_overrule(&overruled, &mut stats);
+-                    Some(overruled)
+-                }
+-                None => probed,
+-            };
++            // INJECTED (TASK-FZB6T.1): the durable tombstone ledger does not
++            // reach the cache-hit path, so the revival above is the only
++            // authority — which is the tree state this defect was observed in.
++            // Without this the ledger (TASK-FZB6T.3 finding 4, wired to this
++            // path by TASK-FZB6T.5 finding 2) re-tombstones the revived entry
++            // on the same pass and masks the defect under test.
++            let _ = derived;
++            let updated = probed;
+             let Some(updated) = updated else {
+                 continue;
+             };
+@@ -1232,29 +1227,11 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
  ///
  /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
  fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
@@ -37,7 +65,7 @@ index b468610..29f7a7c 100644
  }
  
  /// Whether an entry's semantic claims are reproduced by its own source
-@@ -1554,11 +1536,10 @@ struct AuthorityProbe {
+@@ -1572,11 +1549,10 @@ struct AuthorityProbe {
  fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
      let path = match authority {
          WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
@@ -53,7 +81,7 @@ index b468610..29f7a7c 100644
          | WorktreeAuthority::Unrecorded
          | WorktreeAuthority::Unidentified
          | WorktreeAuthority::Unprovable { .. } => return None,
-@@ -1590,6 +1571,17 @@ fn reverify_authority(
+@@ -1608,6 +1584,17 @@ fn reverify_authority(
      previous: &WorktreeAuthority,
      probe: AuthorityProbe,
  ) -> Option<WorktreeAuthority> {
