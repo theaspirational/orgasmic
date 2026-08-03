@@ -4770,3 +4770,162 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-03 Mon 02:17:37 reviewer.reported TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4312
+:TIME:         [2026-08-03 Mon 02:17:37]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:RUN_ID:       run-20260803T015725-fe10bb7af53640f6b6e97e94e853414f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:END:
+
+* TX 2026-08-03 Mon 02:18:57 reviewer.done TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4313
+:TIME:         [2026-08-03 Mon 02:18:57]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Fourth blocking round. The three P1s are each a real resurrect-or-lose-evidence path: boot reattach never consults worktree_authority so a durably tombstoned run can be auto-reattached after a restart even though /api/runs refuses it; refresh_dir applies ledger authority only to freshly rebuilt entries so a cache hit lets stale Verified state beat the durable no-attach fact; and rollback computes its lease from one unlocked manifest read then decodes a different generation under the lock, with no fence assertion, recreating the orphaned-inode window the lease exists to prevent. The P2 is safe-failing — rollback refuses rather than overwriting — but means legacy rollback is unavailable in a classifier-drift case. THE PATTERN IS NOW THE FINDING: every one of these lives in machinery a previous round introduced to satisfy a previous finding.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         12m
+:REVIEWED_DIFF: 84e4257..6acad7a
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     3 P1 blocking (boot reattach bypasses tombstoned/unprovable authority; ledger authority ignored on catalog cache hits; rollback leases paths from a different manifest generation than it executes), 1 P2 safe-failing (format-1 rollback re-derives with the current compactor)
+:PATTERN:      round 4 of 4; findings 1-2 are in the tombstone ledger ADDED by round 3, finding 3 is in the lease/rollback interaction CHANGED by round 3
+:CLOSED_TX:    tx-20260803-orgasmic-4303
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 02:18:57 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4314
+:TIME:         [2026-08-03 Mon 02:18:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 02:19:52 task.created TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4315
+:TIME:         [2026-08-03 Mon 02:19:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round-4 review (tx-4313) returned three P1 blockers, all of them consistency gaps in machinery earlier rounds added. This round is constrained to add no new mechanism, because that is the failure mode of the task rather than an incidental style preference.
+:END:
+
+* TX 2026-08-03 Mon 02:19:52 task.property_updated TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4316
+:TIME:         [2026-08-03 Mon 02:19:52]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4313 round-4 verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-03 Mon 02:19:53 task.created TASK-QNCQ5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4317
+:TIME:         [2026-08-03 Mon 02:19:53]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QNCQ5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Split out of the round-4 review per the reviewer's own recommendation, so the fix round does not grow. Safe-failing: rollback refuses rather than overwriting, so no archive is destroyed.
+:END:
+
+* TX 2026-08-03 Mon 02:20:34 task.state_transitioned TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4318
+:TIME:         [2026-08-03 Mon 02:20:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.5 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 02:20:35 manager.dispatch_started TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4319
+:TIME:         [2026-08-03 Mon 02:20:35]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.5/worktree
+:BRANCH:       task-fzb6t.5-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t5-fix/brief-fzb6t5-fix.md
+:STARTED_AT:   [2026-08-03 Mon 02:20:35]
+:LIVENESS:     ffb0ad0d0df1792cdadc71cd946e3d84ef84f9eb
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round five, constrained to ADD NO NEW MECHANISM — because every round-4 finding lives in machinery an earlier round introduced, which makes surface growth the failure mode rather than an incidental style issue. All three blockers are consistency gaps in things that already exist. The worker is explicitly permitted, and asked, to STOP and report if a fix seems to need new machinery; that judgement feeds the standing decision about deferring the compaction verb instead of running a sixth round.
+:END:
+
+* TX 2026-08-03 Mon 02:20:35 run.created TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4320
+:TIME:         [2026-08-03 Mon 02:20:35]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.5-implementer-20260803T022035.jsonl
+:REASON:       Round five, constrained to ADD NO NEW MECHANISM — because every round-4 finding lives in machinery an earlier round introduced, which makes surface growth the failure mode rather than an incidental style issue. All three blockers are consistency gaps in things that already exist. The worker is explicitly permitted, and asked, to STOP and report if a fix seems to need new machinery; that judgement feeds the standing decision about deferring the compaction verb instead of running a sixth round.
+:RUN_ID:       run-20260803T022035-9f8deab55600460e9b325ad0050ea001
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.5/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t5-fix/brief-fzb6t5-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-fzb6t5-fix/brief-fzb6t5-fix-e4f779d8641d4056911d4e2893f05019-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-fzb6t5-fix/brief-fzb6t5-fix-e4f779d8641d4056911d4e2893f05019-stdout.log
+:DISPATCH_ATTEMPT: e4f779d8641d4056911d4e2893f05019
+:DISPATCH_TX:  tx-20260803-orgasmic-4319
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
