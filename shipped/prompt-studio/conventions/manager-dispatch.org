@@ -78,9 +78,13 @@ direction; the expensive reasoning was spent producing them. Reserve the top
 tier for the passes that have to discover something. Which tier that is, is the
 operator's session answer, not a number this file pins.
 
-*** Choosing a transport: ask for the liveness channel, not the mode name
-What makes a pane transport safe for long work is a pane liveness channel the
-supervisor's stall clock can see — not which mux it is. The supervisor releases
+*** Choosing a transport: ask for the properties, not the mode name
+Two independent properties decide whether a pane transport is safe for long
+work, and a mode name tells you neither. Ask for both, of the runtime you are
+actually dispatching on.
+
+**** Property one: a liveness channel the stall clock can see
+The supervisor releases
 a run after `stall_timeout_secs` (600 s by default) with no work evidence, and
 on a pane transport there are exactly two channels that can supply it: the
 driver's coalesced `pane_activity` event while the pane writes, and, at the
@@ -91,21 +95,60 @@ nothing to see — at exactly ten minutes. That incident has now happened twice,
 on rmux before TASK-RWCRN and on tmux before TASK-4CSMY, and both times the
 transport was the shipped default at the time.
 
-So the question before a dispatch is not "which mode is current" but *does the
-runtime I am dispatching on publish pane liveness for this transport* — and the
-runtime is the installed daemon, not the source tree. A merged commit is not an
-installed one; the daemon binary running the stall clock is what decides, and it
-can be older than `HEAD` by any amount.
+So the first question before a dispatch is not "which mode is current" but *does
+the runtime I am dispatching on publish pane liveness for this transport* — and
+the runtime is the installed daemon, not the source tree. A merged commit is not
+an installed one; the daemon binary running the stall clock is what decides, and
+it can be older than `HEAD` by any amount. `orgasmic --version` against the
+installed binary, read next to when the channel landed, is the check; the source
+tree cannot answer it.
 
-Where that stood on 2026-08-03, as an example of reading it rather than a value
-to copy: rmux carries both channels and needs no override. tmux gained both in
-TASK-4CSMY (merged 2026-08-02), which landed *after* the installed daemon was
-built — so on that host tmux was still blind on both, and every long-thinking
-tmux dispatch there needed
-`--governance-json '{"stall_timeout_secs":3600}'`, with `max_run_duration` still
-bounding the run. Re-check that against the installed runtime rather than
-trusting the paragraph; drop the override once the channel is installed, and not
-before.
+**** Property two: a mux process that will outlive the dispatch
+A liveness channel is necessary and it is not sufficient. The stall clock
+protects a healthy worker from being released for looking idle; nothing protects
+a healthy worker from the mux daemon underneath it exiting. When that happens
+the panes go with it, the supervisor fails to release the drivers, flags the
+runs `manager.dispatch_orphaned`, and every worker that had not committed loses
+its work — there is no stall to detect, because from the daemon's side the runs
+simply ended.
+
+Measured, and this is the second failure mode rather than a variant of the
+first (TASK-4DTBZ, rmux transport survival): at `2026-08-03T00:03:10Z` the rmux
+daemon died under three concurrent dispatches and killed all three inside 24
+milliseconds — two implementers with uncommitted work and a reviewer that lost
+its entire run. It had cycled its pid at least three times in that one session,
+and it leaves no trace to find afterwards: no crash report, and its error log had
+not been written to in a week.
+
+**** Reading both properties at once
+The two properties can point at different transports, and on 2026-08-03 they did
+— which is the case worth understanding, not the dates in it. rmux was chosen
+for every dispatch that session precisely *because* it was the only transport
+carrying a liveness channel on the installed daemon: tmux gained one in
+TASK-4CSMY (merged 2026-08-02), which landed after that daemon was built, so a
+long-thinking tmux dispatch there was still released at ten minutes unless it
+carried `--governance-json '{"stall_timeout_secs":3600}'` with `max_run_duration`
+still bounding the run. So the transport that satisfied property one was the one
+that failed property two, and the transport that would have satisfied property
+two was blind on property one. Whichever way a manager turned, one live failure
+mode was in the path.
+
+What that means for a manager is not "prefer transport X". It is:
+
+- Read both properties against the installed runtime before each session's first
+  dispatch, and say in `--reason` which one you accepted the risk on. Neither
+  property is a standing fact about a mode; both move when the daemon is rebuilt
+  or the mux is restarted.
+- When property one is unmet, raise `stall_timeout_secs` and no more — dropping
+  the guard entirely leaves only the four-hour ceiling. Drop the override once
+  the channel is installed, and not before.
+- When property two is the one you cannot guarantee — and today you never can,
+  for either mux — the mitigation is not in the flags. Tell the worker in its
+  brief to commit as soon as it has anything worth keeping, because a commit is
+  the only worker output that survives its pane disappearing. Prefer fewer
+  concurrent dispatches on one mux for the same reason: a mux death is
+  correlated across every pane it owns, so three parallel runs are one failure,
+  not three independent ones.
 
 The operator's standing direction on which transport to harden is tmux
 (2026-07-29): a first-time user is likely to have only tmux, so tmux is the
