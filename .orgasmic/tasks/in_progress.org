@@ -604,47 +604,6 @@ correctness.
 Logs kept for this session at the scratchpad paths named in the tx; the
 per-test panics are in each run's =suite.log=.
 
-* IN_PROGRESS TASK-XCJYC Rename non-ACP transports and reserve acp-* for the real protocol :drivers:cli:naming:
-:PROPERTIES:
-:ID: TASK-XCJYC
-:PRIORITY: P1
-:END:
-
-Problem: orgasmic uses "acp" for transports that are not the Agent Client Protocol. ACP is a specific open standard from Zed Industries (released August 2025, JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote): it standardises the editor-to-agent boundary while MCP standardises tool access. It is adopted by JetBrains, Google, GitHub and 25+ agents, and Zed ships an ACP Registry containing Claude Agent, Codex, Gemini CLI, OpenCode and others.
-
-What orgasmic labels `acp` is not that:
-- `acp-stdio` + claude runs `claude -p --input-format stream-json --output-format stream-json` — Claude Code's own stream-json wire
-- `acp-stdio` / `acp-ws` + codex runs `codex app-server` — Codex's own JSON-RPC app-server
-- `cursor-acp` is a cursor-agent adapter
-
-The source half-knows: `adapters/claude.rs` documents itself as "ACP-like stdio stream-json", and the `protocol_version` values are already honest (`claude-code-stream-json/1`, `codex-appserver/1`). Only the wrapper names lie. One genuine error remains at `adapters/claude.rs:364`, which reports `protocol_version: "acp/1"`.
-
-Cost, in increasing order of severity:
-1. It misleads readers into treating two unrelated native protocols as one protocol's two implementations. This happened twice in one manager session on 2026-07-25.
-2. It hides that ACP-vs-MCP is a live architectural distinction, precisely the layering an operator asking for a worker "without MCP" is reasoning about.
-3. It squats on the name. If orgasmic adds real ACP, the correct name is taken by something that is not it.
-
-Decision (operator, 2026-07-25): modes name the wire only, since the harness field already determines the protocol.
-- `("acp-stdio", H)` becomes `("stdio", H)`
-- `("acp-ws", H)` becomes `("ws", H)`
-- driver id `claude-acp` becomes `claude-stream-json`; `cursor-acp` becomes `cursor-agent`
-- `acp-stdio` and `acp-ws` are reserved for real ACP and must not be reused for anything else
-
-Scope: roughly 371 occurrences of `acp` across 12+ files, concentrated in `orgasmic-daemon/src/api.rs`, the CLI and daemon dispatch tests, `orgasmic-daemon/src/supervisor.rs`, `orgasmic-daemon/src/config.rs`, and the drivers crate.
-
-This is a cutover, not a find-and-replace. `--mode acp-stdio` is user-facing, the pair list is the `SUPPORTED` matrix authority per dec_WDR5K item 1, and the old names are persisted: 70 historical runs carry `transport: "acp-stdio"` and 1 carries `acp-ws`, plus worker ids such as `reviewer-codex-acp-stdio` throughout tx history.
-
-Work:
-1. Rename the mode pairs, driver ids, transport constants, and the `acp/1` protocol_version error.
-2. Follow dec_WDR5K item 10's precedent for historical data: no alias table, old records render their historical strings as plain text. Confirm the recovery classifier and transcript finder still resolve pre-rename records, since `persisted_run_address_from_session` reads `transport` from old RunMeta.
-3. Record the reservation so a future contributor cannot re-take `acp-*` for a non-ACP transport.
-4. Add a glossary term distinguishing ACP, MCP, and orgasmic's transport modes.
-
-Acceptance:
-- no identifier, mode value, doc comment or protocol_version calls a non-ACP transport "acp"
-- pre-rename session records still classify and still resolve to their native transcripts
-- `acp-stdio` and `acp-ws` are unused and documented as reserved
-
 * IN_PROGRESS TASK-RQ270.1 Stage A — stop producing: retire the architect endpoints, verbs and prompt spec :daemon:cli:shipped:
 :PROPERTIES:
 :ID: TASK-RQ270.1
