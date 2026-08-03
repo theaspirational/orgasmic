@@ -2192,6 +2192,41 @@ section.
 :WRITE_SCOPE: crates/orgasmic-cli/**, crates/orgasmic-daemon/**
 :END:
 
+SECOND HYPOTHESIS, and it implicates the MANAGER rather than the workers. Added
+before the evidence is in, so the record is not shaped by which answer turns out
+to be more comfortable.
+
+Both incidents happened while a manager MONITOR was polling =orgasmic status= and
+=orgasmic manager dispatch-status= every 90 seconds. There is a documented
+behaviour — the memory =orgasmic-runtime-reinstall=, and =install.sh='s trailing
+=orgasmic status= — that =orgasmic status= AUTO-SPAWNS a daemon when it does not
+find a reachable one. An auto-spawn writes the LaunchAgent, and that would
+produce exactly the measured signature: plist mtime equal to the restart instant,
+no shutdown lines in the log, and =launchctl runs = 1= because the job was freshly
+loaded rather than restarted by KeepAlive.
+
+Under this reading the causal chain inverts. Something makes the daemon briefly
+unreachable — a slow request, a drain, load — the polling =status= call misses it,
+auto-spawns, and the spawn restarts the daemon and kills every live run. The
+workers are victims rather than the cause, and the manager's own monitoring is
+the trigger.
+
+THE TWO HYPOTHESES ARE DISTINGUISHABLE, AND THE EXPERIMENT IS RUNNING. As of
+=00:16Z= no workers are dispatched, and a watcher samples boot_id and plist mtime
+every 75 seconds — polling =orgasmic status= at the same cadence that was live
+during both incidents, with the workers removed.
+
+- Daemon restarts during that watch => the workers are exonerated and the polling
+  path, or something else ambient, is the trigger.
+- Daemon stays stable across a window longer than the ~9 minute incident interval
+  => polling alone is not sufficient, and the worker hypothesis stands.
+
+WHICHEVER WAY IT LANDS, ONE FIX IS COMMON TO BOTH and should be built regardless:
+no routine, read-only status call should ever be able to start a daemon as a side
+effect. A read that mutates the LaunchAgent is a trap for every caller, not only
+this one, and it is the same defect shape as the =install.sh= trailing-status
+trap already recorded in the runtime-reinstall memory.
+
 ** Description
 
 INFERENCE, LABELLED AS SUCH — the evidence is strong and circumstantial, and no
