@@ -2226,6 +2226,34 @@ no routine, read-only status call should ever be able to start a daemon as a sid
 effect. A read that mutates the LaunchAgent is a trap for every caller, not only
 this one, and it is the same defect shape as the =install.sh= trailing-status
 trap already recorded in the runtime-reinstall memory.
+EXPERIMENT RESULT [2026-08-03 00:26Z] — the second hypothesis is REFUTED as a
+sole cause, and the first stands.
+
+Ten consecutive minutes of stability, =03:16:33= to =03:26:33= local, sampling
+=boot_id= and the LaunchAgent plist mtime every 75 seconds with NO workers
+dispatched. Every sample identical: boot =2f2fcd57=, plist mtime =1785715985=.
+
+That watch polled =orgasmic status= at essentially the cadence that was live
+during both incidents (90s then, 75s here) and ran LONGER than the ~9 minute
+interval between them. So polling =orgasmic status= does not, by itself, restart
+the daemon. The managers monitoring is exonerated as a sole cause.
+
+What survives: A DISPATCHED WORKER IS A NECESSARY INGREDIENT. That is consistent
+with the primary hypothesis — a worker invoking a daemon lifecycle verb, which
+rewrites the one real LaunchAgent regardless of =ORGASMIC_HOME= — and it is now
+the only reading still standing.
+
+Not yet distinguished, and worth naming rather than glossing: whether the trigger
+is the WORKERS OWN command, or something the daemon does on the dispatch path
+(spawning a mux, writing a run record) that briefly makes it unreachable to a
+concurrent caller which then spawns. The next dispatch is deliberately a
+READ-ONLY reviewer carrying an explicit prohibition on daemon lifecycle verbs and
+no render-check instruction at all: if it survives, the worker-command reading is
+supported; if it dies, the dispatch PATH is implicated rather than anything the
+worker chose to run.
+
+Still worth building either way, unchanged: a routine read-only status call must
+never be able to start a daemon as a side effect.
 
 ** Description
 

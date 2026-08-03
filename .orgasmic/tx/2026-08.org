@@ -4004,3 +4004,68 @@
 :REASON:       edited task node TASK-48SFW
 :NODE_ID:      TASK-48SFW
 :END:
+
+* TX 2026-08-03 Mon 00:27:02 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4270
+:TIME:         [2026-08-03 Mon 00:27:02]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
+
+* TX 2026-08-03 Mon 00:27:18 manager.dispatch_started TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4271
+:TIME:         [2026-08-03 Mon 00:27:18]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRANCH:       task-fzb6t-review-r3c
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:STARTED_AT:   [2026-08-03 Mon 00:27:18]
+:LIVENESS:     d7be0da0ea26e816cf7f6a9f68a64ca833f1c2ac
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Fourth attempt at this review; the previous three died to infrastructure, not to anything in the code. Dispatched ALONE and read-only, carrying an explicit prohibition on daemon lifecycle verbs, as the discriminating experiment for TASK-48SFW: if a lone read-only worker with no render-check instruction survives, the trigger was a worker-invoked command rather than the dispatch path itself.
+:END:
+
+* TX 2026-08-03 Mon 00:27:18 run.created TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4272
+:TIME:         [2026-08-03 Mon 00:27:18]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T-reviewer-20260803T002718.jsonl
+:REASON:       Fourth attempt at this review; the previous three died to infrastructure, not to anything in the code. Dispatched ALONE and read-only, carrying an explicit prohibition on daemon lifecycle verbs, as the discriminating experiment for TASK-48SFW: if a lone read-only worker with no render-check instruction survives, the trigger was a worker-invoked command rather than the dispatch path itself.
+:RUN_ID:       run-20260803T002718-a4d9c25fc5bf41138f0e83a44c1ecaff
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-d21693488d2a4b8fa214c2bebb1e1607-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-d21693488d2a4b8fa214c2bebb1e1607-stdout.log
+:DISPATCH_ATTEMPT: d21693488d2a4b8fa214c2bebb1e1607
+:DISPATCH_TX:  tx-20260803-orgasmic-4271
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
