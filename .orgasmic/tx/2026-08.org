@@ -5770,3 +5770,178 @@
 :REASON:       edited task node TASK-48SFW
 :NODE_ID:      TASK-48SFW
 :END:
+
+* TX 2026-08-03 Mon 04:41:06 task.edited TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4371
+:TIME:         [2026-08-03 Mon 04:41:06]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-3X5AQ
+:NODE_ID:      TASK-3X5AQ
+:END:
+
+* TX 2026-08-03 Mon 04:41:34 task.edited TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4372
+:TIME:         [2026-08-03 Mon 04:41:34]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-3X5AQ
+:NODE_ID:      TASK-3X5AQ
+:END:
+
+* TX 2026-08-03 Mon 04:41:42 task.property_updated TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4373
+:TIME:         [2026-08-03 Mon 04:41:42]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       a recorded decision on this task is measurably unsound; implementing it as written would green a worker's suite against another checkout's binary
+:PRIORITY:     P1
+:END:
+
+* TX 2026-08-03 Mon 04:41:55 task.edited TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4374
+:TIME:         [2026-08-03 Mon 04:41:55]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-3X5AQ
+:NODE_ID:      TASK-3X5AQ
+:END:
+
+* TX 2026-08-03 Mon 04:43:18 task.state_transitioned TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4375
+:TIME:         [2026-08-03 Mon 04:43:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-XCJYC to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 04:43:19 manager.dispatch_started TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4376
+:TIME:         [2026-08-03 Mon 04:43:19]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-xcjyc/worktree
+:BRANCH:       task-xcjyc-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-xcjyc/brief-xcjyc.md
+:STARTED_AT:   [2026-08-03 Mon 04:43:19]
+:LIVENESS:     db40c9721bf9c094e5dedea5d29c34a31bf37952
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: board is quiet, which this cutover explicitly wants; decision recorded 2026-07-25, acceptance is testable
+:END:
+
+* TX 2026-08-03 Mon 04:43:19 run.created TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4377
+:TIME:         [2026-08-03 Mon 04:43:19]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-XCJYC-implementer-20260803T044319.jsonl
+:REASON:       board is quiet, which this cutover explicitly wants; decision recorded 2026-07-25, acceptance is testable
+:RUN_ID:       run-20260803T044319-186f4c1ee6d446698e0f4ac485affca2
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-xcjyc/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-xcjyc/brief-xcjyc.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-xcjyc/brief-xcjyc-3fe82062db3f4105adefd2c124d14592-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-xcjyc/brief-xcjyc-3fe82062db3f4105adefd2c124d14592-stdout.log
+:DISPATCH_ATTEMPT: 3fe82062db3f4105adefd2c124d14592
+:DISPATCH_TX:  tx-20260803-orgasmic-4376
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-03 Mon 04:47:19 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4378
+:TIME:         [2026-08-03 Mon 04:47:19]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_HBK6A
+:NODE_ID:      dec_HBK6A
+:END:
+
+* TX 2026-08-03 Mon 04:47:58 task.created TASK-RQ270
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4379
+:TIME:         [2026-08-03 Mon 04:47:58]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator gave the go on TASK-XYYBT's GO recommendation; dec_HBK6A records the ruling
+:END:
+
+* TX 2026-08-03 Mon 04:48:19 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4380
+:TIME:         [2026-08-03 Mon 04:48:19]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-03 Mon 04:48:30 task.edited TASK-XYYBT
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4381
+:TIME:         [2026-08-03 Mon 04:48:30]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XYYBT
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-XYYBT
+:NODE_ID:      TASK-XYYBT
+:END:

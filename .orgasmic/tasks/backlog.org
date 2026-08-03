@@ -2579,12 +2579,21 @@ is materially different from boot auto-reattach or a polled inventory offering a
 candidate. That is why this is P2 and was correctly kept out of the blocking
 round.
 
-* BACKLOG TASK-3X5AQ Every dispatch worktree that builds the CLI triggers a fresh macOS Documents prompt and leaves a dead TCC row    :dispatch:runtime:macos:
+* BACKLOG TASK-3X5AQ Dispatch worktree builds prompt for Documents and leave dead TCC rows — chosen shared-target-dir fix is measurably unsound, needs a new decision    :dispatch:runtime:macos:
 :PROPERTIES:
 :ID: TASK-3X5AQ
-:PRIORITY: P2
+:PRIORITY: P1
 :WRITE_SCOPE: crates/orgasmic-daemon/**, crates/orgasmic-cli/**, shipped/**
 :END:
+
+=== READ THIS FIRST — STATUS ===
+The DECISION recorded below (option 2, shared =CARGO_TARGET_DIR=) was DISPROVED
+by measurement later the same day. DO NOT IMPLEMENT IT. See the section
+"Disproof of the shared target dir (2026-08-03)" at the end of this task: a
+shared target dir makes a worker's =cargo build= a silent no-op and greens its
+integration suite against another checkout's binary. This task needs a NEW
+decision; option 5 (stable worktree slots) is the recommendation.
+=== END STATUS ===
 
 DECISION [2026-08-03]: take option 2, the shared =CARGO_TARGET_DIR=. The
 operator chose it after the cost of option 1 was measured (it disables the whole
@@ -2634,6 +2643,33 @@ IMPLEMENTATION NOTE: the daemon composes the worker environment, so
 prose instruction is skippable and this needs to hold for every dispatch. Point
 it at the repo-root =target/=, which already holds the TCC grant; that is what
 makes the prompts stop.
+
+macOS TCC keys Documents-folder access by BINARY PATH. Every dispatch worktree
+lives at a fresh path under
+=~/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/<task>/worktree/=, so a
+worker that builds =target/debug/orgasmic= there produces a program macOS has
+never seen. It prompts the operator, and the grant it earns dies with the
+worktree.
+
+*Measured 2026-08-03.* The user TCC db has five
+=kTCCServiceSystemPolicyDocumentsFolder= rows under =dispatch/*/worktree=, and
+ALL FIVE point at worktrees that no longer exist:
+
+: .../dispatch/task-vegrv/worktree/target/debug/orgasmic    granted 03:41:23, worktree GONE
+: .../dispatch/task-2dftx/worktree/target/release/orgasmic  GONE
+: .../dispatch/task-CZTWD/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-Y2ZQJ/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-jj9rd/worktree/target/debug/orgasmic    GONE
+
+So the prompt is not a grant that failed to stick. It is a NEW grant request per
+dispatch, for a path created and destroyed within the hour, and approving it does
+nothing for the next worker.
+
+*NOT the runtime reinstall.* Checked at the same time and stated here because the
+coincidence is misleading: =~/.orgasmic/bin/orgasmic= holds
+=kTCCServiceSystemPolicyAllFiles= = 2, last modified 2026-08-02 18:35:46 — BEFORE
+the 2026-08-03 reinstall — with zero permission errors and all 6 projects
+indexed. The codesign preserved TCC exactly as intended.
 
 ** Description
 
@@ -2711,3 +2747,167 @@ deliberately.
   CHANGING the CLI — that is the case where the tests matter most.
 - Existing dead worktree rows in the TCC db are documented as safe to remove (it
   is SIP-protected, so removal is operator-only through Settings).
+** Disproof of the shared target dir (2026-08-03)
+STOP — THE 2026-08-03 DECISION IS DISPROVED. Do NOT implement the shared
+=CARGO_TARGET_DIR=. It is not merely contended, it is UNSOUND: a dispatch
+worker's =cargo build= becomes a silent no-op and its integration suite greens
+against a DIFFERENT checkout's binary.
+
+*Reproduced 2026-08-03 in the exact production shape* — a git worktree of a
+cargo workspace, both pointed at the repo-root target dir (cargo 1.94.1):
+
+: repo root:        main.rs prints MAIN_BRANCH   -> cargo build -> target/debug/probe-cli = MAIN_BRANCH
+: git worktree A:   main.rs prints TASK_A_BRANCH -> cargo build -> "Fresh probe-cli", NO compile
+:                   target/debug/probe-cli still = MAIN_BRANCH
+:                   cargo test in worktree A: 1 passed, BIN_SAYS=MAIN_BRANCH
+
+The worker edited a source file, built, and tested. Nothing errored. The suite
+was green. It ran the MANAGER's binary.
+
+*Mechanism, and why the earlier lock measurement missed it.* The file lock is
+real and does serialize concurrent builds — that measurement was correct and is
+not what fails. What fails is freshness. Cargo's =-C metadata= hash for a path
+package does not include the checkout path, so BOTH checkouts share ONE
+fingerprint directory (=target/debug/.fingerprint/probe-cli-<hash>=, verified: a
+single dir, not one per worktree). Freshness is then decided by comparing the
+mtimes of the files recorded in the OTHER checkout's dep-info. The worker's own
+edited file is not in that list, so nothing looks stale and cargo reports
+=Fresh=. The stale uplifted binary at =target/<profile>/<name>= is what
+=CARGO_BIN_EXE_*= resolves to, so every integration test inherits it.
+
+It is also NOT ordering-dependent: after making worktree B's file genuinely
+dirty and rebuilding, rebuilding worktree A reported =Fresh= and left B's binary
+in place. Either checkout can silently receive the other's program.
+
+*Why this outweighs the problem it was chosen to solve.* The TCC prompt costs
+the operator a click and leaves a dead db row; no run has ever failed on it.
+This trades that for a class of false green — and this session already lost real
+work to two of those (a re-cut =orgasmic verify= artifact that never reached its
+assertions, and a shipped artifact that became a false green when a fix made its
+defect unreproducible). The whole point of the gate is that green means
+something. Sharing a target dir across checkouts makes green mean nothing, in a
+way no test on this repo would detect.
+
+*Option 5, which satisfies BOTH constraints — the recommendation.* The tension
+is: TCC needs the EXECUTED BINARY PATH to be stable across dispatches, while
+cargo needs ONE checkout path per target dir. A fixed pool of stable worktree
+slots gives both:
+
+: .orgasmic/tmp/dispatch/slot-1/worktree  (own target/)
+: .orgasmic/tmp/dispatch/slot-2/worktree  (own target/)   ... N slots
+
+A slot's binary path never changes, so the operator grants it ONCE and the grant
+survives — the prompt stops for good and the TCC db stops filling with dead
+rows. Each slot keeps its own target dir with exactly one checkout path in it,
+so cargo's freshness logic is the ordinary, sound, single-checkout case. Two
+concurrent workers never share a slot, so there is no lock contention and no
+flag thrashing either. Disk is bounded at N targets instead of unbounded, which
+is strictly better than today.
+
+Cost: the dispatch directory is named by slot rather than by task, so the
+task->worktree mapping has to be read from the dispatch record instead of the
+path. Several gotchas and briefs name task-shaped worktree paths and would need
+updating, and slot release has to be part of worktree teardown.
+
+*Reopened for a decision.* The operator picked option 2 on 2026-08-03 with the
+lock measurement in hand and without this one; that choice should not be
+executed as recorded. Options 1 and 3 stand as previously described. Option 5 is
+the recommendation.
+
+* BACKLOG TASK-RQ270 Excise the architecture layer from orgasmic and the UI (dec_HBK6A, staged A-E)    :daemon:cli:ui:shipped:
+:PROPERTIES:
+:ID: TASK-RQ270
+:MOTIVATED_BY: dec_HBK6A
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,ui/**,shipped/**,.orgasmic/**
+:END:
+
+** Description
+Execute the excision decided in dec_HBK6A. The measuring is already done — do
+NOT re-derive it. TASK-XYYBT produced =archive/TASK-XYYBT-architecture-excision-estimate.md=
+(merged 84892aa), which carries the inventory actuals, answers to seven scoping
+questions, the coupling map, and the staged plan with per-stage LOC and round
+estimates. Read that report before touching anything; this task is the go.
+
+Operator gate: PASSED [2026-08-03]. The report's own framing left excision
+"not started; awaiting operator go/no-go". The operator gave the go, naming both
+halves explicitly: remove it from orgasmic AND from the UI.
+
+** The five stages, in order
+Each lands independently with suites green and no dead routes. Expect one
+implementer dispatch per stage; mint =TASK-<this>.N= subtasks per round the way
+the FZB6T chain did.
+
+A. STOP PRODUCING (~-450 LOC, ~14 files, reversible, 1 round)
+   Retire =POST /architect=, =stage_spec("architect")=, =orgasmic architect=,
+   the =architecture create= verb and its POST routes, and
+   =DispatchEndpointKind::Architector=. Delete the architector prompt spec, its
+   context pack, and the decomposition convention. KEEP "architector" PARSEABLE
+   for ledger history.
+
+B. RETIRE DRIFT AND THE =// arch:= BACK-EDGES (~-550 LOC, ~75 files, 1 round)
+   Delete =crates/orgasmic-cli/src/architecture_drift.rs= (457 LOC, arch-only
+   end to end) and the =Drift= verb; strip the 73 legacy =// arch:= lines. Can
+   fold into A.
+
+C. REMOVE READ MODEL, CLI READS AND UI (~-1,500 LOC, ~30 files, 1-2 rounds)
+   =GET /architecture*=, the index projections and =load_architecture=,
+   =architecture {list,get,schema}=, the =node.rs= arms, =schema_examples.rs=.
+   UI: =ArchitectureView.tsx= (273 LOC), the NodeModal arch views, router/nav
+   entries, =descriptor.ts=, api/types, capabilities — 14 files.
+   *** ALSO LANDS THE LINT CARVE-OUT, and this is the ordering constraint that
+   matters: =done.org='s 231 =:IMPLEMENTS: arch= tokens become dangling graph
+   edges (=index.rs:729= -> =1188= -> lint at =1256=). Drop =arch_= from the
+   structured prefix lists (~4 lines + 2 test updates). This MUST be on main
+   BEFORE stage D deletes the file.
+
+D. RETIRE THE NODE CLASS AND THE FILE (~-800 LOC, ~15 files + state, 1-2 rounds)
+   =ArchitectureNode= / =parse_arch_edges= (=schema.rs:361-660=),
+   =NodeIdClass::Architecture= + =is_arch_id= (=id.rs=), the identity-lint arch
+   collectors, the =node_kind= variant, and full =WorkerKind::Architector=
+   removal WITH a legacy-ledger parse fallback. State edits go through daemon
+   verbs or git, never by hand: delete =.orgasmic/architecture.org=, repoint the
+   two live task drawers (below), optionally the 4 glossary =:PRIMARY_LEAF:=
+   refs, and the conventions/decision-graph wording.
+
+E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
+   =router.org=, =SKILL.md=, =recall-resume.md=, =init.md=, =tx.org=
+   (architector rows become a historical note), the manager/planner/griller/
+   base/general/implementer specs, =conventions.org=, =manager-dispatch.org=,
+   and the project-scaffold seeds. Foldable into A+D.
+
+** What must NOT be removed — the coupling map
+- *The shared graph substrate stays.* =GraphLayer= / =NodeLayer= / =NodeKind= /
+  =NodeIdClass= and the create/mutate/lint plumbing serve decisions and glossary
+  too. Excision removes VARIANTS AND THEIR MATCH ARMS, never the enum
+  machinery, =read_or_seed_graph_file=, writer authority, tx append, or the org
+  substrate. =org.rs='s 33 =arch_= hits are sample ids in its own tests, not
+  coupling; likewise =session.rs='s 8 prose comments.
+- *The generic marker scanner stays* (=marker.rs=, =scan_project_markers=,
+  =/graph/markers=) — it serves dec_/TASK-/term markers. Only the arch-specific
+  drift comparator goes.
+- *=GraphEdgeSummary= and task =implements= edges stay.* =:IMPLEMENTS:= remains
+  a legal task drawer key; only the LINT's arch-prefix handling changes.
+- *History parse paths stay untouched*: tx TYPE is free-string (=tx.rs:432=), so
+  history parses forever; done.org indexing is unchanged.
+- *Enum-variant retirement is ordered.* =WorkerKind::Architector= and the
+  dispatch-kind strings are parsed from persisted ledger records
+  (=manager.rs:3805-3817= maps historical "architector" rows). This is THE ONE
+  PLACE naive deletion breaks history.
+
+** Live fallout, already enumerated
+- TASK-CQM2X and TASK-VBSG2 carry =:IMPLEMENTS: arch_RN73Z= (=backlog.org:38,:54=);
+  repoint to =:MOTIVATED_BY: dec_PC6T2 dec_WDR5K=.
+- 4 glossary =:PRIMARY_LEAF:= refs are unvalidated and inert.
+- Load-bearing content: fold ~3 nodes, drop ~23, park 0.
+
+** Acceptance
+- No route, verb, worker kind, node class, UI surface or shipped instruction
+  offers the architecture layer.
+- Historical =arch_= references in tx, =done.org= and =decisions.org= still
+  parse and still resolve; the dangling-edge lint does not fire on them.
+- A dispatch ledger row recorded as "architector" still parses after stage D.
+- =.orgasmic/architecture.org= is gone and nothing reads it.
+- =cli_parity= passes — it resolves every =orgasmic ...= invocation and named
+  flag in =shipped/= against the real binary, so it is what catches a doctrine
+  rewrite that names a verb the excision just deleted.

@@ -18982,6 +18982,16 @@ Do not remove anything. Do not edit architecture.org. Do not rewrite tx or done.
 - Live fallout: exactly TASK-CQM2X + TASK-VBSG2 (:IMPLEMENTS: arch_RN73Z, backlog.org:38,:54) -> repoint to :MOTIVATED_BY: dec_PC6T2 dec_WDR5K; 4 glossary :PRIMARY_LEAF: refs are unvalidated/inert.
 - Plan: 5 stages (A stop-producing / B drift / C read+CLI+UI / D node class+file / E shipped doctrine), ~-3.5k..-4.5k LOC, ~90-110 files, 4-6 dispatch rounds; precedent TASK-M6146 (-2997/+43, 1 round) says each stage is one-round-sized. A/B/E (~1150 LOC) are cheap and valuable even under NO-GO. WorkerKind::Architector needs a legacy-ledger parse fallback (manager.rs:3805) — the one naive-deletion trap. Lint carve-out (C) must land before D.
 - RECOMMENDATION: GO. Decision draft ready in the archived report §6. OPERATOR GATE: excision stages not started; awaiting operator go/no-go per the task's own framing.
+** Gate outcome
+OPERATOR GATE PASSED [2026-08-03]. This exploration's GO recommendation was
+accepted. The ruling is recorded as dec_HBK6A and the work is TASK-RQ270, which
+carries the staged A-E plan and the coupling map lifted from this report. The
+report itself remains the authority on the numbers:
+=archive/TASK-XYYBT-architecture-excision-estimate.md= (merged 84892aa).
+
+Nothing in this task should be re-derived. If TASK-RQ270's implementer finds a
+measurement here that no longer holds, that is a finding to record on RQ270, not
+a reason to re-run the inventory.
 
 * DONE TASK-95SGV.1 Fix reviewer findings: cleanup reservation release and dispatch diagnostics
 :PROPERTIES:

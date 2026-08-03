@@ -348,34 +348,55 @@ broke the pattern.
     letting it sit in IN_PROGRESS claiming to be underway.
 
 ** In flight
-NOTHING RUNNING. =dispatch-status= is empty, =git worktree list= shows only the
-repo root, and no harness or mux process is alive. The runtime rebuild was done
-in that window deliberately, because a daemon restart cycles rmux and kills every
-live dispatch.
+ONE DISPATCH RUNNING: TASK-XCJYC implementer, =run-20260803T044319-186f4c1ee6d446698e0f4ac485affca2=,
+tx =tx-20260803-orgasmic-4376=, worker =implementer-claude-tmux=, driver tmux,
+harness claude, model =claude-opus-5=, effort high, branch =task-xcjyc-impl= from
+=db40c97=. Brief =.orgasmic/tmp/brief-xcjyc.md=. Started [2026-08-03 Mon 04:43].
+It is the acp-* rename cutover; it was dispatched because the board finally went
+quiet, which that task explicitly asks for.
+
+THE PANE-LIVENESS CHANNEL IS CONFIRMED LIVE IN PRODUCTION — this closes the open
+question the rebuild left. The previous handoff said TASK-4CSMY's tmux channel
+was PRESENT BUT NOT YET EXERCISED, and told a successor to keep
+=--governance-json {"stall_timeout_secs":3600}= on long tmux dispatches until
+someone watched a real run. Measured on this run: the session stream carries
+=driver_event= entries of =type: "pane_activity"= with byte counts (35069, then
+12114) within the first minutes. Verified as real events, not a substring match
+in =driver_config= — an earlier grep on this same file produced exactly that
+false positive, so read =event.type=, never the serialized line.
+
+SO THE OVERRIDE CAN NOW BE RETIRED DELIBERATELY for tmux dispatches. It is still
+set on the run above, which is conservative and fine; the next tmux dispatch does
+not need it. Source-confirmed while checking: =PaneActivity= is deliberately
+=false= in =driver_event_counts_as_work= and =true= in
+=driver_event_advances_stall_clock= — a TUI paints its banner even when wedged,
+so pane bytes are not proof the WORKER worked, but they are proof the run is not
+frozen, and they are the ONLY stall input an rmux run has. The split is
+documented at =supervisor.rs:5563-5612=; do not "fix" it.
 
 THE BOARD
 - IN_REVIEW: empty.
-- IN_PROGRESS (2): TASK-TJKFC (P1, partial implementation, no worker, predates
-  this session — decide whether to finish it or move it back to todo rather than
-  letting it claim to be underway) and TASK-STWVB (P2, the flake work, re-framed
-  this session around the isolation control).
-- TODO (2): TASK-8ED6V (P1, retired-content residue — its named instance is
-  already gone, see the state check on the task; the general defect stands) and
-  TASK-XCJYC (rename non-ACP transports; a wide rename across drivers, daemon and
-  cli, so it wants a quiet board).
-- BACKLOG gained thirteen filings this session, all from what the work uncovered
-  rather than from planning.
-
-DONE THIS SESSION (23): TASK-JQ8AV + .1, TASK-4CSMY + .1 + .2, TASK-FZB6T + .1
-through .5, TASK-YGB1R, TASK-TW3N3, TASK-4YX1K, TASK-0JY7M, TASK-3CM0Q,
-TASK-VEGRV, and the runtime rebuild itself. TASK-15MJN and TASK-XHP43 cancelled
-as redundant.
+- IN_PROGRESS (2): TASK-XCJYC (now dispatched, above) and TASK-STWVB (P2, the
+  flake work, re-framed around the isolation control; no worker).
+- TODO: empty.
+- BACKLOG: 84. TASK-3X5AQ was raised to P1 because a decision recorded ON it is
+  measurably unsound — see Divergence / Risks. TASK-RQ270 (P1) is new and large:
+  the architecture-layer excision, decided in dec_HBK6A [2026-08-03] after the
+  operator passed TASK-XYYBT's gate. It is five staged rounds (A stop-producing,
+  B drift, C read model + CLI + UI, D node class + the file, E shipped doctrine),
+  ~-3.5k to -4.5k LOC. The measuring is DONE — the report is
+  =archive/TASK-XYYBT-architecture-excision-estimate.md= (merged 84892aa) and the
+  task carries the coupling map; do not re-derive any of it. ONE ORDERING
+  CONSTRAINT IS LOAD-BEARING: the dangling-edge lint carve-out lands in stage C
+  and must be on main BEFORE stage D deletes =architecture.org=, or done.org's
+  231 =:IMPLEMENTS: arch= tokens start failing the lint.
 
 EVERY BRIEF from this session is preserved under =.orgasmic/tmp/=. The ones worth
 copying rather than rewriting are =brief-fzb6t5-fix.md= (how to constrain a fix
-round that keeps growing its own surface) and =brief-vegrv-continue.md= (how to
+round that keeps growing its own surface), =brief-vegrv-continue.md= (how to
 state the ORGASMIC_HOME prohibition alongside a task that needs the thing it
-forbids).
+forbids), and =brief-xcjyc.md= (how to hand over a cutover whose old names are
+persisted in history).
 
 ** Divergence / Risks
 THE RUNTIME IS NOW CURRENT — this reverses the standing advice that held for most
