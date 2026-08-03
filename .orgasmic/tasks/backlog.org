@@ -2912,3 +2912,57 @@ E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
   flag in =shipped/= against the real binary, so it is what catches a doctrine
   rewrite that names a verb the excision just deleted.
 
+* BACKLOG TASK-YN5FJ.1 fix-subtask: the review gate's refusal names a remedy that does not satisfy it — promote VERDICT to a real flag    :cli:manager:
+:PROPERTIES:
+:ID: TASK-YN5FJ.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:END:
+
+** Description
+From the TASK-YN5FJ manager review, section "Manager review and verdict".
+CONFIRMED against production, not reasoned.
+
+The default-branch gate requires a =reviewer.done= carrying a non-empty
+=VERDICT=. =VERDICT= has NO FLAG — it is settable only through the generic
+=--property VERDICT=...=, and it was previously optional, read by
+=reviewer_done_stage= only to choose the task's next stage (=.unwrap_or(false)=).
+
+So the refusal text — "Dispatch and close a reviewer for that reported
+generation, or re-run with --no-review-required --reason <why>" — names a first
+branch that DOES NOT WORK. Follow it exactly and you are refused again with the
+same message.
+
+*Production evidence.* =tx-20260803-orgasmic-4401=, the =reviewer.done= this
+manager wrote for TASK-XCJYC, carries =REASON=, =REVIEWED_DIFF=, =CLOSED_TX=,
+=MODEL=, =EFFORT= and lifecycle properties and NO =VERDICT=. It is an ordinary,
+correctly-formed reviewer close that the new gate rejects. Every historical
+reviewer close is the same shape.
+
+** Fix
+1. Add a first-class =--verdict= flag to =dispatch-close= for reviewer closes,
+   so the value the gate depends on is a documented part of the surface rather
+   than an incantation through =--property=. Keep accepting the existing
+   =--property VERDICT= spelling so nothing already written breaks.
+2. Consider a typed value set (approve / approve-with-follow-ups / reject)
+   rather than free text. This also answers the implementer's own declared
+   residual risk that any non-empty verdict — including a negative one —
+   currently satisfies "a verdict exists". Decide deliberately whether a REJECT
+   should unlock a default-branch merge; there is a real argument either way
+   (a REJECT the manager then resolved is exactly what happened on TASK-XCJYC),
+   so state the reasoning rather than picking silently.
+3. Name the verdict requirement IN the refusal text, so the remedy is
+   self-contained.
+
+** Ordering
+Land this BEFORE any runtime reinstall. The gate is not live until the runtime
+is rebuilt, so there is no live breakage today — but the first reinstall after
+TASK-YN5FJ without this fix hands the operator a refusal they cannot clear
+except by =--no-review-required=, which defeats the feature.
+
+** Acceptance
+- A reviewer close can record its verdict through a documented flag.
+- Following the refusal's stated remedy actually clears the refusal — pin this
+  with a test that walks the full loop: refuse, follow the remedy verbatim,
+  succeed.
+- Existing =--property VERDICT= closes still work.
