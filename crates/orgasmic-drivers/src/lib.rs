@@ -29,13 +29,13 @@ pub use catalog::{
     HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
 pub use modes::rmux::{probe_rmux_binary, RmuxBinaryProbe};
-pub use modes::{StdioDriver, WsDriver, RmuxDriver, SubprocessStreamJsonDriver, TmuxDriver};
+pub use modes::{RmuxDriver, StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver};
 pub use r#trait::{
-    build_babysitter_request, implementer_tool_is_allowed, WsProtocol, AttachOutcome, Attached,
-    BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
-    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta,
-    Preflight, PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest,
-    UserInputAck, UserInputRequest, WireMessage, WorkerDriver,
+    build_babysitter_request, implementer_tool_is_allowed, AttachOutcome, Attached, BabysitterAck,
+    BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError, DriverSession,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight,
+    PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
+    UserInputRequest, WireMessage, WorkerDriver, WsProtocol,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
@@ -62,13 +62,7 @@ pub const TRANSPORTS: &[&str] = &[
 /// `rmux` is a **bounded smoke** mode (TASK-104), not a production replacement
 /// for `tmux`. It is registered so the driver-catalog can surface it with its
 /// own (separately checked) `rmux` binary requirement.
-pub const MODES: &[&str] = &[
-    "subprocess-stream-json",
-    "stdio",
-    "ws",
-    "tmux",
-    "rmux",
-];
+pub const MODES: &[&str] = &["subprocess-stream-json", "stdio", "ws", "tmux", "rmux"];
 
 // orgasmic:TASK-XCJYC, term:acp
 /// Mode ids reserved for the **Agent Client Protocol** and unusable for
@@ -297,7 +291,12 @@ macro_rules! legacy_driver {
     };
 }
 
-legacy_driver!(ClaudeStreamJsonDriver, "claude-stream-json", "stdio", "claude");
+legacy_driver!(
+    ClaudeStreamJsonDriver,
+    "claude-stream-json",
+    "stdio",
+    "claude"
+);
 legacy_driver!(CodexAppserverDriver, "codex-appserver", "ws", "codex");
 legacy_driver!(CursorAcpDriver, "cursor-acp", "stdio", "cursor-agent");
 legacy_driver!(

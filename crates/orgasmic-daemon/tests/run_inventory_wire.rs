@@ -451,8 +451,7 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
             .released(ReleaseOutcome::Completed)
             .transcript_bytes(HUGE_TRANSCRIPT_BYTES),
         // Failed tombstone: immutable, recoverable, never attach-probed.
-        SessionFixture::new("run-failed", "stdio", Some("claude"))
-            .released(ReleaseOutcome::Failed),
+        SessionFixture::new("run-failed", "stdio", Some("claude")).released(ReleaseOutcome::Failed),
         // Non-terminal on a transport with no reattachable handle.
         SessionFixture::new("run-interrupted", "stdio", Some("claude")),
         // Non-terminal whose recorded worktree is gone.

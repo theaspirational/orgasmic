@@ -264,13 +264,13 @@ mod tests {
             tmux_row.contains(TransportInteraction::TerminalPane.as_str()),
             "tmux row must name the pane transport: {tmux_row}"
         );
-        let acp_row = text
+        let stdio_row = text
             .lines()
             .find(|line| line.starts_with("stdio "))
             .expect("stdio row present");
         assert!(
-            acp_row.contains(TransportInteraction::Unattended.as_str()),
-            "stdio row must name the unattended transport: {acp_row}"
+            stdio_row.contains(TransportInteraction::Unattended.as_str()),
+            "stdio row must name the unattended transport: {stdio_row}"
         );
         assert!(text.contains(TransportInteraction::TerminalPane.describe()));
         assert!(text.contains(TransportInteraction::Unattended.describe()));

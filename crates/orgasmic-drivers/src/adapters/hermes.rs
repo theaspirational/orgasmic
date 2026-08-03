@@ -17,9 +17,9 @@ use tokio::time::timeout;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::r#trait::{
-    WsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn,
-    TransitionRequest, UserInputRequest, WireMessage,
+    BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn, TransitionRequest, UserInputRequest,
+    WireMessage, WsProtocol,
 };
 use crate::runtime_options::{
     dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest,

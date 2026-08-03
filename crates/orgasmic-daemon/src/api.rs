@@ -3462,7 +3462,7 @@ pub struct ManagerDriverProfile {
     pub harness: String,
     pub binary: String,
     pub display_name: String,
-    /// Standalone transport label, e.g. "tmux" / "acp" — for grouping the UI by mode.
+    /// Standalone transport label, e.g. "tmux" / "stdio" — for grouping the UI by mode.
     pub mode_label: String,
     /// Standalone provider label, e.g. "Claude" / "Codex" — the leaf choice within a mode.
     pub harness_label: String,
@@ -6407,7 +6407,7 @@ fn is_timeout_release_reason(reason: &str) -> bool {
 
 /// Release reasons that mean the run ended without `orgasmic dispatch
 /// finalize` and must be flagged orphan (never scraped into a fake done
-/// report). Timeouts plus ACP/subprocess protocol-end without finalize
+/// report). Timeouts plus structured-transport protocol-end without finalize
 /// (TASK-P4MGK / dec_WDR5K): TUI EOT (`driver terminal event`) stays a
 /// scrape fallback until TASK-AFE5Q.
 #[cfg(test)]
@@ -6576,7 +6576,7 @@ fn dispatch_terminal_reached(envelopes: &[SessionEnvelope]) -> bool {
         })
 }
 
-/// Bare status markers the codex ACP adapter fabricated before TASK-YHA6V
+/// Bare status markers the codex app-server adapter fabricated before TASK-YHA6V
 /// ("codex turn completed", "thread closed"). Sessions recorded by the old
 /// adapter still carry them; they must never shadow the worker's real report.
 fn is_generic_completion_marker(summary: &str) -> bool {
@@ -11356,6 +11356,19 @@ fn start_current_boot_attach_probe(
         });
     };
     let Some((driver, driver_id)) = session_driver(home, envelopes, &meta) else {
+        // orgasmic:TASK-XCJYC — a run that recorded a real address the current
+        // registry cannot build (a mode renamed since it ran) still proved one
+        // thing about itself: reattach is a pane-transport capability, and this
+        // is not a pane transport. `ambiguous` here would demote records that
+        // never became less legible, only less current.
+        if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
+            if !crate::run_catalog::transport_is_pane(&mode) {
+                return AttachProbeStart::Ready(AttachClassification {
+                    classification: "interrupted",
+                    reason: format!("driver {mode}/{harness} does not support runtime reattach"),
+                });
+            }
+        }
         return AttachProbeStart::Ready(AttachClassification {
             classification: "ambiguous",
             reason: "current-boot session has no recoverable driver identity".to_string(),
@@ -11933,9 +11946,14 @@ fn session_driver(
     _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
     if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
-        let driver = resolve_driver(&mode, &harness)?;
-        let driver_id = format!("{mode}/{harness}");
-        return Some((driver, driver_id));
+        if let Some(driver) = resolve_driver(&mode, &harness) {
+            return Some((driver, format!("{mode}/{harness}")));
+        }
+        // A recorded address the registry no longer knows — the pre-TASK-XCJYC
+        // `acp-stdio`/`acp-ws` spelling is the reason this arm exists — is a
+        // fact about the run, not a reason to abandon the record. Fall through
+        // to the `Ready` protocol_version, which recognises the historical
+        // string on its own terms.
     }
     let driver_id = session_driver_id_from_ready(envelopes)?;
     resolve_driver_by_transport(&driver_id).map(|driver| (driver, driver_id))
@@ -11956,6 +11974,17 @@ fn session_driver_id_from_ready(envelopes: &[SessionEnvelope]) -> Option<String>
     })
 }
 
+/// Recognise a run's driver from the `protocol_version` its `Ready` event
+/// carried.
+///
+/// `acp/` is a **historical** protocol_version, never a live one: before
+/// TASK-XCJYC the claude adapter's simulated start events reported `acp/1` for
+/// what has always been Claude Code's own stream-json wire, while the real
+/// path already reported `claude-code-stream-json/1`. Sessions written under
+/// the old build are on disk and must keep resolving; per dec_WDR5K item 10
+/// this is a read of a historical string, not an alias table that would let
+/// anything new be written as `acp/`.
+// orgasmic:TASK-XCJYC
 fn driver_id_from_protocol(protocol_version: &str) -> Option<&'static str> {
     if protocol_version.starts_with("tmux-tui/") {
         Some("tmux-tui")
@@ -19359,7 +19388,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// ACP-shaped driver that ends immediately — used for natural-end
+    /// Structured-transport driver that ends immediately — used for natural-end
     /// tombstone tests of recovered terminal contracts (TASK-ARZGD).
     struct ApiProtocolEndDriver;
 
@@ -29055,17 +29084,22 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn recovery_marks_current_boot_acp_without_attach_proof_interrupted() {
+    async fn recovery_marks_current_boot_stdio_without_attach_proof_interrupted() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let identity = RuntimeIdentity {
-            run_id: "run-acp-recovery".into(),
-            runtime_id: "rt-acp-recovery".into(),
+            run_id: "run-stdio-recovery".into(),
+            runtime_id: "rt-stdio-recovery".into(),
             boot_id: "boot-test".into(),
         };
         let project_root = tmp.path().join("proj");
-        write_nonterminal_session(&project_root, identity, "claude-code-stream-json/1", "implementer-claude-stream-json");
+        write_nonterminal_session(
+            &project_root,
+            identity,
+            "claude-code-stream-json/1",
+            "implementer-claude-stream-json",
+        );
 
         let (recovered, _inventory) = classify_session_files(
             &home,
@@ -29081,7 +29115,7 @@ pub(crate) mod tests {
 
         let run = recovered
             .iter()
-            .find(|run| run.run_id == "run-acp-recovery")
+            .find(|run| run.run_id == "run-stdio-recovery")
             .unwrap();
         assert_eq!(run.classification, "interrupted");
         assert!(run.reason.contains("does not support runtime reattach"));

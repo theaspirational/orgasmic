@@ -203,6 +203,13 @@ fn dispatch_from_yaml(parsed: Option<DispatchYaml>) -> (bool, DispatchGovernance
     (auto_commit_signal, DispatchGovernanceOverlay::from_map(map))
 }
 
+/// Hermes WebSocket defaults.
+///
+/// The `HERMES_ACP_WS_*` names are hermes's own, and they keep their `ACP`
+/// because hermes genuinely speaks the Agent Client Protocol — TASK-XCJYC
+/// renamed orgasmic's *mode* (`acp-ws` → `ws`, which names only the wire), not
+/// the harness's environment.
+// orgasmic:TASK-XCJYC
 fn driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
     let mut defaults = parsed_driver_defaults(parsed);
 
@@ -237,9 +244,7 @@ fn parsed_driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
 }
 
 fn finalize_driver_defaults(mut defaults: DriverDefaults) -> DriverDefaults {
-    if defaults.hermes.ws.endpoint.is_some()
-        && defaults.hermes.ws.session_token_env.is_none()
-    {
+    if defaults.hermes.ws.endpoint.is_some() && defaults.hermes.ws.session_token_env.is_none() {
         defaults.hermes.ws.session_token_env = Some("HERMES_ACP_WS_SESSION_TOKEN".to_string());
     }
     defaults
@@ -532,11 +537,7 @@ mod tests {
             Some("ws://127.0.0.1:9090/acp")
         );
         assert_eq!(
-            cfg.driver_defaults
-                .hermes
-                .ws
-                .session_token_env
-                .as_deref(),
+            cfg.driver_defaults.hermes.ws.session_token_env.as_deref(),
             Some("HERMES_TEST_TOKEN")
         );
     }

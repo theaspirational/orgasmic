@@ -521,7 +521,7 @@ fn crash_error(point: FaultPoint) -> CompactionError {
 ///
 /// `entries` is a CANDIDATE LIST and nothing more (dec_BBPW4). Terminal state,
 /// transport and reclaimability are all re-derived here from each file's
-/// current bytes; a catalog entry that says a live ACP run is a terminal rmux
+/// current bytes; a catalog entry that says a live stdio run is a terminal rmux
 /// one changes which paths are looked at and changes no decision.
 ///
 /// Every planned file is also proven STABLE: the file identity is read before
@@ -3194,16 +3194,16 @@ mod tests {
         assert_eq!(kept, expected);
     }
 
-    /// Structured ACP evidence is never reclaimable, whatever it costs.
+    /// Structured harness evidence is never reclaimable, whatever it costs.
     #[test]
-    fn acp_text_chunks_are_evidence_and_are_never_planned() {
+    fn structured_transport_text_chunks_are_evidence_and_are_never_planned() {
         let board = board();
-        let path = write_session(&board.sessions, "run-acp", "stdio", 64, true);
+        let path = write_session(&board.sessions, "run-stdio", "stdio", 64, true);
         let before = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         assert!(
             plan.is_empty(),
-            "an acp transport's text_chunk is assistant/subprocess evidence: {:?}",
+            "a structured transport's text_chunk is assistant/subprocess evidence: {:?}",
             plan.files
         );
         assert_eq!(plan.reclaimable_bytes, 0);
@@ -3221,14 +3221,14 @@ mod tests {
     }
 
     /// dec_BBPW4 / finding 4 — the catalog is a candidate list, never deletion
-    /// authority. A semantically corrupt entry claiming a LIVE ACP run is a
+    /// authority. A semantically corrupt entry claiming a LIVE stdio run is a
     /// terminal rmux one authorizes nothing: the plan re-derives both facts from
     /// the file's current bytes and refuses.
     #[test]
     fn a_corrupt_catalog_entry_cannot_authorize_a_deletion() {
         let board = board();
-        // Live (no release) and ACP: two independent reasons to refuse.
-        let path = write_session(&board.sessions, "run-acp", "stdio", 40, false);
+        // Live (no release) and structured: two independent reasons to refuse.
+        let path = write_session(&board.sessions, "run-stdio", "stdio", 40, false);
         let before = std::fs::read(&path).unwrap();
 
         let mut entries = indexed(&board);
@@ -3498,7 +3498,7 @@ mod tests {
         let board = board();
         let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
         let mut content = std::fs::read_to_string(&path).unwrap();
-        // The exact shape the byte-scan classifier got wrong: an ACP-style
+        // The exact shape the byte-scan classifier got wrong: a structured-transport
         // tool_result whose content block is `{"type":"text_chunk"}`, and whose
         // `event` object states its own type AFTER that nested one.
         let collision = serde_json::to_string(&json!({

@@ -4837,8 +4837,9 @@ fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path
 /// differs is only the binary, how the run's session is named, and how a
 /// non-default server is addressed.
 ///
-/// `acp-*` transports are deliberately absent: they stream turn events
-/// straight into the stall clock and need no pane channel.
+/// The structured transports (`stdio`, `ws`, `subprocess-stream-json`) are
+/// deliberately absent: they stream turn events straight into the stall clock
+/// and need no pane channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneMux {
     Rmux,
@@ -5738,7 +5739,7 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
 }
 
 /// TUI transports emit a terminal driver event when their pane/process exits.
-/// ACP / subprocess modes use their stream-end path for protocol termination.
+/// The structured modes use their stream-end path for protocol termination.
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
@@ -6658,11 +6659,11 @@ mod tests {
 
     /// TASK-VZMZE's measured shape: an stdio harness that reaches `ready`,
     /// never begins a turn, and emits a heartbeat every interval forever.
-    struct HeartbeatOnlyAcpDriver {
+    struct HeartbeatOnlyStdioDriver {
         event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
     }
 
-    impl HeartbeatOnlyAcpDriver {
+    impl HeartbeatOnlyStdioDriver {
         fn new() -> Self {
             Self {
                 event_tx: Arc::new(Mutex::new(None)),
@@ -6677,7 +6678,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl WorkerDriver for HeartbeatOnlyAcpDriver {
+    impl WorkerDriver for HeartbeatOnlyStdioDriver {
         fn transport(&self) -> &'static str {
             "stdio"
         }
@@ -6814,14 +6815,14 @@ mod tests {
         }
     }
 
-    /// ACP-shaped test driver: emits Ready + RunComplete then drops the
+    /// Structured-transport test driver: emits Ready + RunComplete then drops the
     /// event sender so the supervisor stream-end path runs. Transport is
     /// `stdio` so protocol-end must NOT auto-release as Completed
     /// success (TASK-P4MGK).
-    struct ProtocolEndAcpDriver;
+    struct ProtocolEndStdioDriver;
 
     #[async_trait::async_trait]
-    impl WorkerDriver for ProtocolEndAcpDriver {
+    impl WorkerDriver for ProtocolEndStdioDriver {
         fn transport(&self) -> &'static str {
             "stdio"
         }
@@ -6850,14 +6851,14 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
         }
     }
 
-    struct ProtocolEndAcpControl;
+    struct ProtocolEndStdioControl;
 
     /// Holds the driver stream open until the test signals `gate`, so in-flight
     /// submit can be prepared before protocol-end (TASK-99W9C).
@@ -6896,14 +6897,14 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
         }
     }
 
-    /// TUI-shaped test driver: same as [`ProtocolEndAcpDriver`] but transport
+    /// TUI-shaped test driver: same as [`ProtocolEndStdioDriver`] but transport
     /// is `tmux-tui` so terminal events (not stream-end) claim release.
     struct ProtocolEndTuiDriver;
 
@@ -6936,7 +6937,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -6944,7 +6945,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl DriverControl for ProtocolEndAcpControl {
+    impl DriverControl for ProtocolEndStdioControl {
         async fn transition_state(
             &mut self,
             _req: TransitionRequest,
@@ -6995,7 +6996,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -7036,7 +7037,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -7044,7 +7045,7 @@ mod tests {
     }
 
     /// Holds the event channel open until `release`, then emits RunComplete
-    /// and drops — models finalize-then-protocol-end for ACP modes.
+    /// and drops — models finalize-then-protocol-end for structured modes.
     struct FinalizeThenProtocolEndDriver;
 
     #[async_trait::async_trait]
@@ -7840,7 +7841,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStdioControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -9767,7 +9768,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeats_are_liveness_not_work_so_a_wedged_run_still_stalls() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = HeartbeatOnlyAcpDriver::new();
+        let driver = HeartbeatOnlyStdioDriver::new();
         let req = manual_req("TASK-HEARTBEAT-WEDGE", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -9798,7 +9799,7 @@ mod tests {
     #[tokio::test]
     async fn a_heartbeat_refreshes_liveness_but_not_the_work_clock() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = HeartbeatOnlyAcpDriver::new();
+        let driver = HeartbeatOnlyStdioDriver::new();
         let req = manual_req("TASK-HEARTBEAT-CLOCKS", dir.path(), Some(600), None);
         let resp = sup.acquire(&driver, req).await.unwrap();
         wait_for_event_count(&sup, &resp.run_id, 1).await;
@@ -12375,7 +12376,7 @@ mod tests {
         assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }
 
-    // TASK-P4MGK: ACP protocol-end vs worker finalize must not double-release
+    // TASK-P4MGK: structured protocol-end vs worker finalize must not double-release
     // or race the lease. Cover finalize-then-protocol-end, protocol-end-then-
     // finalize, and finalize against an already-released run.
 
@@ -12435,7 +12436,7 @@ mod tests {
     async fn protocol_end_then_finalize_is_clean_run_not_found() {
         // orgasmic:TASK-P4MGK
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let resp = sup
             .acquire(
                 &driver,
@@ -12482,7 +12483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalize_after_already_released_acp_run_is_clean_run_not_found() {
+    async fn finalize_after_already_released_stdio_run_is_clean_run_not_found() {
         // orgasmic:TASK-P4MGK
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
@@ -12509,12 +12510,12 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
-            "finalize on already-released ACP run must be clean RunNotFound, got {err}"
+            "finalize on already-released stdio run must be clean RunNotFound, got {err}"
         );
     }
 
     #[test]
-    fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
+    fn stream_end_release_downgrades_dispatch_stdio_protocol_complete_to_failed() {
         // orgasmic:TASK-P4MGK
         let (reason, outcome) =
             stream_end_release_for_transport("stdio", Some(ReleaseOutcome::Completed), true);
@@ -12837,7 +12838,7 @@ mod tests {
     async fn failed_protocol_end_writes_failed_tombstone_without_continuation_spawn() {
         // orgasmic:TASK-QPKCD — failure ends at tombstone; no auto-continuation.
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let mut req = dispatch_impl_req("TASK-NO-AUTO-CONT", dir.path());
         req.role = "implementer".into();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -12919,7 +12920,7 @@ mod tests {
     #[tokio::test]
     async fn custom_terminal_protocol_end_is_exempt_from_finalize_contract() {
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let mut req = manager_req("manager.launch:proj:custom", dir.path());
         req.role = "terminal".into();
         let _resp = sup.acquire(&driver, req).await.unwrap();
@@ -13174,7 +13175,7 @@ mod tests {
     async fn grill_protocol_end_without_finalize_is_failed() {
         // orgasmic:TASK-S52X9
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let resp = sup
             .acquire(&driver, stage_grill_req("TASK-GRILL-PROTO", dir.path()))
             .await
@@ -13248,7 +13249,7 @@ mod tests {
     async fn artifactor_protocol_end_without_submit_is_failed() {
         // orgasmic:TASK-S52X9
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let resp = sup
             .acquire(
                 &driver,
@@ -13349,7 +13350,7 @@ mod tests {
         // orgasmic:TASK-S52X9 — unexpected protocol death without release
         // is Failed (anomaly), not silent Completed.
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStdioDriver;
         let resp = sup
             .acquire(&driver, manager_req("manager.launch:dead", dir.path()))
             .await

@@ -702,7 +702,7 @@ mod tests {
     #[test]
     fn mux_kind_routes_rmux_transport_and_defaults_to_tmux() {
         assert_eq!(MuxKind::from_transport("rmux"), MuxKind::Rmux);
-        // Every non-rmux transport (tmux, tmux-tui, acp, …) attaches via tmux.
+        // Every non-rmux transport (tmux, tmux-tui, stdio, …) attaches via tmux.
         assert_eq!(MuxKind::from_transport("tmux"), MuxKind::Tmux);
         assert_eq!(MuxKind::from_transport("tmux-tui"), MuxKind::Tmux);
         assert_eq!(MuxKind::from_transport("ws"), MuxKind::Tmux);

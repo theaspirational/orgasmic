@@ -26,10 +26,10 @@ use crate::modes::jsonrpc::{
     send_driver_error, JsonRpcTransport, RpcIds,
 };
 use crate::r#trait::{
-    preflight_via_adapter, WsProtocol, AttachOutcome, BabysitterAck, BabysitterRequest,
-    DriverConfig, DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
-    HarnessRequest, PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck,
-    UserInputRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
+    DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter, HarnessRequest,
+    PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
+    WorkerDriver, WsProtocol,
 };
 use crate::runtime_options::{RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsRequest};
 use crate::sandbox::allowlist_from_driver_config;

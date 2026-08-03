@@ -55,7 +55,7 @@ Auto-spawn success records reuse =run.created= with extras:
 - :WORKER:         historical execution label derived from the addressed kind/mode/harness
 - :STAGE:          lifecycle stage that triggered the spawn
 - :AGENT_KIND:     =implementer= | =reviewer=
-- :DRIVER:         driver mode resolved for the worker (e.g. =acp-stdio=, =acp-ws=, =subprocess-stream-json=, =tmux=)
+- :DRIVER:         driver mode resolved for the worker (e.g. =stdio=, =ws=, =subprocess-stream-json=, =tmux=)
 - :HARNESS:        harness id resolved for the worker (e.g. =claude=, =codex=, =cursor-agent=, =hermes=)
 
 Fresh recovery/resume also reuses =run.created= to record the replacement run

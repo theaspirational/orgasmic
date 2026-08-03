@@ -434,7 +434,7 @@ mod tests {
             RuntimeOptionsSource::ProtocolRpc {
                 method: "model/list".into()
             },
-            "codex options come from the ACP model/list RPC"
+            "codex options come from the app-server model/list RPC"
         );
         // The harness with no catalog surface at all is still listed, with the
         // adapter's own refusal as the reason.

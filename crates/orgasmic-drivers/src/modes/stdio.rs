@@ -542,10 +542,7 @@ impl WorkerDriver for StdioDriver {
                     adapter,
                     heartbeat_interval,
                 }));
-                (
-                    StdioControlMode::JsonRpc { commands, pid },
-                    Some(producer),
-                )
+                (StdioControlMode::JsonRpc { commands, pid }, Some(producer))
             }
             // Handled above, before this match, so the composed request is the
             // one that gets spawned.
@@ -1121,9 +1118,8 @@ impl DriverControl for StdioControl {
                     .send(StdioCommand::TransitionState { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("stdio transition ack dropped".into())
-                })?
+                rx.await
+                    .map_err(|_| DriverError::Transport("stdio transition ack dropped".into()))?
             }
         }
     }
@@ -1150,9 +1146,8 @@ impl DriverControl for StdioControl {
                     .send(StdioCommand::BabysitterAction { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("stdio babysitter ack dropped".into())
-                })?
+                rx.await
+                    .map_err(|_| DriverError::Transport("stdio babysitter ack dropped".into()))?
             }
         }
     }
@@ -1207,9 +1202,7 @@ impl DriverControl for StdioControl {
 
     async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
         match &mut self.mode {
-            StdioControlMode::Simulated { adapter, .. } => {
-                adapter.runtime_options_catalog().await
-            }
+            StdioControlMode::Simulated { adapter, .. } => adapter.runtime_options_catalog().await,
             StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands

@@ -335,12 +335,7 @@ fn asserted_worker_labels_match_the_daemons_naming_rule() {
             "subprocess-stream-json",
             "cursor-agent",
         ),
-        (
-            "reviewer-codex-ws",
-            WorkerKind::Reviewer,
-            "ws",
-            "codex",
-        ),
+        ("reviewer-codex-ws", WorkerKind::Reviewer, "ws", "codex"),
     ] {
         assert_eq!(worker_label(kind, mode, harness), label);
     }
@@ -3959,7 +3954,7 @@ async fn dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused() {
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    // The harness never has to answer: the ACP handshake blocks on its stdout,
+    // The harness never has to answer: the app-server handshake blocks on its stdout,
     // which is exactly the live-run state a finalize is issued from.
     let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-skew-tx");

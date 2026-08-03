@@ -10,11 +10,11 @@ use orgasmic_drivers::modes::rmux::test_tooling::{
     skip_unless_billing_allowed, ToolRequirement,
 };
 use orgasmic_drivers::{
-    driver_for, driver_for_mode_harness, StdioDriver, WsDriver, WsProtocol, ClaudeAdapter,
-    CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
-    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
-    Preflight, PreflightOutcome, RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver,
-    WorkerDriver, HARNESSES, MODES, SUPPORTED,
+    driver_for, driver_for_mode_harness, ClaudeAdapter, CodexAdapter, CodexAppserverDriver,
+    CursorAdapter, DriverConfig, DriverContext, DriverError, DriverSession, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, HermesAdapter, Preflight, PreflightOutcome, RunKind,
+    StdioDriver, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, WsDriver,
+    WsProtocol, HARNESSES, MODES, SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -574,10 +574,8 @@ async fn stdio_keeps_simulated_when_adapter_does_not_upgrade() {
 
 #[tokio::test]
 async fn stdio_codex_jsonrpc_handshake_mock_peer() {
-    let stdin_log = std::env::temp_dir().join(format!(
-        "orgasmic-stdio-stdin-{}.log",
-        std::process::id()
-    ));
+    let stdin_log =
+        std::env::temp_dir().join(format!("orgasmic-stdio-stdin-{}.log", std::process::id()));
     let _ = fs::remove_file(&stdin_log);
 
     const MOCK_PEER: &str = r#"
@@ -1887,7 +1885,12 @@ async fn legacy_drivers_and_explicit_pairs_emit_equivalent_start_events() {
         return;
     }
     let cases = [
-        ("claude-stream-json", "stdio", "claude", DriverConfig::empty()),
+        (
+            "claude-stream-json",
+            "stdio",
+            "claude",
+            DriverConfig::empty(),
+        ),
         ("codex-appserver", "ws", "codex", DriverConfig::empty()),
         (
             "cursor-agent",

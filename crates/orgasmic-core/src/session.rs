@@ -49,7 +49,7 @@ pub enum SessionError {
 /// The whole difference between a `text_chunk` that is a screen repaint and a
 /// `text_chunk` that is the assistant's actual words. A pane transport
 /// (rmux/tmux) has no other channel, so its `text_chunk` is rendered TUI output
-/// and forbidden storage; an `acp-*` transport's `text_chunk` is the model's or
+/// and forbidden storage; a structured transport's `text_chunk` is the model's or
 /// a subprocess's content, which is evidence.
 ///
 /// Lives here because [`SessionWriter`] is the choke point that has to act on
@@ -73,7 +73,7 @@ pub struct SessionEnvelope {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionEventKind {
-    /// Driver-native event payload (Claude ACP, Codex appserver, etc.).
+    /// Driver-native event payload (Claude stream-json, Codex app-server, etc.).
     DriverEvent,
     /// Lifecycle event (acquire, attach, release, transition, etc.).
     Lifecycle,
@@ -293,7 +293,7 @@ fn run_meta_transport(event: &Value) -> Option<String> {
 /// `RunMeta` is the second line of a run segment, immediately after `Acquire`,
 /// so a small prefix window always contains it. A file whose window holds no
 /// `RunMeta` leaves the transport unknown, and an unknown transport refuses
-/// nothing: refusing on "not proven to be ACP" would delete assistant turns and
+/// nothing: refusing on "not proven to be structured" would delete assistant turns and
 /// tool results, which is the opposite failure.
 const TRANSPORT_PROBE_BYTES: usize = 256 * 1024;
 
@@ -348,7 +348,7 @@ fn recorded_transport(path: &Path) -> Option<String> {
 /// how long each took.
 ///
 /// 16 KiB is chosen against the shapes that actually appear: it holds a whole
-/// ACP `ready` capabilities frame (the largest control frame observed on a real
+/// harness `ready` capabilities frame (the largest control frame observed on a real
 /// 2.2 GiB board was 18 KiB, and control frames are not payload), an ordinary
 /// assistant turn, and a normal tool result, while a `cargo test` log or a
 /// pasted file — the payloads that produced the 2.239 GiB incident — is
@@ -505,7 +505,7 @@ struct BoundStats {
     bytes_elided: u64,
 }
 
-/// Recursion depth ceiling. ACP content trees are shallow; a pathological
+/// Recursion depth ceiling. Harness content trees are shallow; a pathological
 /// payload must cost bounded work rather than blow the stack.
 const BOUND_MAX_DEPTH: usize = 16;
 
@@ -1836,9 +1836,9 @@ mod tests {
     #[test]
     fn oversized_driver_payloads_are_digested_but_stay_countable() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("run-acp.jsonl");
+        let path = dir.path().join("run-stdio.jsonl");
         let mut writer =
-            SessionWriter::open(&path, RuntimeIdentity::new("run-acp", "boot-acp")).unwrap();
+            SessionWriter::open(&path, RuntimeIdentity::new("run-stdio", "boot-stdio")).unwrap();
 
         let huge = "cargo test output line\n".repeat(200_000);
         assert!(huge.len() > 4 * 1024 * 1024);

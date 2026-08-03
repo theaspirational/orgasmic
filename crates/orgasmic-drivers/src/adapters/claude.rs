@@ -1589,9 +1589,9 @@ pub fn simulated_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::stdio::StdioComposeAdapter;
     use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
-    use crate::{StdioDriver, WsDriver, AttachOutcome, ClaudeStreamJsonDriver, WorkerDriver};
+    use crate::modes::stdio::StdioComposeAdapter;
+    use crate::{AttachOutcome, ClaudeStreamJsonDriver, StdioDriver, WorkerDriver, WsDriver};
     use orgasmic_core::RuntimeIdentity;
     use tokio::time::{timeout, Duration};
 
@@ -1768,7 +1768,8 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
         };
-        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
+        let plan =
+            resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
 
         assert_eq!(
             plan.mode,
@@ -1800,7 +1801,8 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-test-not-real".into()),
         };
-        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
+        let plan =
+            resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
         assert_eq!(
             plan.mode,
             ClaudeCredentialMode::BareApiKey,
@@ -1825,8 +1827,8 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
         };
-        let plan =
-            resolve_credentials(&ClaudeStreamJsonConfig::default(), &inconclusive).expect("resolve");
+        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &inconclusive)
+            .expect("resolve");
         assert_eq!(
             plan.mode,
             ClaudeCredentialMode::NativeLogin,
@@ -1875,7 +1877,8 @@ mod tests {
                 native_login: evidence,
                 ..ClaudeAuthProbe::default()
             };
-            let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
+            let plan =
+                resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
             assert_eq!(plan.mode, ClaudeCredentialMode::NativeLogin, "{evidence:?}");
             assert!(!plan.neutralize_ambient_key);
             let resolved = plan.apply().expect("apply");
@@ -1913,7 +1916,8 @@ mod tests {
             api_key_helper: Some("/usr/local/bin/mint-key".into()),
             ambient_api_key: None,
         };
-        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
+        let plan =
+            resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
         assert_eq!(plan.mode, ClaudeCredentialMode::BareApiKey);
         // `--bare` reads no settings file of its own, so the declaration has to
         // be passed inline — and only the declaration, not the operator's whole
@@ -2424,7 +2428,7 @@ mod tests {
     async fn attach_is_not_reattachable() {
         let d = ClaudeStreamJsonDriver;
         let outcome = d
-            .attach(ctx("run-acp-attach", RunKind::Worker), simulated_config())
+            .attach(ctx("run-stdio-attach", RunKind::Worker), simulated_config())
             .await
             .unwrap();
         assert!(matches!(outcome, AttachOutcome::NotReattachable));
