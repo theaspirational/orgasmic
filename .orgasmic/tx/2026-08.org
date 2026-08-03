@@ -4572,3 +4572,15 @@
 :REASON:       edited task node TASK-48SFW
 :NODE_ID:      TASK-48SFW
 :END:
+
+* TX 2026-08-03 Mon 01:56:53 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4302
+:TIME:         [2026-08-03 Mon 01:56:53]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/gotchas.org
+:REASON:       Recorded the ORGASMIC_HOME/LaunchAgent trap that cost five workers in three outages tonight, with the source call chain, the one-look signature, the three wrong conclusions this manager drew before finding it, and the daemon-free way to verify shipped content. Hand edit because gotchas.org has no node write surface (TASK-WPC6G).
+:END:

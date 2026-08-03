@@ -546,6 +546,52 @@ punctuate long gates with output. Managers: a session that dies =[unreported]=
 with a complete-looking report.md died here; salvage = replay its artifact, run
 its missing gate yourself, merge, close with a tx noting the salvage.
 
+** NEVER set ORGASMIC_HOME inside a dispatch: any orgasmic verb then restarts the REAL daemon and kills every live run
+Measured three times on 2026-08-03, costing five workers across three
+dispatch-wide outages. Read out of the source afterwards, not inferred:
+
+: ensure_running(home)                    crates/orgasmic-cli/src/daemon_lifecycle.rs:152
+:   -> ensure_running_local(home, _)                                          :159
+:     -> start_via_selected_adapter(home)                                     :419
+:       -> daemon_service::start(home) => ServiceStart::Persistent
+
+On macOS the persistent adapter WRITES AND LOADS
+=~/Library/LaunchAgents/orgasmic.daemon.plist=. *That path is PER-USER.*
+=ORGASMIC_HOME= does not scope it, and nothing in the chain notices that the home
+it was handed is not the home the LaunchAgent already serves.
+
+So a staged home has nothing listening, =ensure_running= fires, the one real
+plist is rewritten to point at the staged home, launchd reloads it, and EVERY
+LIVE RUN ON THE MACHINE DIES. The worker never has to type =daemon start= — it
+only has to run an ordinary verb with a different home.
+
+SIGNATURE, so you recognise it in one look: plist mtime equals the daemon restart
+instant; the daemon log jumps straight from steady state to =starting pre-bind
+boot work= with NO shutdown lines; =launchctl print gui/501/orgasmic.daemon= says
+=runs = 1= and =last exit code = (never exited)=; no crash report; memory fine.
+Two boot_ids logged back to back is the launchd reload race, not two failures.
+
+WHAT NOT TO CONCLUDE, because this manager concluded all three and was wrong:
+it is not the transport (it happened on rmux AND tmux), it is not concurrency
+(four concurrent workers ran 40 minutes with no outage), and it is not a manager
+=orgasmic status= poll (ten minutes of 75-second polling with no workers left the
+daemon untouched). The tell is that the SAME TASK was live in all three outages
+and absent from every dispatch that survived, dying 4-6 minutes in each time —
+exactly when its brief told it to stage a home and render.
+
+VERIFYING SHIPPED CONTENT WITHOUT A DAEMON, which is what the render check was
+for: =cargo test -p orgasmic-core --test fixtures= covers the parse
+(=parses_shipped_schema_files=); =cargo test -p orgasmic-cli --test cli_parity=
+resolves every =orgasmic= invocation and named flag in =shipped/= against the
+real binary; and =inject_default_workflow= can be read to confirm the injection
+point. None of them needs a daemon. Ask for those in a brief instead of a render.
+
+Fix pending as TASK-48SFW: =ensure_running= should refuse, or warn loudly, when
+asked to start a home that differs from the one the installed LaunchAgent serves.
+A per-user service mutated as a side effect of a per-home read is a trap for
+every caller — the =install.sh= trailing-=orgasmic status= trap in the
+runtime-reinstall memory is the same defect wearing a different hat.
+
 ** Suites run from inside an rmux worker pane need ORGASMIC_ALLOW_MISSING_TOOLS=tmux
 Post-JGHNC the tmux sentinel is strict: the worker PATH's =tmux= is the rmux
 shim and counts as ABSENT, so =required_test_tooling_is_present= fails hard in
