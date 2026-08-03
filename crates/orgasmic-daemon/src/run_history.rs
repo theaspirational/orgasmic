@@ -1817,9 +1817,23 @@ pub fn manifest_session_paths(project_root: &Path, manifest_id: &str) -> Vec<Pat
 /// still the compacted generation, and refusing it would leave an operator
 /// unable to recover for no safety gain. The recorded `post_fingerprint` is
 /// reported for diagnosis, and the digest decides.
+///
+/// `fenced` is the SAME lease the forward pass requires, asserted the same way
+/// (orgasmic:TASK-FZB6T.5 finding 3). Rollback renames over live session paths
+/// exactly as compaction does, and its caller has to decide what to lease
+/// BEFORE the maintenance lock is taken — from a manifest read outside it. So
+/// the generation it leased and the generation it decodes here need not be the
+/// same one: a compaction holding the lock but not yet its manifest gives a
+/// rollback an EMPTY lease, and by the time the lock is free the manifest is
+/// valid and names paths nothing is fencing. Restoring them then races the
+/// deferred lifecycle appends the released writer lease lets through — the
+/// orphaned-inode window the lease exists to close. The fence is what makes the
+/// two generations one: a path the decoded plan names and the lease does not is
+/// refused, untouched.
 pub fn rollback_compaction(
     project_root: &Path,
     manifest_id: &str,
+    fenced: &FencedSessions,
 ) -> Result<RollbackReport, CompactionError> {
     // Exclusion FIRST, and the decode inside it (orgasmic:TASK-FZB6T.4 finding
     // 4): the manifest used to be read, normalised and hashed before the lock
@@ -1841,6 +1855,21 @@ pub fn rollback_compaction(
     };
     for record in &plan.records {
         let key = record.session_path.display().to_string();
+
+        // orgasmic:TASK-FZB6T.5 finding 3 — the fence assertion the forward pass
+        // makes at `compact_one_file`, over the same lease and before anything
+        // is read or written. A plan decoded under the maintenance lock may name
+        // a path the lease taken before that lock does not cover.
+        if !fenced.contains(&record.session_path) {
+            report.refused.insert(
+                key,
+                "the session writer was not leased for this path, so restoring it would leave \
+                 the writer appending to an orphaned inode; the manifest changed between \
+                 leasing and decoding"
+                    .to_string(),
+            );
+            continue;
+        }
 
         // ONE read of the archive, and every decision below is made against
         // exactly these bytes and these digests — including the bytes that get
@@ -2042,6 +2071,18 @@ mod tests {
         apply_compaction(plan, Some(token), &fenced)
     }
 
+    /// Rollback exactly as the route drives it: the lease is taken over every
+    /// path the manifest names, read BEFORE the maintenance lock, and handed to
+    /// the transaction as its fence. Tests that are not about the fence use
+    /// this.
+    fn rollback_fenced(
+        project_root: &Path,
+        manifest_id: &str,
+    ) -> Result<RollbackReport, CompactionError> {
+        let fenced = FencedSessions::new(manifest_session_paths(project_root, manifest_id));
+        rollback_compaction(project_root, manifest_id, &fenced)
+    }
+
     fn manifest_of(board: &Board, manifest_id: &str) -> CompactionManifest {
         let path = board
             .root
@@ -2164,7 +2205,7 @@ mod tests {
         assert_eq!(summary["run_id"].as_str(), Some("run-a"));
 
         // And rollback puts the original back, byte for byte.
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert_eq!(rollback.restored.len(), 1);
         assert!(rollback.failed.is_empty());
         assert!(rollback.refused.is_empty());
@@ -2633,7 +2674,7 @@ mod tests {
             compacted, original,
             "the fixture must actually be compacted"
         );
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert_eq!(
             rollback.restored.len(),
             1,
@@ -2648,7 +2689,7 @@ mod tests {
         // no digests, so a live file that is neither the archive nor the
         // replacement rebuilt from it is REFUSED, not clobbered.
         std::fs::write(&path, b"{\"kind\":\"note\",\"event\":{}}\n").unwrap();
-        let refused = rollback_compaction(&board.root, &token).unwrap();
+        let refused = rollback_fenced(&board.root, &token).unwrap();
         assert!(refused.restored.is_empty(), "{refused:?}");
         assert_eq!(refused.refused.len(), 1, "{refused:?}");
     }
@@ -2797,7 +2838,7 @@ mod tests {
             );
 
             // And this build lands there too, from the same bytes.
-            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            let rollback = rollback_fenced(&board.root, &token).unwrap();
             assert!(rollback.failed.is_empty(), "{point:?}: {rollback:?}");
             assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
             assert!(!rollback.source_complete, "{point:?}");
@@ -2824,14 +2865,14 @@ mod tests {
 
         let held = acquire_maintenance_lock(&board.root).unwrap();
         for manifest_id in [token.as_str(), "deadbeef"] {
-            let error = rollback_compaction(&board.root, manifest_id).unwrap_err();
+            let error = rollback_fenced(&board.root, manifest_id).unwrap_err();
             assert!(
                 matches!(error, CompactionError::MaintenanceBusy { .. }),
                 "{manifest_id}: the lock must be taken before the manifest is read: {error:?}"
             );
         }
         drop(held);
-        assert!(rollback_compaction(&board.root, &token).is_ok());
+        assert!(rollback_fenced(&board.root, &token).is_ok());
     }
 
     /// orgasmic:TASK-FZB6T.4 finding 4b — a manifest that disagrees with itself
@@ -2894,7 +2935,7 @@ mod tests {
             damage(&mut manifest, &board.root);
             write_manifest_value(&board, &token, &manifest);
 
-            let error = rollback_compaction(&board.root, &token).unwrap_err();
+            let error = rollback_fenced(&board.root, &token).unwrap_err();
             assert!(
                 matches!(
                     error,
@@ -3007,7 +3048,7 @@ mod tests {
             .contains_key("skipped_unstable"));
         write_manifest_value(&board, &token, &legacy);
 
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert_eq!(rollback.restored.len(), 1, "{rollback:?}");
         assert!(rollback.refused.is_empty(), "{rollback:?}");
         assert!(rollback.failed.is_empty(), "{rollback:?}");
@@ -3029,7 +3070,7 @@ mod tests {
         tampered.extend_from_slice(b"{\"seq\":9999,\"kind\":\"note\",\"event\":{}}\n");
         std::fs::write(&archived, &tampered).unwrap();
 
-        let after = rollback_compaction(&board.root, &token).unwrap();
+        let after = rollback_fenced(&board.root, &token).unwrap();
         assert!(
             after.restored.is_empty(),
             "the live file is not the replacement rebuilt from THESE archive bytes, so the \
@@ -3062,7 +3103,7 @@ mod tests {
         let mut future = written.clone();
         future["manifest_format"] = serde_json::json!(COMPACTION_MANIFEST_FORMAT + 1);
         write_manifest_value(&board, &token, &future);
-        let error = rollback_compaction(&board.root, &token).unwrap_err();
+        let error = rollback_fenced(&board.root, &token).unwrap_err();
         assert!(
             matches!(
                 error,
@@ -3081,7 +3122,7 @@ mod tests {
         object.remove("files");
         object.remove("results");
         write_manifest_value(&board, &token, &blind);
-        let error = rollback_compaction(&board.root, &token).unwrap_err();
+        let error = rollback_fenced(&board.root, &token).unwrap_err();
         assert!(
             matches!(
                 error,
@@ -3095,7 +3136,7 @@ mod tests {
         assert_ne!(std::fs::read(&path).unwrap(), original);
         write_manifest_value(&board, &token, &written);
         assert_eq!(
-            rollback_compaction(&board.root, &token)
+            rollback_fenced(&board.root, &token)
                 .unwrap()
                 .restored
                 .len(),
@@ -3330,6 +3371,61 @@ mod tests {
         assert_eq!(report.reclaimed_bytes, 0);
     }
 
+    /// orgasmic:TASK-FZB6T.5 finding 3 — rollback leased one manifest
+    /// generation and executed another.
+    ///
+    /// The route reads the manifest to decide what to lease, and
+    /// `rollback_compaction` decodes it again after taking the maintenance
+    /// lock. Those are two instants with a lock wait between them, and
+    /// `manifest_session_paths` maps an absent, unreadable or inconsistent
+    /// manifest to an EMPTY path set. So the sequence the reviewer names —
+    /// compaction holds the lock with its manifest unwritten, rollback sees
+    /// nothing and leases nothing, compaction commits and releases, rollback
+    /// then decodes a valid manifest — put rollback in the middle of renaming
+    /// live session paths with no writer lease covering any of them, which is
+    /// exactly the orphaned-inode window the lease exists to close.
+    ///
+    /// Reproduced without the race: a lease that does not cover the decoded
+    /// plan is the whole defect, whatever produced it. Forward compaction has
+    /// refused this since TASK-FZB6T.2 finding 3
+    /// (`an_unfenced_session_is_never_rewritten`); this is the same assertion
+    /// over the same lease on the way back.
+    #[test]
+    fn an_unleased_session_is_never_restored_by_rollback() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-a", "rmux", 16, true);
+        let original = std::fs::read(&path).unwrap();
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        apply(plan, &token).unwrap();
+        let compacted = std::fs::read(&path).unwrap();
+        assert_ne!(compacted, original, "the fixture must have been rewritten");
+
+        // The empty lease the race produces: the paths were read at an instant
+        // when the manifest did not answer, and the plan decoded under the lock
+        // names one anyway.
+        let report =
+            rollback_compaction(&board.root, &token, &FencedSessions::default()).unwrap();
+        let reason = report
+            .refused
+            .get(&path.display().to_string())
+            .expect("an unleased path must be refused");
+        assert!(reason.contains("not leased"), "{reason}");
+        assert!(report.restored.is_empty());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            compacted,
+            "a refused rollback must not have touched the live file"
+        );
+
+        // And with the lease the route actually takes, the same rollback
+        // restores — the fence refuses a mismatch, it does not break rollback.
+        let report = rollback_fenced(&board.root, &token).unwrap();
+        assert_eq!(report.restored, vec![path.clone()]);
+        assert!(report.refused.is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
     /// finding 3 — maintenance is exclusive per project. A second transaction
     /// while one holds the lock is refused, not interleaved.
     #[test]
@@ -3345,7 +3441,7 @@ mod tests {
             matches!(refused, CompactionError::MaintenanceBusy { .. }),
             "{refused:?}"
         );
-        let refused = rollback_compaction(&board.root, &token).unwrap_err();
+        let refused = rollback_fenced(&board.root, &token).unwrap_err();
         assert!(
             matches!(
                 refused,
@@ -3484,7 +3580,7 @@ mod tests {
         assert!(String::from_utf8_lossy(&after).contains("\"phase\":\"acquire\""));
 
         // And the archive still holds the pre-transaction original.
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert_eq!(rollback.restored.len(), 1);
         assert_eq!(std::fs::read(&path).unwrap(), original);
     }
@@ -3519,7 +3615,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = rollback_compaction(&board.root, &token).unwrap_err();
+        let error = rollback_fenced(&board.root, &token).unwrap_err();
         assert!(
             matches!(error, CompactionError::ManifestInconsistent { .. }),
             "{error:?}"
@@ -3533,7 +3629,7 @@ mod tests {
     #[test]
     fn rollback_of_an_unknown_manifest_is_a_named_error() {
         let board = board();
-        let error = rollback_compaction(&board.root, "deadbeef").unwrap_err();
+        let error = rollback_fenced(&board.root, "deadbeef").unwrap_err();
         assert!(matches!(error, CompactionError::ManifestNotFound { .. }));
     }
 
@@ -3552,7 +3648,7 @@ mod tests {
         let foreign = b"{\"seq\":0,\"kind\":\"note\",\"event\":{}}\n".to_vec();
         std::fs::write(&path, &foreign).unwrap();
 
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert!(rollback.restored.is_empty());
         assert_eq!(rollback.refused.len(), 1, "{rollback:?}");
         assert_eq!(
@@ -3578,7 +3674,7 @@ mod tests {
         let compacted = std::fs::read(&path).unwrap();
         std::fs::write(archived, b"not the original\n").unwrap();
 
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert!(rollback.restored.is_empty());
         assert_eq!(rollback.refused.len(), 1, "{rollback:?}");
         assert_eq!(std::fs::read(&path).unwrap(), compacted);
@@ -3644,7 +3740,7 @@ mod tests {
             }
 
             // And in every case rollback lands on the original.
-            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            let rollback = rollback_fenced(&board.root, &token).unwrap();
             assert!(rollback.failed.is_empty(), "{point:?}: {rollback:?}");
             assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
             assert!(!rollback.source_complete, "{point:?}");
@@ -3687,7 +3783,7 @@ mod tests {
             );
 
             // Rollback finds nothing to do and refuses nothing.
-            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            let rollback = rollback_fenced(&board.root, &token).unwrap();
             assert!(rollback.restored.is_empty(), "{point:?}: {rollback:?}");
             assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
             assert_eq!(std::fs::read(&path).unwrap(), original, "{point:?}");
@@ -3728,7 +3824,7 @@ mod tests {
         // journalled, is still fully described and fully restorable — the exact
         // window the reviewer's finding 2 names.
         assert_eq!(manifest.files[0].stage.label(), "staged");
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        let rollback = rollback_fenced(&board.root, &token).unwrap();
         assert_eq!(rollback.restored, vec![first.clone()]);
         assert!(rollback.refused.is_empty(), "{rollback:?}");
     }
