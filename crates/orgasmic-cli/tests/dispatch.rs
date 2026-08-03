@@ -2095,12 +2095,8 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     let running = boot(home.clone()).await;
 
     // Default worktree suffixes mirror `default_worktree` in manager.rs.
-    // `TASK-DISPATCH` is BACKLOG (dispatchable as implementer/architector);
+    // `TASK-DISPATCH` is BACKLOG (dispatchable as implementer);
     // `TASK-REVIEW-ISSUES` is IN_REVIEW (dispatchable as reviewer).
-    let dispatch_impl_default = project_root
-        .join(".orgasmic/tmp/dispatch/task-dispatch/worktree")
-        .display()
-        .to_string();
     let dispatch_review_default = project_root
         .join(".orgasmic/tmp/dispatch/task-dispatch-review/worktree")
         .display()
@@ -2115,15 +2111,9 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     let cases: &[(&str, &str, &str, &str)] = &[
         (
             "TASK-DISPATCH",
-            "architector",
-            dispatch_impl_default.as_str(),
-            "architector worktree must not reuse implementer default path:",
-        ),
-        (
-            "TASK-DISPATCH",
-            "architector",
+            "implementer",
             dispatch_review_default.as_str(),
-            "architector worktree must not reuse reviewer default path:",
+            "implementer worktree must not reuse reviewer default path:",
         ),
         (
             "TASK-REVIEW-ISSUES",
@@ -2136,7 +2126,6 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     for (task, kind, worktree, expected) in cases {
         let (mode, harness) = match *kind {
             "reviewer" => ("stdio", "codex"),
-            "architector" => ("stdio", "codex"),
             _ => ("ws", "codex"),
         };
         let stderr = run_orgasmic_failure(
@@ -2170,11 +2159,7 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
 
     // The colliding dispatches must not have created any worktree (dry-run +
     // bail before worktree creation).
-    for worktree in [
-        &dispatch_impl_default,
-        &dispatch_review_default,
-        &review_issues_impl_default,
-    ] {
+    for worktree in [&dispatch_review_default, &review_issues_impl_default] {
         assert!(
             !Path::new(worktree.as_str()).exists(),
             "collision bail must not create worktree {worktree}"
@@ -5691,11 +5676,7 @@ async fn dispatch_finalize_concurrent_double_finalize_emits_single_done_tx() {
 }
 
 fn seed_stage_workers(home: &Home) {
-    for (id, kind) in [
-        ("griller", "griller"),
-        ("planner", "planner"),
-        ("architector", "architector"),
-    ] {
+    for (id, kind) in [("griller", "griller"), ("planner", "planner")] {
         write(
             &home.user().join(format!("workers/{id}.org")),
             format!(
@@ -5897,87 +5878,13 @@ async fn stage_plan_finalize_from_orgasmic_run_id_on_main() {
         "plan finalize from main via ORGASMIC_RUN_ID"
     );
 
-    let _ = running.shutdown.send(());
-    let _ = running.join.await;
-}
-
-/// TASK-99W9C: architect stage on `main` finalizes via exported `ORGASMIC_RUN_ID`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
-    let _live_guard = live_session_guard();
-    let tmp = tempfile::tempdir().unwrap();
-    let home = Home::at(tmp.path().join("home"));
-    home.ensure().unwrap();
-    let project_root = tmp.path().join("project");
-    std::fs::create_dir_all(&project_root).unwrap();
-    seed_project(&home, &project_root);
-    seed_stage_workers(&home);
-    init_git_project(&project_root);
-    let bin_dir = tmp.path().join("bin");
-    std::fs::create_dir_all(&bin_dir).unwrap();
-    write_sleeping_stub_codex(&bin_dir);
-    let path_env = path_with_stub(&bin_dir);
-
-    let running = boot(home.clone()).await;
-    let token = std::fs::read_to_string(home.auth_token())
-        .unwrap()
-        .trim()
-        .to_string();
-    let http = reqwest::Client::new();
-    let (run_id, last_path) =
-        start_stage_on_main(&http, running.addr, &token, "architect", "TASK-STAGE-ARCH").await;
-
-    let summary_path = tmp.path().join("architect-summary.md");
-    write(
-        &summary_path,
-        "architect finalize from main via ORGASMIC_RUN_ID",
-    );
-
-    let stdout = run_orgasmic_output_with_env(
-        &home,
-        &running,
-        &project_root,
-        &path_env,
-        &[
-            "dispatch",
-            "finalize",
-            "--summary-file",
-            summary_path.to_str().unwrap(),
-        ],
-        &[("ORGASMIC_RUN_ID", run_id.as_str())],
-    );
-    assert!(
-        stdout.status.success(),
-        "architect finalize from main failed\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&stdout.stdout),
-        String::from_utf8_lossy(&stdout.stderr)
-    );
-    let out = String::from_utf8_lossy(&stdout.stdout);
-    // TASK-6AYEJ: `architector` is BOTH a dispatch kind (`manager dispatch
-    // --kind architector`, whose close is `architector-watch-then-integrate`)
-    // and this stage kind, and finalize sees only `run.kind` — it cannot tell
-    // them apart. It resolves to `architector.reported` for both, because
-    // getting it wrong in the dispatch direction leaves the original bug in
-    // place while getting it "wrong" here costs nothing: a stage run on main
-    // has no `manager.dispatch_started`, so there is no dispatch for a
-    // report-only tx to leave open, and no consumer keys off the tx type
-    // (stage completion comes from the finalize tombstone). What this test
-    // actually pins — ORGASMIC_RUN_ID resolution from main — is unchanged.
-    assert!(
-        out.contains("architector.reported"),
-        "expected architector.reported in finalize output: {out}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&last_path).unwrap(),
-        "architect finalize from main via ORGASMIC_RUN_ID"
-    );
-
-    // TASK-6AYEJ.2 finding 3: the claim above — "a stage run has no
-    // `manager.dispatch_started`, so there is no dispatch for a report-only tx
-    // to leave open" — is asserted HERE, on the production path, because this
-    // test drove the real `POST /api/architect` launch and the real finalize.
-    // The daemon-side unit test that used to assert it never ran that path, so
-    // its negative assertion could not fail.
+    // TASK-6AYEJ.2 finding 3: "a stage run has no `manager.dispatch_started`,
+    // so there is no dispatch for its finalize tx to leave open" is asserted
+    // HERE, on the production path, because this test drove the real
+    // `POST /api/plan` launch and the real finalize. The daemon-side unit test
+    // never runs that path, so its negative assertion could not fail. (This
+    // pair of blocks used to live on the `architect` stage, retired by
+    // dec_HBK6A; the property is a property of every stage.)
     let project_tx = tx_log(&project_root);
     let home_tx = std::fs::read_to_string(home.tx().join(tx_file_name())).unwrap_or_default();
     for (label, ledger) in [("project", &project_tx), ("home", &home_tx)] {
@@ -5987,19 +5894,19 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
         );
     }
     assert!(
-        project_tx.contains(":TYPE:         architector.reported"),
-        "the stage finalize's report-only tx must be on record: {project_tx}"
+        project_tx.contains(":TYPE:         planner.done"),
+        "the stage finalize's tx must be on record: {project_tx}"
     );
     let status_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
         &path_env,
-        &["manager", "dispatch-status", "--task", "TASK-STAGE-ARCH"],
+        &["manager", "dispatch-status", "--task", "TASK-STAGE-PLAN"],
     );
     assert!(
         status_stdout.trim().is_empty(),
-        "the stage's report-only tx must leave no dispatch open: {status_stdout}"
+        "the stage's finalize tx must leave no dispatch open: {status_stdout}"
     );
 
     // TASK-C0XMR: the other half — that stage completion comes off the finalize
@@ -6014,16 +5921,16 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
     loop {
         let ledger = tx_log(&project_root);
         assert!(
-            !ledger.contains(":TYPE:         architect.failed"),
+            !ledger.contains(":TYPE:         plan.failed"),
             "a worker finalize from its active turn must not be recorded as \
-             architect.failed: {ledger}"
+             plan.failed: {ledger}"
         );
-        if ledger.contains(":TYPE:         architect.completed") {
+        if ledger.contains(":TYPE:         plan.completed") {
             break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "timed out waiting for architect.completed: {ledger}"
+            "timed out waiting for plan.completed: {ledger}"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

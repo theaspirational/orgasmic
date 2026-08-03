@@ -30,9 +30,8 @@ TASK-C9V29.4. Each one:
 
 Requires a running daemon and CLI (`/orgasmic install`, then `orgasmic daemon
 start`). Bootstrap `.orgasmic/` writes use `orgasmic node body set|append`,
-`orgasmic decision create`, `orgasmic architecture create`, and `orgasmic task
-update` — see `orgasmic --help`. Replace this task with your own once bootstrap
-is complete.
+`orgasmic decision create`, and `orgasmic task update` — see `orgasmic --help`.
+Replace this task with your own once bootstrap is complete.
 
 ** Acceptance Criteria
 - [ ] TASK-C9V29.1, TASK-C9V29.2, TASK-C9V29.3, and TASK-C9V29.4 are all DONE.

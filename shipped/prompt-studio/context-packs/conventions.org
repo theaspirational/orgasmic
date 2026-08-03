@@ -7,7 +7,7 @@
 :END:
 
 Convention bundles are loaded by name through
-`{{conventions.architecture_decomposition}}`-style slots. The convention index
+`{{conventions.manager_dispatch}}`-style slots. The convention index
 lives at `shipped/prompt-studio/conventions.org`; individual rule bodies live
 under `shipped/prompt-studio/conventions/*.org`.
 

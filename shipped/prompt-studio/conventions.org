@@ -11,14 +11,6 @@ Conventions are reusable rule bodies, not default prompt context. Prompt specs
 should mention convention IDs or include the exact convention through an
 explicit slot only when the role needs the full rule text.
 
-** architecture_decomposition
-:PROPERTIES:
-:SOURCE:             shipped/prompt-studio/conventions/architecture_decomposition.org
-:SLOT:               {{conventions.architecture_decomposition}}
-:END:
-
-Architecture node decomposition rules for the architector.
-
 ** manager-dispatch
 :PROPERTIES:
 :SOURCE:             shipped/prompt-studio/conventions/manager-dispatch.org

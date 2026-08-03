@@ -6,7 +6,7 @@
 //! update, serve, status, restart, project, board, tasks, task, run,
 //! worker, prompt, skills, manager, tx, recovery, auth, question,
 //! optional, hub, glossary, graph, decision, architecture, adr, snapshot, grill,
-//! architect, plan, reconcile). TASK-005 promotes `serve`, `status`,
+//! plan, reconcile). TASK-005 promotes `serve`, `status`,
 //! `restart`, `tx`, and `auth` to real implementations that talk to the
 //! local daemon. Later tasks promote other groups as their owners land.
 
@@ -329,29 +329,6 @@ Examples:
     },
     /// Manager grilling stage.
     Grill {
-        /// Project id this stage runs for.
-        #[arg(long, default_value = "orgasmic")]
-        project: String,
-        /// Transport mode for the stage worker; see `orgasmic manager drivers`
-        /// for the supported `(mode, harness)` pairs.
-        #[arg(long)]
-        mode: String,
-        /// Harness for the stage worker; see `orgasmic manager drivers`.
-        #[arg(long)]
-        harness: String,
-        /// Why this write is being made; recorded on the resulting tx.
-        #[arg(long)]
-        reason: Option<String>,
-        /// Block until the launched run reaches a terminal state instead of
-        /// returning as soon as it starts.
-        #[arg(long)]
-        wait: bool,
-        /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
-        #[arg(long = "governance-json")]
-        governance_json: Option<String>,
-    },
-    /// Manager architecture stage.
-    Architect {
         /// Project id this stage runs for.
         #[arg(long, default_value = "orgasmic")]
         project: String,
@@ -778,36 +755,6 @@ enum ArchitectureCmd {
         /// Emit machine-readable JSON for CI.
         #[arg(long)]
         json: bool,
-    },
-    /// Create an architecture node through the daemon.
-    Create {
-        /// Architecture node id to pin; omitted → daemon mints `arch_XXXXX`.
-        #[arg(long)]
-        id: Option<String>,
-        /// Project id; omitted → resolved from the `.orgasmic/project.org`
-        /// above the current directory.
-        #[arg(long)]
-        project: Option<String>,
-        /// Heading title prose, without the id token.
-        #[arg(long)]
-        title: Option<String>,
-        /// Node body in Org markup, spliced under the heading. Use `**`
-        /// sections; a column-0 `* ` heading is refused.
-        #[arg(long, allow_hyphen_values = true)]
-        body: Option<String>,
-        /// Stable idempotency key. Replaying the same value returns the
-        /// original result instead of writing twice.
-        #[arg(long = "request-id")]
-        request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
-        /// keys (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON,
-        /// IMPLEMENTS, PARENT) take space-separated node ids, not prose.
-        #[arg(long = "property", value_name = "KEY=VALUE")]
-        properties: Vec<String>,
-        /// Skip the write-time check that every reference-valued property
-        /// resolves to a known node id (for intentional forward references).
-        #[arg(long)]
-        force: bool,
     },
     /// Print one canonical architecture node showing its property vocabulary
     /// (no daemon needed) — the pattern `artifact blocks` establishes for
@@ -1518,23 +1465,6 @@ fn main() -> Result<()> {
         } => cmd_stage(
             &home,
             "grill",
-            project,
-            mode,
-            harness,
-            reason,
-            wait,
-            governance_json,
-        ),
-        Cmd::Architect {
-            project,
-            mode,
-            harness,
-            reason,
-            wait,
-            governance_json,
-        } => cmd_stage(
-            &home,
-            "architect",
             project,
             mode,
             harness,
@@ -3183,7 +3113,8 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                 print_list_or_empty(
                     &value,
                     "architecture nodes",
-                    "run `orgasmic architecture create` to add one",
+                    "the architecture layer is retired (dec_HBK6A) and read-only; \
+                     record rationale with `orgasmic decision create`",
                 )
             };
         }
@@ -3199,32 +3130,6 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
             }
             ArchitectureCmd::Drift { .. } => unreachable!("handled before daemon client"),
             ArchitectureCmd::Schema => unreachable!("handled before daemon client"),
-            ArchitectureCmd::Create {
-                id,
-                project,
-                title,
-                body,
-                request_id,
-                properties,
-                force,
-            } => {
-                let project = manager::resolve_project(project)?;
-                let properties: std::collections::BTreeMap<String, String> =
-                    parse_key_values(properties)?.into_iter().collect();
-                let id = id.filter(|id| !id.trim().is_empty());
-                let mut body = serde_json::json!({
-                    "project": project,
-                    "id": id,
-                    "title": title,
-                    "properties": properties,
-                    "body": body,
-                    "force": force,
-                });
-                let request_id =
-                    resolve_create_request_id(request_id, "architecture.create", &project, &body);
-                body["request_id"] = serde_json::json!(request_id);
-                client.post_json("/architecture", &body).await?
-            }
         };
         print_json(&value)
     })
@@ -3914,9 +3819,9 @@ mod create_request_id_tests {
     fn default_request_id_is_separated_by_operation_and_resolved_project() {
         let payload = serde_json::json!({ "title": "Same", "force": false });
         let decision = default_create_request_id("decision.create", "project-a", &payload);
-        let architecture = default_create_request_id("architecture.create", "project-a", &payload);
+        let glossary = default_create_request_id("glossary.create", "project-a", &payload);
         let other_project = default_create_request_id("decision.create", "project-b", &payload);
-        assert_ne!(decision, architecture);
+        assert_ne!(decision, glossary);
         assert_ne!(decision, other_project);
     }
 

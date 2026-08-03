@@ -2319,7 +2319,7 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Append the stage identity of a `grill`/`plan`/`architect` launch to its
+    /// Append the stage identity of a `grill`/`plan` launch to its
     /// session JSONL, so a daemon that restarts while the stage is live can
     /// rebuild the stage completion watcher it lost with the old process
     /// (TASK-KPMFK). Boot recovery reads this back in
@@ -6019,12 +6019,15 @@ fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
 }
 
 /// Whether this run requires an explicit worker-declared terminal call
-/// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan/architect
-/// advertise the contract when they carry a `last_path`; artifactor and
-/// manager always do (their terminal verbs are submit / release, not
-/// `dispatch finalize`). Custom bare terminals (`terminal`) and babysitters
-/// are exempt (dec_WDR5K item 6 seventh amendment / TASK-TZJFF). Unknown
-/// historical agent roles fail closed (TASK-ARZGD).
+/// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan advertise the
+/// contract when they carry a `last_path`; artifactor and manager always do
+/// (their terminal verbs are submit / release, not `dispatch finalize`). Custom
+/// bare terminals (`terminal`) and babysitters are exempt (dec_WDR5K item 6
+/// seventh amendment / TASK-TZJFF). Unknown historical agent roles fail closed
+/// (TASK-ARZGD) — which is why `architector` stays named here after dec_HBK6A
+/// retired it: nothing spawns one any more, but a persisted run recorded with
+/// that role must keep its original contract instead of silently changing
+/// meaning on reattach.
 // orgasmic:TASK-S52X9,TASK-ARZGD,dec_WDR5K
 pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
@@ -12541,7 +12544,7 @@ mod tests {
     #[test]
     fn stream_end_release_keeps_protocol_complete_when_finalize_contract_absent() {
         // Runs that do not advertise the terminal-declaration contract
-        // (babysitter, architect stage without last_path, etc.) still treat
+        // (babysitter, a stage launched without last_path, etc.) still treat
         // protocol-end as success.
         let (reason, outcome) =
             stream_end_release_for_transport("stdio", Some(ReleaseOutcome::Completed), false);
