@@ -1270,6 +1270,197 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
     Ok(())
 }
 
+// orgasmic:TASK-3CM0Q
+#[derive(Debug, Serialize)]
+struct ManagerTierHttpRequest {
+    project: String,
+    task: String,
+    tier: String,
+    triggers: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    lower: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerTierHttpResponse {
+    status: String,
+    tx_id: String,
+    tier: String,
+    #[serde(default)]
+    triggers: Vec<String>,
+    #[serde(default)]
+    previous_tier: Option<String>,
+    #[serde(default)]
+    lowered: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerTierDeclarationView {
+    tier: String,
+    #[serde(default)]
+    triggers: Vec<String>,
+    #[serde(default)]
+    reason: Option<String>,
+    tx_id: String,
+    time: String,
+    #[serde(default)]
+    actor: String,
+    #[serde(default)]
+    lowered: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerTierStatusHttpResponse {
+    task: String,
+    project: String,
+    declared: bool,
+    #[serde(default)]
+    current: Option<ManagerTierDeclarationView>,
+    #[serde(default)]
+    declarations: usize,
+}
+
+fn format_triggers(triggers: &[String]) -> String {
+    if triggers.is_empty() {
+        "none".to_string()
+    } else {
+        triggers.join(", ")
+    }
+}
+
+// orgasmic:TASK-3CM0Q
+/// Record — or read back — the manager's computed process tier for a task.
+///
+/// The `default` workflow already computes the tier from countable triggers and
+/// tells the manager to do so before its first source edit. That is a *reading*
+/// obligation, and a manager already implementing skims one without noticing.
+/// This is the writing obligation: one command, one `manager.tier` tx on the
+/// append-only ledger, and a task nobody declared is visibly undeclared
+/// afterwards.
+///
+/// It is a statement to the record, not a question to the operator. Nothing
+/// here blocks on an answer, because the tier is computed and there is no
+/// decision to escalate.
+pub fn cmd_manager_tier(home: &Home, args: ManagerTierArgs) -> Result<()> {
+    let task = args.task.trim().to_string();
+    if task.is_empty() {
+        bail!("--task names the task the declaration is about, e.g. TASK-3CM0Q");
+    }
+    let project_id = match args.project.clone() {
+        Some(project) => project,
+        None => read_project_id(&find_project_root()?)?,
+    };
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+
+    // No --tier: read back what is on the ledger. This is the audit side of the
+    // same verb — the omission the declaration exists to make detectable is
+    // detected here, and exits non-zero so a check can be scripted.
+    let Some(tier) = args.tier.clone() else {
+        return cmd_manager_tier_read(&client, &runtime, &project_id, &task);
+    };
+
+    let response: ManagerTierHttpResponse = runtime.block_on(client.post_json(
+        "/manager/tier",
+        &ManagerTierHttpRequest {
+            project: project_id.clone(),
+            task: task.clone(),
+            tier,
+            triggers: args.triggers.clone(),
+            reason: args.reason.clone(),
+            lower: args.lower,
+        },
+    ))?;
+
+    let triggers = format_triggers(&response.triggers);
+    match response.status.as_str() {
+        "declared" => println!(
+            "declared {task} {} (triggers: {triggers}) — {}",
+            response.tier, response.tx_id
+        ),
+        "redeclared" => println!(
+            "re-declared {task} {} → {} (triggers: {triggers}){} — {}",
+            response.previous_tier.as_deref().unwrap_or("-"),
+            response.tier,
+            if response.lowered {
+                ", recorded as a downgrade"
+            } else {
+                ""
+            },
+            response.tx_id
+        ),
+        other => println!("manager tier: {other} ({})", response.tx_id),
+    }
+    if response.tier != "trivial" {
+        println!(
+            "{task} is not manager-direct: dispatch it, and run an independent reviewer pass if \
+             risky"
+        );
+    }
+    Ok(())
+}
+
+// orgasmic:TASK-3CM0Q
+/// The audit half of `manager tier`: read back what the ledger holds.
+///
+/// Exits non-zero when nothing was ever declared, so the out-of-policy state is
+/// scriptable and not merely readable.
+fn cmd_manager_tier_read(
+    client: &DaemonClient,
+    runtime: &tokio::runtime::Runtime,
+    project_id: &str,
+    task: &str,
+) -> Result<()> {
+    let status: ManagerTierStatusHttpResponse = runtime.block_on(client.get(&format!(
+        "/manager/tier?project={}&task={}",
+        path_segment(project_id),
+        path_segment(task)
+    )))?;
+    let Some(current) = status.current else {
+        debug_assert!(!status.declared);
+        bail!(
+            "no tier declared for {} in {}: manager-direct source edits are out of policy until \
+             one is recorded. Compute the tier from the `default` workflow's triggers and state \
+             it:\n  orgasmic manager tier --task {} --tier trivial|ordinary|risky [--triggers ...]",
+            status.task,
+            status.project,
+            status.task
+        )
+    };
+    println!(
+        "{} is declared {} (triggers: {})",
+        status.task,
+        current.tier,
+        format_triggers(&current.triggers)
+    );
+    if let Some(reason) = current.reason.as_deref() {
+        println!("  reason: {reason}");
+    }
+    println!(
+        "  {} at {} by {}{}",
+        current.tx_id,
+        current.time,
+        if current.actor.is_empty() {
+            "-"
+        } else {
+            current.actor.as_str()
+        },
+        if current.lowered {
+            " (recorded as a downgrade)"
+        } else {
+            ""
+        }
+    );
+    if status.declarations > 1 {
+        println!(
+            "  {} declarations on the ledger for this task",
+            status.declarations
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct LiveRunInfo {
     run_id: String,
