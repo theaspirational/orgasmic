@@ -2258,6 +2258,94 @@ async fn task_008_graph_routes_are_real() {
     let _ = running.join.await;
 }
 
+/// dec_HBK6A stage A acceptance, on the real router: nothing can CREATE or
+/// REVISE architecture content, and no dispatch can spawn an architector — but
+/// the read projections are untouched (they retire in stage C).
+#[tokio::test]
+async fn architecture_production_routes_are_gone_while_reads_still_serve() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "orgasmic");
+    write(
+        &project_root.join(".orgasmic/architecture.org"),
+        "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n",
+    );
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", running.addr);
+
+    // The three retired write/spawn routes: axum answers 405 for a path whose
+    // remaining methods do not include POST, 404 when the path is gone.
+    for path in [
+        "/api/architecture",
+        "/api/architecture/arch_006",
+        "/api/architect",
+    ] {
+        let status = client
+            .post(format!("{base}{path}"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "project": "orgasmic", "title": "should not exist" }))
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert!(
+            status == reqwest::StatusCode::NOT_FOUND
+                || status == reqwest::StatusCode::METHOD_NOT_ALLOWED,
+            "POST {path} must no longer be routed, got {status}"
+        );
+    }
+
+    // A dispatch can no longer name the architector kind.
+    let resp = client
+        .post(format!(
+            "{base}/api/projects/orgasmic/tasks/TASK-ARCH/dispatch"
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "kind": "architector",
+            "mode": "acp-stdio",
+            "harness": "codex",
+            "brief_path": tmp.path().join("brief.md"),
+            "worktree_path": tmp.path().join("wt"),
+            "last_path": tmp.path().join("last.txt"),
+            "stdout_path": tmp.path().join("stdout.log"),
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown dispatch kind"),
+        "{body}"
+    );
+
+    // Reads are untouched (stage C owns those).
+    let resp = client
+        .get(format!("{base}/api/architecture?project=orgasmic"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let nodes: serde_json::Value = resp.json().await.unwrap();
+    assert!(nodes
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["id"] == "arch_006"));
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 #[tokio::test]
 async fn architecture_nodes_endpoint_returns_child_nodes_artifacts_and_edges() {
     let tmp = tempfile::tempdir().unwrap();
