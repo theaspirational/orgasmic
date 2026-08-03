@@ -4584,3 +4584,120 @@
 :TARGET:       .orgasmic/gotchas.org
 :REASON:       Recorded the ORGASMIC_HOME/LaunchAgent trap that cost five workers in three outages tonight, with the source call chain, the one-look signature, the three wrong conclusions this manager drew before finding it, and the daemon-free way to verify shipped content. Hand edit because gotchas.org has no node write surface (TASK-WPC6G).
 :END:
+
+* TX 2026-08-03 Mon 01:57:25 manager.dispatch_started TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4303
+:TIME:         [2026-08-03 Mon 01:57:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRANCH:       task-fzb6t-review-r4b
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:STARTED_AT:   [2026-08-03 Mon 01:57:25]
+:LIVENESS:     6ec8fa08b8fd2368f94bc250196d845930ab456e
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Fifth attempt at this review; four of the previous ones died to infrastructure rather than to anything in the code. Carries the CORRECTED prohibition — never set ORGASMIC_HOME for any orgasmic invocation, not merely avoid lifecycle verbs — which is the rule that actually covers the trigger found in source.
+:END:
+
+* TX 2026-08-03 Mon 01:57:26 run.created TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4304
+:TIME:         [2026-08-03 Mon 01:57:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T-reviewer-20260803T015725.jsonl
+:REASON:       Fifth attempt at this review; four of the previous ones died to infrastructure rather than to anything in the code. Carries the CORRECTED prohibition — never set ORGASMIC_HOME for any orgasmic invocation, not merely avoid lifecycle verbs — which is the rule that actually covers the trigger found in source.
+:RUN_ID:       run-20260803T015725-fe10bb7af53640f6b6e97e94e853414f
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-52765e0e963440489c65264308a8cdb8-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-runcatalog-rereview-r3/brief-runcatalog-rereview-r3-52765e0e963440489c65264308a8cdb8-stdout.log
+:DISPATCH_ATTEMPT: 52765e0e963440489c65264308a8cdb8
+:DISPATCH_TX:  tx-20260803-orgasmic-4303
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-03 Mon 01:57:43 task.state_transitioned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4305
+:TIME:         [2026-08-03 Mon 01:57:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-VEGRV to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 01:57:44 manager.dispatch_started TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4306
+:TIME:         [2026-08-03 Mon 01:57:44]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:BRANCH:       task-vegrv-impl-c3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-vegrv-continue/brief-vegrv-continue.md
+:STARTED_AT:   [2026-08-03 Mon 01:57:44]
+:LIVENESS:     6b199eb5a1b63f6dea31015b476361a8a4f44c02
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Fourth attempt. The previous three all died at the render check this brief used to demand — that instruction is now REMOVED, not merely warned about, and replaced with daemon-free verification (fixtures parse, cli_parity, reading the injector). Branches from 6b199eb so nothing already committed is redone.
+:END:
+
+* TX 2026-08-03 Mon 01:57:44 run.created TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4307
+:TIME:         [2026-08-03 Mon 01:57:44]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-VEGRV-implementer-20260803T015744.jsonl
+:REASON:       Fourth attempt. The previous three all died at the render check this brief used to demand — that instruction is now REMOVED, not merely warned about, and replaced with daemon-free verification (fixtures parse, cli_parity, reading the injector). Branches from 6b199eb so nothing already committed is redone.
+:RUN_ID:       run-20260803T015744-f7f5ac18199141e4ba53e149c121bf2e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-vegrv-continue/brief-vegrv-continue.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-vegrv-continue/brief-vegrv-continue-d76cbc0bae8c499f8e4fd80d22e8c024-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-vegrv-continue/brief-vegrv-continue-d76cbc0bae8c499f8e4fd80d22e8c024-stdout.log
+:DISPATCH_ATTEMPT: d76cbc0bae8c499f8e4fd80d22e8c024
+:DISPATCH_TX:  tx-20260803-orgasmic-4306
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
