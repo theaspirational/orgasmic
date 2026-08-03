@@ -80,7 +80,27 @@ pub const CATALOG_REL_PATH: &str = ".orgasmic/tmp/run-catalog.json";
 /// OUTSIDE the thing that is allowed to be thrown away, so it has one. This file
 /// is AUTHORITY, not cache: losing it loses a fact no rebuild can recover, which
 /// is exactly the distinction that makes the catalog safe to discard.
-pub const TOMBSTONE_REL_PATH: &str = ".orgasmic/run-tombstones.json";
+///
+/// orgasmic:TASK-FZB6T.4 finding 5 / open question 1 — this authority is
+/// **machine-local, not repo-shared**, and this path says so. Every fact it
+/// holds is a statement about one filesystem ("the directory this run recorded
+/// is gone from THIS machine"); it is meaningless to a teammate, and a run id
+/// paired with an absolute worktree path is machine identity, not project
+/// content. So it lives under `.orgasmic/tmp/`, which `.orgasmic/.gitignore`
+/// already excludes, instead of at the project root where the first tombstone
+/// made `git status` dirty and a commit would have carried someone's home
+/// directory layout into the repository. It is NOT catalog: nothing wipes this
+/// directory, its neighbour is the run-history archive — the other durable thing
+/// a rebuild cannot reconstruct — and it is a different file from
+/// [`CATALOG_REL_PATH`], which is the distinction TASK-FZB6T.3 finding 4 asked
+/// for.
+pub const TOMBSTONE_REL_PATH: &str = ".orgasmic/tmp/run-tombstones.json";
+
+/// The per-project lock that serializes the ledger's read-merge-write across
+/// PROCESSES (orgasmic:TASK-FZB6T.4 finding 2). A second daemon, or a CLI
+/// against the same board, is a real concurrent writer; an in-process mutex
+/// would not see it, and two racing merges each drop the other's tombstone.
+pub const TOMBSTONE_LOCK_REL_PATH: &str = ".orgasmic/tmp/run-tombstones.lock";
 
 /// Default size of the recent-terminal window `GET /api/runs` serves.
 ///
@@ -220,6 +240,17 @@ pub enum WorktreeAuthority {
     Unrecorded,
     /// The session file is not contained by an identified registered project.
     Unidentified,
+    /// A `Verified` verdict that could not be checked against the durable
+    /// tombstone ledger, because the ledger is unreadable or declares a version
+    /// this build does not know.
+    ///
+    /// orgasmic:TASK-FZB6T.4 finding 2 — this is the fail-closed answer. Only a
+    /// positive ledger hit overrules a re-derived `Verified`, so a damaged
+    /// ledger used to read as "nothing is tombstoned" and a dead run became an
+    /// attach candidate again. Where the terminal facts cannot be READ, the run
+    /// is not proven attachable, and an unproven attach candidate is refused
+    /// rather than offered.
+    Unprovable { recorded: PathBuf },
 }
 
 impl WorktreeAuthority {
@@ -234,6 +265,14 @@ impl WorktreeAuthority {
     /// probing rather than to classify.
     pub fn is_tombstoned(&self) -> bool {
         matches!(self, Self::Tombstoned { .. })
+    }
+
+    /// Whether an attach probe is meaningless for this run: its worktree is
+    /// proven gone, or the authority that would prove otherwise cannot be read
+    /// (orgasmic:TASK-FZB6T.4 finding 2). Both are refusals; only one of them is
+    /// terminal.
+    pub fn blocks_attach(&self) -> bool {
+        matches!(self, Self::Tombstoned { .. } | Self::Unprovable { .. })
     }
 
     /// The reason string the inventory reports for a non-verified authority.
@@ -251,6 +290,10 @@ impl WorktreeAuthority {
             Self::Tombstoned { .. } => {
                 Some("recorded worktree is gone; run tombstoned, not an attach candidate")
             }
+            Self::Unprovable { .. } => Some(
+                "the durable tombstone ledger could not be read, so this run is not proven \
+                 attachable; repair or remove the ledger",
+            ),
         }
     }
 
@@ -261,6 +304,7 @@ impl WorktreeAuthority {
             Self::Mismatched { .. } => "mismatched",
             Self::Unrecorded => "unrecorded",
             Self::Unidentified => "unidentified",
+            Self::Unprovable { .. } => "unprovable",
         }
     }
 }
@@ -483,6 +527,11 @@ pub struct CatalogRefreshStats {
     /// Rebuilt entries whose re-derived `Verified` verdict was overruled by the
     /// durable tombstone ledger (orgasmic:TASK-FZB6T.3 finding 4).
     pub tombstones_reasserted: u64,
+    /// Entries whose re-derived `Verified` verdict could not be checked at all,
+    /// because the durable tombstone ledger was unreadable or foreign-version
+    /// (orgasmic:TASK-FZB6T.4 finding 2). Non-zero means the board is being
+    /// served fail-closed and an operator has a ledger to repair.
+    pub tombstones_unprovable: u64,
 }
 
 /// How a durable snapshot load ended. Every non-`Loaded` outcome means the same
@@ -899,18 +948,48 @@ impl RunCatalog {
         // answers to the recorded path, which is precisely how a reused dispatch
         // worktree revived a dead run; the ledger overrules it. And a tombstone
         // this pass MINTED is written down before it can be lost with the cache.
-        let mut ledger = TombstoneLedger::load(project_root);
+        //
+        // orgasmic:TASK-FZB6T.4 finding 2 — and a ledger that cannot be READ is
+        // not an empty ledger. Where the terminal facts are unavailable, every
+        // re-derived `Verified` becomes `Unprovable`: refused, not offered. The
+        // ledger is also not written in that state, because merging into a file
+        // this build cannot decode would destroy the authority it failed to
+        // read.
+        let ledger_state = TombstoneLedger::load(project_root);
+        let ledger_unusable = ledger_state.unusable_reason();
+        let mut ledger = match ledger_state {
+            TombstoneLedgerState::Loaded(ledger) => ledger,
+            _ => TombstoneLedger::default(),
+        };
+        if let Some(reason) = &ledger_unusable {
+            tracing::warn!(
+                project_root = %project_root.display(),
+                reason,
+                "the durable run tombstone ledger is unusable; every affected run is reported \
+                 as unprovable instead of as an attach candidate"
+            );
+        }
         let mut ledger_grew = false;
         for (_, entry) in &mut built {
-            match (&entry.worktree_authority, ledger.contains(&entry.run_id)) {
-                (WorktreeAuthority::Verified { worktree, .. }, true) => {
+            match (
+                &entry.worktree_authority,
+                ledger_unusable.is_some(),
+                ledger.contains(&entry.run_id),
+            ) {
+                (WorktreeAuthority::Verified { worktree, .. }, true, _) => {
+                    entry.worktree_authority = WorktreeAuthority::Unprovable {
+                        recorded: worktree.clone(),
+                    };
+                    stats.tombstones_unprovable += 1;
+                }
+                (WorktreeAuthority::Verified { worktree, .. }, false, true) => {
                     entry.worktree_authority = WorktreeAuthority::Tombstoned {
                         recorded: worktree.clone(),
                         verified_identity: None,
                     };
                     stats.tombstones_reasserted += 1;
                 }
-                (WorktreeAuthority::Tombstoned { recorded, .. }, false) => {
+                (WorktreeAuthority::Tombstoned { recorded, .. }, false, false) => {
                     ledger_grew |= ledger.record(&entry.run_id, recorded);
                 }
                 _ => {}
@@ -927,7 +1006,7 @@ impl RunCatalog {
             if let Err(error) = ledger.save(project_root) {
                 tracing::warn!(
                     project_root = %project_root.display(),
-                    %error,
+                    error = %error,
                     "could not persist run tombstones; a catalog rebuild may re-offer a \
                      pruned worktree as an attach candidate"
                 );
@@ -1210,7 +1289,9 @@ fn snapshot_authority_verdict_is_consistent(entry: &RunCatalogEntry) -> bool {
                 && entry.run_meta_recorded
                 && entry.run_meta_worktree.as_ref() == Some(recorded)
         }
-        WorktreeAuthority::Verified { .. } | WorktreeAuthority::Tombstoned { .. } => {
+        WorktreeAuthority::Verified { .. }
+        | WorktreeAuthority::Tombstoned { .. }
+        | WorktreeAuthority::Unprovable { .. } => {
             entry.project_id.is_some()
                 && entry.run_meta_recorded
                 && entry.run_meta_worktree.is_some()
@@ -1236,18 +1317,133 @@ pub struct TombstoneLedger {
     tombstoned: BTreeMap<String, PathBuf>,
 }
 
+/// What one read of a project's tombstone ledger found.
+///
+/// orgasmic:TASK-FZB6T.4 finding 2 — the old `load` collapsed all four of these
+/// into an empty ledger, and only a POSITIVE ledger hit overrules a rebuilt
+/// entry's re-derived `Verified`. So a damaged ledger read as "nothing is
+/// tombstoned", a dead run came back, and `/api/runs` resumed attach probing on
+/// a worktree that no longer exists. "Absent" and "I could not read the
+/// authority" are opposite answers and must never produce the same behaviour.
+#[derive(Debug)]
+pub enum TombstoneLedgerState {
+    /// No ledger has ever been written for this project. There is nothing to
+    /// overrule and nothing was lost: an empty ledger is the TRUTH here.
+    Absent,
+    /// A ledger this build wrote and can vouch for.
+    Loaded(TombstoneLedger),
+    /// The file exists but could not be read or decoded. Its contents are
+    /// unknown, so every run it might have named is unproven.
+    Corrupt { error: String },
+    /// The file decodes but declares a version this build does not know. A
+    /// newer runtime may express tombstones in a shape this one would read as
+    /// absent, which is the same silent-empty failure in a different costume.
+    VersionMismatch { found: u32 },
+}
+
+impl TombstoneLedgerState {
+    /// The reason this state cannot answer "is this run tombstoned?", or `None`
+    /// when it can.
+    pub fn unusable_reason(&self) -> Option<String> {
+        match self {
+            Self::Absent | Self::Loaded(_) => None,
+            Self::Corrupt { error } => Some(format!("tombstone ledger is unreadable: {error}")),
+            Self::VersionMismatch { found } => Some(format!(
+                "tombstone ledger declares version {found}, this build knows \
+                 {TOMBSTONE_LEDGER_VERSION}"
+            )),
+        }
+    }
+}
+
+/// Why a ledger write did not happen. Every variant means the terminal fact this
+/// process observed is NOT durable yet, which the caller reports rather than
+/// swallows.
+#[derive(Debug)]
+pub enum TombstoneSaveError {
+    /// The on-disk ledger could not be vouched for, so merging into it would
+    /// mean overwriting authority this build cannot read. Refused.
+    WouldOverwriteUnreadable(String),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for TombstoneSaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WouldOverwriteUnreadable(reason) => write!(
+                f,
+                "refusing to overwrite a tombstone ledger this build cannot read ({reason}); \
+                 the terminal fact was NOT persisted"
+            ),
+            Self::Io(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+/// Staging names have to be unique per attempt: one fixed `.json.tmp` is a path
+/// two concurrent writers race on, and the loser's rename publishes the winner's
+/// half-written bytes.
+static TOMBSTONE_STAGING_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The exclusive per-project ledger lock, held for a whole read-merge-write.
+struct TombstoneLock {
+    file: std::fs::File,
+}
+
+impl TombstoneLock {
+    fn acquire(project_root: &Path) -> std::io::Result<Self> {
+        let path = project_root.join(TOMBSTONE_LOCK_REL_PATH);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)?;
+        // Explicit trait call: `File::lock_exclusive` is 1.89 and would shadow
+        // `fs2` here, above the workspace MSRV.
+        fs2::FileExt::lock_exclusive(&file)?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for TombstoneLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
 impl TombstoneLedger {
-    /// Load a project's ledger. An absent, unreadable, corrupt or foreign-version
-    /// file yields an EMPTY ledger and is never overwritten silently: see
-    /// [`Self::save`], which refuses to write over a file it could not read.
-    pub fn load(project_root: &Path) -> Self {
+    /// Load a project's ledger, stating WHICH of the four answers this is.
+    ///
+    /// Absent and empty are the same behaviour and a truthful one. Unreadable
+    /// and foreign-version are not: they are reported, and the caller fails
+    /// closed on them (orgasmic:TASK-FZB6T.4 finding 2).
+    pub fn load(project_root: &Path) -> TombstoneLedgerState {
         let path = project_root.join(TOMBSTONE_REL_PATH);
-        let Ok(source) = std::fs::read_to_string(path) else {
-            return Self::default();
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return TombstoneLedgerState::Absent
+            }
+            Err(error) => {
+                return TombstoneLedgerState::Corrupt {
+                    error: error.to_string(),
+                }
+            }
         };
         match serde_json::from_str::<Self>(&source) {
-            Ok(ledger) if ledger.version == TOMBSTONE_LEDGER_VERSION => ledger,
-            _ => Self::default(),
+            Ok(ledger) if ledger.version == TOMBSTONE_LEDGER_VERSION => {
+                TombstoneLedgerState::Loaded(ledger)
+            }
+            Ok(ledger) => TombstoneLedgerState::VersionMismatch {
+                found: ledger.version,
+            },
+            Err(error) => TombstoneLedgerState::Corrupt {
+                error: error.to_string(),
+            },
         }
     }
 
@@ -1264,15 +1460,43 @@ impl TombstoneLedger {
             .is_none()
     }
 
-    /// Persist the ledger, MERGING with whatever is on disk.
+    /// Persist the ledger, MERGING with whatever is on disk, under the
+    /// per-project lock, durably.
     ///
     /// Merged rather than replaced because this file is authority: another
     /// daemon, or this one before a restart, may have recorded a tombstone this
     /// process never observed, and a last-writer-wins overwrite would delete a
     /// terminal fact. A tombstone is only ever added.
-    fn save(&self, project_root: &Path) -> std::io::Result<()> {
+    ///
+    /// orgasmic:TASK-FZB6T.4 finding 2 — the merge used to read through the
+    /// lossy `load`, so a corrupt file merged into an EMPTY map and the rename
+    /// destroyed it, contradicting the comment that claimed otherwise. And the
+    /// read-merge-write was unsynchronised, staged through one fixed
+    /// `.json.tmp`, and neither the file nor its directory was fsynced: two
+    /// writers could both read generation N and each publish a different N+1,
+    /// and a crash could lose a rename this function had already reported as
+    /// persisted. All four are closed here — flock across processes, refusal on
+    /// unreadable authority, unique staging, and fsync of file then directory.
+    fn save(&self, project_root: &Path) -> Result<(), TombstoneSaveError> {
         let path = project_root.join(TOMBSTONE_REL_PATH);
-        let mut merged = Self::load(project_root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(TombstoneSaveError::Io)?;
+        }
+        // The lock covers the read, the merge and the rename. Anything narrower
+        // is the lost update it exists to stop.
+        let _lock = TombstoneLock::acquire(project_root).map_err(TombstoneSaveError::Io)?;
+
+        let mut merged = match Self::load(project_root) {
+            TombstoneLedgerState::Loaded(ledger) => ledger,
+            TombstoneLedgerState::Absent => Self::default(),
+            unusable => {
+                return Err(TombstoneSaveError::WouldOverwriteUnreadable(
+                    unusable
+                        .unusable_reason()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ))
+            }
+        };
         merged.version = TOMBSTONE_LEDGER_VERSION;
         for (run_id, recorded) in &self.tombstoned {
             merged
@@ -1280,14 +1504,31 @@ impl TombstoneLedger {
                 .entry(run_id.clone())
                 .or_insert_with(|| recorded.clone());
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let bytes = serde_json::to_vec_pretty(&merged)
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let staged = path.with_extension("json.tmp");
-        std::fs::write(&staged, &bytes)?;
-        std::fs::rename(&staged, &path)
+            .map_err(|error| TombstoneSaveError::Io(std::io::Error::other(error.to_string())))?;
+
+        let seq = TOMBSTONE_STAGING_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let staged = path.with_extension(format!("json.{}.{seq}.tmp", std::process::id()));
+        let write = (|| -> std::io::Result<()> {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&staged)?;
+            file.write_all(&bytes)?;
+            file.flush()?;
+            // Durable BEFORE the rename, or the rename can publish a file whose
+            // contents never reached the disk.
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&staged, &path)?;
+            // A rename is only durable once its DIRECTORY is.
+            if let Some(parent) = path.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            Ok(())
+        })();
+        if write.is_err() {
+            let _ = std::fs::remove_file(&staged);
+        }
+        write.map_err(TombstoneSaveError::Io)
     }
 }
 
@@ -1313,10 +1554,14 @@ struct AuthorityProbe {
 fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
     let path = match authority {
         WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
+        // `Unprovable` is a statement about the LEDGER, not about the path: no
+        // stat can change it, and re-probing would only re-derive the verdict
+        // that could not be checked in the first place.
         WorktreeAuthority::Tombstoned { .. }
         | WorktreeAuthority::Mismatched { .. }
         | WorktreeAuthority::Unrecorded
-        | WorktreeAuthority::Unidentified => return None,
+        | WorktreeAuthority::Unidentified
+        | WorktreeAuthority::Unprovable { .. } => return None,
     };
     Some(AuthorityProbe {
         current: DirIdentity::at(path),
@@ -2915,6 +3160,255 @@ mod tests {
                 "{loss}: a dead run must not be offered as an attach candidate"
             );
         }
+    }
+
+    /// Mint a durable tombstone for `run-wt` the way an ordinary prune does, and
+    /// return the board it was minted on. The caller then damages the ledger.
+    fn board_with_a_durable_tombstone(dir: &std::path::Path) -> (PathBuf, PathBuf, PathBuf) {
+        let root = dir.join("proj");
+        project(&root, "proj-1");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let worktree = dir.join("wt");
+        project(&worktree, "proj-1");
+        write_session(&sessions, "run-wt", 4096, None, &worktree, "proj-1");
+
+        let catalog = RunCatalog::new();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        std::fs::remove_dir_all(&worktree).unwrap();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert!(catalog.entries()[0].worktree_authority.is_tombstoned());
+        assert!(
+            matches!(
+                TombstoneLedger::load(&root),
+                TombstoneLedgerState::Loaded(_)
+            ),
+            "the prune must have produced a readable durable ledger"
+        );
+        std::fs::write(
+            root.join(CATALOG_REL_PATH),
+            catalog.snapshot_bytes(&root).unwrap(),
+        )
+        .unwrap();
+        (root, sessions, worktree)
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 2 — a ledger this build cannot read is NOT
+    /// an empty ledger, and the difference is a dead run coming back to life.
+    ///
+    /// `load` used to map absent, unreadable, corrupt AND foreign-version onto
+    /// the same empty result. Only a positive ledger hit overrules a rebuilt
+    /// entry's re-derived `Verified`, so a damaged ledger silently answered "no
+    /// run is tombstoned": the catalog rebuilt, the pruned worktree path was
+    /// reused by an ordinary same-project checkout, the entry re-derived
+    /// `Verified`, and `/api/runs` resumed attach probing against a run whose
+    /// worktree is gone forever.
+    ///
+    /// Both damaged shapes now fail CLOSED — the run is `Unprovable`, offers no
+    /// worktree, and blocks the attach probe — and neither is overwritten, so
+    /// the authority an operator might still repair survives the daemon that
+    /// could not read it.
+    #[tokio::test]
+    async fn a_damaged_tombstone_ledger_never_revives_a_dead_run() {
+        for damage in ["corrupt", "foreign version", "unreadable bytes"] {
+            let dir = tempfile::tempdir().unwrap();
+            let (root, sessions, worktree) = board_with_a_durable_tombstone(dir.path());
+            let ledger_path = root.join(TOMBSTONE_REL_PATH);
+            let intact = std::fs::read(&ledger_path).unwrap();
+
+            match damage {
+                "corrupt" => std::fs::write(&ledger_path, b"{\"tombstoned\": {\"run-").unwrap(),
+                "foreign version" => {
+                    let mut value: Value = serde_json::from_slice(&intact).unwrap();
+                    value["version"] = json!(TOMBSTONE_LEDGER_VERSION + 9);
+                    std::fs::write(&ledger_path, serde_json::to_vec(&value).unwrap()).unwrap();
+                }
+                // Valid JSON, wrong shape: `tombstoned` is not a map at all.
+                _ => std::fs::write(&ledger_path, br#"{"version":1,"tombstoned":[1,2]}"#).unwrap(),
+            }
+            assert!(
+                TombstoneLedger::load(&root).unusable_reason().is_some(),
+                "{damage}: the fixture must actually be unusable"
+            );
+
+            // The catalog is thrown away — it is allowed to be — and the pruned
+            // path is reused by an unrelated checkout of the same project, which
+            // is the ordinary fate of a dispatch worktree.
+            let _ = std::fs::remove_file(root.join(CATALOG_REL_PATH));
+            project(&worktree, "proj-1");
+            let rebuilt = RunCatalog::new();
+            let stats =
+                rebuilt.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert_eq!(stats.rebuilt, 1, "{damage}");
+            assert_eq!(
+                stats.tombstones_unprovable, 1,
+                "{damage}: a ledger that cannot be read must be reported, not assumed empty"
+            );
+            let entry = rebuilt.entries().remove(0);
+            assert!(
+                entry.worktree_authority.verified_worktree().is_none(),
+                "{damage}: a damaged ledger must never re-offer a worktree: {:?}",
+                entry.worktree_authority
+            );
+            assert!(
+                entry.worktree_authority.blocks_attach(),
+                "{damage}: the run must not become an attach candidate: {:?}",
+                entry.worktree_authority
+            );
+            assert_eq!(entry.worktree_authority.label(), "unprovable", "{damage}");
+            assert!(entry
+                .worktree_authority
+                .authority_error()
+                .unwrap()
+                .contains("tombstone ledger"));
+
+            // And the damaged authority was not silently replaced: an operator
+            // can still repair it, which is the only reason refusing beats
+            // rebuilding here.
+            assert!(
+                TombstoneLedger::load(&root).unusable_reason().is_some(),
+                "{damage}: the unreadable ledger must not have been overwritten"
+            );
+            assert!(
+                matches!(
+                    TombstoneLedger::default().save(&root),
+                    Err(TombstoneSaveError::WouldOverwriteUnreadable(_))
+                ),
+                "{damage}: a write over unreadable authority must be refused, not merged"
+            );
+
+            // Repairing it restores the terminal verdict, which proves the
+            // refusal above was about READABILITY and not about losing the fact.
+            std::fs::write(&ledger_path, &intact).unwrap();
+            let repaired = RunCatalog::new();
+            let stats =
+                repaired.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+            assert_eq!(stats.tombstones_unprovable, 0, "{damage}");
+            assert_eq!(stats.tombstones_reasserted, 1, "{damage}");
+            assert!(repaired.entries()[0].worktree_authority.is_tombstoned());
+        }
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 2 — the read-merge-write is serialized, so
+    /// two concurrent writers cannot lose each other's tombstone.
+    ///
+    /// `save` read the current ledger, merged its own entries in, and renamed —
+    /// with no lock and one fixed `.json.tmp`. Two daemons, or two refresh
+    /// passes, could both read generation N and each publish a different N+1;
+    /// the loser's terminal facts were gone, and both had already been reported
+    /// as persisted. A tombstone is authority no rebuild can recover, so a lost
+    /// update here is a dead run resurrected later.
+    #[test]
+    fn concurrent_ledger_writers_never_lose_a_tombstone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        project(&root, "proj-1");
+
+        // Each writer records a DISJOINT set, so the correct merge is the union
+        // and any lost update is a missing key rather than a benign tie.
+        const WRITERS: usize = 8;
+        const PER_WRITER: usize = 12;
+        let start = std::sync::Arc::new(std::sync::Barrier::new(WRITERS));
+        std::thread::scope(|scope| {
+            for writer in 0..WRITERS {
+                let root = root.clone();
+                let start = std::sync::Arc::clone(&start);
+                scope.spawn(move || {
+                    let mut ledger = TombstoneLedger::default();
+                    for index in 0..PER_WRITER {
+                        ledger.record(
+                            &format!("run-{writer}-{index}"),
+                            std::path::Path::new("/gone"),
+                        );
+                    }
+                    start.wait();
+                    ledger.save(&root).expect("save must not fail");
+                });
+            }
+        });
+
+        let TombstoneLedgerState::Loaded(final_ledger) = TombstoneLedger::load(&root) else {
+            panic!("the concurrently written ledger must still be readable");
+        };
+        for writer in 0..WRITERS {
+            for index in 0..PER_WRITER {
+                let run_id = format!("run-{writer}-{index}");
+                assert!(
+                    final_ledger.contains(&run_id),
+                    "a concurrent writer's tombstone was lost: {run_id}"
+                );
+            }
+        }
+        assert_eq!(final_ledger.tombstoned.len(), WRITERS * PER_WRITER);
+
+        // No staging file survived the race, so no writer published another's
+        // half-written bytes through a shared temp path.
+        let leftovers: Vec<String> = std::fs::read_dir(root.join(".orgasmic/tmp"))
+            .unwrap()
+            .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().to_string()))
+            .filter(|name| name.starts_with("run-tombstones.") && name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 2 — a `save` that returned `Ok` means the
+    /// bytes and the rename are on the disk, not in a page cache.
+    ///
+    /// The old write was `fs::write` + `rename` with no fsync of either the file
+    /// or its directory, so a crash could lose a tombstone this function had
+    /// already reported as persisted. A unit test cannot cut a machine's power;
+    /// what it CAN prove is the protocol — that the durable path is the only one
+    /// a reader ever sees, that a stale staging file left by a killed writer is
+    /// never read as authority, and that the ledger survives the loss of every
+    /// derived thing around it.
+    #[tokio::test]
+    async fn a_persisted_tombstone_survives_the_loss_of_everything_derived() {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, sessions, worktree) = board_with_a_durable_tombstone(dir.path());
+        let ledger_path = root.join(TOMBSTONE_REL_PATH);
+
+        // A writer that died between its staging write and its rename. The
+        // staging name is unique per attempt, so this cannot be mistaken for
+        // the live file and cannot be renamed over it by anyone else.
+        let orphan = root.join(".orgasmic/tmp/run-tombstones.json.99999.0.tmp");
+        std::fs::write(&orphan, br#"{"version":1,"tombstoned":{}}"#).unwrap();
+
+        // Everything derived is destroyed: the catalog snapshot, the session
+        // directory's cached state, and the daemon itself.
+        std::fs::remove_file(root.join(CATALOG_REL_PATH)).unwrap();
+        project(&worktree, "proj-1");
+
+        let rebuilt = RunCatalog::new();
+        let stats = rebuilt.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        assert_eq!(stats.tombstones_reasserted, 1);
+        assert_eq!(stats.tombstones_unprovable, 0);
+        let entry = rebuilt.entries().remove(0);
+        assert!(
+            entry.worktree_authority.is_tombstoned(),
+            "{:?}",
+            entry.worktree_authority
+        );
+        assert!(entry.worktree_authority.blocks_attach());
+        assert!(entry.worktree_authority.verified_worktree().is_none());
+
+        // The orphaned staging file was neither read nor promoted.
+        assert!(orphan.exists());
+        let TombstoneLedgerState::Loaded(ledger) = TombstoneLedger::load(&root) else {
+            panic!("the durable ledger must still be the readable one");
+        };
+        assert!(ledger.contains("run-wt"));
+
+        // orgasmic:TASK-FZB6T.4 finding 5 — and it is machine-local state, so it
+        // lives where the repository ignores it rather than at the project root
+        // where the first tombstone dirtied `git status`.
+        assert!(
+            ledger_path.starts_with(root.join(".orgasmic/tmp")),
+            "{}",
+            ledger_path.display()
+        );
+        assert!(
+            !root.join(".orgasmic/run-tombstones.json").exists(),
+            "the old repo-visible location must not be written any more"
+        );
     }
 
     /// orgasmic:TASK-FZB6T.2 finding 7 / dec_BBPW4 — a tombstone is TERMINAL,

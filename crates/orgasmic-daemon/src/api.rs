@@ -10778,7 +10778,7 @@ async fn classify_catalog_entries(
             } else {
                 ("terminal_noop".to_string(), terminal_reason, Vec::new())
             }
-        } else if entry.worktree_authority.is_tombstoned() {
+        } else if entry.worktree_authority.blocks_attach() {
             // orgasmic:TASK-FZB6T item 2 — the recorded worktree is gone, so no
             // attach can ever succeed for this run under this identity. Before
             // the catalog this fell through to a driver attach probe whose
