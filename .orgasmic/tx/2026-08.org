@@ -4135,3 +4135,96 @@
 :FROM_STATE:   in_review
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-08-03 Mon 00:49:48 task.created TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4277
+:TIME:         [2026-08-03 Mon 00:49:48]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round-3 review (tx-4275) returned four P1 blocking findings. The sharpest reopens what round 3 closed: the lease is held in the HTTP handler while spawn_blocking runs, and a started blocking task is not cancelled when its join handle drops.
+:END:
+
+* TX 2026-08-03 Mon 00:49:48 task.property_updated TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4278
+:TIME:         [2026-08-03 Mon 00:49:48]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from the tx-4275 round-3 verdict
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-03 Mon 00:50:27 task.state_transitioned TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4279
+:TIME:         [2026-08-03 Mon 00:50:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T.4 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 00:50:28 manager.dispatch_started TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4280
+:TIME:         [2026-08-03 Mon 00:50:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.4/worktree
+:BRANCH:       task-fzb6t.4-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t4-fix/brief-fzb6t4-fix.md
+:STARTED_AT:   [2026-08-03 Mon 00:50:28]
+:LIVENESS:     8c880f0c7a1bc6c21baa8141fddf9a9a6d93884b
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round-3 review returned four P1 blockers. Dispatched with the TASK-48SFW prohibition, which is now the only thing preventing a repeat of tonight's two dispatch-wide losses, and briefed on the pattern rather than only the findings: three rounds of breakage concentrated where a resource's lifetime and a transaction's lifetime differ, which finding 1 makes for the third time.
+:END:
+
+* TX 2026-08-03 Mon 00:50:28 run.created TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4281
+:TIME:         [2026-08-03 Mon 00:50:28]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-FZB6T.4-implementer-20260803T005028.jsonl
+:REASON:       Round-3 review returned four P1 blockers. Dispatched with the TASK-48SFW prohibition, which is now the only thing preventing a repeat of tonight's two dispatch-wide losses, and briefed on the pattern rather than only the findings: three rounds of breakage concentrated where a resource's lifetime and a transaction's lifetime differ, which finding 1 makes for the third time.
+:RUN_ID:       run-20260803T005028-f417a74dd2594efd9e488a4b6a06c2ee
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.4/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-fzb6t4-fix/brief-fzb6t4-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-fzb6t4-fix/brief-fzb6t4-fix-1f2acaa5337e4cd296419d39680f8b08-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-fzb6t4-fix/brief-fzb6t4-fix-1f2acaa5337e4cd296419d39680f8b08-stdout.log
+:DISPATCH_ATTEMPT: 1f2acaa5337e4cd296419d39680f8b08
+:DISPATCH_TX:  tx-20260803-orgasmic-4280
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
