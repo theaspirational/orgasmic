@@ -575,3 +575,12 @@ Roles: the one admin mints and revokes tokens and can do everything; editors gen
 :ID: term_6QE1M
 :RELATES_TO: term_5V9F8 term_YTD8X term_Z5EZJ
 :END:
+
+* term_YX8AG Transport mode
+:PROPERTIES:
+:AVOID: ACP mode, acp-stdio, acp-ws, driver protocol
+:CANONICAL: transport mode
+:DEFINITION: A dispatch address's wire component — stdio, ws, subprocess-stream-json, tmux or rmux — naming only how orgasmic and the harness exchange bytes, never which protocol they speak over it; the harness field decides that. Distinct from ACP (Zed's Agent Client Protocol, the editor-to-agent standard that cursor-agent acp and hermes acp implement) and from MCP (the tool-access standard); orgasmic's stdio mode also carries two non-ACP native wires, Claude Code's stream-json and codex app-server's own JSON-RPC. The mode ids acp-stdio and acp-ws were retired for exactly this confusion (TASK-XCJYC) and are reserved for real ACP by the drivers registry's RESERVED_MODES list.
+:ID: term_YX8AG
+:RELATES_TO: term_KH8TX
+:END:

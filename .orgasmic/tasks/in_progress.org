@@ -645,3 +645,54 @@ Acceptance:
 - pre-rename session records still classify and still resolve to their native transcripts
 - `acp-stdio` and `acp-ws` are unused and documented as reserved
 
+* IN_PROGRESS TASK-RQ270.1 Stage A — stop producing: retire the architect endpoints, verbs and prompt spec :daemon:cli:shipped:
+:PROPERTIES:
+:ID: TASK-RQ270.1
+:MOTIVATED_BY: dec_HBK6A
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**,shipped/**
+:END:
+
+** Description
+Stage A of the dec_HBK6A excision: STOP PRODUCING. Read the TASK-RQ270 parent
+for the full staged plan and the coupling map, and
+=archive/TASK-XYYBT-architecture-excision-estimate.md= for the measured
+inventory. Do not re-derive either.
+
+This stage ends new architecture-layer production without touching the read
+model, the node class, or =architecture.org=. It is the operator's actual
+complaint — that the layer manufactures bureaucracy — and it is independently
+valuable even if the later stages never land.
+
+** In scope
+Retire =POST /architect=, =stage_spec("architect")=, the =orgasmic architect=
+verb, the =architecture create= verb and its POST routes, and
+=DispatchEndpointKind::Architector=. Delete the architector prompt spec, its
+context pack (=shipped/prompt-studio/context-packs/architecture.org=), and the
+decomposition convention.
+
+Estimate from the report: ~14 files, ≈ -450 LOC, fully reversible by git revert.
+
+** The one thing that breaks history if done naively
+=WorkerKind::Architector= and the dispatch-kind strings are PARSED FROM
+PERSISTED LEDGER RECORDS — =manager.rs:3805-3817= maps historical "architector"
+rows. Stage A removes the ENDPOINTS but must keep the string PARSEABLE, via a
+tolerant or explicitly-legacy arm. Full variant deletion waits for stage D.
+A test that loads a historical "architector" ledger row and still parses it is
+worth more than the removal itself.
+
+** Explicitly NOT in this stage
+- No read-model, CLI-read or UI changes (that is stage C).
+- No node class, no =schema.rs=/=id.rs= changes, no deleting
+  =architecture.org= (stage D).
+- Do NOT touch the dangling-edge lint (it lands in stage C, and stage D depends
+  on it being on main first).
+- Do not strip =// arch:= back-edges or the drift comparator (stage B).
+
+** Acceptance
+- No route, CLI verb or dispatch kind can CREATE architecture content or spawn
+  an architector.
+- A persisted dispatch ledger row recorded as "architector" still parses.
+- Shipped prompt-studio no longer carries the architector spec or context pack.
+- Focused suites green (see the brief; the full workspace suite is deliberately
+  not a gate for this stage).

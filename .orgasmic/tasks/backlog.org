@@ -2911,3 +2911,4 @@ E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
 - =cli_parity= passes — it resolves every =orgasmic ...= invocation and named
   flag in =shipped/= against the real binary, so it is what catches a doctrine
   rewrite that names a verb the excision just deleted.
+
