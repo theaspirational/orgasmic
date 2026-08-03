@@ -5345,3 +5345,16 @@
 :REASON:       edited task node TASK-48SFW
 :NODE_ID:      TASK-48SFW
 :END:
+
+
+* TX 2026-08-03 Mon 03:21:30 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4345
+:TIME:         [2026-08-03 Mon 03:21:30]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/.orgasmic/current
+:REASON:       Runtime rebuilt from source at 05e1813 and installed (was 57e35de). Verified four ways: manifest commit, new-code probe GET /api/manager/tier 404->401, running txt inode == installed file inode 521369262, and health 6 projects / parse_errors 0 / zero permission errors with the Documents-hosted project indexing. Codesigned under the stable identity so TCC survived. Rollback: runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260803a. This finally puts TASK-4CSMY's tmux liveness channel into the running daemon.
+:END:
