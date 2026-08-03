@@ -2549,3 +2549,87 @@ An operator forcing a recovery is an explicit act with a human behind it, which
 is materially different from boot auto-reattach or a polled inventory offering a
 candidate. That is why this is P2 and was correctly kept out of the blocking
 round.
+
+* BACKLOG TASK-3X5AQ Every dispatch worktree that builds the CLI triggers a fresh macOS Documents prompt and leaves a dead TCC row    :dispatch:runtime:macos:
+:PROPERTIES:
+:ID: TASK-3X5AQ
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-daemon/**, crates/orgasmic-cli/**, shipped/**
+:END:
+
+** Description
+
+macOS TCC keys Documents-folder access by BINARY PATH. Every dispatch worktree
+lives at a fresh path under
+=~/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/<task>/worktree/=, so a
+worker that builds =target/debug/orgasmic= there produces a program macOS has
+never seen. It prompts the operator, and the grant it earns dies with the
+worktree.
+
+*Measured 2026-08-03.* The user TCC db has five
+=kTCCServiceSystemPolicyDocumentsFolder= rows under =dispatch/*/worktree=, and
+ALL FIVE point at worktrees that no longer exist:
+
+: .../dispatch/task-vegrv/worktree/target/debug/orgasmic    granted 03:41:23, worktree GONE
+: .../dispatch/task-2dftx/worktree/target/release/orgasmic  GONE
+: .../dispatch/task-CZTWD/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-Y2ZQJ/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-jj9rd/worktree/target/debug/orgasmic    GONE
+
+So the prompt is not a grant that failed to stick. It is a NEW grant request per
+dispatch, for a path created and destroyed within the hour, and approving it does
+nothing for the next worker.
+
+*NOT the runtime reinstall.* Checked at the same time and stated here because the
+coincidence is misleading: =~/.orgasmic/bin/orgasmic= holds
+=kTCCServiceSystemPolicyAllFiles= = 2, last modified 2026-08-02 18:35:46 — BEFORE
+the 2026-08-03 reinstall — with zero permission errors and all 6 projects
+indexed. The codesign preserved TCC exactly as intended.
+
+** Why it has not broken anything yet
+
+A worker denied Documents access still reaches =.orgasmic/= state through the
+daemon over HTTP, so no run has failed on this. The costs are operator
+interruption, a TCC db slowly filling with dead paths, and the risk that an
+operator conditioned to dismiss orgasmic prompts dismisses one that matters.
+
+** Same family as TASK-48SFW
+
+Per-user OS state that per-dispatch isolation does not scope. There it was the
+LaunchAgent plist; here it is the TCC path grant. Worth fixing with that in mind
+rather than as a one-off.
+
+** Options, and the trade is real
+
+1. *Tell workers never to build the CLI.* Simplest, and the operator asked for
+   this first. COST, measured: =cargo test -p orgasmic-cli= builds the binary
+   automatically for integration tests (=CARGO_BIN_EXE_orgasmic=), so this
+   disables essentially the whole CLI integration suite —
+   =cli_parity= (the TASK-TKR0H false-verb guard, load-bearing for every shipped
+   prose change), =entry=, =doctor=, =status=, =reindex=, =list_output=,
+   =node_body_roundtrip_cli=, =task_property_silent_drop_cli=, =bootstrap_smoke=,
+   =pinned_exec=, =manager_tier_cli=, =manager_register=. Several of those caught
+   real defects in the 2026-08-02/03 session.
+2. *Shared =CARGO_TARGET_DIR=.* Point worktree builds at one stable path that
+   already holds the grant. Every test keeps working and no new prompt is ever
+   raised. Cost: concurrent workers serialize on the cargo lock, and a shared
+   target dir is a known contention source.
+3. *Move dispatch worktrees outside =~/Documents=.* Removes the whole class —
+   Documents is the only guarded ancestor — but changes a path a lot of tooling
+   and several gotchas assume, and the daemons own Documents grant exists
+   precisely because the project lives there.
+4. *Prompt-free by construction:* have the dispatch env set =CARGO_TARGET_DIR=
+   only for the CLI crate, or have workers run the INSTALLED
+   =~/.orgasmic/bin/orgasmic= (already granted) for anything that just needs a
+   working CLI rather than the one they are changing.
+
+Options 2 and 4 keep the suite; 1 and 3 change what workers can verify. Pick
+deliberately.
+
+** Acceptance
+
+- A dispatch that builds and runs the CLI raises no new Documents prompt.
+- Whatever is chosen, the CLI integration suite still runs for a worker that is
+  CHANGING the CLI — that is the case where the tests matter most.
+- Existing dead worktree rows in the TCC db are documented as safe to remove (it
+  is SIP-protected, so removal is operator-only through Settings).

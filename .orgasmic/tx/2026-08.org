@@ -5674,3 +5674,16 @@
 :REASON:       edited task node TASK-TJKFC
 :NODE_ID:      TASK-TJKFC
 :END:
+
+* TX 2026-08-03 Mon 03:56:01 task.created TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4365
+:TIME:         [2026-08-03 Mon 03:56:01]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Observed by the operator on 2026-08-03: a Documents-folder prompt for 'orgasmic' while dispatches were running. Root-caused to worktree-local CLI builds, not to the runtime reinstall — the daemon's own grant was verified intact and untouched.
+:END:
