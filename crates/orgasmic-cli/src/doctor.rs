@@ -3,11 +3,13 @@
 //! Diagnose the local orgasmic install — missing home dirs, missing shipped
 //! files, broken binary symlink.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
+use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};
+use orgasmic_core::retired;
 use reqwest::StatusCode;
 use serde::Deserialize;
 
@@ -111,6 +113,7 @@ pub fn diagnose(home: &Home) -> Vec<Finding> {
     }
 
     push_cli_path_findings(&mut out, home);
+    push_retired_content_findings(&mut out, home);
     push_daemon_findings(&mut out, home);
     push_daemon_path_findings(&mut out);
 
@@ -195,6 +198,52 @@ fn push_cli_path_findings(out: &mut Vec<Finding>, home: &Home) {
             bin_dir.display()
         )));
     }
+}
+
+// orgasmic:dec_WDR5K
+/// Retired content still on disk. A hard cutover stops reading a content family
+/// but leaves the operator's files where they were, so the files keep looking
+/// like live configuration — and the only signal they are dead used to be a
+/// daemon log line no agent reads (TASK-8ED6V). The finding therefore has to
+/// carry the three things a reader needs to stop reasoning from the file: that
+/// it is inert, which decision made it inert, and how to get rid of it.
+///
+/// It is a warning, not a failure: the files are the operator's data and an
+/// install that still has them is healthy, just misleading.
+fn push_retired_content_findings(out: &mut Vec<Finding>, home: &Home) {
+    for retired in retired::present(home) {
+        out.push(Finding::Warn(format!(
+            "retired content on disk: {}\n  \
+             what it was: {}\n  \
+             retired by:  {} — the runtime does not read this path; anything in it is \
+             inert, including any model or transport it appears to configure\n  \
+             rationale:   orgasmic decision get {}\n  \
+             remove it:   orgasmic doctor --remove-retired (never removed for you)",
+            retired.path(home).display(),
+            retired.summary,
+            retired.deciding_node,
+            retired.deciding_node,
+        )));
+    }
+}
+
+/// Remove retired residue, one path at a time, reporting each removal. Only ever
+/// called from `orgasmic doctor --remove-retired`: these are the operator's
+/// files, so removal is opt-in and never a side effect of an upgrade.
+pub fn remove_retired_content(home: &Home) -> anyhow::Result<Vec<PathBuf>> {
+    let mut removed = Vec::new();
+    for retired in retired::present(home) {
+        let path = retired.path(home);
+        let meta =
+            std::fs::symlink_metadata(&path).with_context(|| format!("stat {}", path.display()))?;
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            std::fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
+        } else {
+            std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+        }
+        removed.push(path);
+    }
+    Ok(removed)
 }
 
 fn push_daemon_path_findings(out: &mut Vec<Finding>) {

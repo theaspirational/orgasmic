@@ -89,9 +89,16 @@ Examples:
     #[command(after_help = "\
 Examples:
   orgasmic doctor
+  orgasmic doctor --remove-retired
 
 A [warn] line means the install is usable but needs attention — e.g. stale daemon
-uptime (see orgasmic status) or missing runtime content (see orgasmic init hints).")]
+uptime (see orgasmic status) or missing runtime content (see orgasmic init hints).
+
+A `retired content on disk` warning names files a hard cutover stopped reading.
+They are inert, so nothing breaks while they sit there — but they still read like
+live configuration, which is why the warning names the deciding decision. They
+are your files: only --remove-retired deletes them, and it never runs on its
+own.")]
     Doctor {
         /// Re-mint duplicate identity ids introduced by a merge branch.
         /// Value is `base..incoming` (first parent keeps its id). Example:
@@ -108,6 +115,11 @@ uptime (see orgasmic status) or missing runtime content (see orgasmic init hints
         /// With --fix, write the env file but never edit shell startup files.
         #[arg(long = "no-modify-path")]
         no_modify_path: bool,
+        /// Delete retired content left on disk by a hard cutover (the paths the
+        /// `retired content on disk` warnings name). Opt-in and never implied by
+        /// an update: these are your files.
+        #[arg(long = "remove-retired")]
+        remove_retired: bool,
     },
     /// Put the `orgasmic` CLI on your shell PATH.
     #[command(after_help = "\
@@ -1430,12 +1442,14 @@ fn main() -> Result<()> {
             project,
             fix,
             no_modify_path,
+            remove_retired,
         } => cmd_doctor(
             &home,
             fix_id_collisions.as_deref(),
             project.as_deref(),
             fix,
             no_modify_path,
+            remove_retired,
         ),
         Cmd::Path { cmd } => cmd_path(&home, cmd),
         Cmd::Update {
@@ -2017,12 +2031,16 @@ fn cmd_doctor(
     project: Option<&Path>,
     fix: bool,
     no_modify_path: bool,
+    remove_retired: bool,
 ) -> Result<()> {
     if let Some(spec) = fix_id_collisions {
         return cmd_doctor_fix_id_collisions(home, spec, project);
     }
     if fix {
         cmd_doctor_fix(home, no_modify_path)?;
+    }
+    if remove_retired {
+        cmd_doctor_remove_retired(home)?;
     }
     let findings = doctor::diagnose(home);
     let mut fails = 0;
@@ -2038,6 +2056,24 @@ fn cmd_doctor(
     }
     if fails > 0 {
         anyhow::bail!("doctor: {fails} failure(s)");
+    }
+    Ok(())
+}
+
+// orgasmic:dec_WDR5K
+/// Delete retired residue on explicit request. Deliberately not folded into
+/// `--fix`: `--fix` repairs things the runtime owns (a dangling symlink, a PATH
+/// entry), whereas this deletes content the operator wrote. Removal is offered
+/// by every `retired content on disk` warning and happens only here, so an
+/// upgrade can never take an operator's files without being asked (TASK-8ED6V).
+fn cmd_doctor_remove_retired(home: &Home) -> Result<()> {
+    let removed = doctor::remove_retired_content(home)?;
+    if removed.is_empty() {
+        println!("no retired content on disk; nothing to remove");
+        return Ok(());
+    }
+    for path in &removed {
+        println!("→ removed retired content: {}", path.display());
     }
     Ok(())
 }

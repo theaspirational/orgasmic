@@ -81,6 +81,31 @@ done plainly enough that the user can reverse it.
 - `conventions/`: repo-local working agreements.
 - `tx/`: agent activity log.
 
+** Retired content
+Some paths under the runtime home hold content a decision retired. The runtime
+stopped reading them; the files stayed. They therefore look exactly like live
+configuration, and reading one produces a confident wrong conclusion rather than
+a lookup failure - which is worse, because nothing signals the mistake.
+
+Known-retired paths, and the decision that retired each:
+- `~/.orgasmic/user/workers/` - worker templates, retired by `dec_WDR5K`. Inert.
+  Anything a file in there appears to configure, including `:DEFAULT_MODEL:` and
+  `:DEFAULT_EFFORT:`, configures nothing. Transport comes from the driver
+  registry in code and model/effort are per-dispatch flags; there is no file
+  anywhere that sets a default model.
+
+Treat that list as the whole of it: a path not named here is live. If you find
+content under `~/.orgasmic/` that looks configured but stale, run `orgasmic
+doctor` - it names every retired path with its deciding node, and it is the
+answer to "is this file still read?". Read the rationale with `orgasmic decision
+get <id>` before concluding the runtime lost a capability; a retired concept was
+removed on purpose, so proposing to restore it is arguing against a decision you
+have not read yet.
+
+The files belong to the operator. `orgasmic doctor --remove-retired` deletes
+them on request and nothing deletes them otherwise - so residue you find may
+have outlived several releases, and its age is not evidence that it is live.
+
 ** Write rules
 - Before `.orgasmic/` state writes: run
   `command -v orgasmic >/dev/null 2>&1 && orgasmic status >/dev/null 2>&1`.
