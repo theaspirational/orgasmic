@@ -191,6 +191,7 @@ pub(crate) struct DispatchRequest {
     branch: String,
     liveness: String,
     goal_id: Option<String>,
+    reviewed_dispatch_txs: Vec<String>,
     governance: Option<orgasmic_daemon::governance::GovernancePatch>,
 }
 
@@ -213,6 +214,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         branch: plan.branch.clone(),
         liveness: plan.from_sha.clone(),
         goal_id: plan.goal_id.clone(),
+        reviewed_dispatch_txs: plan.reviewed_dispatch_txs.clone(),
         governance: plan.governance.clone(),
     }
 }
@@ -459,6 +461,7 @@ mod tests {
             stdout_path: PathBuf::from("/tmp/stdout.log"),
             dispatch_attempt_token: "aaaa1111bbbb2222cccc3333dddd4444".into(),
             goal_id: None,
+            reviewed_dispatch_txs: Vec::new(),
             reason: None,
             dry_run: false,
             governance: None,
@@ -476,6 +479,20 @@ mod tests {
         );
         assert_eq!(request.branch, "task-1-impl");
         assert_eq!(request.liveness, "abc123");
+    }
+
+    #[test]
+    fn reviewer_request_carries_the_reported_generation_it_reviews() {
+        let mut plan = sample_plan();
+        plan.kind = DispatchKind::Reviewer;
+        plan.reviewed_dispatch_txs = vec!["tx-start-implementer".into()];
+        let request = build_dispatch_request(&plan);
+        assert_eq!(
+            request.reviewed_dispatch_txs,
+            vec!["tx-start-implementer".to_string()]
+        );
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(wire["reviewed_dispatch_txs"][0], "tx-start-implementer");
     }
 
     /// `--credential-mode` is the operator's escape hatch when claude's

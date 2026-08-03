@@ -173,6 +173,10 @@ pub struct DispatchCloseArgs {
     /// Why the dispatch is being closed this way; recorded on the close tx.
     #[arg(long)]
     pub reason: Option<String>,
+    /// Bypass the reviewer-verdict gate for an implementer merge. Requires
+    /// --reason and records NO_REVIEW_REQUIRED=true on the close tx.
+    #[arg(long = "no-review-required")]
+    pub no_review_required: bool,
     /// Remove the worker's git worktree as part of the close. DEFAULTS TO
     /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
     /// removal salvages uncommitted worker output to
@@ -372,6 +376,9 @@ pub(crate) struct DispatchPlan {
     pub(crate) stdout_path: PathBuf,
     pub(crate) dispatch_attempt_token: String,
     pub(crate) goal_id: Option<String>,
+    /// Reported dispatch generation(s) this reviewer was allowed to overlap.
+    /// The daemon records these on manager.dispatch_started as REVIEWS_TX.
+    pub(crate) reviewed_dispatch_txs: Vec<String>,
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
     pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
@@ -811,6 +818,47 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     {
         bail!("--merge-sha is required when closing an architector dispatch as architector.done");
     }
+    if args.no_review_required
+        && !(args.status == DispatchCloseStatus::Done && tx_type == "implementer.done")
+    {
+        bail!("--no-review-required is valid only when closing an implementer dispatch as done");
+    }
+    if args.no_review_required
+        && args
+            .reason
+            .as_ref()
+            .map(|reason| sanitize_tx_value(reason))
+            .filter(|reason| !reason.is_empty())
+            .is_none()
+    {
+        bail!("--no-review-required requires --reason so the bypass is auditable");
+    }
+    let verified_merge = if matches!(tx_type, "implementer.done" | "architector.done") {
+        merge_sha
+            .as_deref()
+            .map(|merge_sha| {
+                verify_merge_evidence(&project_root, merge_sha, args.worker_commit.as_deref())
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    if tx_type == "implementer.done" {
+        let merge = verified_merge.as_ref().expect("verified implementer merge");
+        if merge_lands_on_default_branch(home, &project_id, &project_root, &merge.sha)?
+            && !args.no_review_required
+            && !reviewer_verdict_exists(&project_root, &tasks, &open.tx_id)?
+        {
+            bail!(
+                "refusing --merge-sha `{}` on the default branch: no reviewer verdict exists for \
+                 implementer generation {} and task(s) {}. Dispatch and close a reviewer for \
+                 that reported generation, or re-run with --no-review-required --reason <why>",
+                merge.sha,
+                open.tx_id,
+                task_list_property(&tasks)
+            );
+        }
+    }
     // The TASK-6AYEJ.1 `--merge-sha` fence that used to sit here guarded the
     // TOKENLESS path against replaying an older generation's close onto a
     // successor. TASK-6AYEJ.2 removed that path entirely — a tokenless close can
@@ -941,7 +989,10 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
                     &args,
                     &CloseTxFacts {
                         tx_type,
-                        merge_sha: merge_sha.as_deref(),
+                        merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
+                        worker_commit: verified_merge
+                            .as_ref()
+                            .and_then(|merge| merge.worker_commit.as_deref()),
                         cleanup: &cleanup,
                         transition: transition_for(&transitions, task),
                     },
@@ -2318,21 +2369,23 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let project_id = read_project_id(&cwd_project_root)?;
     let project_root = registered_project_root(home, &project_id)?;
     let tasks = normalize_tasks(args.task)?;
-    if let Some(open) = latest_open_dispatch_overlapping_tasks(&project_root, &tasks)? {
+    let overlapping_open = open_dispatches_overlapping_tasks(&project_root, &tasks)?;
+    if let Some(open) = overlapping_open
+        .iter()
+        .rev()
+        .find(|open| !open.reported || open.kind == args.kind.as_str())
+    {
         let overlapping = overlapping_tasks(&open.tasks, &tasks);
-        // TASK-6AYEJ made a reported-but-unclosed dispatch a normal state, so
-        // this guard now fires on the ordinary "worker finished, manager hasn't
-        // closed yet" case — e.g. dispatching the reviewer before closing the
-        // implementer. Name the remedy instead of leaving the manager to
-        // rediscover it.
-        // The hint must carry `--started-tx` (TASK-6AYEJ.2): a copyable close
-        // that omits the generation token is exactly the unsafe form this fix
-        // now refuses, and teaching it here is how it spreads.
+        // A reported generation may overlap a DIFFERENT kind: that is the
+        // handoff which lets review precede implementer close/merge. The same
+        // kind still collides, and an unreported worker is still active.
         let hint = if open.reported {
             format!(
-                " — its worker has reported; close it first with \
+                " — its worker has reported, but a second {} dispatch still collides; \
+                 close it first with \
                  `orgasmic manager dispatch-close --task {} --started-tx {} \
                  --status done --merge-sha <sha>`",
+                open.kind,
                 task_list_property(&open.tasks),
                 open.tx_id
             )
@@ -2347,8 +2400,24 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             hint
         );
     }
+    let reviewed_dispatch_txs = if args.kind == DispatchKind::Reviewer {
+        overlapping_open
+            .iter()
+            .filter(|open| open.reported && open.kind != args.kind.as_str())
+            .map(|open| open.tx_id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     for task in &tasks {
-        validate_task_dispatchable(&project_root, task, args.kind)?;
+        let reported_handoff = overlapping_open.iter().any(|open| {
+            open.reported
+                && open.kind != args.kind.as_str()
+                && open.tasks.iter().any(|open_task| open_task == task)
+        });
+        if !reported_handoff {
+            validate_task_dispatchable(&project_root, task, args.kind)?;
+        }
     }
     let brief_path = canonical_existing_file(&args.brief)?;
     let brief_content = std::fs::read_to_string(&brief_path)
@@ -2409,6 +2478,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         stdout_path: PathBuf::new(),
         dispatch_attempt_token: String::new(),
         goal_id,
+        reviewed_dispatch_txs,
         reason: args
             .reason
             .map(|s| sanitize_tx_value(&s))
@@ -3052,6 +3122,7 @@ fn push_lifecycle_extra(extra: &mut Vec<(String, String)>, transition: Option<&C
 struct CloseTxFacts<'a> {
     tx_type: &'a str,
     merge_sha: Option<&'a str>,
+    worker_commit: Option<&'a str>,
     cleanup: &'a CleanupOutcome,
     transition: Option<&'a CloseTransition>,
 }
@@ -3066,6 +3137,7 @@ fn close_done_request(
     let CloseTxFacts {
         tx_type,
         merge_sha,
+        worker_commit,
         cleanup,
         transition,
     } = *facts;
@@ -3079,7 +3151,10 @@ fn close_done_request(
     if let Some(effort) = optional_value(open.effort.as_deref()) {
         extra.push(("EFFORT".to_string(), effort));
     }
-    if let Some(commit) = optional_value(args.worker_commit.as_deref()) {
+    if let Some(commit) = worker_commit
+        .map(str::to_string)
+        .or_else(|| optional_value(args.worker_commit.as_deref()))
+    {
         extra.push(("WORKER_COMMIT".to_string(), commit));
     }
     if matches!(tx_type, "implementer.done" | "architector.done") {
@@ -3101,6 +3176,9 @@ fn close_done_request(
     }
     for (key, value) in &args.properties {
         extra.push((key.clone(), sanitize_tx_value(value)));
+    }
+    if args.no_review_required {
+        extra.push(("NO_REVIEW_REQUIRED".to_string(), "true".to_string()));
     }
     extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
     push_lifecycle_extra(&mut extra, transition);
@@ -4318,6 +4396,174 @@ fn allowed_stage_text(kind: DispatchKind) -> &'static str {
     }
 }
 
+#[derive(Debug)]
+struct VerifiedMergeEvidence {
+    sha: String,
+    worker_commit: Option<String>,
+}
+
+fn verify_merge_evidence(
+    project_root: &Path,
+    merge_sha: &str,
+    worker_commit: Option<&str>,
+) -> Result<VerifiedMergeEvidence> {
+    let merge_sha = resolve_commit(project_root, merge_sha).map_err(|_| {
+        anyhow::anyhow!(
+            "--merge-sha `{}` does not resolve to a commit in {}",
+            merge_sha,
+            project_root.display()
+        )
+    })?;
+    let parents = Command::new("git")
+        .args(["rev-list", "--parents", "-n", "1", &merge_sha])
+        .current_dir(project_root)
+        .output()
+        .context("git rev-list merge parents")?;
+    if !parents.status.success() {
+        bail!(
+            "cannot inspect --merge-sha `{merge_sha}` parents: {}{}",
+            String::from_utf8_lossy(&parents.stderr),
+            String::from_utf8_lossy(&parents.stdout)
+        );
+    }
+    if String::from_utf8_lossy(&parents.stdout)
+        .split_whitespace()
+        .count()
+        < 3
+    {
+        bail!("--merge-sha `{merge_sha}` is not a merge commit");
+    }
+
+    let worker_commit = worker_commit
+        .map(|worker_commit| {
+            resolve_commit(project_root, worker_commit).map_err(|_| {
+                anyhow::anyhow!(
+                    "--worker-commit `{worker_commit}` does not resolve to a commit in {}",
+                    project_root.display()
+                )
+            })
+        })
+        .transpose()?;
+    if let Some(worker_commit) = worker_commit.as_deref() {
+        let contained = Command::new("git")
+            .args(["merge-base", "--is-ancestor", worker_commit, &merge_sha])
+            .current_dir(project_root)
+            .status()
+            .context("git merge-base --is-ancestor for --worker-commit")?;
+        match contained.code() {
+            Some(0) => {}
+            Some(1) => bail!(
+                "--merge-sha `{merge_sha}` does not contain --worker-commit `{worker_commit}`"
+            ),
+            _ => bail!(
+                "cannot verify whether --merge-sha `{merge_sha}` contains --worker-commit \
+                 `{worker_commit}` (git merge-base exit {})",
+                contained
+            ),
+        }
+    }
+
+    Ok(VerifiedMergeEvidence {
+        sha: merge_sha,
+        worker_commit,
+    })
+}
+
+fn merge_lands_on_default_branch(
+    home: &Home,
+    project_id: &str,
+    project_root: &Path,
+    merge_sha: &str,
+) -> Result<bool> {
+    let default_branch = projects::read_board(home)
+        .context("read project board for default-branch merge verification")?
+        .into_iter()
+        .find(|entry| entry.id == project_id)
+        .map(|entry| entry.branch)
+        .filter(|branch| !branch.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot verify --merge-sha against the default branch: project {project_id} \
+                 has no BRANCH in the project board"
+            )
+        })?;
+    let local_ref = format!("refs/heads/{default_branch}");
+    let remote_ref = format!("refs/remotes/origin/{default_branch}");
+    let default_ref = if resolve_commit(project_root, &local_ref).is_ok() {
+        local_ref
+    } else if resolve_commit(project_root, &remote_ref).is_ok() {
+        remote_ref
+    } else {
+        bail!(
+            "cannot verify --merge-sha against default branch `{default_branch}`: neither \
+             `{local_ref}` nor `{remote_ref}` resolves"
+        );
+    };
+    let contained = Command::new("git")
+        .args(["merge-base", "--is-ancestor", merge_sha, &default_ref])
+        .current_dir(project_root)
+        .status()
+        .with_context(|| format!("git merge-base --is-ancestor {merge_sha} {default_ref}"))?;
+    match contained.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => bail!(
+            "cannot verify whether --merge-sha `{merge_sha}` is on default branch \
+             `{default_branch}` (git merge-base exit {contained})"
+        ),
+    }
+}
+
+fn reviewer_verdict_exists(
+    project_root: &Path,
+    tasks: &[String],
+    reviewed_dispatch_tx: &str,
+) -> Result<bool> {
+    let entries = read_tx_entries(project_root)?;
+    Ok(tasks.iter().all(|task| {
+        let linked_reviewers = entries
+            .iter()
+            .filter(|entry| entry.ty == "manager.dispatch_started")
+            .filter(|entry| extra(entry, "KIND") == Some("reviewer"))
+            .filter(|entry| {
+                entry
+                    .task
+                    .as_deref()
+                    .map(split_task_list)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|reviewed_task| reviewed_task == task)
+            })
+            .filter(|entry| {
+                extra(entry, "REVIEWS_TX")
+                    .map(|value| {
+                        value
+                            .split_whitespace()
+                            .any(|tx| tx == reviewed_dispatch_tx)
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|entry| entry.tx_id.as_str())
+            .collect::<BTreeSet<_>>();
+        entries.iter().any(|entry| {
+            entry.ty == "reviewer.done"
+                && entry
+                    .task
+                    .as_deref()
+                    .map(split_task_list)
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|reviewed_task| reviewed_task == task)
+                && extra(entry, "CLOSED_TX")
+                    .map(|closed_tx| linked_reviewers.contains(closed_tx))
+                    .unwrap_or(false)
+                && extra(entry, "VERDICT")
+                    .map(|verdict| !verdict.trim().is_empty())
+                    .unwrap_or(false)
+        })
+    }))
+}
+
 fn resolve_commit(project_root: &Path, commitish: &str) -> Result<String> {
     let rev = format!("{commitish}^{{commit}}");
     let output = Command::new("git")
@@ -4774,17 +5020,20 @@ fn latest_closed_dispatch_for_tasks(
         }))
 }
 
-fn latest_open_dispatch_overlapping_tasks(
+fn open_dispatches_overlapping_tasks(
     project_root: &Path,
     tasks: &[String],
-) -> Result<Option<DispatchRecord>> {
+) -> Result<Vec<DispatchRecord>> {
     let open = scan_open_dispatches(project_root)?;
-    Ok(open.into_iter().rev().find(|record| {
-        record
-            .tasks
-            .iter()
-            .any(|task| tasks.iter().any(|requested| requested == task))
-    }))
+    Ok(open
+        .into_iter()
+        .filter(|record| {
+            record
+                .tasks
+                .iter()
+                .any(|task| tasks.iter().any(|requested| requested == task))
+        })
+        .collect())
 }
 
 fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<String> {
@@ -5619,6 +5868,7 @@ mod tests {
             tokens: None,
             wall: None,
             reason: None,
+            no_review_required: false,
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
