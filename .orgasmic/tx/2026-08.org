@@ -3927,3 +3927,66 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+
+* TX 2026-08-03 Mon 00:15:06 task.created TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4265
+:TIME:         [2026-08-03 Mon 00:15:06]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Two dispatch-wide losses in ten minutes on 2026-08-03. Five workers killed across the two events, three of them with live uncommitted work. The LaunchAgent plist mtime equals the daemon restart instant in both cases.
+:END:
+
+* TX 2026-08-03 Mon 00:16:10 manager.dispatch_aborted TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4266
+:TIME:         [2026-08-03 Mon 00:16:10]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:REASON:       Second dispatch-wide loss, on tmux this time, which is what ruled out the transport and led to TASK-48SFW. This worker DID commit early as briefed — da77b18, 61 insertions rewriting the transport guidance — and the manager preserved one further uncommitted line as 6b199eb. Its work is intact and further along than the first attempt.
+:CLOSED_TX:    tx-20260803-orgasmic-4261
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 00:16:10 task.state_transitioned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4267
+:TIME:         [2026-08-03 Mon 00:16:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-VEGRV to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 00:16:11 manager.dispatch_aborted TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4268
+:TIME:         [2026-08-03 Mon 00:16:11]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Same event. Read-only reviewer, worktree clean, no findings recorded. Third consecutive attempt at this review to be killed by infrastructure rather than by anything in the code under review.
+:CLOSED_TX:    tx-20260803-orgasmic-4263
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:

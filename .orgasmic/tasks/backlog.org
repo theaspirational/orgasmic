@@ -2185,3 +2185,84 @@ section.
 - The guard does not fire on paths the worker legitimately does not need.
 - A regression proves both the fire and the no-fire case.
 
+* BACKLOG TASK-48SFW A worker touching the daemon lifecycle rewrites the one real LaunchAgent and kills every live dispatch    :dispatch:daemon:runtime:
+:PROPERTIES:
+:ID: TASK-48SFW
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**, crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+INFERENCE, LABELLED AS SUCH — the evidence is strong and circumstantial, and no
+worker artifact survived to prove it directly.
+
+Two dispatch-wide losses on 2026-08-03, ten minutes apart:
+
+| time (UTC) | killed | transport |
+|------------+--------+-----------|
+| 00:03-00:04 | TASK-VEGRV, TASK-3CM0Q, TASK-FZB6T reviewer | rmux |
+| 00:13:05    | TASK-VEGRV, TASK-FZB6T reviewer            | tmux |
+
+The second event rules out the transport as the cause: it happened on tmux, after
+the manager switched away from rmux precisely because rmux had died in the first.
+
+WHAT IS MEASURED
+- =~/Library/LaunchAgents/orgasmic.daemon.plist= has mtime *03:13:05 local*,
+  which is exactly the =00:13:05Z= daemon restart instant. The first event shows
+  the same pattern, with TWO boot_ids logged one after the other at =00:04:11Z=
+  (a plist reload race).
+- The daemon logged NO shutdown lines before either restart. It goes straight
+  from steady-state to =starting pre-bind boot work=, so it was killed hard.
+- =launchctl print gui/501/orgasmic.daemon= reports =runs = 1= and
+  =last exit code = (never exited)=, so this is NOT launchd KeepAlive restarting
+  a crashed process.
+- No orgasmic crash report exists for 2026-08-03 (latest is 2026-07-31). Memory
+  was 61% free with zero swap, so it is not an OOM kill.
+- The plist still points at =~/.orgasmic/bin/orgasmic=, so the BINARY was not
+  hijacked — only the plist was rewritten and reloaded.
+
+WHAT THAT LEAVES. Something rewrote the LaunchAgent plist, twice, at the exact
+instants the daemon restarted. The memory =orgasmic-daemon-start-hijacks-launchagent=
+and the existing gotcha both record that =orgasmic daemon start= rewrites THE ONE
+REAL LAUNCHAGENT PLIST regardless of =ORGASMIC_HOME= — a per-user path, not a
+per-home one. A worker running any daemon lifecycle verb therefore restarts the
+operator daemon and kills every sibling dispatch, including itself.
+
+THE MANAGER CONTRIBUTED TO THIS. Several briefs this session instructed workers
+to "stage an =ORGASMIC_HOME= from the edited files" for a render check, because
+the live daemon serves INSTALLED shipped content rather than the worktree. That
+instruction is correct and necessary, and it is one short step from
+=orgasmic daemon start= against the staged home — which is not isolated at all.
+The instruction was given without the accompanying prohibition.
+
+** Why this is P1
+
+It makes concurrent dispatch unsafe outright. Five workers died in ten minutes,
+three with live uncommitted work that had to be salvaged by hand. Nothing warns
+the worker, nothing warns the manager, and the failure looks like a transport
+problem — the manager initially and wrongly blamed rmux, switched transports, and
+lost the next two workers the same way.
+
+** Work
+
+- A daemon lifecycle verb invoked from inside a dispatch (=ORGASMIC_RUN_ID= is
+  set in the worker environment) should REFUSE by name, and say why: it would
+  restart the operator daemon and kill every live run including your own.
+- Consider whether =ORGASMIC_HOME= should scope the LaunchAgent path at all, or
+  whether the honest answer is that daemon lifecycle is never per-home and the
+  verb should say so.
+- Give workers a SAFE render path that needs no daemon: the 2026-08-03
+  TASK-0JY7M worker did it correctly by running the worktrees own
+  =target/debug/orgasmic entry= against a staged home. Document that as the
+  supported recipe so the dangerous one is not reinvented.
+- Until this lands, every dispatch brief must carry an explicit prohibition.
+
+** Acceptance
+
+- A daemon lifecycle verb from inside a dispatch refuses, with a message naming
+  the consequence.
+- The supported no-daemon render recipe is documented where brief authors will
+  find it.
+- A regression proves the refusal fires when the dispatch environment is present
+  and does not fire for an ordinary operator invocation.
