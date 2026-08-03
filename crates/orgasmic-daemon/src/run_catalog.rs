@@ -522,13 +522,16 @@ pub struct CatalogRefreshStats {
     pub unreadable_sessions: u64,
     /// Entries dropped because their session file is gone.
     pub evicted: u64,
-    /// Worktree authority verdicts re-verified against the filesystem.
+    /// Cached worktree authority verdicts that changed: re-verified against the
+    /// filesystem, or overruled by the durable tombstone ledger
+    /// (orgasmic:TASK-FZB6T.5 finding 2 — the ledger reaches this path too, and
+    /// the two ledger counters below now count cache hits as well as rebuilds).
     pub authority_reverified: u64,
-    /// Rebuilt entries whose re-derived `Verified` verdict was overruled by the
-    /// durable tombstone ledger (orgasmic:TASK-FZB6T.3 finding 4).
+    /// Entries whose `Verified` verdict was overruled by the durable tombstone
+    /// ledger (orgasmic:TASK-FZB6T.3 finding 4), rebuilt or cached.
     pub tombstones_reasserted: u64,
-    /// Entries whose re-derived `Verified` verdict could not be checked at all,
-    /// because the durable tombstone ledger was unreadable or foreign-version
+    /// Entries, rebuilt or cached, whose `Verified` verdict could not be checked
+    /// at all because the durable tombstone ledger was unreadable or foreign-version
     /// (orgasmic:TASK-FZB6T.4 finding 2). Non-zero means the board is being
     /// served fail-closed and an operator has a ledger to repair.
     pub tombstones_unprovable: u64,
