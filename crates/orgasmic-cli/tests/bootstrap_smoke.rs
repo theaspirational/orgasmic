@@ -3,7 +3,7 @@
 //! Reproduces what the 2026-07-06 orsl battle-test did on the greenfield
 //! path, CLI-only, against a running isolated test daemon: `project init` in
 //! a temp git repo, then drive the shipped bootstrap the way an agent would
-//! — decisions (daemon-minted ids), glossary refs, architecture edges, a
+//! — decisions (daemon-minted ids), glossary refs, typed reference edges, a
 //! post-init task create/update, and an artifact submit. Every write goes
 //! through the CLI; the only direct `.org` write is the initial scaffold from
 //! `project init` itself.
@@ -70,8 +70,8 @@ fn run_cli_output(
         .expect("run orgasmic")
 }
 
-/// Extract `"id"` from a JSON object printed on stdout (decision / glossary /
-/// architecture create responses all share this shape).
+/// Extract `"id"` from a JSON object printed on stdout (decision / glossary
+/// create responses all share this shape).
 fn extract_id(stdout: &str) -> String {
     let value: serde_json::Value =
         serde_json::from_str(stdout).unwrap_or_else(|e| panic!("stdout not JSON: {e}\n{stdout}"));
@@ -215,7 +215,7 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
             "--title",
             "Reference the first decision from later nodes",
             "--body",
-            "Second decision so glossary/architecture refs below resolve.",
+            "Second decision so the glossary and edge refs below resolve.",
         ],
     );
     let dec_two = extract_id(&dec_two_stdout);
@@ -274,28 +274,27 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
     let term_id = extract_id(&term_stdout);
     assert!(term_id.starts_with("term_"), "got {term_id}");
 
-    // --- architecture: typed edges + MOTIVATED_BY, refs must resolve. ---
-    let arch_stdout = run_cli(
+    // --- typed edges via --property: reference-valued keys must take minted
+    // ids and must resolve at write time. ---
+    let dec_three_stdout = run_cli(
         &home,
         &running,
         &project_root,
         &[
-            "architecture",
+            "decision",
             "create",
             "--project",
             project_id,
             "--title",
-            "bootstrap smoke test module",
+            "Bootstrap smoke typed edges",
             "--body",
-            "Owns the greenfield bootstrap e2e smoke test.",
+            "Carries the typed reference edges the bootstrap e2e smoke pins.",
             "--property",
-            &format!("MOTIVATED_BY={dec_two}"),
-            "--property",
-            &format!("RELATES_TO={term_id}"),
+            &format!("RELATES_TO={dec_two} {term_id}"),
         ],
     );
-    let arch_id = extract_id(&arch_stdout);
-    assert!(arch_id.starts_with("arch_"), "got {arch_id}");
+    let dec_three = extract_id(&dec_three_stdout);
+    assert!(dec_three.starts_with("dec_"), "got {dec_three}");
 
     // --- task: create + update, proving the post-boot write path TASK-GERBB
     // made work without a restart (F1). ---
@@ -358,7 +357,7 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
             "--title",
             "Bootstrap smoke artifact",
             "--subject-nodes",
-            &arch_id,
+            &dec_three,
         ],
     );
 
@@ -371,6 +370,7 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
     );
     assert!(decision_list.contains(&dec_one));
     assert!(decision_list.contains(&dec_two));
+    assert!(decision_list.contains(&dec_three));
 
     let task_list = run_cli(
         &home,

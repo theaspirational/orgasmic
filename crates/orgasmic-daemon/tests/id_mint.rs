@@ -354,10 +354,6 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
         "#+title: decisions\n#+orgasmic_version: 1\n\n",
     );
     write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n#+orgasmic_version: 1\n\n",
-    );
-    write(
         &project_root.join(".orgasmic/glossary.org"),
         "#+title: glossary\n#+orgasmic_version: 1\n\n",
     );
@@ -374,20 +370,6 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
             "project": "orgasmic",
             "request_id": "create-token-decision",
             "title": "Tokened decision"
-        }))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let architecture: serde_json::Value = client
-        .post(format!("{base}/api/architecture"))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({
-            "project": "orgasmic",
-            "request_id": "create-token-architecture",
-            "title": "Tokened architecture"
         }))
         .send()
         .await
@@ -424,15 +406,11 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
         .unwrap();
 
     let decision_id = decision["id"].as_str().unwrap();
-    let arch_id = architecture["id"].as_str().unwrap();
     let glossary_id = glossary["id"].as_str().unwrap();
     let task_id = task["id"].as_str().unwrap();
 
     let decisions = std::fs::read_to_string(project_root.join(".orgasmic/decisions.org")).unwrap();
     assert!(decisions.contains(&format!("* {decision_id} Tokened decision")));
-    let architecture =
-        std::fs::read_to_string(project_root.join(".orgasmic/architecture.org")).unwrap();
-    assert!(architecture.contains(&format!("* {arch_id} Tokened architecture")));
     let glossary = std::fs::read_to_string(project_root.join(".orgasmic/glossary.org")).unwrap();
     assert!(glossary.contains(&format!("* {glossary_id} Tokened glossary")));
     let tasks = std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();

@@ -23,7 +23,7 @@ fn test_options() -> DaemonOptions {
         // `fs_watcher_enabled: true` explicitly.
         fs_watcher_enabled: false,
         // `stage_acquire_blocked_sessions_is_path_free` drives the real
-        // claude/tmux architect stage. Its assertion is about the acquire
+        // claude/tmux plan stage. Its assertion is about the acquire
         // failure being path-free, not about TUI-input detection, so shrink the
         // driver's 10s input-ready window to the 1s floor to avoid waiting it
         // out. Other tests never reach the claude/tmux spawn path.
@@ -873,7 +873,7 @@ async fn stage_acquire_blocked_sessions_is_path_free() {
 
     let resp = ctx
         .client
-        .post(format!("http://{}/api/architect", ctx.running.addr))
+        .post(format!("http://{}/api/plan", ctx.running.addr))
         .bearer_auth(&ctx.token)
         .json(&serde_json::json!({
             "project": ctx.project_id,

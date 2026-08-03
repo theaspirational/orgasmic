@@ -26,11 +26,17 @@ use uuid::Uuid;
 use crate::daemon_client::DaemonClient;
 use crate::home::Home;
 
+/// The kinds `orgasmic manager dispatch --kind` will start.
+///
+/// dec_HBK6A retired `architector`, so it is no longer a value this enum
+/// accepts and no dispatch can start one. The READ side is deliberately not
+/// this enum: a `DispatchRecord`'s `kind` is a plain `String`, and every close
+/// / finalize / scan path below matches it as a string precisely so a persisted
+/// `architector` row keeps parsing after the verb is gone.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum DispatchKind {
     Implementer,
     Reviewer,
-    Architector,
 }
 
 impl DispatchKind {
@@ -38,7 +44,6 @@ impl DispatchKind {
         match self {
             Self::Implementer => "implementer",
             Self::Reviewer => "reviewer",
-            Self::Architector => "architector",
         }
     }
 }
@@ -583,11 +588,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     }
     // Each dispatch kind owns a distinct default worktree suffix; reject any
     // accidental reuse of another kind's default path for the same task.
-    for other_kind in [
-        DispatchKind::Implementer,
-        DispatchKind::Reviewer,
-        DispatchKind::Architector,
-    ] {
+    for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
         if other_kind != plan.kind {
             let other_default =
                 default_worktree(&plan.project_root, first_task(&plan.tasks), other_kind);
@@ -3177,6 +3178,11 @@ fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
     // txs mirror the dispatch-worker `*.done` vocabulary. Stage completion
     // watchers still emit `grill.completed` / `plan.completed` from the
     // finalize tombstone.
+    //
+    // `architector` is LEGACY (dec_HBK6A): no verb starts one any more, but
+    // this function is fed the `kind` string read back off a persisted
+    // `DispatchRecord`, so an architector dispatch opened before the excision
+    // must still be closable. Removing the arm would strand it.
     match kind {
         "implementer" => Ok("implementer.done"),
         "reviewer" => Ok("reviewer.done"),
@@ -3204,14 +3210,11 @@ fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
 /// `manager.dispatch_started` record and no manager close, so there is nothing
 /// for a report-only tx to leave open.
 ///
-/// `architector` is deliberately in the reported set even though it is ALSO a
-/// stage kind, because finalize sees only `run.kind` and cannot tell a
-/// dispatched architector from `stage architect` on main. Dispatched
-/// architectors are closed by the manager (`architector-watch-then-integrate`,
-/// `--merge-sha` required), so treating them as terminal would leave this whole
-/// defect in place for that kind; the stage direction costs nothing, since a
-/// stage run has no dispatch record to leave open and stage completion is
-/// derived from the finalize tombstone, not the tx type.
+/// `architector` stays in the reported set as LEGACY (dec_HBK6A retired both
+/// the dispatch kind and the `architect` stage). It is kept because finalize is
+/// fed `run.kind` off a live or persisted run record: a worker still running
+/// inside an architector dispatch opened before the excision must finalize with
+/// the tx the manager's close is waiting for.
 fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
     match kind {
         "implementer" => Ok("implementer.reported"),
@@ -3998,7 +4001,6 @@ fn dispatch_lifecycle_transitions(
     let stage = match kind {
         DispatchKind::Implementer => LifecycleStage::InProgress,
         DispatchKind::Reviewer => LifecycleStage::InReview,
-        DispatchKind::Architector => LifecycleStage::InProgress,
     };
     tasks.iter().map(|task| (task.clone(), stage)).collect()
 }
@@ -4032,6 +4034,10 @@ fn close_lifecycle_transitions(
     let mut transitions = Vec::new();
     for task in tasks {
         let info = read_task_lifecycle(project_root, task)?;
+        // `open.kind` is the string on the persisted `manager.dispatch_started`
+        // record, not a `DispatchKind`. The `architector` arms are legacy
+        // (dec_HBK6A) and exist so a dispatch opened before the excision still
+        // closes; nothing can open a new one.
         let stage = match args.status {
             DispatchCloseStatus::Aborted => match open.kind.as_str() {
                 "implementer" => LifecycleStage::Todo,
@@ -4299,9 +4305,6 @@ fn dispatchable_stage(kind: DispatchKind, stage: LifecycleStage) -> bool {
         DispatchKind::Implementer => {
             matches!(stage, LifecycleStage::Backlog | LifecycleStage::Todo)
         }
-        DispatchKind::Architector => {
-            matches!(stage, LifecycleStage::Backlog | LifecycleStage::Todo)
-        }
         DispatchKind::Reviewer => {
             matches!(stage, LifecycleStage::InReview)
         }
@@ -4312,7 +4315,6 @@ fn allowed_stage_text(kind: DispatchKind) -> &'static str {
     match kind {
         DispatchKind::Implementer => "BACKLOG or TODO",
         DispatchKind::Reviewer => "IN_REVIEW",
-        DispatchKind::Architector => "BACKLOG or TODO",
     }
 }
 
@@ -4404,7 +4406,6 @@ fn default_worktree(project_root: &Path, task: &str, kind: DispatchKind) -> Path
     let stem = match kind {
         DispatchKind::Implementer => slug,
         DispatchKind::Reviewer => format!("{slug}-review"),
-        DispatchKind::Architector => format!("{slug}-arch"),
     };
     project_dispatch_dir(project_root)
         .join(stem)
@@ -4416,7 +4417,6 @@ fn default_branch(task: &str, kind: DispatchKind) -> String {
     match kind {
         DispatchKind::Implementer => format!("{slug}-impl"),
         DispatchKind::Reviewer => format!("{slug}-review"),
-        DispatchKind::Architector => format!("{slug}-arch"),
     }
 }
 
@@ -5349,10 +5349,6 @@ mod tests {
             PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-047.5.1-review/worktree")
         );
         assert_eq!(
-            default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
-            PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-086-arch/worktree")
-        );
-        assert_eq!(
             default_branch("TASK-047.5.1", DispatchKind::Implementer),
             "task-047.5.1-impl"
         );
@@ -5360,17 +5356,13 @@ mod tests {
             default_branch("TASK-047.5.1", DispatchKind::Reviewer),
             "task-047.5.1-review"
         );
-        assert_eq!(
-            default_branch("TASK-086", DispatchKind::Architector),
-            "task-086-arch"
-        );
         assert_ne!(
-            default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
+            default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer),
             default_worktree(&project_root, "TASK-086", DispatchKind::Implementer)
         );
         assert_ne!(
-            default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
-            default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer)
+            default_branch("TASK-086", DispatchKind::Reviewer),
+            default_branch("TASK-086", DispatchKind::Implementer)
         );
     }
 
@@ -5544,24 +5536,64 @@ mod tests {
         assert!(!is_release_run_not_found_error(&unreachable));
     }
 
+    /// dec_HBK6A stage A: the architector dispatch VERB is gone, but the string
+    /// is still on disk in every project's tx log. The removal is only correct
+    /// if a persisted `manager.dispatch_started` row recorded as `architector`
+    /// still parses off the ledger and still resolves its whole close
+    /// vocabulary — otherwise a dispatch opened before the excision is
+    /// unclosable and its history is unreadable.
+    ///
+    /// This is the load-bearing test of stage A. Stage D deletes
+    /// `WorkerKind::Architector`; it must keep this green.
     #[test]
-    fn parses_architector_kind_and_maps_lifecycle() {
-        let kind = <DispatchKind as ValueEnum>::from_str("architector", false).unwrap();
-        assert_eq!(kind, DispatchKind::Architector);
-        assert_eq!(kind.as_str(), "architector");
-        assert_eq!(kind.to_string(), "architector");
+    fn historical_architector_ledger_row_still_parses_and_closes() {
+        // Nothing can START one any more.
+        assert!(<DispatchKind as ValueEnum>::from_str("architector", false).is_err());
 
-        assert_eq!(
-            dispatch_lifecycle_transitions(kind, &["TASK-086".to_string()]),
-            vec![("TASK-086".to_string(), LifecycleStage::InProgress)]
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_dir = tmp.path().join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        // Verbatim shape of a real pre-excision row (`:KIND: architector`),
+        // followed by the worker's own report, which must leave it OPEN.
+        std::fs::write(
+            tx_dir.join("2026-05.org"),
+            "#+title: tx\n#+orgasmic_version: 1\n\n* TX 2026-05-23 Sat 10:00:00 manager.dispatch_started TASK-086\n:PROPERTIES:\n:TX_ID:        tx-start-arch\n:TIME:         [2026-05-23 Sat 10:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-086\n:KIND:         architector\n:WORKTREE:     /tmp/orgasmic-worktrees/task-086-arch\n:BRANCH:       task-086-arch\n:STARTED_AT:   [2026-05-23 Sat 10:00:00]\n:END:\n\n* TX 2026-05-23 Sat 10:10:00 architector.reported TASK-086\n:PROPERTIES:\n:TX_ID:        tx-reported-arch\n:TIME:         [2026-05-23 Sat 10:10:00]\n:TYPE:         architector.reported\n:ACTOR:        agent.architector\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-086\n:END:\n",
+        )
+        .unwrap();
+
+        let open = scan_open_dispatches(tmp.path()).unwrap();
+        assert_eq!(open.len(), 1, "the historical architector row must parse");
+        assert_eq!(open[0].tx_id, "tx-start-arch");
+        assert_eq!(open[0].kind, "architector");
+        assert!(
+            open[0].reported,
+            "`architector.reported` must still mark the dispatch reported"
         );
-        assert!(dispatchable_stage(kind, LifecycleStage::Backlog));
-        assert!(dispatchable_stage(kind, LifecycleStage::Todo));
-        assert!(!dispatchable_stage(kind, LifecycleStage::InReview));
-        assert_eq!(allowed_stage_text(kind), "BACKLOG or TODO");
+        assert!(!open[0].closed, "a report does not close the dispatch");
 
-        let open = architector_record();
-        assert_eq!(done_tx_type(&open).unwrap(), "architector.done");
+        // The close vocabulary the manager needs to finish it off.
+        assert_eq!(done_tx_type(&open[0]).unwrap(), "architector.done");
+        assert_eq!(
+            finalize_tx_type_for_kind("architector").unwrap(),
+            "architector.reported"
+        );
+
+        // And the manager's `*.done` still closes it.
+        let closed_file = tx_dir.join("2026-06.org");
+        std::fs::write(
+            &closed_file,
+            "#+title: tx\n#+orgasmic_version: 1\n\n* TX 2026-06-01 Mon 10:00:00 architector.done TASK-086\n:PROPERTIES:\n:TX_ID:        tx-done-arch\n:TIME:         [2026-06-01 Mon 10:00:00]\n:TYPE:         architector.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-086\n:CLOSED_TX:    tx-start-arch\n:END:\n",
+        )
+        .unwrap();
+        assert!(
+            scan_open_dispatches(tmp.path()).unwrap().is_empty(),
+            "`architector.done` must still close the historical dispatch"
+        );
+        let closed = latest_closed_dispatch_for_tasks(tmp.path(), &["TASK-086".to_string()])
+            .unwrap()
+            .expect("a closed architector dispatch must still resolve");
+        assert_eq!(closed.tx_id, "tx-start-arch");
+        assert!(closed.closed);
     }
 
     #[test]

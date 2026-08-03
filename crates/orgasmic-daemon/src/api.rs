@@ -694,17 +694,13 @@ pub fn router(state: ApiState) -> Router {
             "/decisions/:id",
             get(get_decision).post(post_decision_action),
         )
-        .route(
-            "/architecture",
-            get(get_architecture).post(post_architecture_create),
-        )
+        // dec_HBK6A: the architecture layer is read-only from here on. The GET
+        // projections stay until the read model retires; nothing can create or
+        // revise an architecture node through the daemon any more.
+        .route("/architecture", get(get_architecture))
         .route("/architecture/nodes", get(get_architecture_nodes))
-        .route(
-            "/architecture/:id",
-            get(get_architecture_node).post(post_architecture_action),
-        )
+        .route("/architecture/:id", get(get_architecture_node))
         .route("/grill", post(post_grill))
-        .route("/architect", post(post_architect))
         .route("/plan", post(post_plan))
         .route("/graph/markers/:node_id", get(get_graph_markers))
         .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
@@ -3576,13 +3572,6 @@ async fn post_grill(
     post_stage(&state, stage_spec("grill"), req, None).await
 }
 
-async fn post_architect(
-    State(state): State<ApiState>,
-    Json(req): Json<StageRequest>,
-) -> Result<Json<Value>, ApiError> {
-    post_stage(&state, stage_spec("architect"), req, None).await
-}
-
 async fn post_plan(
     State(state): State<ApiState>,
     Json(req): Json<StageRequest>,
@@ -3600,14 +3589,6 @@ fn stage_spec(stage: &str) -> StageSpec {
             target: DEFAULT_TASK_FILE_REL,
             default_reason: "grill stage requested",
         },
-        "architect" => StageSpec {
-            stage: "architect",
-            requested_tx: "architect.requested",
-            kind: WorkerKind::Architector,
-            prompt_kind: "architector",
-            target: ".orgasmic/architecture.org",
-            default_reason: "architect stage requested",
-        },
         "plan" => StageSpec {
             stage: "plan",
             requested_tx: "plan.requested",
@@ -3622,9 +3603,12 @@ fn stage_spec(stage: &str) -> StageSpec {
 
 /// [`stage_spec`] for a stage name that came off disk rather than out of a
 /// route (TASK-KPMFK boot recovery). Unknown names answer `None` instead of
-/// panicking: a session file is untrusted input to this process.
+/// panicking: a session file is untrusted input to this process. A retired
+/// stage name (`architect`, dec_HBK6A) is exactly such an unknown name — a
+/// persisted session naming it reattaches without a stage watcher rather than
+/// resurrecting the stage.
 fn stage_spec_for(stage: &str) -> Option<StageSpec> {
-    matches!(stage, "grill" | "architect" | "plan").then(|| stage_spec(stage))
+    matches!(stage, "grill" | "plan").then(|| stage_spec(stage))
 }
 
 async fn post_stage(
@@ -3716,10 +3700,10 @@ async fn post_stage(
         spec.stage,
         now.format("%Y%m%dT%H%M%S")
     ));
-    // orgasmic:TASK-S52X9 — grill/plan/architect carry a last_path so they
-    // advertise the universal finalize contract; `orgasmic dispatch finalize`
-    // can resolve the report path via ORGASMIC_RUN_ID (TASK-TZJFF).
-    let last_path = matches!(spec.stage, "grill" | "plan" | "architect").then(|| {
+    // orgasmic:TASK-S52X9 — grill/plan carry a last_path so they advertise the
+    // universal finalize contract; `orgasmic dispatch finalize` can resolve the
+    // report path via ORGASMIC_RUN_ID (TASK-TZJFF).
+    let last_path = matches!(spec.stage, "grill" | "plan").then(|| {
         project
             .root
             .join(".orgasmic")
@@ -4227,7 +4211,6 @@ fn project_prompt_defaults(project: &crate::index::ProjectIndex) -> ProjectPromp
 fn stage_acceptance(spec: StageSpec, reason: &str) -> String {
     match spec.stage {
         "grill" => format!("- [ ] Record findings or questions for: {reason}"),
-        "architect" => format!("- [ ] Draft or update architecture for: {reason}"),
         "plan" => format!("- [ ] Draft implementation-ready tasks for: {reason}"),
         _ => format!("- [ ] Complete stage: {reason}"),
     }
@@ -4661,11 +4644,17 @@ struct DispatchResponse {
     pub dispatch_tx_id: String,
 }
 
+/// The kinds `POST /dispatch` will spawn.
+///
+/// dec_HBK6A retired `architector`: it is no longer accepted here, so no
+/// dispatch can spawn one. Historical ledger rows recorded as `architector`
+/// are still read — that vocabulary lives on the CLI close/finalize side
+/// (`manager::done_tx_type_for_kind`) and in `WorkerKind`, neither of which
+/// this enum gates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DispatchEndpointKind {
     Implementer,
     Reviewer,
-    Architector,
 }
 
 impl DispatchEndpointKind {
@@ -4673,7 +4662,6 @@ impl DispatchEndpointKind {
         match self {
             Self::Implementer => "implementer",
             Self::Reviewer => "reviewer",
-            Self::Architector => "architector",
         }
     }
 
@@ -4681,15 +4669,14 @@ impl DispatchEndpointKind {
         match self {
             Self::Implementer => WorkerKind::Implementer,
             Self::Reviewer => WorkerKind::Reviewer,
-            Self::Architector => WorkerKind::Architector,
         }
     }
 
     fn run_kind(self) -> RunKind {
-        // Reviewer + Architector dispatches are normal worker runs in the
-        // supervisor. The dispatched role is passed separately to the run
-        // summary; the driver runtime kind stays non-babysitter so they have
-        // the same tool surface as implementers.
+        // Reviewer dispatches are normal worker runs in the supervisor. The
+        // dispatched role is passed separately to the run summary; the driver
+        // runtime kind stays non-babysitter so they have the same tool surface
+        // as implementers.
         RunKind::Worker
     }
 }
@@ -4701,7 +4688,6 @@ impl FromStr for DispatchEndpointKind {
         match value {
             "implementer" => Ok(Self::Implementer),
             "reviewer" => Ok(Self::Reviewer),
-            "architector" => Ok(Self::Architector),
             other => Err(ApiError::bad_request(format!(
                 "unknown dispatch kind {other}"
             ))),
@@ -5245,9 +5231,9 @@ async fn post_task_dispatch_close_guard(
     let params = DispatchCloseGuardParams {
         project_id: project_id.clone(),
         task_id: task_id.clone(),
-        // Every dispatch shape — implementer, reviewer, architector, and the
-        // stage kinds — is a `RunKind::Worker` run in the supervisor, so this
-        // is the lease and reservation identity for all of them.
+        // Every dispatch shape — implementer, reviewer, and the stage kinds —
+        // is a `RunKind::Worker` run in the supervisor, so this is the lease
+        // and reservation identity for all of them.
         kind: RunKind::Worker,
         branch: req.branch.clone().unwrap_or_default(),
         worktree_path: req.worktree_path.clone(),
@@ -5909,6 +5895,9 @@ async fn post_task_lease_release(
     Json(req): Json<LeaseReleaseRequest>,
 ) -> Result<Json<LeaseReleaseResponse>, ApiError> {
     let kind = match req.kind.as_deref().unwrap_or("implementer") {
+        // `architector` is legacy (dec_HBK6A): no dispatch spawns one any more,
+        // but a lease left behind by a historical architector run must still be
+        // clearable by name rather than answering 400.
         "implementer" | "reviewer" | "architector" => RunKind::Worker,
         "babysitter" => RunKind::Babysitter,
         other => return Err(ApiError::bad_request(format!("unknown lease kind {other}"))),
@@ -6061,7 +6050,6 @@ fn dispatch_expected_next(kind: DispatchEndpointKind) -> &'static str {
     match kind {
         DispatchEndpointKind::Implementer => "fix-implementer-watch-then-integrate",
         DispatchEndpointKind::Reviewer => "reviewer-watch-then-fix-or-close",
-        DispatchEndpointKind::Architector => "architector-watch-then-integrate",
     }
 }
 
@@ -10156,10 +10144,10 @@ struct BootReattachCandidate {
     dispatch_attempt_token: Option<String>,
     role: Option<String>,
     requires_worker_finalize: Option<bool>,
-    /// The stage this run was launched as, when it was a `grill`/`plan`/
-    /// `architect` launch — enables respawning its stage completion watcher
-    /// (TASK-KPMFK). `None` for every non-stage run and for session JSONL
-    /// written before the stage identity was durable.
+    /// The stage this run was launched as, when it was a `grill`/`plan`
+    /// launch — enables respawning its stage completion watcher (TASK-KPMFK).
+    /// `None` for every non-stage run and for session JSONL written before the
+    /// stage identity was durable.
     stage: Option<String>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
@@ -12745,13 +12733,6 @@ async fn post_decision_create(
     create_graph_heading(&state, GraphLayer::Decision, req).await
 }
 
-async fn post_architecture_create(
-    State(state): State<ApiState>,
-    Json(req): Json<GraphCreateRequest>,
-) -> Result<Json<GraphMutationResponse>, ApiError> {
-    create_graph_heading(&state, GraphLayer::Architecture, req).await
-}
-
 async fn post_glossary_create(
     State(state): State<ApiState>,
     Json(req): Json<GraphCreateRequest>,
@@ -12767,14 +12748,6 @@ async fn post_decision_action(
     mutate_graph_heading(&state, GraphLayer::Decision, id, req).await
 }
 
-async fn post_architecture_action(
-    State(state): State<ApiState>,
-    Path(id): Path<String>,
-    Json(req): Json<GraphActionRequest>,
-) -> Result<Json<GraphMutationResponse>, ApiError> {
-    mutate_graph_heading(&state, GraphLayer::Architecture, id, req).await
-}
-
 async fn post_glossary_action(
     State(state): State<ApiState>,
     Path(id): Path<String>,
@@ -12783,10 +12756,15 @@ async fn post_glossary_action(
     mutate_graph_heading(&state, GraphLayer::Glossary, id, req).await
 }
 
+/// The layers the daemon will CREATE or REVISE a graph heading in.
+///
+/// dec_HBK6A dropped `Architecture`: with `POST /architecture` and
+/// `POST /architecture/:id` retired there is no way to reach it, so the variant
+/// would be dead. Reading architecture nodes is unaffected — that goes through
+/// [`NodeLayer`] and the index projections, which still carry the layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GraphLayer {
     Decision,
-    Architecture,
     Glossary,
 }
 
@@ -12794,7 +12772,6 @@ impl GraphLayer {
     fn file_name(self) -> &'static str {
         match self {
             Self::Decision => "decisions.org",
-            Self::Architecture => "architecture.org",
             Self::Glossary => "glossary.org",
         }
     }
@@ -12802,7 +12779,6 @@ impl GraphLayer {
     fn layer_name(self) -> &'static str {
         match self {
             Self::Decision => "decision",
-            Self::Architecture => "architecture",
             Self::Glossary => "glossary",
         }
     }
@@ -12810,7 +12786,6 @@ impl GraphLayer {
     fn artifact_name(self) -> &'static str {
         match self {
             Self::Decision => "decisions file",
-            Self::Architecture => "architecture file",
             Self::Glossary => "glossary file",
         }
     }
@@ -12818,7 +12793,6 @@ impl GraphLayer {
     fn title_prefix(self) -> &'static str {
         match self {
             Self::Decision => "",
-            Self::Architecture => "",
             Self::Glossary => "term:",
         }
     }
@@ -13137,7 +13111,6 @@ fn reject_glossary_duplicate_identity(
 fn graph_layer_class(layer: GraphLayer) -> orgasmic_core::NodeIdClass {
     match layer {
         GraphLayer::Decision => orgasmic_core::NodeIdClass::Decision,
-        GraphLayer::Architecture => orgasmic_core::NodeIdClass::Architecture,
         GraphLayer::Glossary => orgasmic_core::NodeIdClass::Term,
     }
 }
@@ -14394,8 +14367,8 @@ fn render_graph_heading(
     let mut properties = req.properties.clone();
     properties.insert("ID".to_string(), id.to_string());
     let heading_title = match layer {
-        GraphLayer::Decision | GraphLayer::Architecture if title == id => id.to_string(),
-        GraphLayer::Decision | GraphLayer::Architecture => format!("{id} {title}"),
+        GraphLayer::Decision if title == id => id.to_string(),
+        GraphLayer::Decision => format!("{id} {title}"),
         GraphLayer::Glossary => {
             if id.starts_with("term_") {
                 format!("{id} {title}")
@@ -18277,21 +18250,22 @@ pub(crate) mod tests {
         );
     }
 
+    /// dec_HBK6A: the dispatch endpoint no longer spawns an architector, and
+    /// the retired stage name is no longer a stage spec — but neither removal
+    /// may touch the READ side, so this also pins that `WorkerKind` still
+    /// parses the persisted `architector` string (the ledger-history contract
+    /// whose CLI half lives in `manager::ledger_kind_architector_still_parses`).
     #[test]
-    fn dispatch_endpoint_kind_supports_architector() {
-        let kind = DispatchEndpointKind::Architector;
-
-        assert_eq!(kind.as_str(), "architector");
-        assert_eq!(kind.worker_kind(), WorkerKind::Architector);
-        assert_eq!(kind.run_kind(), RunKind::Worker);
-        assert_eq!(
-            DispatchEndpointKind::from_str("architector").unwrap(),
-            DispatchEndpointKind::Architector
-        );
+    fn architect_production_surfaces_are_retired_but_history_still_parses() {
+        assert!(DispatchEndpointKind::from_str("architector").is_err());
         assert!(DispatchEndpointKind::from_str("nonexistent").is_err());
+        assert!(stage_spec_for("architect").is_none());
+        assert!(stage_spec_for("grill").is_some());
+        assert!(stage_spec_for("plan").is_some());
+
         assert_eq!(
-            dispatch_expected_next(kind),
-            "architector-watch-then-integrate"
+            WorkerKind::from_str("architector").unwrap(),
+            WorkerKind::Architector
         );
     }
 
@@ -24274,24 +24248,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    /// The `architect` case specifically (TASK-KPMFK acceptance): `architect`
-    /// is a STAGE kind whose worker finalize emits `architector.reported`
-    /// rather than `architector.done` (TASK-6AYEJ.1), so a watcher keyed on a
-    /// `.done` tx would pass grill/plan and still miss this one. The session
-    /// below carries NO terminal tx of any kind — only the finalize tombstone —
-    /// and `architect.completed` must still be emitted after the restart.
-    #[tokio::test]
-    async fn boot_reattach_respawns_architect_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Tmux,
-            "architect",
-            "architector",
-            None,
-            "boot_reattach_respawns_architect_stage_completion_watcher",
-        )
-        .await;
-    }
-
     #[tokio::test]
     async fn boot_reattach_rmux_respawns_grill_stage_completion_watcher() {
         assert_boot_reattach_respawns_stage_completion_watcher(
@@ -24312,18 +24268,6 @@ pub(crate) mod tests {
             "planner",
             None,
             "boot_reattach_rmux_respawns_plan_stage_completion_watcher",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_rmux_respawns_architect_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Rmux,
-            "architect",
-            "architector",
-            None,
-            "boot_reattach_rmux_respawns_architect_stage_completion_watcher",
         )
         .await;
     }
@@ -25938,11 +25882,7 @@ pub(crate) mod tests {
         )
         .unwrap();
 
-        for spec in [
-            stage_spec("grill"),
-            stage_spec("plan"),
-            stage_spec("architect"),
-        ] {
+        for spec in [stage_spec("grill"), stage_spec("plan")] {
             let mut values = orgasmic_core::SlotValues::new();
             values.insert("worker.id".into(), worker.id.clone());
             compile_stage_prompt(&home, spec, &mut values).unwrap();
@@ -27185,26 +27125,26 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
 
         let resp = client
-            .post(format!("http://{}/api/architecture", running.addr))
+            .post(format!("http://{}/api/decisions", running.addr))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "orgasmic",
                 "request_id": "graph-node-created-test",
-                "title": "Typed streams architecture node"
+                "title": "Typed streams decision node"
             }))
             .send()
             .await
             .unwrap();
         let status = resp.status();
         let body: Value = resp.json().await.unwrap();
-        assert!(status.is_success(), "create architecture: {status} {body}");
-        let minted_arch = body["id"].as_str().expect("minted arch id");
+        assert!(status.is_success(), "create decision: {status} {body}");
+        let minted_dec = body["id"].as_str().expect("minted dec id");
 
         let event = next_event_kind(&mut ws, "graph_node_created").await;
         let payload = &event["payload"];
         assert_eq!(payload["project_id"], "orgasmic");
-        assert_eq!(payload["layer"], "architecture");
-        assert_eq!(payload["node_id"], minted_arch);
+        assert_eq!(payload["layer"], "decision");
+        assert_eq!(payload["node_id"], minted_dec);
         assert!(!payload["tx_id"].as_str().unwrap().is_empty());
 
         let _ = running.shutdown.send(());
@@ -27946,51 +27886,6 @@ pub(crate) mod tests {
                 .any(|line| line.contains("PRIORITY") && line.contains("P1")),
             "{after}"
         );
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
-    #[tokio::test]
-    async fn architecture_revise_rejects_unresolved_reference_token() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        let architecture_path = project_root.join(".orgasmic/architecture.org");
-        write(
-            architecture_path.clone(),
-            "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_001 Component\n:PROPERTIES:\n:ID:                 arch_001\n:DEPENDS_ON:\n:MOTIVATED_BY:\n:END:\n",
-        );
-        let original = std::fs::read_to_string(&architecture_path).unwrap();
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let base = format!("http://{}", running.addr);
-
-        let resp = client
-            .post(format!("{base}/api/architecture/arch_001"))
-            .bearer_auth(&token)
-            .json(&serde_json::json!({
-                "project": "orgasmic",
-                "properties": { "DEPENDS_ON": "Expanded Routing Graph" }
-            }))
-            .send()
-            .await
-            .unwrap();
-        let status = resp.status();
-        let body: Value = resp.json().await.unwrap();
-        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
-        let message = body["error"].as_str().unwrap_or_default();
-        assert!(message.contains("DEPENDS_ON"), "{message}");
-        assert!(message.contains("space-separated node ids"), "{message}");
-
-        let after = std::fs::read_to_string(&architecture_path).unwrap();
-        assert_eq!(after, original, "write-nothing on reject");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
@@ -28841,19 +28736,21 @@ pub(crate) mod tests {
         state.writer.shutdown().await;
     }
 
-    /// TASK-6AYEJ.1 (residual gap named by the TASK-6AYEJ review): `architect`
-    /// is a STAGE kind whose worker finalize now emits `architector.reported`
-    /// rather than `architector.done`, because finalize sees only `run.kind`
-    /// and cannot tell a dispatched architector from `stage architect` on main.
-    /// That is safe only if stage completion is driven by the finalize
-    /// TOMBSTONE and not by the tx type, and if a stage run leaves no
-    /// `manager.dispatch_started` record for a report-only tx to leave open.
-    /// This test owns the FIRST half only: the session below carries a
-    /// worker-finalize release and no terminal tx of any kind, and the stage
-    /// still completes. The second half needs the production launch path and is
-    /// asserted there (see the comment on the removed assertion below).
+    /// TASK-6AYEJ.1 (residual gap named by the TASK-6AYEJ review): stage
+    /// completion must be driven by the finalize TOMBSTONE and not by the tx
+    /// type, and a stage run must leave no `manager.dispatch_started` record
+    /// for a report-only tx to leave open. This test owns the FIRST half only:
+    /// the session below carries a worker-finalize release and no terminal tx
+    /// of any kind, and the stage still completes. The second half needs the
+    /// production launch path and is asserted there (see the comment on the
+    /// removed assertion below).
+    ///
+    /// This used to run on the `architect` stage, which was the only stage
+    /// whose worker finalize emitted `*.reported` rather than `*.done`. That
+    /// stage retired with dec_HBK6A; the tombstone property it pinned is a
+    /// property of every stage, so the test moved to `plan`.
     #[tokio::test]
-    async fn architect_stage_completes_off_the_finalize_tombstone_not_the_tx_type() {
+    async fn stage_completes_off_the_finalize_tombstone_not_the_tx_type() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -28861,18 +28758,18 @@ pub(crate) mod tests {
         seed_project(&home, &project_root, "orgasmic");
         let state = direct_stage_test_state(home.clone()).await;
         let mut rx = state.events.subscribe();
-        let session_path = home.sessions().join("stage-architect.jsonl");
+        let session_path = home.sessions().join("stage-plan.jsonl");
         let identity = RuntimeIdentity {
-            run_id: "run-stage-architect".into(),
-            runtime_id: "rt-stage-architect".into(),
-            boot_id: "boot-stage-architect".into(),
+            run_id: "run-stage-plan".into(),
+            runtime_id: "rt-stage-plan".into(),
+            boot_id: "boot-stage-plan".into(),
         };
         let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
         writer
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::Release {
-                    reason: "worker finalize for TASK-ARCH-STAGE".into(),
+                    reason: "worker finalize for TASK-PLAN-STAGE".into(),
                     outcome: ReleaseOutcome::Completed,
                     finalized_by_worker: true,
                 })
@@ -28884,23 +28781,23 @@ pub(crate) mod tests {
         spawn_stage_completion_watcher(
             state.clone(),
             StageCompletion {
-                stage: "architect".to_string(),
+                stage: "plan".to_string(),
                 project_id: "orgasmic".to_string(),
-                task_id: "TASK-ARCH-STAGE".to_string(),
+                task_id: "TASK-PLAN-STAGE".to_string(),
                 target: task_file_rel("backlog.org"),
-                run_id: "run-stage-architect".to_string(),
+                run_id: "run-stage-plan".to_string(),
                 session_path,
             },
         );
 
         let event = next_bus_event_kind(&mut rx, Topic::Run, "stage_completed").await;
         let value = serde_json::to_value(&event).unwrap();
-        assert_eq!(value["payload"]["stage"], "architect");
-        assert_eq!(value["payload"]["task_id"], "TASK-ARCH-STAGE");
+        assert_eq!(value["payload"]["stage"], "plan");
+        assert_eq!(value["payload"]["task_id"], "TASK-PLAN-STAGE");
 
         let tx_body = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
         assert!(
-            tx_body.contains("architect.completed"),
+            tx_body.contains("plan.completed"),
             "the tombstone must drive stage completion: {tx_body}"
         );
         // The "a stage run creates no `manager.dispatch_started`" half is NOT
@@ -28908,11 +28805,11 @@ pub(crate) mod tests {
         // session and calls the watcher directly, so the production stage
         // launch/recording path never runs and the negative assertion could not
         // fail. It now lives on the real path, in orgasmic-cli's
-        // `stage_architect_finalize_from_orgasmic_run_id_on_main`, which drives
-        // `POST /api/architect` and the real finalize and checks BOTH the
-        // project and home ledgers plus `dispatch-status`.
+        // `stage_plan_finalize_from_orgasmic_run_id_on_main`, which drives
+        // `POST /api/plan` and the real finalize and checks BOTH the project
+        // and home ledgers plus `dispatch-status`.
         assert!(
-            !tx_body.contains("architector.reported") && !tx_body.contains("architector.done"),
+            !tx_body.contains("planner.reported") && !tx_body.contains("planner.done"),
             "stage completion must not depend on a worker terminal tx: {tx_body}"
         );
 
@@ -34822,19 +34719,19 @@ pub(crate) mod tests {
 
         // (1) A graph event — visible to admin, filtered out for an artifacts member.
         let graph = client
-            .post(format!("http://{}/api/architecture", running.addr))
+            .post(format!("http://{}/api/decisions", running.addr))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "proj-a",
                 "request_id": "ws-authz-graph",
-                "title": "WS authz architecture node"
+                "title": "WS authz decision node"
             }))
             .send()
             .await
             .unwrap();
         assert!(
             graph.status().is_success(),
-            "create arch: {}",
+            "create decision: {}",
             graph.status()
         );
 

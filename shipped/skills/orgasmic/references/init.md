@@ -5,8 +5,8 @@ running CLI and daemon — run `/orgasmic install` first if `orgasmic status`
 fails. Scaffolding uses `orgasmic project init`. After scaffold, ask the
 operator whether to start bootstrap now or leave it for `/orgasmic resume`.
 Bootstrap and handoff edits run through the daemon (`orgasmic node body
-set|append`, `orgasmic decision create`, `orgasmic architecture create`,
-`orgasmic task update`, `orgasmic tx record` — see `orgasmic --help`).
+set|append`, `orgasmic decision create`, `orgasmic task update`,
+`orgasmic tx record` — see `orgasmic --help`).
 
 ## Guard rails
 
