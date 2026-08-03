@@ -2379,6 +2379,35 @@ absent that, it silently escalates to mutating a per-user service. Refusing —
 or at minimum warning — when the home it is asked to start differs from the one
 the installed LaunchAgent serves would have turned all three outages into an
 error message.
+RULE SHARPENED BY MEASUREMENT [2026-08-03]. The blanket "never set
+=ORGASMIC_HOME=" is the right thing to put in a brief, but it is not the precise
+rule, and the code fix should be built against the precise one.
+
+Measured: =ORGASMIC_HOME=<staged> orgasmic doctor= with residue staged in the
+fake home printed the expected warning AND left the LaunchAgent plist mtime
+unchanged (=04:53:32=, from hours earlier) with the daemons boot_id and pid
+untouched. So =doctor= genuinely does not reach =ensure_running=.
+
+The precise rule is therefore *never set =ORGASMIC_HOME= for a verb that NEEDS
+THE DAEMON* — because that is what triggers =ensure_running= ->
+=start_via_selected_adapter= -> the per-user LaunchAgent write. Read-only local
+verbs that never open a connection are unaffected.
+
+TWO CONSEQUENCES, and they point in opposite directions on purpose:
+
+1. *Keep the blanket ban in briefs.* A worker cannot reliably know which verbs
+   open a daemon connection, the failure is total and silent when it guesses
+   wrong, and the cost of the blanket version is nearly zero because the
+   daemon-free verification recipe covers what workers actually need. Precision
+   here would buy nothing and risk everything.
+2. *Build the code fix against the precise rule.* =ensure_running= is the single
+   choke point and already has a cheap correct path when it is told where the
+   daemon is (=ORGASMIC_DAEMON_URL=). Refusing — or warning — when the home it is
+   asked to start differs from the one the installed LaunchAgent serves would fix
+   the class without touching verbs like =doctor= that are already safe.
+
+That asymmetry is the useful part: the guidance humans and agents read should be
+blunter than the invariant the code enforces.
 
 ** Description
 

@@ -5701,3 +5701,72 @@
 :REASON:       edited task node TASK-3X5AQ
 :NODE_ID:      TASK-3X5AQ
 :END:
+
+* TX 2026-08-03 Mon 04:30:12 implementer.done TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4367
+:TIME:         [2026-08-03 Mon 04:30:12]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:REASON:       One table in core owns the retired-content families and every surface reads it, so a future cutover is one edit rather than four to remember. The maintenance discipline is ENFORCED rather than documented: a test fails when a table entry is not named in the shipped router with its deciding node, so a cutover author cannot land the code without the agent-facing text in the same release. The author declined the more elegant :RETIRES_PATHS: decision-property trigger with a real reason — a dispatch worktree's .orgasmic/ is a frozen snapshot, so that test would pass vacuously on the branch and fail after merge. Removal is a separate flag rather than part of --fix because --fix repairs runtime-owned things while this deletes operator-written content, and for the same reason it is not on the upgrade path. Manager verified the doctor output behaviourally against staged residue rather than trusting the tests.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    96c1f9d
+:BRANCH:       task-8ed6v-impl
+:WALL:         10m
+:REVIEWED_DIFF: d15a2d4..HEAD
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; retired_content 6/0; cli_parity 3/0; core fixtures 26/0; cli doctor 2/0; behaviour verified on the BUILT binary with staged residue, not on the installed one
+:CLOSED_TX:    tx-20260803-orgasmic-4351
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 04:30:12 task.state_transitioned TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4368
+:TIME:         [2026-08-03 Mon 04:30:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-8ED6V to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-03 Mon 04:30:13 task.state_transitioned TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4369
+:TIME:         [2026-08-03 Mon 04:30:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed and gated; doctor surface and router text verified behaviourally on the built binary.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 04:30:38 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4370
+:TIME:         [2026-08-03 Mon 04:30:38]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
