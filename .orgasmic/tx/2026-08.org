@@ -6152,3 +6152,43 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 05:30:58 reviewer.reported TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4393
+:TIME:         [2026-08-03 Mon 05:30:58]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:RUN_ID:       run-20260803T051431-2ad3e78fd9bb4b2c8ae50b78f598f95e
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-xcjyc-review/worktree
+:END:
+
+* TX 2026-08-03 Mon 05:34:23 implementer.reported TASK-RQ270.1
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4394
+:TIME:         [2026-08-03 Mon 05:34:23]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1
+:RUN_ID:       run-20260803T050838-fd21c2b27d2d44fda832501a2388b53b
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1/worktree
+:SHA:          53eeee4861c57d50af745c4422f7a188556b6b74
+:END:
+
+* TX 2026-08-03 Mon 09:00:50 task.created TASK-YN5FJ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4395
+:TIME:         [2026-08-03 Mon 09:00:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator asked how to stop unreviewed code reaching main; measured the forcing chain and found the merge assertion is never verified
+:END:
