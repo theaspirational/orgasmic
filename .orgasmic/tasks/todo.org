@@ -23,6 +23,35 @@ Acceptance:
 - an agent that finds retired content on disk has a first-class way to learn it is retired, without reading daemon logs or source
 - the check names the deciding node, not just the path
 - removal is offered, never performed silently
+STATE CHECK [2026-08-03], so the next worker does not chase a ghost: *the
+specific residue named in this task is GONE.* =~/.orgasmic/user/workers/= does
+not exist, and no daemon boot on 2026-08-03 logged the =user/workers= warning
+(the 54 occurrences in =daemon.out.log= are all historical, the most recent
+predating today). Someone removed it between the 2026-07-25 observation and now.
+
+That narrows the task but does NOT close it, and the remaining half is the half
+that generalises:
+
+- There is no live instance to clean up, so item 2 (offer removal through the
+  CLI) has nothing to act on today and should be built for the NEXT hard cutover
+  rather than this one.
+- Items 1, 3 and 4 stand unchanged. The defect was never really the two stale
+  files — it was that retired content sits on disk looking exactly like live
+  configuration while the only signal it is dead goes to a log no agent reads.
+  That is still true of every future cutover.
+- Item 3 is now the highest-value part: a decision that retires a content family
+  should land its path in the doctor check IN THE SAME RELEASE. Had that existed,
+  the 2026-07-25 incident would have been a doctor line instead of a manager
+  confidently telling the operator it had bypassed a configured reviewer and
+  proposing to restore the concept the decision had just removed.
+
+A note on why this matters more than its age suggests, from tonight: this session
+watched a manager (me) draw three successive wrong conclusions from plausible-
+looking evidence, and the fix each time was to make the real signal reachable
+rather than to reason harder. Item 4 — having =orgasmic entry= name known-retired
+paths so the router output itself inoculates — is the same shape of fix and is
+probably worth more than the doctor check alone, because the router is read by
+every agent on every session and =doctor= is read by almost none.
 
 * TODO TASK-XCJYC Rename non-ACP transports and reserve acp-* for the real protocol :drivers:cli:naming:
 :PROPERTIES:
