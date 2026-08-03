@@ -3136,10 +3136,7 @@ mod tests {
         assert_ne!(std::fs::read(&path).unwrap(), original);
         write_manifest_value(&board, &token, &written);
         assert_eq!(
-            rollback_fenced(&board.root, &token)
-                .unwrap()
-                .restored
-                .len(),
+            rollback_fenced(&board.root, &token).unwrap().restored.len(),
             1
         );
         assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -3404,8 +3401,7 @@ mod tests {
         // The empty lease the race produces: the paths were read at an instant
         // when the manifest did not answer, and the plan decoded under the lock
         // names one anyway.
-        let report =
-            rollback_compaction(&board.root, &token, &FencedSessions::default()).unwrap();
+        let report = rollback_compaction(&board.root, &token, &FencedSessions::default()).unwrap();
         let reason = report
             .refused
             .get(&path.display().to_string())
