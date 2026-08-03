@@ -64,7 +64,7 @@ pub const TRANSPORTS: &[&str] = &[
 /// own (separately checked) `rmux` binary requirement.
 pub const MODES: &[&str] = &["subprocess-stream-json", "stdio", "ws", "tmux", "rmux"];
 
-// orgasmic:TASK-XCJYC, term:acp
+// orgasmic:TASK-XCJYC, term_YX8AG
 /// Mode ids reserved for the **Agent Client Protocol** and unusable for
 /// anything else.
 ///

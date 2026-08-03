@@ -4579,7 +4579,18 @@ mod tests {
         for pane in ["rmux", "tmux", "tmux-tui"] {
             assert!(class_is_reclaimable("rendered_tui", Some(pane)), "{pane}");
         }
-        for structured in ["stdio", "acp-claude", "cursor-acp", "external"] {
+        // `acp-stdio` and `acp-ws` are the pre-TASK-XCJYC spellings, still on
+        // disk in 71 runs. The rule reads the recorded string, so a rename must
+        // not turn a historical run's evidence into reclaimable bytes.
+        for structured in [
+            "stdio",
+            "ws",
+            "acp-stdio",
+            "acp-ws",
+            "acp-claude",
+            "cursor-acp",
+            "external",
+        ] {
             assert!(
                 !class_is_reclaimable("rendered_tui", Some(structured)),
                 "{structured}: a structured transport's text_chunk is evidence"

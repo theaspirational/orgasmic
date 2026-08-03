@@ -29121,6 +29121,116 @@ pub(crate) mod tests {
         assert!(run.reason.contains("does not support runtime reattach"));
     }
 
+    // orgasmic:TASK-XCJYC
+    /// A session written before the `acp-stdio` → `stdio` rename still
+    /// classifies, and still classifies the same way.
+    ///
+    /// Seventy runs on the operator's board carry `transport: "acp-stdio"` and
+    /// one carries `"acp-ws"`. dec_WDR5K item 10 forbids an alias table, so
+    /// nothing translates those strings — which means the classifier has to
+    /// reach its answer without the registry. It can: reattach is a
+    /// pane-transport capability, `transport_is_pane` answers from the recorded
+    /// string alone, and neither historical id was ever a pane transport.
+    ///
+    /// Without this, such a record silently demotes from `interrupted` to
+    /// `ambiguous` — the same run, less legible, for a reason that has nothing
+    /// to do with the run.
+    #[tokio::test]
+    async fn pre_rename_transport_still_classifies_as_interrupted() {
+        for historical in ["acp-stdio", "acp-ws"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = Home::at(tmp.path().join("home"));
+            home.ensure().unwrap();
+            let project_root = tmp.path().join("proj");
+            write(
+                project_root.join(".orgasmic/project.org"),
+                "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
+            );
+            let run_id = format!("run-{historical}");
+            let identity = RuntimeIdentity {
+                run_id: run_id.clone(),
+                runtime_id: format!("rt-{historical}"),
+                boot_id: "boot-test".into(),
+            };
+            let path = project_sessions_dir(&project_root).join(format!("{run_id}.jsonl"));
+            let mut writer = orgasmic_core::SessionWriter::open(&path, identity).unwrap();
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    serde_json::to_value(Lifecycle::Acquire {
+                        task_id: "TASK-038".into(),
+                        kind: "implementer".into(),
+                        worker_id: format!("implementer-claude-{historical}"),
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    serde_json::to_value(Lifecycle::RunMeta {
+                        transport: historical.into(),
+                        harness: Some("claude".into()),
+                        project_id: Some("orgasmic".into()),
+                        worktree: Some(project_root.clone()),
+                        last_path: None,
+                        stdout_path: None,
+                        dispatch_attempt_token: None,
+                        role: Some("implementer".into()),
+                        requires_worker_finalize: Some(false),
+                        credential_mode: None,
+                        driver_config: json!({"force_inert": false}),
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            drop(writer);
+
+            let (recovered, _inventory) = classify_session_files(
+                &home,
+                None,
+                "boot-test",
+                &[],
+                std::slice::from_ref(&project_root),
+                &crate::run_catalog::RunCatalog::new(),
+                None,
+                TerminalWindow::unbounded(),
+            )
+            .await;
+
+            let run = recovered
+                .iter()
+                .find(|run| run.run_id == run_id)
+                .unwrap_or_else(|| panic!("{historical} record was not classified at all"));
+            assert_eq!(
+                run.classification, "interrupted",
+                "{historical}: pre-rename record must classify as it always did, got {}: {}",
+                run.classification, run.reason
+            );
+            assert!(
+                run.reason.contains(historical),
+                "{historical}: the reason must render the historical string it read, got {}",
+                run.reason
+            );
+        }
+    }
+
+    // orgasmic:TASK-XCJYC
+    /// The historical `acp/1` protocol_version still names its driver.
+    ///
+    /// Pre-rename claude runs wrote it from the simulated start-event path; it
+    /// is the only route left for a record whose `(mode, harness)` the current
+    /// registry cannot rebuild. It is a read of a historical string, not an
+    /// alias that lets anything new be written as `acp/`.
+    #[test]
+    fn historical_acp_protocol_version_still_names_its_driver() {
+        assert_eq!(driver_id_from_protocol("acp/1"), Some("claude-stream-json"));
+        assert_eq!(
+            driver_id_from_protocol("claude-code-stream-json/1"),
+            Some("claude-stream-json")
+        );
+    }
+
     struct HangingAttachDriver(Arc<std::sync::atomic::AtomicBool>);
 
     impl Drop for HangingAttachDriver {
