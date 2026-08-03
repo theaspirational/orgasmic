@@ -328,7 +328,25 @@ fn init_git_project(project_root: &Path) -> String {
     run_git(project_root, &["config", "user.name", "Test User"]);
     run_git(project_root, &["add", "."]);
     run_git(project_root, &["commit", "-m", "init"]);
-    run_git(project_root, &["rev-parse", "HEAD"])
+    // Most dispatch-close tests exercise integration-branch cleanup rather
+    // than the default-branch review gate. Give them a real merge commit on a
+    // non-default branch so --merge-sha is honest without adding an unrelated
+    // review bypass to every fixture. Default-branch enforcement has its own
+    // production-shaped regression below.
+    run_git(project_root, &["checkout", "-b", "integration"]);
+    run_git(project_root, &["checkout", "-b", "fixture-side"]);
+    run_git(
+        project_root,
+        &["commit", "--allow-empty", "-m", "fixture side"],
+    );
+    run_git(project_root, &["checkout", "integration"]);
+    run_git(
+        project_root,
+        &["merge", "--no-ff", "-m", "fixture merge", "fixture-side"],
+    );
+    let merge_sha = run_git(project_root, &["rev-parse", "HEAD"]);
+    run_git(project_root, &["checkout", "main"]);
+    merge_sha
 }
 
 fn write_stub_codex(bin_dir: &Path) -> PathBuf {
@@ -1218,6 +1236,362 @@ async fn dispatch_rejects_any_overlapping_open_task() {
         !second_worktree.exists(),
         "overlap validation should fail before creating the second worktree"
     );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let implementer_brief = tmp.path().join("codex/review-before-close-impl.md");
+    let implementer_worktree = tmp.path().join("worktrees/review-before-close-impl");
+
+    let running = boot(home.clone()).await;
+    let implementer_started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &implementer_worktree,
+        &implementer_brief,
+    )
+    .await;
+    write(
+        &implementer_worktree.join("reviewed-worker-change.txt"),
+        "worker output\n",
+    );
+    let summary = tmp.path().join("implementer-summary.md");
+    write(&summary, "reported implementer");
+    run_orgasmic(
+        &home,
+        &running,
+        &implementer_worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    let worker_sha = run_git(&implementer_worktree, &["rev-parse", "HEAD"]);
+
+    let second_impl_brief = tmp.path().join("codex/review-before-close-second-impl.md");
+    write(&second_impl_brief, "second implementer must collide");
+    let second_impl_worktree = tmp.path().join("worktrees/review-before-close-second-impl");
+    let same_kind_error = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            second_impl_brief.to_str().unwrap(),
+            "--from",
+            &worker_sha,
+            "--worktree",
+            second_impl_worktree.to_str().unwrap(),
+            "--branch",
+            "task-review-before-close-second-impl",
+        ],
+    );
+    assert!(
+        same_kind_error.contains("a second implementer dispatch still collides"),
+        "reported same-kind dispatch must remain blocked: {same_kind_error}"
+    );
+
+    let reviewer_brief = tmp.path().join("codex/review-before-close-review.md");
+    write(&reviewer_brief, "review the reported implementer");
+    let reviewer_worktree = tmp.path().join("worktrees/review-before-close-review");
+    let reviewer_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            reviewer_brief.to_str().unwrap(),
+            "--from",
+            &worker_sha,
+            "--worktree",
+            reviewer_worktree.to_str().unwrap(),
+            "--branch",
+            "task-review-before-close-review",
+        ],
+    );
+    assert!(
+        reviewer_stdout.contains("dispatched: TASK-DISPATCH reviewer pid="),
+        "reviewer must dispatch before implementer close: {reviewer_stdout}"
+    );
+    let reviewer_started_tx = started_tx_from_dispatch_stdout(&reviewer_stdout);
+    let tx_before_review_close = tx_log(&project_root);
+    assert!(
+        tx_before_review_close.contains(&format!(":REVIEWS_TX:   {implementer_started_tx}")),
+        "reviewer generation must name the reported implementer generation: \
+         {tx_before_review_close}"
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &reviewer_started_tx,
+            "--status",
+            "done",
+            "--property",
+            "VERDICT=ship",
+            "--reviewed-diff",
+            "main..task-dispatch-test-impl",
+        ],
+    );
+
+    run_git(&project_root, &["checkout", "main"]);
+    run_git(
+        &project_root,
+        &[
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge reviewed worker",
+            "task-dispatch-test-impl",
+        ],
+    );
+    let merge_sha = run_git(&project_root, &["rev-parse", "HEAD"]);
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &implementer_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &merge_sha,
+            "--worker-commit",
+            &worker_sha,
+        ],
+    );
+    assert!(
+        close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="),
+        "linked reviewer verdict must unlock a verified default-branch close: {close_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_close_rejects_unverified_merge_evidence_and_records_review_bypass() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/merge-evidence.md");
+    write(&brief, "merge evidence regression");
+    let worktree = tmp.path().join("worktrees/merge-evidence");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-merge-evidence-impl",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    write(&worktree.join("worker-evidence.txt"), "worker evidence\n");
+    run_git(&worktree, &["add", "worker-evidence.txt"]);
+    run_git(&worktree, &["commit", "-m", "worker evidence"]);
+    let worker_sha = run_git(&worktree, &["rev-parse", "HEAD"]);
+
+    let close_prefix = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        started_tx.as_str(),
+        "--status",
+        "done",
+        "--merge-sha",
+    ];
+    let unresolved = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[&close_prefix[..], &["not-a-real-merge-sha"]].concat(),
+    );
+    assert!(
+        unresolved.contains("--merge-sha `not-a-real-merge-sha` does not resolve"),
+        "unresolved string must be refused by name: {unresolved}"
+    );
+    let non_merge = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[&close_prefix[..], &[worker_sha.as_str()]].concat(),
+    );
+    assert!(
+        non_merge.contains("is not a merge commit"),
+        "non-merge commit must be refused by name: {non_merge}"
+    );
+
+    run_git(&project_root, &["checkout", "main"]);
+    run_git(&project_root, &["checkout", "-b", "unrelated-worker"]);
+    run_git(
+        &project_root,
+        &["commit", "--allow-empty", "-m", "unrelated worker"],
+    );
+    let unrelated_worker = run_git(&project_root, &["rev-parse", "HEAD"]);
+    run_git(&project_root, &["checkout", "main"]);
+    run_git(
+        &project_root,
+        &[
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge evidence worker",
+            "task-merge-evidence-impl",
+        ],
+    );
+    let merge_sha = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let not_contained_args = [
+        &close_prefix[..],
+        &[
+            merge_sha.as_str(),
+            "--worker-commit",
+            unrelated_worker.as_str(),
+        ],
+    ]
+    .concat();
+    let not_contained = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &not_contained_args,
+    );
+    assert!(
+        not_contained.contains("does not contain --worker-commit"),
+        "merge missing the worker commit must be refused by name: {not_contained}"
+    );
+
+    let verified_args = [
+        &close_prefix[..],
+        &[merge_sha.as_str(), "--worker-commit", worker_sha.as_str()],
+    ]
+    .concat();
+    let no_verdict =
+        run_orgasmic_failure(&home, &running, &project_root, &path_env, &verified_args);
+    assert!(
+        no_verdict.contains("no reviewer verdict exists")
+            && no_verdict.contains("--no-review-required --reason <why>"),
+        "default-branch refusal must name the missing verdict and remedy: {no_verdict}"
+    );
+
+    let no_reason_args = [&verified_args[..], &["--no-review-required"]].concat();
+    let no_reason =
+        run_orgasmic_failure(&home, &running, &project_root, &path_env, &no_reason_args);
+    assert!(
+        no_reason.contains("--no-review-required requires --reason"),
+        "review bypass must refuse an invisible reason: {no_reason}"
+    );
+
+    let bypass_args = [
+        &verified_args[..],
+        &[
+            "--no-review-required",
+            "--reason",
+            "documentation-only change",
+            "--no-worktree-remove",
+        ],
+    ]
+    .concat();
+    let bypass_close = run_orgasmic(&home, &running, &project_root, &path_env, &bypass_args);
+    assert!(bypass_close.contains("closed: TASK-DISPATCH implementer.done tx="));
+    let tx = tx_log(&project_root);
+    assert!(tx.contains(":NO_REVIEW_REQUIRED: true"));
+    assert!(tx.contains(":REASON:       documentation-only change"));
+    assert!(tx.contains(&format!(":MERGE_SHA:    {merge_sha}")));
+    assert!(tx.contains(&format!(":WORKER_COMMIT: {worker_sha}")));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -2545,7 +2919,7 @@ async fn dispatch_close_fails_when_liveness_probe_unreachable() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    init_git_project(&project_root);
+    let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     write_stub_codex(&bin_dir);
@@ -2581,7 +2955,7 @@ async fn dispatch_close_fails_when_liveness_probe_unreachable() {
             "--status",
             "done",
             "--merge-sha",
-            "deadbeef",
+            &head,
         ],
         &[("ORGASMIC_DAEMON_URL", "http://127.0.0.1:1")],
     );
@@ -4290,6 +4664,10 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
 
     // The manager merges. Its merge sha is a DIFFERENT commit from the worker's
     // branch tip — the exact distinction the old MERGE_SHA-from-finalize lost.
+    // This pre-existing test owns finalize/cleanup behavior, so merge on the
+    // fixture integration branch; the default-branch review gate is covered by
+    // the focused regressions above.
+    run_git(&project_root, &["checkout", "integration"]);
     run_git(
         &project_root,
         &[
@@ -6896,7 +7274,7 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    init_git_project(&project_root);
+    let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     write_stub_codex(&bin_dir);
@@ -6924,7 +7302,7 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
             "--status",
             "done",
             "--merge-sha",
-            "deadbeef",
+            &head,
             "--no-worktree-remove",
         ],
         &[],
@@ -6987,7 +7365,7 @@ async fn resubmitted_close_and_transition_are_labelled_no_ops() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    init_git_project(&project_root);
+    let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     write_stub_codex(&bin_dir);
@@ -7009,7 +7387,7 @@ async fn resubmitted_close_and_transition_are_labelled_no_ops() {
         "--status",
         "done",
         "--merge-sha",
-        "deadbeef",
+        &head,
         "--no-worktree-remove",
     ];
     let first = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);

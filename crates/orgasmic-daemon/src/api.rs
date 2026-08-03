@@ -4646,6 +4646,9 @@ struct DispatchRequest {
     pub liveness: Option<String>,
     #[serde(default)]
     pub goal_id: Option<String>,
+    /// Reported dispatch generations this reviewer was allowed to overlap.
+    #[serde(default)]
+    pub reviewed_dispatch_txs: Vec<String>,
     #[serde(default)]
     pub governance: Option<GovernancePatch>,
 }
@@ -6132,6 +6135,12 @@ async fn record_dispatch_started(
     }
     if let Some(goal_id) = non_empty_field(record.req.goal_id.clone()) {
         extra.push(("GOAL_ID".to_string(), goal_id));
+    }
+    if !record.req.reviewed_dispatch_txs.is_empty() {
+        extra.push((
+            "REVIEWS_TX".to_string(),
+            record.req.reviewed_dispatch_txs.join(" "),
+        ));
     }
     if let Some(reason) = non_empty_field(record.req.reason.clone()) {
         extra.push(("REASON_INITIAL".to_string(), reason));
