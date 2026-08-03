@@ -1,8 +1,8 @@
 diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
-index 08f0c11..a02b4b1 100644
+index b468610..29f7a7c 100644
 --- a/crates/orgasmic-daemon/src/run_catalog.rs
 +++ b/crates/orgasmic-daemon/src/run_catalog.rs
-@@ -1074,29 +1074,11 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
+@@ -1214,29 +1214,11 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
  ///
  /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
  fn snapshot_entry_is_admissible(entry: &RunCatalogEntry, sessions_dir: &Path) -> bool {
@@ -37,10 +37,13 @@ index 08f0c11..a02b4b1 100644
  }
  
  /// Whether an entry's semantic claims are reproduced by its own source
-@@ -1143,8 +1125,10 @@ struct AuthorityProbe {
+@@ -1554,11 +1536,10 @@ struct AuthorityProbe {
  fn probe_authority_path(authority: &WorktreeAuthority) -> Option<AuthorityProbe> {
      let path = match authority {
          WorktreeAuthority::Verified { worktree, .. } => worktree.as_path(),
+-        // `Unprovable` is a statement about the LEDGER, not about the path: no
+-        // stat can change it, and re-probing would only re-derive the verdict
+-        // that could not be checked in the first place.
 -        WorktreeAuthority::Tombstoned { .. }
 -        | WorktreeAuthority::Mismatched { .. }
 +        // INJECTED (TASK-FZB6T.1): a tombstone is probed again, so a directory
@@ -48,9 +51,9 @@ index 08f0c11..a02b4b1 100644
 +        WorktreeAuthority::Tombstoned { recorded, .. } => recorded.as_path(),
 +        WorktreeAuthority::Mismatched { .. }
          | WorktreeAuthority::Unrecorded
-         | WorktreeAuthority::Unidentified => return None,
-     };
-@@ -1175,6 +1159,17 @@ fn reverify_authority(
+         | WorktreeAuthority::Unidentified
+         | WorktreeAuthority::Unprovable { .. } => return None,
+@@ -1590,6 +1571,17 @@ fn reverify_authority(
      previous: &WorktreeAuthority,
      probe: AuthorityProbe,
  ) -> Option<WorktreeAuthority> {
