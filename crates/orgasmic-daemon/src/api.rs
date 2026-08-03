@@ -7359,41 +7359,41 @@ async fn post_run_history_compact(
     // transaction, not a one-shot handle close. While it is held every append
     // for these paths queues in the writer before it opens anything, so no line
     // can land on the inode the rename is about to orphan.
-    let lease = state
-        .writer
-        .lease_sessions(
-            plan.files
-                .iter()
-                .map(|file| file.session_path.clone())
-                .collect(),
-        )
-        .await
-        .map_err(|error| {
-            ApiError::internal(format!("hold session writer across compaction: {error}"))
-        })?;
-    let fenced = crate::run_history::FencedSessions::new(lease.paths().to_vec());
-
+    //
+    // orgasmic:TASK-FZB6T.4 finding 1 — and the lease is owned by a DETACHED
+    // task, not by this handler. A client disconnect or route cancellation used
+    // to drop the handler, which dropped the lease, which reopened the writer
+    // while the already-started blocking transaction was still mid-rename.
+    // Awaiting this call is now the only thing cancellation can take away.
+    let paths: Vec<PathBuf> = plan
+        .files
+        .iter()
+        .map(|file| file.session_path.clone())
+        .collect();
+    let fenced = crate::run_history::FencedSessions::new(paths.clone());
     let report = {
         let catalog = catalog.clone();
-        tokio::task::spawn_blocking(move || {
-            let paths: Vec<PathBuf> = plan
-                .files
-                .iter()
-                .map(|file| file.session_path.clone())
-                .collect();
-            let outcome = crate::run_history::apply_compaction(plan, Some(&confirm), &fenced);
-            // Whatever happened, every rewritten file's cached entry is stale.
-            for path in &paths {
-                catalog.invalidate_session(path);
-            }
-            outcome
-        })
-        .await
-        .map_err(|error| ApiError::internal(format!("run history compaction failed: {error}")))?
+        let paths = paths.clone();
+        state
+            .writer
+            .with_detached_session_lease(paths.clone(), move || {
+                let outcome = crate::run_history::apply_compaction(plan, Some(&confirm), &fenced);
+                // Whatever happened, every rewritten file's cached entry is stale.
+                for path in &paths {
+                    catalog.invalidate_session(path);
+                }
+                outcome
+            })
+            .await
+            .map_err(|error| match error {
+                crate::writer::LeasedTransactionError::Lease(error) => ApiError::internal(format!(
+                    "hold session writer across compaction: {error}"
+                )),
+                crate::writer::LeasedTransactionError::Transaction(error) => {
+                    ApiError::internal(format!("run history compaction failed: {error}"))
+                }
+            })?
     };
-    // Released only now: the rename is committed and the journal is written, so
-    // a queued append lands in the replacement.
-    lease.release().await;
 
     let report = report.map_err(|error| match error {
         crate::run_history::CompactionError::ConfirmationRequired { .. }
@@ -7429,22 +7429,29 @@ async fn post_run_history_rollback(
         .await
         .map_err(|error| ApiError::internal(format!("read compaction manifest: {error}")))?
     };
-    let lease = state.writer.lease_sessions(paths).await.map_err(|error| {
-        ApiError::internal(format!("hold session writer across rollback: {error}"))
-    })?;
-
-    let report = tokio::task::spawn_blocking(move || {
-        let report = crate::run_history::rollback_compaction(&root, &manifest_id);
-        if let Ok(report) = &report {
-            for path in &report.restored {
-                catalog.invalidate_session(path);
+    // orgasmic:TASK-FZB6T.4 finding 1 — same detached owner as the forward
+    // pass. Rollback renames over live paths too, so a handler-scoped lease left
+    // the same window open here.
+    let report = state
+        .writer
+        .with_detached_session_lease(paths, move || {
+            let report = crate::run_history::rollback_compaction(&root, &manifest_id);
+            if let Ok(report) = &report {
+                for path in &report.restored {
+                    catalog.invalidate_session(path);
+                }
             }
-        }
-        report
-    })
-    .await
-    .map_err(|error| ApiError::internal(format!("run history rollback failed: {error}")))?;
-    lease.release().await;
+            report
+        })
+        .await
+        .map_err(|error| match error {
+            crate::writer::LeasedTransactionError::Lease(error) => {
+                ApiError::internal(format!("hold session writer across rollback: {error}"))
+            }
+            crate::writer::LeasedTransactionError::Transaction(error) => {
+                ApiError::internal(format!("run history rollback failed: {error}"))
+            }
+        })?;
 
     let report = report.map_err(|error| match error {
         crate::run_history::CompactionError::ManifestNotFound { .. } => {

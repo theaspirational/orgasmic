@@ -355,6 +355,29 @@ impl SessionLease {
     }
 }
 
+/// Why a detached leased transaction produced no outcome
+/// (orgasmic:TASK-FZB6T.4 finding 1). Kept apart from the transaction's own
+/// error type: "the lease could not be taken" and "the transaction refused" are
+/// different answers and the caller reports them differently.
+#[derive(Debug)]
+pub enum LeasedTransactionError {
+    /// The session writer would not grant the lease, so nothing ran and nothing
+    /// was touched.
+    Lease(String),
+    /// The detached owner or its blocking task did not return an outcome — a
+    /// panic or a runtime shutdown, never a caller-side cancellation.
+    Transaction(String),
+}
+
+impl std::fmt::Display for LeasedTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Lease(error) => write!(f, "{error}"),
+            Self::Transaction(error) => write!(f, "{error}"),
+        }
+    }
+}
+
 impl Drop for SessionLease {
     fn drop(&mut self) {
         if self.released || self.paths.is_empty() {
@@ -662,6 +685,52 @@ impl WriterHandle {
             paths,
             released: false,
         })
+    }
+
+    /// Run one blocking maintenance transaction under a session lease whose
+    /// owner is DETACHED from the caller's future.
+    ///
+    /// orgasmic:TASK-FZB6T.4 finding 1 — the same lifetime mistake, a third
+    /// time. Holding the [`SessionLease`] in an HTTP handler and awaiting
+    /// `spawn_blocking` from there gives the lease the REQUEST's lifetime and
+    /// the transaction its own. A started `spawn_blocking` task is not
+    /// cancelled when its join handle is dropped, but dropping the handler DOES
+    /// drop the lease, and [`SessionLease::drop`] queues `ReleaseSessions`
+    /// immediately. So a client disconnect, a route cancellation or a shutdown
+    /// reopened the writer while the transaction was still between its final
+    /// fingerprint check and its `rename` — exactly the orphaned-inode window
+    /// the lease was introduced to close.
+    ///
+    /// Here the lease is acquired, held and released inside ONE detached
+    /// `tokio::spawn`ed task, alongside the blocking work it authorizes. The
+    /// caller may await the outcome, and dropping that await cancels nothing:
+    /// the detached task still runs the transaction to its end, still writes
+    /// its journal, and still releases the lease afterwards, so the appends
+    /// queued behind it land in the replacement rather than in an orphan.
+    pub async fn with_detached_session_lease<T, F>(
+        &self,
+        paths: Vec<PathBuf>,
+        work: F,
+    ) -> Result<T, LeasedTransactionError>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        let writer = self.clone();
+        let owner = tokio::spawn(async move {
+            let lease = writer
+                .lease_sessions(paths)
+                .await
+                .map_err(|error| LeasedTransactionError::Lease(error.to_string()))?;
+            let outcome = tokio::task::spawn_blocking(work).await;
+            // Released by the OWNER, only once the transaction and its journal
+            // are done — never by whoever happened to be awaiting the result.
+            lease.release().await;
+            outcome.map_err(|error| LeasedTransactionError::Transaction(error.to_string()))
+        });
+        owner
+            .await
+            .map_err(|error| LeasedTransactionError::Transaction(error.to_string()))?
     }
 
     /// How many appends are currently queued behind a lease. Test-visible so a

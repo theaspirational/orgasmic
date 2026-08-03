@@ -2091,6 +2091,196 @@ mod tests {
         assert!(!original.is_empty());
     }
 
+    /// orgasmic:TASK-FZB6T.4 finding 1 — the lease must outlive the REQUEST,
+    /// not merely the await.
+    ///
+    /// The test above holds the lease in a local binding for the whole test, so
+    /// it can never exercise this: a real handler holds it in the request
+    /// future, and axum drops that future on client disconnect, route
+    /// cancellation or shutdown. A started `spawn_blocking` task is NOT
+    /// cancelled by dropping its join handle, so the transaction kept running
+    /// while `SessionLease::drop` queued `ReleaseSessions` — reopening the
+    /// writer between the transaction's final fingerprint check and its
+    /// `rename`, which is precisely the orphaned-inode window the lease exists
+    /// to close.
+    ///
+    /// So this test does the one thing the other cannot: it DROPS the caller's
+    /// future while the transaction is provably parked at `AfterStage` with an
+    /// append already queued behind the lease, and then requires
+    ///
+    /// 1. the append to stay deferred across the cancellation — the lease is
+    ///    still held by an owner the caller does not have;
+    /// 2. the transaction to run to its end anyway, journal and all;
+    /// 3. the deferred append to land in the REPLACEMENT once that owner
+    ///    releases, which is only true if it never reached the doomed inode.
+    #[tokio::test]
+    async fn cancelling_the_request_does_not_release_the_transaction_lease() {
+        use crate::writer::{SessionAppend, WriterHandle};
+        use orgasmic_core::session::RuntimeIdentity;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let board = board();
+        let path = write_session(&board.sessions, "run-cancel", "rmux", 12, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        assert_eq!(plan.files.len(), 1);
+        let fenced = FencedSessions::new(vec![path.clone()]);
+
+        let writer: WriterHandle =
+            crate::writer::spawn_with_catalog(crate::events::EventBus::new(), None);
+
+        // Signals across the blocking transaction thread. `parked` tells the
+        // test the transaction is at `AfterStage` with its append queued;
+        // `proceed` keeps it there until the test has cancelled the caller.
+        let parked = Arc::new(AtomicBool::new(false));
+        let proceed = Arc::new(AtomicBool::new(false));
+        let (append_tx, append_rx) = tokio::sync::oneshot::channel();
+        let append_tx = Arc::new(std::sync::Mutex::new(Some(append_tx)));
+        let runtime = tokio::runtime::Handle::current();
+
+        let park_with_a_queued_append = {
+            let writer = writer.clone();
+            let path = path.clone();
+            let parked = Arc::clone(&parked);
+            let proceed = Arc::clone(&proceed);
+            move |point: FaultPoint, _: &Path| -> Option<Fault> {
+                if point != FaultPoint::AfterStage {
+                    return None;
+                }
+                let before = writer.deferred_session_appends();
+                let append = SessionAppend {
+                    run_id: "run-cancel".to_string(),
+                    session_path: path.clone(),
+                    identity: RuntimeIdentity {
+                        run_id: "run-cancel".to_string(),
+                        runtime_id: "runtime-run-cancel".to_string(),
+                        boot_id: "boot-compact".to_string(),
+                    },
+                    authority: None,
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "release",
+                        "reason": "supervisor finished while the client was disconnecting",
+                        "outcome": ReleaseOutcome::Completed,
+                    }),
+                };
+                let issuing = writer.clone();
+                let append_tx = Arc::clone(&append_tx);
+                runtime.spawn(async move {
+                    let outcome = issuing.append_session(append).await;
+                    if let Some(tx) = append_tx.lock().unwrap().take() {
+                        let _ = tx.send(outcome.map(|ok| ok.seq));
+                    }
+                });
+                while writer.deferred_session_appends() == before {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                parked.store(true, Ordering::SeqCst);
+                // Hold the transaction open across the cancellation below —
+                // BOUNDED. A blocking thread that spins forever survives the
+                // test's panic and wedges the whole binary at runtime shutdown,
+                // which turns a legible failure into a hang.
+                let give_up = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                while !proceed.load(Ordering::SeqCst) && std::time::Instant::now() < give_up {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                None
+            }
+        };
+
+        // `Box::pin`, deliberately, NOT `tokio::pin!`: the latter pins a value
+        // that outlives the binding, so `drop` would only drop a `Pin<&mut _>`
+        // and the future — and its lease — would stay alive on the stack. This
+        // test is worthless unless the future itself is really destroyed.
+        let mut caller = Box::pin(writer.with_detached_session_lease(
+            vec![path.clone()],
+            move || apply_compaction_with(plan, Some(&token), &fenced, &park_with_a_queued_append),
+        ));
+
+        // Poll the caller until the transaction is parked, then DROP it. This is
+        // the client disconnect.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the transaction never reached the pre-rename boundary"
+            );
+            tokio::select! {
+                outcome = &mut caller => panic!("the transaction returned early: {outcome:?}"),
+                () = tokio::time::sleep(std::time::Duration::from_millis(2)) => {}
+            }
+            if parked.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+        assert_eq!(
+            writer.deferred_session_appends(),
+            1,
+            "the append must be queued behind the lease before the cancellation"
+        );
+        drop(caller);
+
+        // The lease has no owner in this test's stack any more. If it were held
+        // by the request future, `SessionLease::drop` has already queued
+        // `ReleaseSessions` and the append is about to hit the doomed inode.
+        for _ in 0..25 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            assert_eq!(
+                writer.deferred_session_appends(),
+                1,
+                "cancelling the caller must not release the transaction's lease"
+            );
+        }
+
+        // Let the detached owner finish. It renames, journals, and only then
+        // releases — so the queued append runs against the replacement.
+        proceed.store(true, Ordering::SeqCst);
+        tokio::time::timeout(std::time::Duration::from_secs(30), append_rx)
+            .await
+            .expect("the deferred append must run once the detached owner releases")
+            .unwrap()
+            .expect("the deferred append must succeed");
+
+        let compacted = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            compacted.contains("orgasmic-run-history-compacted"),
+            "the detached transaction must have completed despite the cancellation: {compacted}"
+        );
+        assert!(
+            !compacted.contains("\"text_chunk\""),
+            "this must be the compacted generation, not the orphaned original"
+        );
+        assert!(
+            compacted.contains("supervisor finished while the client was disconnecting"),
+            "the deferred append must land IN the replacement: {compacted}"
+        );
+
+        // And the journal the manifest holds is the completed one, not a
+        // transaction abandoned at `Staged`.
+        let manifest = manifest_of(&board, &writer_manifest_id(&board));
+        assert!(manifest.complete);
+        assert_eq!(manifest.files[0].stage.label(), "committed");
+    }
+
+    /// The single manifest one board's archive directory holds.
+    fn writer_manifest_id(board: &Board) -> String {
+        let archive = board.root.join(ARCHIVE_REL_PATH);
+        let mut ids: Vec<String> = std::fs::read_dir(&archive)
+            .unwrap()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                entry
+                    .file_type()
+                    .ok()?
+                    .is_dir()
+                    .then(|| entry.file_name().to_string_lossy().to_string())
+            })
+            .collect();
+        assert_eq!(ids.len(), 1, "{ids:?}");
+        ids.pop().unwrap()
+    }
+
     /// Read the manifest one transaction wrote, as JSON.
     fn manifest_value(board: &Board, manifest_id: &str) -> serde_json::Value {
         let path = board

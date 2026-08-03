@@ -1990,6 +1990,28 @@ const SCAN_MAX_DEPTH: usize = 64;
 /// discriminator this module knows is a short snake_case token.
 const SCAN_MAX_DISCRIMINATOR_BYTES: usize = 64;
 
+/// The bytes JSON permits between tokens: space, horizontal tab, line feed and
+/// carriage return, and nothing else (RFC 8259 §2).
+///
+/// orgasmic:TASK-FZB6T.4 finding 3 — the scan used to skip
+/// `u8::is_ascii_whitespace`, which is a DIFFERENT set. Measured against the
+/// locked toolchain, that set is `{0x09, 0x0a, 0x0c, 0x0d, 0x20}`: it adds FORM
+/// FEED `0x0c`, which JSON forbids. So a `text_chunk` line carrying a form feed
+/// between two tokens was walked successfully, classified `rendered_tui`, and
+/// its bytes were eligible for deletion — while `serde_json` rejects the very
+/// same line. A record no reader accepts is exactly the record this accounting
+/// must not delete on its own say-so.
+///
+/// The finding also named VERTICAL TAB `0x0b`. That half does not reproduce:
+/// Rust follows the WhatWG Infra definition, which excludes `0x0b`, so a
+/// vertical tab already failed the scan closed. The fixtures below pin BOTH
+/// bytes against `serde_json` anyway, because the class — "the scan's whitespace
+/// is not JSON's whitespace" — is what must stay closed, not the one byte that
+/// happened to be open.
+const fn is_json_whitespace(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
+
 /// A single-pass structural reader over one JSONL line.
 ///
 /// Deliberately not `serde_json`: parsing the line would allocate the whole
@@ -2010,7 +2032,7 @@ impl<'a> JsonScan<'a> {
         while self
             .bytes
             .get(self.pos)
-            .is_some_and(u8::is_ascii_whitespace)
+            .is_some_and(|byte| is_json_whitespace(*byte))
         {
             self.pos += 1;
         }
@@ -2294,7 +2316,7 @@ fn scan_envelope_discriminators(line: &[u8]) -> Option<EnvelopeDiscriminators> {
     while scan
         .bytes
         .get(scan.pos)
-        .is_some_and(u8::is_ascii_whitespace)
+        .is_some_and(|byte| is_json_whitespace(*byte))
     {
         scan.pos += 1;
     }
@@ -4033,6 +4055,126 @@ mod tests {
                 classify_history_line(case),
                 "rendered_tui",
                 "a valid rendered pane payload must still be reclaimable: {rendered}"
+            );
+        }
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 3 — the scan's whitespace must be JSON's
+    /// whitespace, at every token boundary, in both directions.
+    ///
+    /// The hole was FORM FEED `0x0c`: `u8::is_ascii_whitespace` accepts it and
+    /// JSON does not, so a `text_chunk` line carrying one between tokens walked
+    /// clean, classified `rendered_tui`, and became eligible for deletion —
+    /// while `serde_json` rejects the identical bytes. VERTICAL TAB `0x0b` was
+    /// named in the same finding but never reproduced: Rust's set excludes it
+    /// (measured below, not assumed), so it already failed closed. Both are
+    /// pinned here because the class is what must stay shut.
+    ///
+    /// This is a generated differential rather than a fixture list: every
+    /// candidate byte is inserted at EVERY token boundary of a real reclaimable
+    /// envelope, and the scan's verdict is required to agree with `serde_json`
+    /// at each one. A future edit to the predicate cannot reopen the class
+    /// without failing here.
+    #[test]
+    fn the_scan_skips_exactly_the_whitespace_json_permits() {
+        // Measured, so the comment above is a fact about this toolchain rather
+        // than a recollection. If Rust ever changes this set, this line is where
+        // it surfaces.
+        let rust_ascii_ws: Vec<u8> = (0u8..=0x7f).filter(u8::is_ascii_whitespace).collect();
+        assert_eq!(
+            rust_ascii_ws,
+            vec![0x09, 0x0a, 0x0c, 0x0d, 0x20],
+            "`u8::is_ascii_whitespace` is not the set this finding was decided against"
+        );
+        assert!(
+            !rust_ascii_ws.contains(&0x0b),
+            "vertical tab is NOT in Rust's ascii-whitespace set; the finding's second byte \
+             does not reproduce"
+        );
+
+        // A real reclaimable envelope, with every structural boundary marked by
+        // `|`. The marker is removed before use; each position is one insertion
+        // point for the differential below.
+        const MARKED: &str = r#"|{|"kind"|:|"driver_event"|,|"event"|:|{|"type"|:|"text_chunk"|,|"chunk"|:|"redraw"|,|"n"|:|12|}|}|"#;
+        let template: Vec<u8> = MARKED.bytes().filter(|byte| *byte != b'|').collect();
+        let boundaries: Vec<usize> = MARKED
+            .bytes()
+            .enumerate()
+            .filter(|(_, byte)| *byte == b'|')
+            .enumerate()
+            .map(|(seen, (index, _))| index - seen)
+            .collect();
+        assert_eq!(classify_history_line(&template), "rendered_tui");
+        assert!(boundaries.len() >= 20, "{boundaries:?}");
+
+        // Everything an operator could plausibly find wedged between two tokens:
+        // JSON's four, the two the old predicate got wrong, and NUL for good
+        // measure.
+        for byte in [b' ', b'\t', b'\n', b'\r', 0x0b, 0x0c, 0x00] {
+            let json_permits = matches!(byte, b' ' | b'\t' | b'\n' | b'\r');
+            for boundary in &boundaries {
+                let mut line = template.clone();
+                line.insert(*boundary, byte);
+                let parses = serde_json::from_slice::<Value>(&line).is_ok();
+                assert_eq!(
+                    parses, json_permits,
+                    "serde_json disagrees with RFC 8259 for 0x{byte:02x} at {boundary}: {}",
+                    String::from_utf8_lossy(&line)
+                );
+                let class = classify_history_line(&line);
+                assert_eq!(
+                    class == "rendered_tui",
+                    parses,
+                    "the scan and the parser must agree for 0x{byte:02x} at offset {boundary}: \
+                     classified {class}, serde_json parses = {parses}"
+                );
+                assert!(
+                    parses || !class_is_reclaimable(class, Some("rmux")),
+                    "a line no parser accepts must never be reclaimable: 0x{byte:02x} at \
+                     offset {boundary}"
+                );
+            }
+        }
+
+        // And the two named bytes as whole-line fixtures, cross-checked, so the
+        // finding's exact shape is on record independent of the generator.
+        for byte in [0x0b_u8, 0x0c_u8] {
+            let line = [
+                &br#"{"kind":"driver_event","#[..],
+                &[byte][..],
+                &br#""event":{"type":"text_chunk","chunk":"redraw"}}"#[..],
+            ]
+            .concat();
+            assert!(
+                serde_json::from_slice::<Value>(&line).is_err(),
+                "0x{byte:02x} is not JSON whitespace"
+            );
+            assert_eq!(
+                classify_history_line(&line),
+                "unparsed",
+                "0x{byte:02x} between tokens must fail the scan closed"
+            );
+            assert!(!class_is_reclaimable(classify_history_line(&line), Some("rmux")));
+        }
+
+        // Trailing-content site: the same predicate guards the bytes AFTER the
+        // top-level object, and it must refuse there too.
+        for byte in [0x0b_u8, 0x0c_u8] {
+            let line = [&template[..], &[byte][..]].concat();
+            assert!(serde_json::from_slice::<Value>(&line).is_err());
+            assert_eq!(
+                classify_history_line(&line),
+                "unparsed",
+                "trailing 0x{byte:02x} must refuse: this is the second scanner site"
+            );
+        }
+        for byte in [b' ', b'\t', b'\r'] {
+            let line = [&template[..], &[byte][..]].concat();
+            assert!(serde_json::from_slice::<Value>(&line).is_ok());
+            assert_eq!(
+                classify_history_line(&line),
+                "rendered_tui",
+                "trailing JSON whitespace must still classify"
             );
         }
     }
