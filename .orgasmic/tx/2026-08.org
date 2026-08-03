@@ -6258,3 +6258,117 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 10:12:27 implementer.done TASK-RQ270.1
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4399
+:TIME:         [2026-08-03 Mon 10:12:27]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1
+:REASON:       stage A landed with no unmet criteria; real-router probe confirms the three POSTs unrouted and GET /architecture still serving; historical architector ledger row still parses (two tests)
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 53eeee4
+:MERGE_SHA:    eb2ba3b
+:BRANCH:       task-rq270.1-impl
+:CLOSED_TX:    tx-20260803-orgasmic-4385
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 10:12:27 task.state_transitioned TASK-RQ270.1
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4400
+:TIME:         [2026-08-03 Mon 10:12:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-03 Mon 10:12:30 reviewer.done TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4401
+:TIME:         [2026-08-03 Mon 10:12:30]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:REASON:       REJECT on one P1 doc-comment criterion; fixed by the manager in dd494ab and swept; reviewer independently closed the historical criterion with a live pre-rename record resolving to its Codex rollout
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: db40c97..d54fba5
+:CLOSED_TX:    tx-20260803-orgasmic-4391
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 10:12:30 task.state_transitioned TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4402
+:TIME:         [2026-08-03 Mon 10:12:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-XCJYC to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 10:12:50 task.edited TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4403
+:TIME:         [2026-08-03 Mon 10:12:50]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-XCJYC
+:NODE_ID:      TASK-XCJYC
+:END:
+
+* TX 2026-08-03 Mon 10:12:50 task.state_transitioned TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4404
+:TIME:         [2026-08-03 Mon 10:12:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewer REJECT resolved in dd494ab; all acceptance criteria met, cursor-acp line item withdrawn by ruling
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 10:13:05 task.state_transitioned TASK-RQ270.1
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4405
+:TIME:         [2026-08-03 Mon 10:13:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       stage A landed in eb2ba3b; no unmet criteria; real-router probe and two history tests
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
