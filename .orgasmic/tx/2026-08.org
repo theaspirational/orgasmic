@@ -3655,3 +3655,158 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-03 Mon 00:03:10 manager.dispatch_orphaned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4250
+:TIME:         [2026-08-03 Mon 00:03:10]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-FZB6T-reviewer-20260802T235158.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260802T235158-f6cae37c5eb04c8b9c2bba2608c717f4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:END:
+
+* TX 2026-08-03 Mon 00:03:10 manager.dispatch_orphaned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4251
+:TIME:         [2026-08-03 Mon 00:03:10]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-3CM0Q-implementer-20260802T235733.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260802T235733-a642ea866ff145058a1581e19b5ffe3a
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:END:
+
+* TX 2026-08-03 Mon 00:03:10 manager.dispatch_orphaned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4252
+:TIME:         [2026-08-03 Mon 00:03:10]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-VEGRV-implementer-20260802T235731.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260802T235731-a0f17bb23ec74e43be1b4574dc437a74
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:END:
+
+
+* TX 2026-08-03 Mon 00:06:19 manager.dispatch_aborted TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4253
+:TIME:         [2026-08-03 Mon 00:06:19]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:REASON:       Killed by the rmux daemon dying at 2026-08-03T00:03:10Z, which took all three live panes at once; the orgasmic daemon then failed to release all three drivers ('rmux send child exited with exit status: 1'), flagged them orphaned, and itself restarted twice. Not the worker's failure. Its last pane capture showed all four gates passing and the render check underway. Uncommitted work preserved by the manager as ad368c6 on task-vegrv-impl.
+:CLOSED_TX:    tx-20260802-orgasmic-4241
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vegrv/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 00:06:20 task.state_transitioned TASK-VEGRV
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4254
+:TIME:         [2026-08-03 Mon 00:06:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VEGRV
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-VEGRV to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 00:06:20 manager.dispatch_aborted TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4255
+:TIME:         [2026-08-03 Mon 00:06:20]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:REASON:       Same incident as TASK-VEGRV. Roughly six minutes in with nothing committed; edits to crates/orgasmic-cli/src/manager.rs and crates/orgasmic-daemon/src/api.rs preserved by the manager as a409197 on task-3cm0q-impl. Completeness unknown and it may not compile.
+:CLOSED_TX:    tx-20260802-orgasmic-4244
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 00:06:21 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4256
+:TIME:         [2026-08-03 Mon 00:06:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-3CM0Q to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 00:06:22 manager.dispatch_aborted TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4257
+:TIME:         [2026-08-03 Mon 00:06:22]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Same incident. Read-only reviewer, so nothing was lost but the run itself — its worktree is clean and it had produced no findings tx. Needs a full re-dispatch.
+:CLOSED_TX:    tx-20260802-orgasmic-4233
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 00:06:43 task.edited TASK-4DTBZ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4258
+:TIME:         [2026-08-03 Mon 00:06:43]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4DTBZ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-4DTBZ
+:NODE_ID:      TASK-4DTBZ
+:END:
+
+* TX 2026-08-03 Mon 00:06:59 task.property_updated TASK-4DTBZ
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4259
+:TIME:         [2026-08-03 Mon 00:06:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4DTBZ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Raised from its filed priority: this transport killed three concurrent workers in one event on 2026-08-03, and it is the transport every dispatch currently has to use because the installed runtime predates TASK-4CSMY's tmux liveness channel.
+:PRIORITY:     P1
+:END:
