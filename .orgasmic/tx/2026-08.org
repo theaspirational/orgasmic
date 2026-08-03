@@ -4069,3 +4069,69 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 00:46:32 reviewer.reported TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4273
+:TIME:         [2026-08-03 Mon 00:46:32]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:RUN_ID:       run-20260803T002718-a4d9c25fc5bf41138f0e83a44c1ecaff
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-FZB6T-review/worktree
+:END:
+
+* TX 2026-08-03 Mon 00:47:48 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4274
+:TIME:         [2026-08-03 Mon 00:47:48]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
+
+* TX 2026-08-03 Mon 00:47:48 reviewer.done TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4275
+:TIME:         [2026-08-03 Mon 00:47:48]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:REASON:       Round 3. The sharpest finding reopens what round 3 closed: post_run_history_compact holds the SessionLease in the HTTP handler while awaiting spawn_blocking, and a started blocking task is NOT cancelled when its join handle is dropped — so a client disconnect drops the lease while the transaction is still between its final fingerprint check and rename, making the orphaned-inode race live again. The regression cannot catch it because it holds the lease manually. It also found that Rust's is_ascii_whitespace includes 0x0b and 0x0c while JSON permits only four bytes, so a record serde_json rejects is classified reclaimable and deleted — and the 19-case two-way cross-check omits exactly those bytes. This reviewer also served as the TASK-48SFW discriminator and completed untouched, which exonerates the dispatch path.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WALL:         20m
+:REVIEWED_DIFF: 0bdfaed..84e4257
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      NEEDS FIXES — BLOCK SHIP
+:FINDINGS:     4 P1 blocking (request cancellation drops the lease while spawn_blocking continues; tombstone ledger not fail-closed and neither locked nor fsynced; JSON validator accepts vertical tab and form feed which serde_json rejects; rollback not bound to one validated manifest/archive generation), 1 P2 (machine-specific absolute paths in a repo-root file)
+:CLOSED_TX:    tx-20260803-orgasmic-4271
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 00:47:49 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4276
+:TIME:         [2026-08-03 Mon 00:47:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-FZB6T to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:

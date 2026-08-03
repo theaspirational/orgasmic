@@ -2254,6 +2254,41 @@ worker chose to run.
 
 Still worth building either way, unchanged: a routine read-only status call must
 never be able to start a daemon as a side effect.
+DISCRIMINATOR RESULT [2026-08-03 00:4xZ] — THE WORKER-COMMAND READING IS
+SUPPORTED, and the dispatch path is exonerated.
+
+The next dispatch after the experiment was deliberately built to separate the two
+survivors: ONE worker, read-only reviewer, no render-check instruction, carrying
+an explicit prohibition on every daemon lifecycle verb.
+
+IT COMPLETED NORMALLY. Full review delivered, =dispatch finalize= called, and the
+LaunchAgent-mtime watch fired no rewrite event for its entire run. Its own report
+states: "No daemon start/stop/restart/serve command, no launchctl, and no
+forbidden billed test was run."
+
+So a dispatch does NOT restart the daemon by existing. Something a worker CHOSE
+to run did. Combined with the earlier ten-minute polling watch, both alternative
+explanations are now eliminated:
+
+| hypothesis | verdict | evidence |
+|------------+---------+----------|
+| manager polling =orgasmic status= auto-spawns | REFUTED as sole cause | 10 min stable, no workers, same cadence |
+| the dispatch PATH restarts the daemon | REFUTED | lone read-only worker completed untouched |
+| a worker INVOKES a lifecycle verb | STANDS | only reading left; prohibition worked |
+
+WHAT THIS MEANS OPERATIONALLY, and it should go in every brief until the code
+fix lands: the prohibition is currently the only thing standing between a
+concurrent dispatch fleet and a total loss. It worked on first use. It is also
+one sentence in a brief that a worker under momentum can skip, which is exactly
+the argument for the refusal being enforced in the CLI rather than requested in
+prose — the same reasoning TASK-3CM0Q makes about tier declarations.
+
+MANAGERS OWN CONTRIBUTION, restated now that the cause is known: the briefs
+that told workers to "stage an ORGASMIC_HOME from the edited files" were the
+likely invitation. That instruction is still CORRECT and still necessary — the
+live daemon serves installed content, not the worktree — but it must always
+travel with the prohibition and with the safe recipe (run the worktrees own
+=target/debug/orgasmic entry= against the staged home; never start a daemon).
 
 ** Description
 
