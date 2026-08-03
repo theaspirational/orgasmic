@@ -226,6 +226,49 @@ pub struct LeaseReleaseArgs {
     pub kind: String,
 }
 
+// orgasmic:TASK-3CM0Q
+/// The manager's recorded process-tier declaration (TASK-3CM0Q).
+///
+/// The `default` workflow computes the tier from countable triggers and tells
+/// the manager to do so before its first source edit. That is a reading
+/// obligation, and a manager already implementing skims one. This is the
+/// writing obligation that leaves a trace: one command, one `manager.tier` tx,
+/// and an undeclared task is visible as such afterwards.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Examples:
+  orgasmic manager tier --task TASK-XXXXX --tier trivial
+  orgasmic manager tier --task TASK-XXXXX --tier ordinary --triggers coupling
+  orgasmic manager tier --task TASK-XXXXX --tier risky --triggers blast_radius,breadth \\
+    --reason \"touches writer durability and spans three crates\"
+  orgasmic manager tier --task TASK-XXXXX   # read back what was declared")]
+pub struct ManagerTierArgs {
+    /// Task the declaration is about, e.g. TASK-3CM0Q.
+    #[arg(long)]
+    pub task: String,
+    /// The computed tier: `trivial`, `ordinary`, or `risky`. Omit to read back
+    /// the tier already declared for --task; reading exits non-zero when
+    /// nothing has been declared, which is the out-of-policy state.
+    #[arg(long)]
+    pub tier: Option<String>,
+    /// Triggers that fired, comma-separated or repeated: `priority`,
+    /// `blast_radius`, `breadth`, `coupling`. Required above `trivial`, because
+    /// the floor only rises when one fires and a reader checks the arithmetic.
+    #[arg(long)]
+    pub triggers: Vec<String>,
+    /// One line of why. Optional for a plain `trivial`; required for the
+    /// no-tracked-source exemption and for `--lower`.
+    #[arg(long)]
+    pub reason: Option<String>,
+    /// Record a downgrade of an existing declaration as a correction. Scope
+    /// that grew re-declares upward and does not need this.
+    #[arg(long)]
+    pub lower: bool,
+    /// Project id; defaults to the project containing the cwd.
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
 /// External manager self-registration (dec_3Y2E1): a manager session started
 /// outside the app registers itself with the daemon so it appears in Running
 /// Agents as a supervised run.
