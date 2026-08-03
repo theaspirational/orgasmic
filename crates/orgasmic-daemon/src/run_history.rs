@@ -419,6 +419,12 @@ pub enum CompactionError {
     )]
     ManifestUnrestorable { manifest_id: String, planned: usize },
     #[error(
+        "manifest {manifest_id} does not describe one coherent transaction ({reason}), so this \
+         build cannot prove which generation of which file it would restore. Refused: the \
+         archived originals are still under the archive directory and can be restored by hand."
+    )]
+    ManifestInconsistent { manifest_id: String, reason: String },
+    #[error(
         "the transaction journal could not be made durable, so the transaction stopped \
          before it could do anything it could not undo: {0}"
     )]
@@ -894,6 +900,54 @@ fn result_of(journal: &CompactionFileJournal) -> CompactionFileResult {
     }
 }
 
+/// Render one journal record as format 1 renders it — which is a statement
+/// about what an OLDER RUNTIME must be able to recover, not about what happened.
+///
+/// orgasmic:TASK-FZB6T.4 finding 4c / open question 2 — [`result_of`] renders
+/// `Staged` as `Failed`, and the real format-1 reader (`9bee827`) restores only
+/// `Compacted` records, copying the named archive over the session path with no
+/// digest check. So a crash after the rename but before the committed journal
+/// write left a live REPLACEMENT that an older runtime skipped while reporting
+/// success — the silent successful-empty rollback that versioning this manifest
+/// was supposed to end.
+///
+/// Question 2's answer, recorded on TASK-FZB6T.4: the backward promise covers
+/// every stage at which a v2 transaction could have MOVED the live file, which
+/// is `Staged` and `Committed` — not `Planned` and not `Archived`. A `Staged`
+/// record means the live path holds either the original or the replacement, and
+/// the old reader's unconditional copy of the archived original is correct for
+/// both, so `Staged` projects as `Compacted`. `Archived` does not project,
+/// because nothing was renamed and the archive equals the live file; skipping it
+/// is the truthful answer there, not a loss.
+///
+/// The operator-facing report keeps [`result_of`], which calls a stopped
+/// transaction stopped. These two must not be the same function: one describes
+/// what happened, the other describes what an older reader must do about it.
+fn legacy_result_of(journal: &CompactionFileJournal) -> CompactionFileResult {
+    if let CompactionFileStage::Staged {
+        archived,
+        reclaimed_records,
+        reclaimed_bytes,
+        bytes_before,
+        bytes_after,
+        ..
+    } = &journal.stage
+    {
+        return CompactionFileResult {
+            session_path: journal.session_path.clone(),
+            run_id: journal.run_id.clone(),
+            outcome: CompactionFileOutcome::Compacted {
+                reclaimed_records: *reclaimed_records,
+                reclaimed_bytes: *reclaimed_bytes,
+                archived: archived.clone(),
+                bytes_before: *bytes_before,
+                bytes_after: *bytes_after,
+            },
+        };
+    }
+    result_of(journal)
+}
+
 fn write_manifest(archive_dir: &Path, manifest: &CompactionManifest) -> std::io::Result<()> {
     let path = archive_dir.join("manifest.json");
     let staged = archive_dir.join("manifest.json.tmp");
@@ -902,7 +956,7 @@ fn write_manifest(archive_dir: &Path, manifest: &CompactionManifest) -> std::io:
     // write produced this manifest (orgasmic:TASK-FZB6T.3 finding 2).
     let manifest = CompactionManifest {
         manifest_format: COMPACTION_MANIFEST_FORMAT,
-        results: manifest.files.iter().map(result_of).collect(),
+        results: manifest.files.iter().map(legacy_result_of).collect(),
         ..manifest.clone()
     };
     let bytes = serde_json::to_vec_pretty(&manifest)
@@ -1360,7 +1414,8 @@ pub struct RollbackReport {
 }
 
 /// One destination a rollback may act on, normalised out of either manifest
-/// format (orgasmic:TASK-FZB6T.3 finding 2).
+/// format (orgasmic:TASK-FZB6T.3 finding 2) and VALIDATED as part of one
+/// coherent transaction (orgasmic:TASK-FZB6T.4 finding 4).
 #[derive(Debug, Clone)]
 struct RollbackRecord {
     session_path: PathBuf,
@@ -1369,15 +1424,39 @@ struct RollbackRecord {
     /// format-1 record, which recorded none — there is nothing to check the
     /// archive against, and pretending otherwise would be the false claim.
     recorded_original_sha256: Option<String>,
-    /// Digest of the archived original as it is on disk NOW. The "already
-    /// original" comparison is against this, because these are the exact bytes
-    /// a restore would write.
-    original_sha256: Option<String>,
-    /// The image this transaction left at the live path. Recorded in format 2;
-    /// re-derived from the archive and the manifest's own plan in format 1.
-    replacement_sha256: Option<String>,
+    /// The image this transaction left at the live path, as RECORDED. Format 2
+    /// only; a format-1 record rebuilds it from the one archive generation it
+    /// reads, under [`Self::legacy_plan`].
+    recorded_replacement_sha256: Option<String>,
+    /// The plan entry this destination correlates to one-to-one. Carried for a
+    /// legacy record because rebuilding its replacement image is the only way
+    /// to recognise the compacted generation at all.
+    legacy_plan: Option<CompactionPlanFile>,
     /// This record came from format 1's `results`.
     legacy: bool,
+}
+
+/// One manifest decoded into exactly what a rollback is allowed to do, and
+/// nothing it is not.
+///
+/// orgasmic:TASK-FZB6T.4 finding 4 — `read_manifest` validated the version
+/// ceiling and the both-arrays-empty case, and no more. It did not require the
+/// requested id, the embedded id and the plan's id to agree; it did not require
+/// the manifest's project root to be the root being rolled back; it did not
+/// require one journal record per planned file; and it did not confine
+/// `archived` or `staging` to the places this transaction is the only writer of.
+/// A crafted or cross-wired manifest could therefore name an arbitrary readable
+/// file as the "original" of a session path and have it renamed into place.
+///
+/// Decoding happens ONCE, under the maintenance lock, into this immutable
+/// value. Anything that does not correlate refuses the whole rollback rather
+/// than restoring the part that happened to parse.
+#[derive(Debug, Clone)]
+struct RollbackPlan {
+    manifest_id: String,
+    /// The transaction that wrote this manifest ran to the end.
+    source_complete: bool,
+    records: Vec<RollbackRecord>,
 }
 
 /// Read and decode one manifest, refusing a shape this build cannot vouch for.
@@ -1429,115 +1508,290 @@ fn read_manifest(
     Ok(manifest)
 }
 
-/// Normalise a manifest of either supported format into the destinations a
-/// rollback acts on.
+/// Decode one manifest into a fully validated [`RollbackPlan`], or refuse.
 ///
-/// Format 2 is read from `files`, which names every PLANNED file and the
-/// furthest durable stage each reached. Format 1 is read from `results`, which
-/// names only the files whose rename committed — the only ones whose live path
-/// moved, so the ones a rollback has anything to do about. Format 1 recorded no
-/// digests, so both are re-derived: the original from the archive as it stands,
-/// and the replacement by rebuilding it from that archive and the manifest's own
-/// embedded plan. A rebuild that does not match the live file refuses, which is
-/// the same fail-closed answer format 2 gives.
-fn rollback_records(manifest: &CompactionManifest) -> Vec<RollbackRecord> {
-    if !manifest.files.is_empty() {
-        return manifest
-            .files
-            .iter()
-            .filter_map(|record| {
-                let (archived, original_sha256, replacement_sha256) = match &record.stage {
-                    // Nothing was ever written for this file.
-                    CompactionFileStage::Planned => return None,
-                    CompactionFileStage::Archived {
-                        archived,
-                        original_sha256,
-                    } => (archived, original_sha256, None),
-                    CompactionFileStage::Staged {
-                        archived,
-                        original_sha256,
-                        replacement_sha256,
-                        ..
-                    }
-                    | CompactionFileStage::Committed {
-                        archived,
-                        original_sha256,
-                        replacement_sha256,
-                        ..
-                    } => (archived, original_sha256, Some(replacement_sha256.clone())),
-                };
-                Some(RollbackRecord {
-                    session_path: record.session_path.clone(),
-                    archived: archived.clone(),
-                    recorded_original_sha256: Some(original_sha256.clone()),
-                    original_sha256: Some(original_sha256.clone()),
-                    replacement_sha256,
-                    legacy: false,
-                })
-            })
-            .collect();
+/// Every check here answers one question: does this manifest describe ONE
+/// transaction, over THIS project, whose per-file journal correlates one-to-one
+/// with its own plan, naming only paths this transaction is the sole writer of?
+/// Where the answer cannot be proven the whole rollback refuses — restoring the
+/// records that happen to correlate would be deciding, file by file, to trust a
+/// document that has already been shown to be inconsistent.
+fn read_rollback_plan(
+    project_root: &Path,
+    manifest_id: &str,
+) -> Result<RollbackPlan, CompactionError> {
+    let manifest = read_manifest(project_root, manifest_id)?;
+    let refuse = |reason: String| CompactionError::ManifestInconsistent {
+        manifest_id: manifest_id.to_string(),
+        reason,
+    };
+
+    // --- identity: three ids and two roots, all of which must be the same one.
+    if manifest.manifest_id != manifest_id {
+        return Err(refuse(format!(
+            "it is stored as {manifest_id} but calls itself {}",
+            manifest.manifest_id
+        )));
     }
-    manifest
-        .results
-        .iter()
-        .filter_map(|result| {
-            let CompactionFileOutcome::Compacted { archived, .. } = &result.outcome else {
-                return None;
+    if manifest.plan.manifest_id != manifest.manifest_id {
+        return Err(refuse(format!(
+            "its embedded plan names manifest {}",
+            manifest.plan.manifest_id
+        )));
+    }
+    if manifest.project_root != project_root || manifest.plan.project_root != project_root {
+        return Err(refuse(format!(
+            "it was written for {} / {}, not for {}",
+            manifest.project_root.display(),
+            manifest.plan.project_root.display(),
+            project_root.display()
+        )));
+    }
+
+    // --- destinations: inside this project's sessions directory, and distinct.
+    let sessions_dir = project_sessions_dir(project_root);
+    let archive_dir = project_root.join(ARCHIVE_REL_PATH).join(manifest_id);
+    let mut seen: BTreeSet<&Path> = BTreeSet::new();
+    for planned in &manifest.plan.files {
+        if planned.session_path.parent() != Some(sessions_dir.as_path())
+            || planned.session_path.file_name().is_none()
+        {
+            return Err(refuse(format!(
+                "its plan names {}, which is not in this project's sessions directory",
+                planned.session_path.display()
+            )));
+        }
+        if !seen.insert(planned.session_path.as_path()) {
+            return Err(refuse(format!(
+                "its plan names {} twice",
+                planned.session_path.display()
+            )));
+        }
+    }
+
+    // The archive a record may name is the one THIS transaction wrote for THAT
+    // session file, and no other path. Exact equality rather than a prefix test:
+    // the forward pass computes exactly this name, so anything else is a record
+    // that was not produced by the transaction it claims to belong to.
+    let archive_for = |session_path: &Path| -> Option<PathBuf> {
+        Some(archive_dir.join(session_path.file_name()?))
+    };
+
+    // Which array is authoritative is decided by the DECLARED format, not by
+    // which one happens to be non-empty. A format-2 manifest whose `files` is
+    // empty is not a format-1 manifest that can be read from `results`; it is a
+    // format-2 manifest missing its journal, and reading it the other way would
+    // restore from a projection this build writes but never reads.
+    let records = if manifest.manifest_format >= COMPACTION_MANIFEST_FORMAT {
+        // --- format 2: one journal record per planned file, in plan order.
+        if manifest.files.len() != manifest.plan.files.len() {
+            return Err(refuse(format!(
+                "it plans {} file(s) but journals {}",
+                manifest.plan.files.len(),
+                manifest.files.len()
+            )));
+        }
+        let mut records = Vec::new();
+        for (journal, planned) in manifest.files.iter().zip(&manifest.plan.files) {
+            if journal.session_path != planned.session_path {
+                return Err(refuse(format!(
+                    "journal record {} does not correlate with planned file {}",
+                    journal.session_path.display(),
+                    planned.session_path.display()
+                )));
+            }
+            if journal.run_id != planned.run_id {
+                return Err(refuse(format!(
+                    "journal record {} names run {} but the plan names run {}",
+                    journal.session_path.display(),
+                    journal.run_id,
+                    planned.run_id
+                )));
+            }
+            let (archived, original_sha256, replacement_sha256, staging) = match &journal.stage {
+                // Nothing was ever written for this file.
+                CompactionFileStage::Planned => continue,
+                CompactionFileStage::Archived {
+                    archived,
+                    original_sha256,
+                } => (archived, original_sha256, None, None),
+                CompactionFileStage::Staged {
+                    archived,
+                    original_sha256,
+                    replacement_sha256,
+                    staging,
+                    ..
+                } => (
+                    archived,
+                    original_sha256,
+                    Some(replacement_sha256.clone()),
+                    Some(staging),
+                ),
+                CompactionFileStage::Committed {
+                    archived,
+                    original_sha256,
+                    replacement_sha256,
+                    ..
+                } => (
+                    archived,
+                    original_sha256,
+                    Some(replacement_sha256.clone()),
+                    None,
+                ),
             };
-            let (original_sha256, replacement_sha256) =
-                legacy_digests(manifest, &result.session_path, archived);
-            Some(RollbackRecord {
+            if Some(archived.clone()) != archive_for(&journal.session_path) {
+                return Err(refuse(format!(
+                    "journal record {} names archive {}, which is not the archive this \
+                     transaction writes for it",
+                    journal.session_path.display(),
+                    archived.display()
+                )));
+            }
+            // The staging path is a SIBLING of the destination, not a file under
+            // the manifest directory: a rename must stay within one filesystem,
+            // so the forward pass stages beside the live file. Pinning it to
+            // exactly that name is stricter than confining it to a directory.
+            if let Some(staging) = staging {
+                if staging != &staging_path(&journal.session_path) {
+                    return Err(refuse(format!(
+                        "journal record {} names staging file {}, which is not the one this \
+                         transaction stages",
+                        journal.session_path.display(),
+                        staging.display()
+                    )));
+                }
+            }
+            records.push(RollbackRecord {
+                session_path: journal.session_path.clone(),
+                archived: archived.clone(),
+                recorded_original_sha256: Some(original_sha256.clone()),
+                recorded_replacement_sha256: replacement_sha256,
+                legacy_plan: None,
+                legacy: false,
+            });
+        }
+        records
+    } else {
+        // --- format 1: `results` names only the files whose rename committed.
+        // Each one must still correlate to exactly one planned file, because
+        // rebuilding its replacement image — the only way to recognise the
+        // compacted generation without a recorded digest — is done from that
+        // plan entry.
+        let mut records = Vec::new();
+        let mut claimed: BTreeSet<&Path> = BTreeSet::new();
+        for result in &manifest.results {
+            let CompactionFileOutcome::Compacted { archived, .. } = &result.outcome else {
+                continue;
+            };
+            let Some(planned) = manifest
+                .plan
+                .files
+                .iter()
+                .find(|planned| planned.session_path == result.session_path)
+            else {
+                return Err(refuse(format!(
+                    "it records a result for {}, which its own plan does not name",
+                    result.session_path.display()
+                )));
+            };
+            if result.run_id != planned.run_id {
+                return Err(refuse(format!(
+                    "result {} names run {} but the plan names run {}",
+                    result.session_path.display(),
+                    result.run_id,
+                    planned.run_id
+                )));
+            }
+            if !claimed.insert(result.session_path.as_path()) {
+                return Err(refuse(format!(
+                    "it records {} twice",
+                    result.session_path.display()
+                )));
+            }
+            if Some(archived.clone()) != archive_for(&result.session_path) {
+                return Err(refuse(format!(
+                    "result {} names archive {}, which is not the archive this transaction \
+                     writes for it",
+                    result.session_path.display(),
+                    archived.display()
+                )));
+            }
+            records.push(RollbackRecord {
                 session_path: result.session_path.clone(),
                 archived: archived.clone(),
                 recorded_original_sha256: None,
-                original_sha256,
-                replacement_sha256,
+                recorded_replacement_sha256: None,
+                legacy_plan: Some(planned.clone()),
                 legacy: true,
-            })
-        })
-        .collect()
+            });
+        }
+        records
+    };
+
+    Ok(RollbackPlan {
+        manifest_id: manifest.manifest_id.clone(),
+        source_complete: manifest.complete,
+        records,
+    })
 }
 
-/// Re-derive a format-1 record's two digests from the archive it names.
-fn legacy_digests(
-    manifest: &CompactionManifest,
-    session_path: &Path,
-    archived: &Path,
-) -> (Option<String>, Option<String>) {
-    let Ok(original) = std::fs::read(archived) else {
-        return (None, None);
+/// The one generation of an archived original a rollback decides and acts on.
+///
+/// orgasmic:TASK-FZB6T.4 finding 4a — the format-1 path used to hash and
+/// reconstruct from an archive read at one point and then REREAD the archive
+/// later to write it back. Because `recorded_original_sha256` is deliberately
+/// `None` for a legacy record, the second generation was never compared against
+/// the digest that authorized the decision, so bytes B could be renamed over a
+/// session whose overwrite was authorized against bytes A. The archive is read
+/// exactly once here and these bytes are what gets written — authorization and
+/// staging cannot disagree because they are the same value.
+struct ArchivedOriginal {
+    bytes: Vec<u8>,
+    sha256: String,
+    /// The image the transaction left at the live path, rebuilt from THESE
+    /// bytes for a legacy record and taken from the journal for a format-2 one.
+    replacement_sha256: Option<String>,
+}
+
+fn read_archived_original(
+    record: &RollbackRecord,
+    manifest_id: &str,
+) -> std::io::Result<ArchivedOriginal> {
+    let bytes = std::fs::read(&record.archived)?;
+    let sha256 = sha256_of(&bytes);
+    let replacement_sha256 = match &record.legacy_plan {
+        Some(planned) => Some(sha256_of(
+            &build_compacted(&bytes, planned, manifest_id).bytes,
+        )),
+        None => record.recorded_replacement_sha256.clone(),
     };
-    let replacement = manifest
-        .plan
-        .files
-        .iter()
-        .find(|planned| planned.session_path == session_path)
-        .map(|planned| {
-            sha256_of(&build_compacted(&original, planned, &manifest.manifest_id).bytes)
-        });
-    (Some(sha256_of(&original)), replacement)
+    Ok(ArchivedOriginal {
+        bytes,
+        sha256,
+        replacement_sha256,
+    })
 }
 
 /// Every session path one manifest names, so a caller can fence the session
 /// writer against them before asking for a rollback. Empty when the manifest is
-/// absent or unreadable — [`rollback_compaction`] reports that properly.
+/// absent, unreadable or inconsistent — [`rollback_compaction`] reports that
+/// properly, and an empty fence compacts and restores nothing.
 pub fn manifest_session_paths(project_root: &Path, manifest_id: &str) -> Vec<PathBuf> {
+    // The PLAN, not the journal: fencing has to cover every path the
+    // transaction could have touched, including the ones a format-1 manifest
+    // never named because their rewrite never committed. The validated decode
+    // has already proven that the journal names nothing the plan does not.
     let Ok(manifest) = read_manifest(project_root, manifest_id) else {
         return Vec::new();
     };
-    // The PLAN, not the journal: fencing has to cover every path the
-    // transaction could have touched, including the ones a format-1 manifest
-    // never named because their rewrite never committed.
+    if read_rollback_plan(project_root, manifest_id).is_err() {
+        return Vec::new();
+    }
     manifest
         .plan
         .files
         .iter()
         .map(|planned| planned.session_path.clone())
-        .chain(
-            rollback_records(&manifest)
-                .into_iter()
-                .map(|r| r.session_path),
-        )
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -1567,34 +1821,47 @@ pub fn rollback_compaction(
     project_root: &Path,
     manifest_id: &str,
 ) -> Result<RollbackReport, CompactionError> {
-    let manifest = read_manifest(project_root, manifest_id)?;
-    let records = rollback_records(&manifest);
-
-    // Same exclusion as the forward pass: a rollback racing a compaction is the
-    // same defect as two compactions racing.
+    // Exclusion FIRST, and the decode inside it (orgasmic:TASK-FZB6T.4 finding
+    // 4): the manifest used to be read, normalised and hashed before the lock
+    // was taken, so a concurrent compaction could be rewriting the very archives
+    // this pass was deciding against. Same exclusion as the forward pass — a
+    // rollback racing a compaction is the same defect as two compactions racing.
     let _lock = acquire_maintenance_lock(project_root)?;
+    let plan = read_rollback_plan(project_root, manifest_id)?;
 
-    let sessions_dir = project_sessions_dir(project_root);
     let mut report = RollbackReport {
         manifest_id: manifest_id.to_string(),
         project_root: project_root.to_path_buf(),
-        source_complete: manifest.complete,
+        source_complete: plan.source_complete,
         restored: Vec::new(),
         already_original: Vec::new(),
         missing_archives: Vec::new(),
         refused: BTreeMap::new(),
         failed: BTreeMap::new(),
     };
-    for record in &records {
+    for record in &plan.records {
         let key = record.session_path.display().to_string();
-        // Session-directory authority again: a hand-edited manifest must not be
-        // able to name an arbitrary destination.
-        if record.session_path.parent() != Some(sessions_dir.as_path()) {
-            report.failed.insert(
-                key,
-                "manifest names a path outside this project's sessions directory".to_string(),
-            );
-            continue;
+
+        // ONE read of the archive, and every decision below is made against
+        // exactly these bytes and these digests — including the bytes that get
+        // written back.
+        let original = match read_archived_original(record, &plan.manifest_id) {
+            Ok(original) => original,
+            Err(_) => {
+                report.missing_archives.push(record.archived.clone());
+                continue;
+            }
+        };
+        if let Some(recorded) = record.recorded_original_sha256.as_deref() {
+            if original.sha256 != recorded {
+                report.refused.insert(
+                    key,
+                    "the archived original does not match the digest recorded when it was \
+                     archived; it is not restorable"
+                        .to_string(),
+                );
+                continue;
+            }
         }
 
         let live = match std::fs::read(&record.session_path) {
@@ -1607,12 +1874,12 @@ pub fn rollback_compaction(
         };
         match live.as_deref() {
             // Already the original: a transaction killed before its rename.
-            Some(digest) if Some(digest) == record.original_sha256.as_deref() => {
+            Some(digest) if digest == original.sha256 => {
                 report.already_original.push(record.session_path.clone());
                 continue;
             }
             // The compacted generation, and provably this transaction's.
-            Some(digest) if Some(digest) == record.replacement_sha256.as_deref() => {}
+            Some(digest) if Some(digest) == original.replacement_sha256.as_deref() => {}
             // The file is gone: restoring the archived original is exactly
             // right, and there is nothing there to clobber.
             None => {}
@@ -1636,24 +1903,7 @@ pub fn rollback_compaction(
             }
         }
 
-        let bytes = match std::fs::read(&record.archived) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                report.missing_archives.push(record.archived.clone());
-                continue;
-            }
-        };
-        if let Some(recorded) = record.recorded_original_sha256.as_deref() {
-            if sha256_of(&bytes) != recorded {
-                report.refused.insert(
-                    key,
-                    "the archived original does not match the digest recorded when it was \
-                     archived; it is not restorable"
-                        .to_string(),
-                );
-                continue;
-            }
-        }
+        let bytes = original.bytes;
         let staging = staging_path(&record.session_path);
         if let Err(error) = write_and_sync(&staging, &bytes).and_then(|()| sync_dir_of(&staging)) {
             let _ = std::fs::remove_file(&staging);
@@ -2091,6 +2341,197 @@ mod tests {
         assert!(!original.is_empty());
     }
 
+    /// orgasmic:TASK-FZB6T.4 finding 1 — the lease must outlive the REQUEST,
+    /// not merely the await.
+    ///
+    /// The test above holds the lease in a local binding for the whole test, so
+    /// it can never exercise this: a real handler holds it in the request
+    /// future, and axum drops that future on client disconnect, route
+    /// cancellation or shutdown. A started `spawn_blocking` task is NOT
+    /// cancelled by dropping its join handle, so the transaction kept running
+    /// while `SessionLease::drop` queued `ReleaseSessions` — reopening the
+    /// writer between the transaction's final fingerprint check and its
+    /// `rename`, which is precisely the orphaned-inode window the lease exists
+    /// to close.
+    ///
+    /// So this test does the one thing the other cannot: it DROPS the caller's
+    /// future while the transaction is provably parked at `AfterStage` with an
+    /// append already queued behind the lease, and then requires
+    ///
+    /// 1. the append to stay deferred across the cancellation — the lease is
+    ///    still held by an owner the caller does not have;
+    /// 2. the transaction to run to its end anyway, journal and all;
+    /// 3. the deferred append to land in the REPLACEMENT once that owner
+    ///    releases, which is only true if it never reached the doomed inode.
+    #[tokio::test]
+    async fn cancelling_the_request_does_not_release_the_transaction_lease() {
+        use crate::writer::{SessionAppend, WriterHandle};
+        use orgasmic_core::session::RuntimeIdentity;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let board = board();
+        let path = write_session(&board.sessions, "run-cancel", "rmux", 12, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        assert_eq!(plan.files.len(), 1);
+        let fenced = FencedSessions::new(vec![path.clone()]);
+
+        let writer: WriterHandle =
+            crate::writer::spawn_with_catalog(crate::events::EventBus::new(), None);
+
+        // Signals across the blocking transaction thread. `parked` tells the
+        // test the transaction is at `AfterStage` with its append queued;
+        // `proceed` keeps it there until the test has cancelled the caller.
+        let parked = Arc::new(AtomicBool::new(false));
+        let proceed = Arc::new(AtomicBool::new(false));
+        let (append_tx, append_rx) = tokio::sync::oneshot::channel();
+        let append_tx = Arc::new(std::sync::Mutex::new(Some(append_tx)));
+        let runtime = tokio::runtime::Handle::current();
+
+        let park_with_a_queued_append = {
+            let writer = writer.clone();
+            let path = path.clone();
+            let parked = Arc::clone(&parked);
+            let proceed = Arc::clone(&proceed);
+            move |point: FaultPoint, _: &Path| -> Option<Fault> {
+                if point != FaultPoint::AfterStage {
+                    return None;
+                }
+                let before = writer.deferred_session_appends();
+                let append = SessionAppend {
+                    run_id: "run-cancel".to_string(),
+                    session_path: path.clone(),
+                    identity: RuntimeIdentity {
+                        run_id: "run-cancel".to_string(),
+                        runtime_id: "runtime-run-cancel".to_string(),
+                        boot_id: "boot-compact".to_string(),
+                    },
+                    authority: None,
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "release",
+                        "reason": "supervisor finished while the client was disconnecting",
+                        "outcome": ReleaseOutcome::Completed,
+                    }),
+                };
+                let issuing = writer.clone();
+                let append_tx = Arc::clone(&append_tx);
+                runtime.spawn(async move {
+                    let outcome = issuing.append_session(append).await;
+                    if let Some(tx) = append_tx.lock().unwrap().take() {
+                        let _ = tx.send(outcome.map(|ok| ok.seq));
+                    }
+                });
+                while writer.deferred_session_appends() == before {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                parked.store(true, Ordering::SeqCst);
+                // Hold the transaction open across the cancellation below —
+                // BOUNDED. A blocking thread that spins forever survives the
+                // test's panic and wedges the whole binary at runtime shutdown,
+                // which turns a legible failure into a hang.
+                let give_up = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                while !proceed.load(Ordering::SeqCst) && std::time::Instant::now() < give_up {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                None
+            }
+        };
+
+        // `Box::pin`, deliberately, NOT `tokio::pin!`: the latter pins a value
+        // that outlives the binding, so `drop` would only drop a `Pin<&mut _>`
+        // and the future — and its lease — would stay alive on the stack. This
+        // test is worthless unless the future itself is really destroyed.
+        let mut caller = Box::pin(
+            writer.with_detached_session_lease(vec![path.clone()], move || {
+                apply_compaction_with(plan, Some(&token), &fenced, &park_with_a_queued_append)
+            }),
+        );
+
+        // Poll the caller until the transaction is parked, then DROP it. This is
+        // the client disconnect.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the transaction never reached the pre-rename boundary"
+            );
+            tokio::select! {
+                outcome = &mut caller => panic!("the transaction returned early: {outcome:?}"),
+                () = tokio::time::sleep(std::time::Duration::from_millis(2)) => {}
+            }
+            if parked.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+        assert_eq!(
+            writer.deferred_session_appends(),
+            1,
+            "the append must be queued behind the lease before the cancellation"
+        );
+        drop(caller);
+
+        // The lease has no owner in this test's stack any more. If it were held
+        // by the request future, `SessionLease::drop` has already queued
+        // `ReleaseSessions` and the append is about to hit the doomed inode.
+        for _ in 0..25 {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            assert_eq!(
+                writer.deferred_session_appends(),
+                1,
+                "cancelling the caller must not release the transaction's lease"
+            );
+        }
+
+        // Let the detached owner finish. It renames, journals, and only then
+        // releases — so the queued append runs against the replacement.
+        proceed.store(true, Ordering::SeqCst);
+        tokio::time::timeout(std::time::Duration::from_secs(30), append_rx)
+            .await
+            .expect("the deferred append must run once the detached owner releases")
+            .unwrap()
+            .expect("the deferred append must succeed");
+
+        let compacted = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            compacted.contains("orgasmic-run-history-compacted"),
+            "the detached transaction must have completed despite the cancellation: {compacted}"
+        );
+        assert!(
+            !compacted.contains("\"text_chunk\""),
+            "this must be the compacted generation, not the orphaned original"
+        );
+        assert!(
+            compacted.contains("supervisor finished while the client was disconnecting"),
+            "the deferred append must land IN the replacement: {compacted}"
+        );
+
+        // And the journal the manifest holds is the completed one, not a
+        // transaction abandoned at `Staged`.
+        let manifest = manifest_of(&board, &writer_manifest_id(&board));
+        assert!(manifest.complete);
+        assert_eq!(manifest.files[0].stage.label(), "committed");
+    }
+
+    /// The single manifest one board's archive directory holds.
+    fn writer_manifest_id(board: &Board) -> String {
+        let archive = board.root.join(ARCHIVE_REL_PATH);
+        let mut ids: Vec<String> = std::fs::read_dir(&archive)
+            .unwrap()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                entry
+                    .file_type()
+                    .ok()?
+                    .is_dir()
+                    .then(|| entry.file_name().to_string_lossy().to_string())
+            })
+            .collect();
+        assert_eq!(ids.len(), 1, "{ids:?}");
+        ids.pop().unwrap()
+    }
+
     /// Read the manifest one transaction wrote, as JSON.
     fn manifest_value(board: &Board, manifest_id: &str) -> serde_json::Value {
         let path = board
@@ -2210,6 +2651,396 @@ mod tests {
         let refused = rollback_compaction(&board.root, &token).unwrap();
         assert!(refused.restored.is_empty(), "{refused:?}");
         assert_eq!(refused.refused.len(), 1, "{refused:?}");
+    }
+
+    /// The format-1 reader, byte-for-byte as `9bee827` declared it: the fields
+    /// that commit's `CompactionManifest`, `CompactionFileResult` and
+    /// `CompactionFileOutcome::Compacted` actually had, and no others.
+    #[derive(Deserialize)]
+    struct Nine9Bee827Manifest {
+        manifest_id: String,
+        project_root: PathBuf,
+        #[serde(default)]
+        results: Vec<Nine9Bee827Result>,
+    }
+
+    #[derive(Deserialize)]
+    struct Nine9Bee827Result {
+        session_path: PathBuf,
+        #[allow(dead_code)]
+        run_id: String,
+        #[serde(flatten)]
+        outcome: Nine9Bee827Outcome,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(tag = "outcome", rename_all = "snake_case")]
+    enum Nine9Bee827Outcome {
+        Compacted {
+            archived: PathBuf,
+            #[allow(dead_code)]
+            reclaimed_records: u64,
+            #[allow(dead_code)]
+            reclaimed_bytes: u64,
+            #[allow(dead_code)]
+            bytes_before: u64,
+            #[allow(dead_code)]
+            bytes_after: u64,
+        },
+        SkippedChanged {
+            #[allow(dead_code)]
+            reason: String,
+        },
+        Failed {
+            #[allow(dead_code)]
+            error: String,
+        },
+    }
+
+    /// `9bee827`'s rollback, reproduced: for every `Compacted` result whose
+    /// destination is inside the sessions directory, copy the named archive over
+    /// the session path. No digests, no stage, no second live-file check —
+    /// that reader had none of those, which is exactly why what this build
+    /// PROJECTS into `results` has to be correct for it.
+    fn rollback_as_9bee827(manifest: &Nine9Bee827Manifest) -> Vec<PathBuf> {
+        let sessions_dir = project_sessions_dir(&manifest.project_root);
+        let mut restored = Vec::new();
+        for result in &manifest.results {
+            let Nine9Bee827Outcome::Compacted { archived, .. } = &result.outcome else {
+                continue;
+            };
+            if result.session_path.parent() != Some(sessions_dir.as_path()) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(archived) else {
+                continue;
+            };
+            let staging = staging_path(&result.session_path);
+            std::fs::write(&staging, &bytes).unwrap();
+            std::fs::rename(&staging, &result.session_path).unwrap();
+            restored.push(result.session_path.clone());
+        }
+        restored
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 4c / open question 2 — the backward promise
+    /// has to cover the crash state, not just the completed one.
+    ///
+    /// A crash after the `rename` but before the committed journal write leaves
+    /// a `Staged` record and a LIVE REPLACEMENT. `result_of` renders `Staged` as
+    /// `Failed`, and the real `9bee827` reader restores only `Compacted`
+    /// records — so that older runtime skipped the one file whose live path had
+    /// actually moved, and reported success. This drives the actual old reader
+    /// over the actual emitted bytes at the actual crash state.
+    ///
+    /// The answer recorded for question 2: the promise covers every stage at
+    /// which the transaction could have MOVED the live file — `Staged` and
+    /// `Committed` — and not `Planned` or `Archived`, where the live path still
+    /// holds the original and skipping is correct.
+    #[test]
+    fn an_older_runtime_recovers_the_after_rename_crash_state() {
+        for point in [
+            FaultPoint::AfterArchive,
+            FaultPoint::AfterStage,
+            FaultPoint::AfterRename,
+        ] {
+            let board = board();
+            let path = write_session(&board.sessions, "run-crash", "rmux", 16, true);
+            let original = std::fs::read(&path).unwrap();
+            let plan = plan_compaction(&board.root, &indexed(&board));
+            let token = plan.manifest_id.clone();
+            let fenced = fence_all(&plan);
+            apply_compaction_with(plan, Some(&token), &fenced, &fault_at(point, Fault::Crash))
+                .unwrap_err();
+
+            let stage = manifest_of(&board, &token).files[0].stage.label();
+            assert_eq!(
+                stage,
+                match point {
+                    FaultPoint::AfterArchive => "archived",
+                    _ => "staged",
+                },
+                "{point:?}"
+            );
+            let live_moved = std::fs::read(&path).unwrap() != original;
+            assert_eq!(live_moved, point == FaultPoint::AfterRename, "{point:?}");
+
+            // The old reader, over the real emitted bytes.
+            let legacy: Nine9Bee827Manifest =
+                serde_json::from_value(manifest_value(&board, &token)).expect("format 1 decodes");
+            assert_eq!(legacy.manifest_id, token);
+            let restorable = legacy
+                .results
+                .iter()
+                .filter(|result| matches!(result.outcome, Nine9Bee827Outcome::Compacted { .. }))
+                .count();
+            match stage {
+                // Nothing was renamed: the live path holds the original and the
+                // archive equals it, so an old reader has nothing to do.
+                "archived" => assert_eq!(restorable, 0, "{point:?}"),
+                // The live path may hold EITHER image, and copying the archive
+                // over it is correct for both. It must be offered.
+                _ => assert_eq!(
+                    restorable, 1,
+                    "{point:?}: a crash that may have moved the live file must be restorable by \
+                     a runtime that predates `files`"
+                ),
+            }
+
+            let restored = rollback_as_9bee827(&legacy);
+            assert_eq!(restored.len(), restorable, "{point:?}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "{point:?}: an older runtime must land on the original, not on a live \
+                 replacement it skipped while reporting success"
+            );
+
+            // And this build lands there too, from the same bytes.
+            let rollback = rollback_compaction(&board.root, &token).unwrap();
+            assert!(rollback.failed.is_empty(), "{point:?}: {rollback:?}");
+            assert!(rollback.refused.is_empty(), "{point:?}: {rollback:?}");
+            assert!(!rollback.source_complete, "{point:?}");
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{point:?}");
+        }
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 4a — the decode happens UNDER the lock.
+    ///
+    /// `rollback_compaction` used to read the manifest, normalise it and hash
+    /// every archive BEFORE it asked for the maintenance lock. Everything it
+    /// decided in that prologue was decided against a board another maintenance
+    /// transaction was free to be rewriting. This pins the ordering the only way
+    /// a test can observe it: with the lock held, a rollback must report the
+    /// LOCK, not the manifest — which is only possible if it looked at the lock
+    /// first.
+    #[test]
+    fn a_rollback_decodes_nothing_before_it_holds_the_lock() {
+        let board = board();
+        write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        apply(plan, &token).unwrap();
+
+        let held = acquire_maintenance_lock(&board.root).unwrap();
+        for manifest_id in [token.as_str(), "deadbeef"] {
+            let error = rollback_compaction(&board.root, manifest_id).unwrap_err();
+            assert!(
+                matches!(error, CompactionError::MaintenanceBusy { .. }),
+                "{manifest_id}: the lock must be taken before the manifest is read: {error:?}"
+            );
+        }
+        drop(held);
+        assert!(rollback_compaction(&board.root, &token).is_ok());
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 4b — a manifest that disagrees with itself
+    /// refuses as a whole, before a single byte is written anywhere.
+    ///
+    /// `read_manifest` checked the format ceiling and the both-arrays-empty
+    /// case, and nothing else: not that the requested id, the embedded id and
+    /// the plan's id agree, not that the manifest was written for the root being
+    /// rolled back, not that there is one journal record per planned file, and
+    /// not that `archived` and `staging` name the paths this transaction is the
+    /// only writer of. Each case below is a document a hand edit or a crossed
+    /// wire produces, and each one used to be acted on.
+    #[test]
+    fn a_manifest_that_disagrees_with_itself_is_refused_whole() {
+        type Damage = fn(&mut serde_json::Value, &Path);
+        let cases: Vec<(&str, Damage)> = vec![
+            ("the embedded id", |manifest, _| {
+                manifest["manifest_id"] = json!("not-the-id-it-is-stored-under");
+            }),
+            ("the plan's id", |manifest, _| {
+                manifest["plan"]["manifest_id"] = json!("some-other-transaction");
+            }),
+            ("the project root", |manifest, _| {
+                manifest["project_root"] = json!("/somewhere/else");
+            }),
+            ("the plan's root", |manifest, _| {
+                manifest["plan"]["project_root"] = json!("/somewhere/else");
+            }),
+            ("a journal record per planned file", |manifest, _| {
+                manifest["files"].as_array_mut().unwrap().clear();
+            }),
+            ("the run id", |manifest, _| {
+                manifest["files"][0]["run_id"] = json!("run-somebody-else");
+            }),
+            ("archive confinement", |manifest, root| {
+                manifest["files"][0]["archived"] = json!(root.join("outside.jsonl"));
+            }),
+            ("staging confinement", |manifest, root| {
+                manifest["files"][0]["staging"] = json!(root.join("outside.tmp"));
+            }),
+        ];
+
+        for (what, damage) in cases {
+            let board = board();
+            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let plan = plan_compaction(&board.root, &indexed(&board));
+            let token = plan.manifest_id.clone();
+            let fenced = fence_all(&plan);
+            // A crash at `AfterStage` so the journal carries a `staging` field
+            // for the confinement case; every other case is unaffected by it.
+            let _ = apply_compaction_with(
+                plan,
+                Some(&token),
+                &fenced,
+                &fault_at(FaultPoint::AfterStage, Fault::Crash),
+            );
+            let live = std::fs::read(&path).unwrap();
+
+            let mut manifest = manifest_value(&board, &token);
+            damage(&mut manifest, &board.root);
+            write_manifest_value(&board, &token, &manifest);
+
+            let error = rollback_compaction(&board.root, &token).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    CompactionError::ManifestInconsistent { .. }
+                        | CompactionError::ManifestUnrestorable { .. }
+                ),
+                "{what}: an incoherent manifest must refuse, not restore: {error:?}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                live,
+                "{what}: nothing may be written on the strength of a refused manifest"
+            );
+            assert!(
+                manifest_session_paths(&board.root, &token).is_empty(),
+                "{what}: and nothing may be fenced on it either"
+            );
+        }
+    }
+
+    /// orgasmic:TASK-FZB6T.4 finding 4a — a legacy rollback is bound to ONE
+    /// generation of the archive it read.
+    ///
+    /// The manifest here is authored in `9bee827`'s shape field by field from
+    /// that commit's struct definitions — not a completed v2 manifest with keys
+    /// deleted, which is what the round-3 test did and what the reviewer
+    /// correctly refused to accept as evidence.
+    ///
+    /// Because `recorded_original_sha256` is deliberately `None` for a legacy
+    /// record, the archive was the ONLY authority, and it used to be read twice:
+    /// once to derive the digests the decision was made against, and again to
+    /// produce the bytes that were renamed over the session file. Nothing
+    /// compared the two, so bytes B could be written over a file whose overwrite
+    /// was authorized against bytes A. The archive is read once now, and the
+    /// second half of this test proves it by swapping the archive between the
+    /// two reads: the swap must either be invisible or be refused, and never be
+    /// written.
+    #[test]
+    fn a_real_format_1_manifest_restores_the_generation_it_authorized() {
+        let board = board();
+        let path = write_session(&board.sessions, "run-legacy", "rmux", 24, true);
+        let original = std::fs::read(&path).unwrap();
+        let plan = plan_compaction(&board.root, &indexed(&board));
+        let token = plan.manifest_id.clone();
+        let planned = plan.files[0].clone();
+        let report = apply(plan.clone(), &token).unwrap();
+        let CompactionFileOutcome::Compacted {
+            archived,
+            reclaimed_records,
+            reclaimed_bytes,
+            bytes_before,
+            bytes_after,
+        } = report.results[0].outcome.clone()
+        else {
+            panic!("expected a compaction: {:?}", report.results[0]);
+        };
+        let compacted = std::fs::read(&path).unwrap();
+        assert_ne!(compacted, original);
+
+        // The `9bee827` document, authored from that commit's field lists.
+        // `CompactionManifest`: manifest_id, project_root, started_at, plan,
+        // results. `CompactionPlan`: manifest_id, project_root, planned_at,
+        // files, reclaimable_bytes, reclaimable_records, candidates_considered,
+        // skipped_not_terminal, skipped_unreadable — and nothing else; the two
+        // `skipped_*` counters this build added did not exist.
+        let legacy = json!({
+            "manifest_id": token,
+            "project_root": board.root,
+            "started_at": "2026-08-02T17:52:39Z",
+            "plan": {
+                "manifest_id": token,
+                "project_root": board.root,
+                "planned_at": "2026-08-02T17:52:39Z",
+                "files": [{
+                    "session_path": planned.session_path,
+                    "run_id": planned.run_id,
+                    "driver": planned.driver,
+                    "transport": planned.transport,
+                    "fingerprint": planned.fingerprint,
+                    "total_bytes": planned.total_bytes,
+                    "reclaimable_records": planned.reclaimable_records,
+                    "reclaimable_bytes": planned.reclaimable_bytes,
+                    "reclaimable_sha256": planned.reclaimable_sha256,
+                }],
+                "reclaimable_bytes": plan.reclaimable_bytes,
+                "reclaimable_records": plan.reclaimable_records,
+                "candidates_considered": plan.candidates_considered,
+                "skipped_not_terminal": plan.skipped_not_terminal,
+                "skipped_unreadable": plan.skipped_unreadable,
+            },
+            "results": [{
+                "session_path": planned.session_path,
+                "run_id": planned.run_id,
+                "outcome": "compacted",
+                "reclaimed_records": reclaimed_records,
+                "reclaimed_bytes": reclaimed_bytes,
+                "archived": archived,
+                "bytes_before": bytes_before,
+                "bytes_after": bytes_after,
+            }],
+        });
+        // The fixture is genuinely the old shape, not the new one undressed.
+        let object = legacy.as_object().unwrap();
+        assert!(!object.contains_key("manifest_format"));
+        assert!(!object.contains_key("files"));
+        assert!(!object.contains_key("complete"));
+        assert!(!legacy["plan"]
+            .as_object()
+            .unwrap()
+            .contains_key("skipped_unstable"));
+        write_manifest_value(&board, &token, &legacy);
+
+        let rollback = rollback_compaction(&board.root, &token).unwrap();
+        assert_eq!(rollback.restored.len(), 1, "{rollback:?}");
+        assert!(rollback.refused.is_empty(), "{rollback:?}");
+        assert!(rollback.failed.is_empty(), "{rollback:?}");
+        assert!(
+            !rollback.source_complete,
+            "a format-1 manifest states no completion, and inventing one would be a claim"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        // ---- one generation: swap the archive, and nothing else. -------------
+        // Put the live file back to the compacted image so there is something to
+        // roll back, then replace the archive with DIFFERENT bytes that are
+        // still a valid session file. A rollback that authorized against one
+        // generation and wrote another would land these bytes on the session
+        // path; a single-read rollback cannot, because the digest it decided
+        // with and the bytes it writes are the same value.
+        std::fs::write(&path, &compacted).unwrap();
+        let mut tampered = original.clone();
+        tampered.extend_from_slice(b"{\"seq\":9999,\"kind\":\"note\",\"event\":{}}\n");
+        std::fs::write(&archived, &tampered).unwrap();
+
+        let after = rollback_compaction(&board.root, &token).unwrap();
+        assert!(
+            after.restored.is_empty(),
+            "the live file is not the replacement rebuilt from THESE archive bytes, so the \
+             rollback must refuse: {after:?}"
+        );
+        assert_eq!(after.refused.len(), 1, "{after:?}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            compacted,
+            "a refused destination must be byte-identical afterwards"
+        );
     }
 
     /// orgasmic:TASK-FZB6T.3 finding 2 — a manifest this build cannot read is
@@ -2660,6 +3491,11 @@ mod tests {
 
     /// A manifest that names a path outside the project's sessions directory
     /// cannot be used to write there.
+    ///
+    /// orgasmic:TASK-FZB6T.4 finding 4b — this used to be a PER-RECORD refusal,
+    /// which meant the rest of an inconsistent manifest was still acted on. A
+    /// document that has been shown to disagree with itself is not a document to
+    /// trust the rest of, so the whole rollback now refuses at decode.
     #[test]
     fn rollback_refuses_a_manifest_naming_a_foreign_path() {
         let board = board();
@@ -2683,10 +3519,15 @@ mod tests {
         )
         .unwrap();
 
-        let rollback = rollback_compaction(&board.root, &token).unwrap();
-        assert!(rollback.restored.is_empty());
-        assert_eq!(rollback.failed.len(), 1);
+        let error = rollback_compaction(&board.root, &token).unwrap_err();
+        assert!(
+            matches!(error, CompactionError::ManifestInconsistent { .. }),
+            "{error:?}"
+        );
         assert_eq!(std::fs::read(&victim).unwrap(), b"catalog\n");
+        // And nothing may be fenced on the strength of a manifest that cannot
+        // be decoded, so the caller cannot compact against it either.
+        assert!(manifest_session_paths(&board.root, &token).is_empty());
     }
 
     #[test]
