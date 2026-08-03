@@ -53,7 +53,7 @@ impl fmt::Display for DispatchKind {
 #[command(after_help = "\
 Examples:
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --mode acp-stdio --harness cursor-agent
+    --brief /path/to/brief.md --mode stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
     --brief /path/to/brief.md --mode rmux --harness custom \\
@@ -1633,7 +1633,7 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     // down the driver, which reaps the harness's whole setsid process group
     // (`reap_process_group`, TERM then KILL) — and this CLI is a member of that
     // group, because the harness spawned it. Release kills the process that
-    // still had to write the tx. On acp-stdio that reap is a direct
+    // still had to write the tx. On stdio that reap is a direct
     // `kill(-pgid, …)` and the tx was lost every time (3/3); on rmux it goes
     // through the rmux server, and the extra hop left just enough time to win
     // (2/2). Losing it left a durable commit, a durable last.txt, a RELEASED
@@ -2842,7 +2842,7 @@ async fn release_dispatch_run_with_reason(
 /// release call, that it will write the terminal tx as part of that release
 /// (TASK-WGXKD.1, reviewer finding 1).
 ///
-/// Why a pre-flight probe and not a post-release fallback: on acp-stdio there
+/// Why a pre-flight probe and not a post-release fallback: on stdio there
 /// is no "after the release" for this process. The release tears down the
 /// driver, the driver reaps the harness's setsid process group, and this CLI is
 /// in it — so a fallback that runs after the release call returns never runs at

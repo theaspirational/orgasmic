@@ -2205,7 +2205,7 @@ mod tests {
         let lc = Lifecycle::Acquire {
             task_id: "TASK-006".into(),
             kind: "implementer".into(),
-            worker_id: "implementer-claude-acp".into(),
+            worker_id: "implementer-claude-stream-json".into(),
         };
         let v = serde_json::to_value(&lc).unwrap();
         let back: Lifecycle = serde_json::from_value(v).unwrap();

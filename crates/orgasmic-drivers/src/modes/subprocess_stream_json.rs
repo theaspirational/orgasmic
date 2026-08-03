@@ -40,9 +40,9 @@ impl SubprocessStreamJsonDriver {
     /// Spawn a request that has **already been composed**, by the caller, on the
     /// adapter handed in here.
     ///
-    /// ACP-stdio delegates the plain-subprocess shape to this mode. It used to
+    /// The stdio mode delegates the plain-subprocess shape to this mode. It used to
     /// do so by handing over a fresh adapter clone and letting `acquire`
-    /// compose a second time, which meant every acp-stdio claude dispatch built
+    /// compose a second time, which meant every stdio claude dispatch built
     /// its argv twice and — until the credential plan was pinned — detected its
     /// credentials twice, after the lease was already held (TASK-KKBTP). The
     /// request the mode spawns is now the request the caller composed, so there
@@ -92,8 +92,8 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
         // Read straight after composing, before `adapter` is moved into the
         // control below. The adapter pins its harness-native session id while
         // building the argv; this used to be hardcoded `None` here, so a run
-        // reaching this driver — which is every acp-stdio claude run, via the
-        // delegation in `AcpStdioDriver::acquire` — recorded no NativeRuntime
+        // reaching this driver — which is every stdio claude run, via the
+        // delegation in `StdioDriver::acquire` — recorded no NativeRuntime
         // lifecycle event at all, and recovery could never offer
         // `resume_native_fork` (TASK-VB9DQ item 3, TASK-SGRTX).
         let native_runtime = adapter.native_runtime();

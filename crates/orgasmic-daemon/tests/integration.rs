@@ -877,7 +877,7 @@ async fn stage_acquire_blocked_sessions_is_path_free() {
         .bearer_auth(&ctx.token)
         .json(&serde_json::json!({
             "project": ctx.project_id,
-            "mode": "acp-stdio",
+            "mode": "stdio",
             "harness": "codex",
             "reason": "path-free acquire error test",
         }))
@@ -2587,7 +2587,7 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
     write(
         &sessions_dir.join("run-old.jsonl"),
         format!(
-            r#"{{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"acquire","task_id":"TASK-OLD","kind":"implementer","worker_id":"implementer-claude-acp"}}}}
+            r#"{{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"acquire","task_id":"TASK-OLD","kind":"implementer","worker_id":"implementer-claude-stream-json"}}}}
 {{"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"run_meta","transport":"tmux","harness":"claude","project_id":"orgasmic","worktree":{},"role":"implementer","requires_worker_finalize":true,"driver_config":{{}}}}}}
 "#,
             serde_json::to_string(&project_root).unwrap()
@@ -2595,7 +2595,7 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
     );
     write(
         &sessions_dir.join("run-done.jsonl"),
-        r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-done","runtime_id":"rt-done","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-DONE","kind":"implementer","worker_id":"implementer-claude-acp"}}
+        r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-done","runtime_id":"rt-done","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-DONE","kind":"implementer","worker_id":"implementer-claude-stream-json"}}
 {"seq":1,"time":"2026-05-21T20:01:00Z","run_id":"run-done","runtime_id":"rt-done","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"release","reason":"done","outcome":"completed"}}
 "#,
     );
@@ -2806,7 +2806,7 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
-            "mode": "acp-ws",
+            "mode": "ws",
             "harness": "codex",
             "brief_path": brief,
             "worktree_path": worktree,

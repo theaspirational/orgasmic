@@ -571,13 +571,13 @@ mod tests {
     #[test]
     fn babysitter_patch_object_sets_explicit_address() {
         let patch: GovernancePatch = serde_json::from_str(
-            r#"{"babysitter": {"mode": "acp-stdio", "harness": "codex", "model": "gpt-5"}}"#,
+            r#"{"babysitter": {"mode": "stdio", "harness": "codex", "model": "gpt-5"}}"#,
         )
         .unwrap();
         assert_eq!(
             patch.babysitter,
             Some(Some(BabysitterAddress {
-                mode: "acp-stdio".into(),
+                mode: "stdio".into(),
                 harness: "codex".into(),
                 harness_args: Vec::new(),
                 model: Some("gpt-5".into()),

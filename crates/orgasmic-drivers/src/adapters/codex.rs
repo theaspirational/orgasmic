@@ -18,7 +18,7 @@ use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
-    AcpWsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
+    WsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
     HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome,
     StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
 };
@@ -185,10 +185,10 @@ impl HarnessEventAdapter for CodexAdapter {
         let endpoint = websocket_endpoint(endpoint);
         self.ctx = Some(ctx.clone());
         self.cfg = Some(cfg.clone());
-        Ok(HarnessRequest::AcpWs {
+        Ok(HarnessRequest::Ws {
             endpoint,
             headers: Default::default(),
-            protocol: AcpWsProtocol::JsonRpc,
+            protocol: WsProtocol::JsonRpc,
             session_init: json!({
                 "initialize": initialize_params(),
                 "thread_start": thread_start_params(ctx, &cfg)?,

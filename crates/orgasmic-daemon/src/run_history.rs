@@ -3198,7 +3198,7 @@ mod tests {
     #[test]
     fn acp_text_chunks_are_evidence_and_are_never_planned() {
         let board = board();
-        let path = write_session(&board.sessions, "run-acp", "acp-stdio", 64, true);
+        let path = write_session(&board.sessions, "run-acp", "stdio", 64, true);
         let before = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         assert!(
@@ -3228,7 +3228,7 @@ mod tests {
     fn a_corrupt_catalog_entry_cannot_authorize_a_deletion() {
         let board = board();
         // Live (no release) and ACP: two independent reasons to refuse.
-        let path = write_session(&board.sessions, "run-acp", "acp-stdio", 40, false);
+        let path = write_session(&board.sessions, "run-acp", "stdio", 40, false);
         let before = std::fs::read(&path).unwrap();
 
         let mut entries = indexed(&board);

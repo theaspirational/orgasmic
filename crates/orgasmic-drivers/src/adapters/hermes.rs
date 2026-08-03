@@ -17,7 +17,7 @@ use tokio::time::timeout;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::r#trait::{
-    AcpWsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
+    WsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
     HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn,
     TransitionRequest, UserInputRequest, WireMessage,
 };
@@ -84,7 +84,7 @@ struct HermesConfig {
     model: Option<String>,
     /// Reasoning effort, forwarded as the ACP `/reasoning <level>` command.
     ///
-    /// Deliberately NOT `alias = "effort"`, the same way `ClaudeAcpConfig` is
+    /// Deliberately NOT `alias = "effort"`, the same way `ClaudeStreamJsonConfig` is
     /// not. The daemon used to write the value under both `effort` and
     /// `reasoning_effort`, so with the alias serde saw one field twice and
     /// every hermes dispatch that set an effort died on `duplicate field
@@ -118,13 +118,13 @@ fn default_auto_start_turn() -> bool {
 /// check the credential the launch will actually consume, and on every hermes
 /// mode that credential is not one orgasmic selects:
 ///
-/// - acp-stdio, tmux, rmux: the spawn is a bare `hermes acp` / `hermes` with no
+/// - stdio, tmux, rmux: the spawn is a bare `hermes acp` / `hermes` with no
 ///   provider on the argv. The configured provider travels only inside
 ///   `thread_start._meta.orgasmic`, and hermes ignores it. Measured: a
 ///   `session/new` carrying `provider: "nonexistent-provider"` succeeded and
 ///   came up on `ollama-cloud:glm-5.2` — hermes's own default — and so did the
 ///   same call carrying `provider: "anthropic"`. Identical result either way.
-/// - acp-ws: the provider *is* sent, but the run authenticates to a remote
+/// - ws: the provider *is* sent, but the run authenticates to a remote
 ///   gateway with a `session_token`. A local pooled-credential store says
 ///   nothing about a credential held on another machine.
 ///
@@ -246,10 +246,10 @@ impl HarnessEventAdapter for HermesAdapter {
             })?;
         let mut headers = std::collections::BTreeMap::new();
         headers.insert("session_token".into(), session_token);
-        Ok(HarnessRequest::AcpWs {
+        Ok(HarnessRequest::Ws {
             endpoint: websocket_endpoint(endpoint)?,
             headers,
-            protocol: AcpWsProtocol::RawJson,
+            protocol: WsProtocol::RawJson,
             session_init: spawn_payload(ctx, &cfg),
         })
     }
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn simulated_acquire_emits_ready() {
-        let d = driver_for_mode_harness("acp-ws", "hermes").expect("acp-ws hermes driver");
+        let d = driver_for_mode_harness("ws", "hermes").expect("ws hermes driver");
         let mut s = d
             .acquire(ctx("run-h", RunKind::Worker), simulated_config())
             .await
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[tokio::test]
     async fn simulated_send_input_emits_user_text() {
-        let d = driver_for_mode_harness("acp-ws", "hermes").expect("acp-ws hermes driver");
+        let d = driver_for_mode_harness("ws", "hermes").expect("ws hermes driver");
         let mut s = d
             .acquire(ctx("run-h-input", RunKind::Worker), simulated_config())
             .await
@@ -1370,7 +1370,7 @@ mod tests {
             spawn
         });
 
-        let d = driver_for_mode_harness("acp-ws", "hermes").expect("acp-ws hermes driver");
+        let d = driver_for_mode_harness("ws", "hermes").expect("ws hermes driver");
         let cfg = DriverConfig::from_value(json!({
             "endpoint": format!("ws://{addr}/acp"),
             "session_token": "fixture-token",
@@ -1445,7 +1445,7 @@ mod tests {
             (spawn, input)
         });
 
-        let d = driver_for_mode_harness("acp-ws", "hermes").expect("acp-ws hermes driver");
+        let d = driver_for_mode_harness("ws", "hermes").expect("ws hermes driver");
         let cfg = DriverConfig::from_value(json!({
             "endpoint": format!("ws://{addr}/acp"),
             "session_token": "fixture-token",

@@ -1,12 +1,16 @@
 // arch: arch_A53QX.3
 // orgasmic:arch_A53QX, dec_ASB1A, task_TGGAJ
-//! Claude Code harness adapter for ACP-like stdio stream-json.
+//! Claude Code harness adapter for its own stdio stream-json wire.
+//!
+//! This is NOT the Agent Client Protocol: it is `claude -p --input-format
+//! stream-json --output-format stream-json`, Claude Code's own line protocol
+//! (TASK-XCJYC). It rides orgasmic's `stdio` mode, which names only the wire.
 //!
 //! Claude Code's exposed programmatic wire is the Agent SDK JSONL stream:
 //! `claude -p --input-format stream-json --output-format stream-json`.
 //! The `endpoint` field in config is retained in capabilities for audit only.
-//! An empty endpoint is normal for the ACP-stdio pairing, where the mode
-//! upgrades this adapter's simulated request into `stdio_spawn`; ACP-WS keeps
+//! An empty endpoint is normal for the stdio pairing, where the mode
+//! upgrades this adapter's simulated request into `stdio_spawn`; `ws` keeps
 //! the simulated request because a WebSocket URL is required there.
 //!
 //! Simulation is also used when `claude` is not detectable on PATH, or when
@@ -32,7 +36,7 @@ use crate::r#trait::{
     StdioSpawn, TransitionRequest,
 };
 
-const TRANSPORT: &str = "claude-acp";
+const TRANSPORT: &str = "claude-stream-json";
 
 /// How this run authenticates the `claude` subprocess.
 ///
@@ -129,7 +133,7 @@ impl ClaudeCredentialMode {
 }
 
 pub struct ClaudeAdapter {
-    translator: Option<AcpTranslator>,
+    translator: Option<StreamJsonTranslator>,
     /// Native session identity for the run this adapter last composed, handed
     /// to the mode so the supervisor can record it (see `native_runtime`).
     native_runtime: Option<NativeRuntimeMeta>,
@@ -146,7 +150,7 @@ impl ClaudeAdapter {
     async fn collect<F>(&mut self, f: F) -> Vec<DriverEvent>
     where
         F: for<'a> FnOnce(
-            &'a mut AcpTranslator,
+            &'a mut StreamJsonTranslator,
             mpsc::Sender<DriverEvent>,
         )
             -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>,
@@ -172,7 +176,7 @@ impl Default for ClaudeAdapter {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
-struct ClaudeAcpConfig {
+struct ClaudeStreamJsonConfig {
     #[serde(default)]
     endpoint: Option<String>,
     #[serde(default)]
@@ -297,12 +301,12 @@ impl HarnessEventAdapter for ClaudeAdapter {
     fn next_seq(&mut self) -> u64 {
         self.translator
             .as_mut()
-            .map(AcpTranslator::next_seq)
+            .map(StreamJsonTranslator::next_seq)
             .unwrap_or(0)
     }
 
     fn validate_config(&self, config: &DriverConfig) -> Result<(), DriverError> {
-        let cfg: ClaudeAcpConfig = serde_json::from_value(config.0.clone())
+        let cfg: ClaudeStreamJsonConfig = serde_json::from_value(config.0.clone())
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
         if let Some(env_name) = cfg.api_key_env.as_deref() {
             if std::env::var(env_name).is_err() && cfg.endpoint.is_some() {
@@ -357,9 +361,9 @@ impl HarnessEventAdapter for ClaudeAdapter {
         ctx: &DriverContext,
         config: &DriverConfig,
     ) -> Result<Option<Vec<u8>>, DriverError> {
-        let cfg: ClaudeAcpConfig = serde_json::from_value(config.0.clone())
+        let cfg: ClaudeStreamJsonConfig = serde_json::from_value(config.0.clone())
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
-        self.translator = Some(AcpTranslator::new(
+        self.translator = Some(StreamJsonTranslator::new(
             cfg.endpoint.clone(),
             ctx.run_kind,
             cfg.model.clone(),
@@ -392,7 +396,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
     /// Establishing either requires submitting a real turn, which was measured
     /// at $0.0994 per dispatch and rejected on that ground.
     async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
-        let Ok(cfg) = serde_json::from_value::<ClaudeAcpConfig>(config.0.clone()) else {
+        let Ok(cfg) = serde_json::from_value::<ClaudeStreamJsonConfig>(config.0.clone()) else {
             return Preflight::Unsupported.into();
         };
         if simulate_override() {
@@ -410,7 +414,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
         // inconclusive.
         //
         // And an empty endpoint must *not* skip the probe. It makes this
-        // adapter compose a simulated request, but acp-stdio then upgrades that
+        // adapter compose a simulated request, but stdio then upgrades that
         // into a real subprocess whenever the binary is present
         // (`upgrades_simulated_to_subprocess`) — a real subprocess presenting a
         // real credential that can fail at startup. Skipping there would have
@@ -464,7 +468,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
         ctx: &DriverContext,
         config: &DriverConfig,
     ) -> Result<HarnessRequest, DriverError> {
-        let cfg: ClaudeAcpConfig = serde_json::from_value(config.0.clone())
+        let cfg: ClaudeStreamJsonConfig = serde_json::from_value(config.0.clone())
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
         self.validate_config(config)?;
         if let Some(reason) = simulation_reason(&cfg) {
@@ -476,7 +480,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
             });
         }
 
-        self.translator = Some(AcpTranslator::new(
+        self.translator = Some(StreamJsonTranslator::new(
             cfg.endpoint.clone(),
             ctx.run_kind,
             cfg.model.clone(),
@@ -617,7 +621,7 @@ impl HarnessEventAdapter for ClaudeAdapter {
         &mut self,
         req: BabysitterRequest,
     ) -> Result<HarnessControlOutcome, DriverError> {
-        let call_id = format!("acp-bs-{}", uuid::Uuid::new_v4());
+        let call_id = format!("claude-bs-{}", uuid::Uuid::new_v4());
         let payload = json!({
             "tool": req.tool.as_str(),
             "target_run": req.target_run,
@@ -722,10 +726,10 @@ impl SimulationReason {
     fn warning(self) -> Option<&'static str> {
         match self {
             Self::ExplicitOverride => Some(
-                "claude-acp: ORGASMIC_DRIVER_SIMULATE=1 is set; using simulated mode (explicit override)",
+                "claude-stream-json: ORGASMIC_DRIVER_SIMULATE=1 is set; using simulated mode (explicit override)",
             ),
             Self::BinaryMissing => Some(
-                "claude-acp: 'claude' binary not found on PATH; using simulated mode (binary not detectable)",
+                "claude-stream-json: 'claude' binary not found on PATH; using simulated mode (binary not detectable)",
             ),
         }
     }
@@ -749,9 +753,9 @@ fn simulate_override() -> bool {
 /// production never takes (TASK-SGRTX, TASK-VB9DQ).
 ///
 /// `claude -p` with line-delimited stream JSON is a real transport, not a
-/// simulation of one. Having no ACP endpoint to dial does not make the run
+/// simulation of one. Having no endpoint to dial does not make the run
 /// fake; it only means this transport is the local binary.
-fn simulation_reason(_cfg: &ClaudeAcpConfig) -> Option<SimulationReason> {
+fn simulation_reason(_cfg: &ClaudeStreamJsonConfig) -> Option<SimulationReason> {
     if simulate_override() {
         return Some(SimulationReason::ExplicitOverride);
     }
@@ -858,7 +862,7 @@ impl ClaudeAuthProbe {
     /// `claude auth status`, and the caller is a synchronous method running on
     /// an async worker thread, where spawning is exactly the hazard this task
     /// removed. There used to be a blocking sibling of [`Self::observe`] here;
-    /// it polled with `std::thread::sleep` and ran twice per acp-stdio dispatch,
+    /// it polled with `std::thread::sleep` and ran twice per stdio dispatch,
     /// after preflight had already answered the same question (TASK-KKBTP).
     fn ambient_only() -> Self {
         Self::ambient(api_key_helper_from_settings_file())
@@ -985,7 +989,7 @@ fn api_key_helper_from_settings_file() -> Option<String> {
 /// verbatim thereafter.
 // orgasmic:dec_7P79C, task_KKBTP
 fn resolve_credentials(
-    cfg: &ClaudeAcpConfig,
+    cfg: &ClaudeStreamJsonConfig,
     probe: &ClaudeAuthProbe,
 ) -> Result<CredentialPlan, DriverError> {
     let forced = match cfg.credential_mode.as_deref() {
@@ -1147,7 +1151,7 @@ fn classify_bare_api_key(api_key: Option<&str>) -> Preflight {
     )
 }
 
-fn build_spawn_prompt(ctx: &DriverContext, cfg: &ClaudeAcpConfig) -> String {
+fn build_spawn_prompt(ctx: &DriverContext, cfg: &ClaudeStreamJsonConfig) -> String {
     let payload = json!({
         "transport": TRANSPORT,
         "wire": "claude-code-stdio-stream-json",
@@ -1200,9 +1204,9 @@ fn json_line_bytes(value: &Value) -> Result<Vec<u8>, DriverError> {
     Ok(line)
 }
 
-fn simulated_start_events(ctx: &DriverContext, cfg: &ClaudeAcpConfig) -> Vec<DriverEvent> {
+fn simulated_start_events(ctx: &DriverContext, cfg: &ClaudeStreamJsonConfig) -> Vec<DriverEvent> {
     vec![DriverEvent::Ready {
-        protocol_version: "acp/1".into(),
+        protocol_version: "claude-code-stream-json/1".into(),
         capabilities: json!({
             "simulated": true,
             "kind": ctx.run_kind,
@@ -1218,7 +1222,7 @@ struct StreamingTool {
     partial_json: String,
 }
 
-struct AcpTranslator {
+struct StreamJsonTranslator {
     seq: u64,
     endpoint: Option<String>,
     kind: RunKind,
@@ -1227,7 +1231,7 @@ struct AcpTranslator {
     saw_partial_text: bool,
 }
 
-impl AcpTranslator {
+impl StreamJsonTranslator {
     fn new(endpoint: Option<String>, kind: RunKind, configured_model: Option<String>) -> Self {
         Self {
             seq: 0,
@@ -1585,9 +1589,9 @@ pub fn simulated_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::acp_stdio::AcpStdioComposeAdapter;
+    use crate::modes::stdio::StdioComposeAdapter;
     use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
-    use crate::{AcpStdioDriver, AcpWsDriver, AttachOutcome, ClaudeAcpDriver, WorkerDriver};
+    use crate::{StdioDriver, WsDriver, AttachOutcome, ClaudeStreamJsonDriver, WorkerDriver};
     use orgasmic_core::RuntimeIdentity;
     use tokio::time::{timeout, Duration};
 
@@ -1764,7 +1768,7 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
         };
-        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
 
         assert_eq!(
             plan.mode,
@@ -1796,7 +1800,7 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-test-not-real".into()),
         };
-        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
         assert_eq!(
             plan.mode,
             ClaudeCredentialMode::BareApiKey,
@@ -1822,7 +1826,7 @@ mod tests {
             ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
         };
         let plan =
-            resolve_credentials(&ClaudeAcpConfig::default(), &inconclusive).expect("resolve");
+            resolve_credentials(&ClaudeStreamJsonConfig::default(), &inconclusive).expect("resolve");
         assert_eq!(
             plan.mode,
             ClaudeCredentialMode::NativeLogin,
@@ -1841,16 +1845,16 @@ mod tests {
             ..inconclusive.clone()
         };
         assert_eq!(
-            resolve_credentials(&ClaudeAcpConfig::default(), &declared_helper)
+            resolve_credentials(&ClaudeStreamJsonConfig::default(), &declared_helper)
                 .expect("resolve")
                 .mode,
             ClaudeCredentialMode::BareApiKey,
             "a helper written into the operator's settings file is a declaration"
         );
 
-        let forced = ClaudeAcpConfig {
+        let forced = ClaudeStreamJsonConfig {
             credential_mode: Some("bare_api_key".into()),
-            ..ClaudeAcpConfig::default()
+            ..ClaudeStreamJsonConfig::default()
         };
         assert_eq!(
             resolve_credentials(&forced, &inconclusive)
@@ -1871,7 +1875,7 @@ mod tests {
                 native_login: evidence,
                 ..ClaudeAuthProbe::default()
             };
-            let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+            let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
             assert_eq!(plan.mode, ClaudeCredentialMode::NativeLogin, "{evidence:?}");
             assert!(!plan.neutralize_ambient_key);
             let resolved = plan.apply().expect("apply");
@@ -1909,7 +1913,7 @@ mod tests {
             api_key_helper: Some("/usr/local/bin/mint-key".into()),
             ambient_api_key: None,
         };
-        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        let plan = resolve_credentials(&ClaudeStreamJsonConfig::default(), &probe).expect("resolve");
         assert_eq!(plan.mode, ClaudeCredentialMode::BareApiKey);
         // `--bare` reads no settings file of its own, so the declaration has to
         // be passed inline — and only the declaration, not the operator's whole
@@ -1933,17 +1937,17 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-preferred".into()),
         };
-        let forced_bare = ClaudeAcpConfig {
+        let forced_bare = ClaudeStreamJsonConfig {
             credential_mode: Some("bare_api_key".into()),
-            ..ClaudeAcpConfig::default()
+            ..ClaudeStreamJsonConfig::default()
         };
         let plan = resolve_credentials(&forced_bare, &logged_in_with_key).expect("resolve");
         assert_eq!(plan.mode, ClaudeCredentialMode::BareApiKey);
         assert_eq!(plan.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
 
-        let forced_native = ClaudeAcpConfig {
+        let forced_native = ClaudeStreamJsonConfig {
             credential_mode: Some("native_login".into()),
-            ..ClaudeAcpConfig::default()
+            ..ClaudeStreamJsonConfig::default()
         };
         let no_login_but_a_key = ClaudeAuthProbe {
             native_login: NativeLoginEvidence::Absent,
@@ -1963,9 +1967,9 @@ mod tests {
 
         // `auto` and an absent value both mean "detect".
         for auto in [Some("auto"), Some(" "), None] {
-            let cfg = ClaudeAcpConfig {
+            let cfg = ClaudeStreamJsonConfig {
                 credential_mode: auto.map(str::to_string),
-                ..ClaudeAcpConfig::default()
+                ..ClaudeStreamJsonConfig::default()
             };
             assert_eq!(
                 resolve_credentials(&cfg, &logged_in_with_key)
@@ -2231,7 +2235,7 @@ mod tests {
     /// logged-out harness must reach the supervisor as a rejection, not as a
     /// worker that dies 1.2 s after acquiring a lease and a worktree.
     #[tokio::test]
-    async fn acp_stdio_rejects_a_dispatch_for_a_logged_out_claude() {
+    async fn stdio_rejects_a_dispatch_for_a_logged_out_claude() {
         let dir = tempfile::tempdir().expect("tempdir");
         make_auth_status_stub(dir.path(), false);
 
@@ -2244,7 +2248,7 @@ mod tests {
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let verdict = driver
             .preflight(
                 &ctx("run-preflight-stdio", RunKind::Worker),
@@ -2255,11 +2259,11 @@ mod tests {
         std::env::set_var("PATH", saved_path);
         assert!(
             verdict.rejects_dispatch().is_some(),
-            "acp-stdio must carry the harness's verdict through to the supervisor: {verdict:?}"
+            "stdio must carry the harness's verdict through to the supervisor: {verdict:?}"
         );
     }
 
-    /// An empty endpoint is not a reason to skip the probe: acp-stdio upgrades
+    /// An empty endpoint is not a reason to skip the probe: stdio upgrades
     /// that config into a real `claude` subprocess whenever the binary exists,
     /// so the credential is just as real as with an endpoint set.
     #[tokio::test]
@@ -2273,7 +2277,7 @@ mod tests {
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
 
-        let verdict = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()))
+        let verdict = StdioDriver::new(Box::new(ClaudeAdapter::new()))
             .preflight(
                 &ctx("run-preflight-no-endpoint", RunKind::Worker),
                 // No endpoint at all — the shape most dispatches use.
@@ -2290,7 +2294,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acp_stdio_accepts_a_dispatch_for_a_logged_in_claude() {
+    async fn stdio_accepts_a_dispatch_for_a_logged_in_claude() {
         let dir = tempfile::tempdir().expect("tempdir");
         make_auth_status_stub(dir.path(), true);
 
@@ -2300,7 +2304,7 @@ mod tests {
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let verdict = driver
             .preflight(
                 &ctx("run-preflight-stdio-ok", RunKind::Worker),
@@ -2387,7 +2391,7 @@ mod tests {
         let _guard = env_lock().lock().await;
         std::env::set_var("ORGASMIC_DRIVER_SIMULATE", "1");
 
-        let d = ClaudeAcpDriver;
+        let d = ClaudeStreamJsonDriver;
         let mut s = d
             .acquire(ctx("run-c", RunKind::Worker), simulated_config())
             .await
@@ -2402,23 +2406,23 @@ mod tests {
 
     #[tokio::test]
     async fn missing_api_key_with_endpoint_fails_validation() {
-        let d = ClaudeAcpDriver;
-        std::env::remove_var("ORGASMIC_TEST_MISSING_ACP_KEY");
+        let d = ClaudeStreamJsonDriver;
+        std::env::remove_var("ORGASMIC_TEST_MISSING_STREAM_JSON_KEY");
         let cfg = DriverConfig::from_value(json!({
             "endpoint": "https://example.com",
-            "api_key_env": "ORGASMIC_TEST_MISSING_ACP_KEY"
+            "api_key_env": "ORGASMIC_TEST_MISSING_STREAM_JSON_KEY"
         }));
         assert!(d.validate(&cfg).is_err());
     }
 
     #[test]
     fn transport_name_is_stable() {
-        assert_eq!(ClaudeAcpDriver.transport(), "claude-acp");
+        assert_eq!(ClaudeStreamJsonDriver.transport(), "claude-stream-json");
     }
 
     #[tokio::test]
     async fn attach_is_not_reattachable() {
-        let d = ClaudeAcpDriver;
+        let d = ClaudeStreamJsonDriver;
         let outcome = d
             .attach(ctx("run-acp-attach", RunKind::Worker), simulated_config())
             .await
@@ -2430,7 +2434,7 @@ mod tests {
     async fn stream_json_init_emits_ready() {
         let (tx, mut rx) = mpsc::channel(8);
         let mut translator =
-            AcpTranslator::new(Some("stdio".into()), RunKind::Worker, Some("sonnet".into()));
+            StreamJsonTranslator::new(Some("stdio".into()), RunKind::Worker, Some("sonnet".into()));
         translator
             .translate_value(
                 &tx,
@@ -2460,7 +2464,7 @@ mod tests {
     #[tokio::test]
     async fn stream_json_text_delta_maps_to_assistant_chunk() {
         let (tx, mut rx) = mpsc::channel(8);
-        let mut translator = AcpTranslator::new(None, RunKind::Worker, None);
+        let mut translator = StreamJsonTranslator::new(None, RunKind::Worker, None);
         translator
             .translate_value(
                 &tx,
@@ -2491,7 +2495,7 @@ mod tests {
     #[tokio::test]
     async fn stream_json_tool_delta_maps_to_tool_call() {
         let (tx, mut rx) = mpsc::channel(8);
-        let mut translator = AcpTranslator::new(None, RunKind::Worker, None);
+        let mut translator = StreamJsonTranslator::new(None, RunKind::Worker, None);
         translator
             .translate_value(
                 &tx,
@@ -2652,8 +2656,8 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         }
     }
 
-    /// Endpoint-empty + ACP-stdio + detectable `claude` (via stub) must take
-    /// the real stdio path. ACP-stdio is the discriminator: it upgrades the
+    /// Endpoint-empty + stdio + detectable `claude` (via stub) must take
+    /// the real stdio path. The stdio mode is the discriminator: it upgrades the
     /// adapter's empty-endpoint Simulated request through `stdio_spawn`.
     #[tokio::test]
     async fn gate_real_wire_for_empty_endpoint_stdio_when_claude_stub_on_path() {
@@ -2666,7 +2670,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         std::env::set_var("PATH", &new_path);
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let mut session = driver
             .acquire(ctx("run-gate-real", RunKind::Worker), simulated_config())
             .await
@@ -2688,11 +2692,11 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         let _ = session.control.release("test cleanup").await;
     }
 
-    /// Endpoint-empty + ACP-WS + detectable `claude` is now an explicit
+    /// Endpoint-empty + `ws` + detectable `claude` is now an explicit
     /// unsupported-shape error rather than a silent simulation.
     ///
     /// This test used to assert the simulation. It was guarding a pairing the
-    /// registry forbids — `("acp-ws", "claude")` is not in `SUPPORTED`, and
+    /// registry forbids — `("ws", "claude")` is not in `SUPPORTED`, and
     /// `driver_for_mode_harness` returns `None` for it; only this direct
     /// construction reaches it. With an empty endpoint no longer meaning
     /// "simulate" (dec_S18RH), the adapter composes the real local-spawn
@@ -2700,7 +2704,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
     ///
     /// Refusing is the better answer: the endpoint requirement belongs to the
     /// transport, not the harness, and a silent simulated Ready for an
-    /// impossible pairing is how the acp-stdio discard stayed invisible.
+    /// impossible pairing is how the stdio discard stayed invisible.
     #[tokio::test]
     async fn ws_refuses_the_local_spawn_request_claude_composes_without_an_endpoint() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2712,7 +2716,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         std::env::set_var("PATH", &new_path);
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
 
-        let driver = AcpWsDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = WsDriver::new(Box::new(ClaudeAdapter::new()));
         let outcome = driver
             .acquire(ctx("run-gate-ws-sim", RunKind::Worker), simulated_config())
             .await;
@@ -2720,7 +2724,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
 
         match outcome {
             Err(DriverError::Unsupported(what)) => assert!(
-                what.contains("acp-ws request shape"),
+                what.contains("ws request shape"),
                 "expected a request-shape refusal, got {what:?}"
             ),
             Ok(_) => panic!("ws must not accept a local-spawn request"),
@@ -2728,7 +2732,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         }
     }
 
-    /// Endpoint-empty + ACP-stdio + missing `claude` remains simulated because
+    /// Endpoint-empty + stdio + missing `claude` remains simulated because
     /// the stdio upgrade only fires when the spawn command is available.
     #[tokio::test]
     async fn gate_simulates_for_empty_endpoint_stdio_when_claude_missing() {
@@ -2737,7 +2741,7 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         std::env::set_var("PATH", "");
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let mut session = driver
             .acquire(ctx("run-gate-missing", RunKind::Worker), simulated_config())
             .await
@@ -2811,11 +2815,11 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         ) {
             return;
         }
-        std::env::set_var("ORGASMIC_TEST_CLAUDE_ACP_KEY", "invalid");
-        let d = ClaudeAcpDriver;
+        std::env::set_var("ORGASMIC_TEST_CLAUDE_STREAM_JSON_KEY", "invalid");
+        let d = ClaudeStreamJsonDriver;
         let cfg = DriverConfig::from_value(json!({
             "endpoint": "stdio",
-            "api_key_env": "ORGASMIC_TEST_CLAUDE_ACP_KEY",
+            "api_key_env": "ORGASMIC_TEST_CLAUDE_STREAM_JSON_KEY",
             "model": "sonnet"
         }));
         let mut s = d
@@ -3096,7 +3100,7 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
         const STALE_KEY: &str = "sk-ant-stale-but-the-only-credential-there-is";
         std::env::set_var("ANTHROPIC_API_KEY", STALE_KEY);
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let ctx = ctx("run-pinned-credential", RunKind::Worker);
         // The shape a real dispatch sends: no endpoint (dec_S18RH).
         let config = DriverConfig(json!({}));
@@ -3121,9 +3125,9 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
         //    dispatch and acquiring it (`spawn_worker_run`).
         let launch_config = outcome.pin_into(&config);
 
-        // 3. Launch. Composed through the mode wrapper `AcpStdioDriver::acquire`
+        // 3. Launch. Composed through the mode wrapper `StdioDriver::acquire`
         //    delegates to, so this is the request that would be spawned.
-        let mut mode_adapter = AcpStdioComposeAdapter {
+        let mut mode_adapter = StdioComposeAdapter {
             inner: Box::new(ClaudeAdapter::new()),
             jsonrpc_session_init: None,
         };
@@ -3243,12 +3247,12 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
 
     /// The mode layer composes once, not twice.
     ///
-    /// `AcpStdioDriver::acquire` used to hand a fresh adapter clone to
+    /// `StdioDriver::acquire` used to hand a fresh adapter clone to
     /// `SubprocessStreamJsonDriver::acquire`, which composed the request a
-    /// second time — so the argv that got spawned was never the argv acp-stdio
+    /// second time — so the argv that got spawned was never the argv stdio
     /// had built, and every per-run decision was made twice.
     #[tokio::test]
-    async fn acp_stdio_spawns_the_request_it_composed() {
+    async fn stdio_spawns_the_request_it_composed() {
         let dir = tempfile::tempdir().expect("tempdir");
         let log = make_recording_stub(dir.path(), &[true]);
         let settings = tempfile::tempdir().expect("settings dir");
@@ -3260,7 +3264,7 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::set_var("CLAUDE_CONFIG_DIR", settings.path());
 
-        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let driver = StdioDriver::new(Box::new(ClaudeAdapter::new()));
         let ctx = ctx("run-single-composition", RunKind::Worker);
         let config = DriverConfig(json!({}));
         let outcome = driver.preflight(&ctx, &config).await;

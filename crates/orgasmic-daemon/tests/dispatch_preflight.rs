@@ -173,9 +173,9 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-claude-acp-stdio";
+    let worker_id = "implementer-claude-stdio";
     let task_id = "TASK-PREFLIGHT-ABSENT";
-    seed_worker(&home, worker_id, "acp-stdio", "claude", "anthropic");
+    seed_worker(&home, worker_id, "stdio", "claude", "anthropic");
     seed_project(&home, &project_root, "proj-preflight", task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -196,7 +196,7 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
-            "mode": "acp-stdio",
+            "mode": "stdio",
             "harness": "claude",
             "brief_path": brief,
             "worktree_path": worktree,
@@ -223,7 +223,7 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     // and durable task evidence.
     let error = assert_path_free_error(
         &body,
-        "acp-stdio/claude cannot start a worker",
+        "stdio/claude cannot start a worker",
         &[
             project_root.as_path(),
             home.root.as_path(),
@@ -268,7 +268,7 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
-            "mode": "acp-stdio",
+            "mode": "stdio",
             "harness": "claude",
             "brief_path": brief,
             "worktree_path": worktree,

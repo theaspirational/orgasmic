@@ -87,7 +87,7 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
             serde_json::to_value(Lifecycle::Acquire {
                 task_id: "TASK-FAULT".into(),
                 kind: "worker".into(),
-                worker_id: "implementer-claude-acp".into(),
+                worker_id: "implementer-claude-stream-json".into(),
             })
             .unwrap(),
         )

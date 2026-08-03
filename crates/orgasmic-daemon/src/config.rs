@@ -60,11 +60,11 @@ pub struct DriverDefaults {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HermesDriverDefaults {
     #[serde(default)]
-    pub acp_ws: AcpWsDriverDefaults,
+    pub ws: WsDriverDefaults,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AcpWsDriverDefaults {
+pub struct WsDriverDefaults {
     #[serde(default)]
     pub endpoint: Option<String>,
     #[serde(default)]
@@ -210,13 +210,13 @@ fn driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
         .ok()
         .and_then(non_empty)
     {
-        defaults.hermes.acp_ws.endpoint = Some(endpoint);
+        defaults.hermes.ws.endpoint = Some(endpoint);
     }
     if let Some(token_env) = std::env::var("HERMES_ACP_WS_SESSION_TOKEN_ENV")
         .ok()
         .and_then(non_empty)
     {
-        defaults.hermes.acp_ws.session_token_env = Some(token_env);
+        defaults.hermes.ws.session_token_env = Some(token_env);
     }
     finalize_driver_defaults(defaults)
 }
@@ -224,12 +224,12 @@ fn driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
 fn parsed_driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
     DriverDefaults {
         hermes: HermesDriverDefaults {
-            acp_ws: parsed
+            ws: parsed
                 .and_then(|drivers| drivers.hermes)
-                .and_then(|hermes| hermes.acp_ws)
-                .map(|acp_ws| AcpWsDriverDefaults {
-                    endpoint: acp_ws.endpoint.and_then(non_empty),
-                    session_token_env: acp_ws.session_token_env.and_then(non_empty),
+                .and_then(|hermes| hermes.ws)
+                .map(|ws| WsDriverDefaults {
+                    endpoint: ws.endpoint.and_then(non_empty),
+                    session_token_env: ws.session_token_env.and_then(non_empty),
                 })
                 .unwrap_or_default(),
         },
@@ -237,10 +237,10 @@ fn parsed_driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
 }
 
 fn finalize_driver_defaults(mut defaults: DriverDefaults) -> DriverDefaults {
-    if defaults.hermes.acp_ws.endpoint.is_some()
-        && defaults.hermes.acp_ws.session_token_env.is_none()
+    if defaults.hermes.ws.endpoint.is_some()
+        && defaults.hermes.ws.session_token_env.is_none()
     {
-        defaults.hermes.acp_ws.session_token_env = Some("HERMES_ACP_WS_SESSION_TOKEN".to_string());
+        defaults.hermes.ws.session_token_env = Some("HERMES_ACP_WS_SESSION_TOKEN".to_string());
     }
     defaults
 }
@@ -377,13 +377,13 @@ fn collect_hermes_keys(value: &serde_yaml::Value, out: &mut Vec<String>) {
         let Some(name) = key.as_str() else {
             continue;
         };
-        if name != "acp_ws" {
+        if name != "ws" {
             out.push(format!("drivers.hermes.{name}"));
             continue;
         }
         collect_object_keys(
             child,
-            "drivers.hermes.acp_ws",
+            "drivers.hermes.ws",
             &["endpoint", "session_token_env"],
             out,
         );
@@ -441,11 +441,11 @@ struct DriversYaml {
 
 #[derive(Debug, Default, Deserialize)]
 struct HermesDriverYaml {
-    acp_ws: Option<AcpWsDriverYaml>,
+    ws: Option<WsDriverYaml>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct AcpWsDriverYaml {
+struct WsDriverYaml {
     endpoint: Option<String>,
     session_token_env: Option<String>,
 }
@@ -517,24 +517,24 @@ mod tests {
     }
 
     #[test]
-    fn loads_hermes_acp_ws_driver_defaults() {
+    fn loads_hermes_ws_driver_defaults() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         std::fs::create_dir_all(&home.root).unwrap();
         std::fs::write(
             home.config(),
-            "drivers:\n  hermes:\n    acp_ws:\n      endpoint: ws://127.0.0.1:9090/acp\n      session_token_env: HERMES_TEST_TOKEN\n",
+            "drivers:\n  hermes:\n    ws:\n      endpoint: ws://127.0.0.1:9090/acp\n      session_token_env: HERMES_TEST_TOKEN\n",
         )
         .unwrap();
         let cfg = DaemonConfig::load(&home).unwrap();
         assert_eq!(
-            cfg.driver_defaults.hermes.acp_ws.endpoint.as_deref(),
+            cfg.driver_defaults.hermes.ws.endpoint.as_deref(),
             Some("ws://127.0.0.1:9090/acp")
         );
         assert_eq!(
             cfg.driver_defaults
                 .hermes
-                .acp_ws
+                .ws
                 .session_token_env
                 .as_deref(),
             Some("HERMES_TEST_TOKEN")
@@ -542,10 +542,10 @@ mod tests {
     }
 
     #[test]
-    fn hermes_acp_ws_endpoint_defaults_token_env_name() {
+    fn hermes_ws_endpoint_defaults_token_env_name() {
         let defaults = finalize_driver_defaults(parsed_driver_defaults(Some(DriversYaml {
             hermes: Some(HermesDriverYaml {
-                acp_ws: Some(AcpWsDriverYaml {
+                ws: Some(WsDriverYaml {
                     endpoint: Some("ws://127.0.0.1:9090/acp".to_string()),
                     session_token_env: None,
                 }),
@@ -553,7 +553,7 @@ mod tests {
         })));
 
         assert_eq!(
-            defaults.hermes.acp_ws.session_token_env.as_deref(),
+            defaults.hermes.ws.session_token_env.as_deref(),
             Some("HERMES_ACP_WS_SESSION_TOKEN")
         );
     }
@@ -731,7 +731,7 @@ dispatch:
       allow_telepathy: true
 drivers:
   hermes:
-    acp_ws:
+    ws:
       endpoint: ws://x
       extra: 1
   other_driver: {}
@@ -753,7 +753,7 @@ drivers:
             "{keys:?}"
         );
         assert!(
-            keys.iter().any(|k| k == "drivers.hermes.acp_ws.extra"),
+            keys.iter().any(|k| k == "drivers.hermes.ws.extra"),
             "{keys:?}"
         );
         assert!(keys.iter().any(|k| k == "drivers.other_driver"), "{keys:?}");

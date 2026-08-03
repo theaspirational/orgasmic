@@ -705,7 +705,7 @@ mod tests {
         // Every non-rmux transport (tmux, tmux-tui, acp, …) attaches via tmux.
         assert_eq!(MuxKind::from_transport("tmux"), MuxKind::Tmux);
         assert_eq!(MuxKind::from_transport("tmux-tui"), MuxKind::Tmux);
-        assert_eq!(MuxKind::from_transport("acp-ws"), MuxKind::Tmux);
+        assert_eq!(MuxKind::from_transport("ws"), MuxKind::Tmux);
     }
 
     #[test]

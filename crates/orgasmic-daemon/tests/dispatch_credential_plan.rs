@@ -58,7 +58,7 @@ fn seed_worker(home: &Home, id: &str) {
     write(
         &home.user().join(format!("workers/{id}.org")),
         format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nCredential-plan test worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
+            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        implementer\n:DRIVER:                      stdio\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nCredential-plan test worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
         ),
     );
 }
@@ -248,7 +248,7 @@ async fn the_daemon_pins_the_admitted_credential_plan_into_the_launch() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-claude-acp-stdio";
+    let worker_id = "implementer-claude-stdio";
     let task_id = "TASK-CREDENTIAL-PLAN";
     seed_worker(&home, worker_id);
     seed_project(&home, &project_root, "proj-credential-plan", task_id);
@@ -269,7 +269,7 @@ async fn the_daemon_pins_the_admitted_credential_plan_into_the_launch() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
-            "mode": "acp-stdio",
+            "mode": "stdio",
             "harness": "claude",
             "brief_path": brief,
             "worktree_path": worktree,

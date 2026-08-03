@@ -266,11 +266,11 @@ mod tests {
         );
         let acp_row = text
             .lines()
-            .find(|line| line.starts_with("acp-stdio "))
-            .expect("acp-stdio row present");
+            .find(|line| line.starts_with("stdio "))
+            .expect("stdio row present");
         assert!(
             acp_row.contains(TransportInteraction::Unattended.as_str()),
-            "acp-stdio row must name the unattended transport: {acp_row}"
+            "stdio row must name the unattended transport: {acp_row}"
         );
         assert!(text.contains(TransportInteraction::TerminalPane.describe()));
         assert!(text.contains(TransportInteraction::Unattended.describe()));

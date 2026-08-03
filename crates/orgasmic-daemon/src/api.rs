@@ -4433,10 +4433,10 @@ fn apply_driver_defaults(
     harness: &str,
     defaults: &DriverDefaults,
 ) -> DriverConfig {
-    if mode != "acp-ws" || harness != "hermes" {
+    if mode != "ws" || harness != "hermes" {
         return config;
     }
-    let Some(endpoint) = defaults.hermes.acp_ws.endpoint.as_deref() else {
+    let Some(endpoint) = defaults.hermes.ws.endpoint.as_deref() else {
         return config;
     };
     let Some(map) = config.0.as_object_mut() else {
@@ -4450,7 +4450,7 @@ fn apply_driver_defaults(
     if endpoint_is_empty {
         map.insert("endpoint".to_string(), json!(endpoint));
     }
-    if let Some(token_env) = defaults.hermes.acp_ws.session_token_env.as_deref() {
+    if let Some(token_env) = defaults.hermes.ws.session_token_env.as_deref() {
         if let Ok(token) = std::env::var(token_env) {
             let token = token.trim();
             if !token.is_empty() {
@@ -8076,7 +8076,7 @@ pub struct RunReleaseRequest {
     /// the driver, and the driver reaps the harness's whole setsid process
     /// group — which the `orgasmic dispatch finalize` process is a member of.
     /// The client is therefore signalled by the very call it is waiting on,
-    /// and on acp-stdio it never returns. Handing the tx to the daemon with
+    /// and on stdio it never returns. Handing the tx to the daemon with
     /// the release is what makes "released but unreported" impossible; the
     /// content is the client's verbatim, so tx matching (RUN_ID, deterministic
     /// request id — TASK-6AYEJ.1) is unchanged.
@@ -8274,7 +8274,7 @@ async fn post_run_release(
     // `POST /tx` on its own turn — released the run and got a 200 with
     // `terminal_tx_id: null`. It never gets that turn: this release tears down
     // the driver, the driver reaps the harness's setsid process group, and the
-    // finalize CLI is a member of it (on acp-stdio a direct `kill(-pgid, …)`,
+    // finalize CLI is a member of it (on stdio a direct `kill(-pgid, …)`,
     // lost 3/3 when measured). What survives is a released run with a
     // `Completed` tombstone, no terminal tx, and NO orphan flag — the dispatch
     // completion watcher reads `finalized_by_worker` as "already reported by
@@ -11966,7 +11966,7 @@ fn driver_id_from_protocol(protocol_version: &str) -> Option<&'static str> {
     } else if protocol_version.starts_with("acp/")
         || protocol_version.starts_with("claude-code-stream-json/")
     {
-        Some("claude-acp")
+        Some("claude-stream-json")
     } else {
         None
     }
@@ -12041,7 +12041,7 @@ pub const RESTART_WRITER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duratio
 /// the release itself" (TASK-WGXKD).
 ///
 /// It exists because `dispatch finalize` cannot discover this after the fact:
-/// on acp-stdio the release reaps the finalize process's own group, so there is
+/// on stdio the release reaps the finalize process's own group, so there is
 /// no client left to observe the response, let alone run a fallback. The probe
 /// therefore has to complete BEFORE the release call.
 pub const CAPABILITY_RELEASE_TERMINAL_TX: &str = "release.terminal_tx";
@@ -18969,7 +18969,7 @@ pub(crate) mod tests {
                     // orgasmic:task_K4G1D — the rmux arm completes an existing
                     // rule (derive the transport from the protocol) rather than
                     // adding a parallel seeding path beside it.
-                    // orgasmic:task_3NJ9K — the non-mux arm seeded `acp-stdio`,
+                    // orgasmic:task_3NJ9K — the non-mux arm seeded `stdio`,
                     // which the classifier then resolved into a real transport.
                     // The stub stands for the same class (a transport with no
                     // reattachable runtime handle) without a test build ever
@@ -19366,7 +19366,7 @@ pub(crate) mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for ApiProtocolEndDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -19435,7 +19435,7 @@ pub(crate) mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for ApiHoldingDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -20278,7 +20278,7 @@ pub(crate) mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for CursorAcpFixtureDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         fn harness(&self) -> Option<&'static str> {
@@ -22003,13 +22003,13 @@ pub(crate) mod tests {
 
     /// TASK-QRTT8, blast radius: the fix makes a whole class of runs candidates
     /// that never reached `Supervisor::reattach` before. The class that exists
-    /// in production TODAY is `acp-stdio`/`claude` — the one path that writes
+    /// in production TODAY is `stdio`/`claude` — the one path that writes
     /// `credential_mode: Some(_)` (the mux drivers all write `None`; see
     /// `modes/tmux.rs` and `modes/rmux.rs`). Its runtime is a child of the
     /// daemon process, so after a restart there is nothing to attach to.
     ///
     /// This asserts the newly-reachable path declines SAFELY: the candidate is
-    /// produced, `AcpStdioDriver::attach` answers `NotReattachable`, and the
+    /// produced, `StdioDriver::attach` answers `NotReattachable`, and the
     /// lease `Supervisor::reattach` admits before attaching is released again —
     /// so the dead run neither enters the supervisor as live nor wedges the
     /// task's lease for the rest of the daemon's life.
@@ -22037,7 +22037,7 @@ pub(crate) mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-QRTT8-STDIO".into(),
                     kind: "worker".into(),
-                    worker_id: "implementer-claude-acp".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
                 })
                 .unwrap(),
             )
@@ -22047,7 +22047,7 @@ pub(crate) mod tests {
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
                     // orgasmic:task_3NJ9K — the transport is the stub because a
-                    // test build may not hold an `acp-stdio` one. What this run
+                    // test build may not hold an `stdio` one. What this run
                     // is a candidate *for* is `credential_mode: Some(_)`, which
                     // is the TASK-QRTT8 pattern and is unchanged below.
                     transport: crate::driver_resolution::STUB_MODE.into(),
@@ -22096,9 +22096,9 @@ pub(crate) mod tests {
         // The subject here is the supervisor's lease bookkeeping, not any one
         // transport's attach logic: what has to hold is that a driver which
         // declines leaves the lease free. The stub declines exactly as
-        // `AcpStdioDriver::attach` does (an unconditional `NotReattachable`),
+        // `StdioDriver::attach` does (an unconditional `NotReattachable`),
         // and a test build must not hold a real transport at all — TASK-3NJ9K.
-        // Whether acp-stdio itself still declines is a drivers-crate contract
+        // Whether stdio itself still declines is a drivers-crate contract
         // and is tested there.
         let driver = crate::driver_resolution::stub_driver();
         let error = state
@@ -23233,7 +23233,7 @@ pub(crate) mod tests {
         // `acquire`, where admission refuses on the reservation — the refusal
         // this test is about, unchanged.
         //
-        // It named `acp-stdio`/`hermes` when it was written (TASK-95SGV.2). The
+        // It named `stdio`/`hermes` when it was written (TASK-95SGV.2). The
         // driver was incidental to the refusal and load-bearing for nothing
         // here, but on a host with `hermes` on `$PATH` it was a real provider
         // spawn away; TASK-3NJ9K made that address unresolvable in a test build
@@ -23322,7 +23322,7 @@ pub(crate) mod tests {
         // the lease/cleanup fence — no provider credential, no billed turn.
         //
         // We deliberately do NOT run a second dispatch after the release. On a
-        // host with a `hermes` binary on `$PATH`, `acp-stdio` upgrades the
+        // host with a `hermes` binary on `$PATH`, `stdio` upgrades the
         // simulated harness to a real `hermes acp` subprocess during driver
         // spawn — which happens *after* admission clears. That second call
         // would therefore cross a provider boundary this test must stay out
@@ -23353,10 +23353,10 @@ pub(crate) mod tests {
     /// That ordering is itself part of what this test pins: move the fence
     /// later and the panic message stops being the first thing that happens.
     ///
-    /// Before TASK-3NJ9K this exact call resolved `acp-stdio`/`hermes` into a
+    /// Before TASK-3NJ9K this exact call resolved `stdio`/`hermes` into a
     /// real transport and ran on to acquire.
     #[tokio::test]
-    #[should_panic(expected = "refuses to resolve the real transport acp-stdio/hermes")]
+    #[should_panic(expected = "refuses to resolve the real transport stdio/hermes")]
     async fn a_dispatch_naming_a_real_driver_is_refused_in_a_test_build() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -23371,7 +23371,7 @@ pub(crate) mod tests {
         let worker = StageWorker {
             id: "implementer-hermes".into(),
             kind: WorkerKind::Implementer,
-            driver: "acp-stdio".into(),
+            driver: "stdio".into(),
             harness: "hermes".into(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
@@ -23856,7 +23856,7 @@ pub(crate) mod tests {
             force_inert: true,
             task_id: "TASK-PENDING-FENCE".into(),
             kind: "worker".into(),
-            worker_id: "implementer-claude-acp".into(),
+            worker_id: "implementer-claude-stream-json".into(),
             role: "implementer".into(),
             requires_worker_finalize: true,
             transport: mode.id().into(),
@@ -24393,7 +24393,7 @@ pub(crate) mod tests {
                 "project": "orgasmic",
                 "task_id": "TASK-KPMFK-LAUNCH",
                 // orgasmic:task_3NJ9K — this POST launches a real stage run
-                // through the live daemon; `acp-stdio`/`codex` made it exec
+                // through the live daemon; `stdio`/`codex` made it exec
                 // `codex app-server` on any host with codex on `$PATH`.
                 "mode": crate::driver_resolution::STUB_MODE,
                 "harness": crate::driver_resolution::STUB_HARNESS,
@@ -24675,7 +24675,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::DriverEvent,
                 serde_json::to_value(DriverEvent::Ready {
-                    protocol_version: "acp/1".into(),
+                    protocol_version: "claude-code-stream-json/1".into(),
                     capabilities: json!({}),
                 })
                 .unwrap(),
@@ -24698,7 +24698,7 @@ pub(crate) mod tests {
             .find(|run| run.run_id == "run-manager-recovery")
             .expect("manager run should remain visible after restart");
         assert_eq!(run.classification, "interrupted");
-        // acp-stdio has no reattachable runtime handle, so inventory records
+        // stdio has no reattachable runtime handle, so inventory records
         // that fact instead of paying for a driver probe that can only fail.
         assert!(
             run.reason.contains("does not support runtime reattach"),
@@ -25277,7 +25277,7 @@ pub(crate) mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-GRILL".into(),
                     kind: "grill".into(),
-                    worker_id: "griller-claude-acp".into(),
+                    worker_id: "griller-claude-stream-json".into(),
                 })
                 .unwrap(),
             )
@@ -25756,14 +25756,14 @@ pub(crate) mod tests {
         let worker = resolve_addressed_stage_worker(
             &home,
             WorkerKind::Implementer,
-            "acp-stdio",
+            "stdio",
             "codex",
             Vec::new(),
             &overlay,
             None,
         )
         .unwrap();
-        assert_eq!(worker.driver, "acp-stdio");
+        assert_eq!(worker.driver, "stdio");
         assert_eq!(worker.harness, "codex");
         assert_eq!(worker.stall_timeout_secs, Some(600));
     }
@@ -25838,7 +25838,7 @@ pub(crate) mod tests {
         let err = resolve_addressed_stage_worker(
             &home,
             WorkerKind::Implementer,
-            "acp-stdio",
+            "stdio",
             "codex",
             vec!["--smuggle".into()],
             &DispatchGovernanceOverlay::default(),
@@ -25869,7 +25869,7 @@ pub(crate) mod tests {
             resolve_addressed_stage_worker(
                 &home,
                 kind,
-                "acp-stdio",
+                "stdio",
                 "codex",
                 Vec::new(),
                 &overlay,
@@ -26041,9 +26041,9 @@ pub(crate) mod tests {
     #[test]
     fn dispatch_driver_config_forwards_the_credential_mode_override() {
         let worker = StageWorker {
-            id: "implementer-claude-acp".to_string(),
+            id: "implementer-claude-stream-json".to_string(),
             kind: WorkerKind::Implementer,
-            driver: "acp-stdio".to_string(),
+            driver: "stdio".to_string(),
             harness: "claude".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
@@ -26080,7 +26080,7 @@ pub(crate) mod tests {
         // override cannot be a key nothing reads.
         //
         // The question is the claude *adapter's* config contract, so ask the
-        // adapter. `AcpStdioDriver::validate` is `adapter.validate_config` and
+        // adapter. `StdioDriver::validate` is `adapter.validate_config` and
         // nothing else, so this is the same check the dispatch would run —
         // without a test build ever holding a transport that could exec the
         // harness (TASK-3NJ9K).
@@ -26154,14 +26154,14 @@ pub(crate) mod tests {
     #[test]
     fn driver_validate_400_carries_the_drivers_own_message() {
         let err = driver_validate_error(
-            "acp-stdio",
+            "stdio",
             "hermes",
             orgasmic_drivers::DriverError::InvalidConfig(
                 "duplicate field `reasoning_effort`".into(),
             ),
         );
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        assert!(err.message.contains("acp-stdio/hermes"), "{}", err.message);
+        assert!(err.message.contains("stdio/hermes"), "{}", err.message);
         assert!(
             err.message.contains("duplicate field `reasoning_effort`"),
             "{}",
@@ -26207,7 +26207,7 @@ pub(crate) mod tests {
                 assert_eq!(model_idx, "  Composer-2.5-FAST  ");
             }
             HarnessRequest::Simulated { .. }
-            | HarnessRequest::AcpWs { .. }
+            | HarnessRequest::Ws { .. }
             | HarnessRequest::Tmux { .. } => {
                 // Simulated when cursor-agent absent — config still validated above.
             }
@@ -26259,7 +26259,7 @@ pub(crate) mod tests {
         let worker = resolve_addressed_stage_worker(
             &home,
             WorkerKind::Implementer,
-            "acp-stdio",
+            "stdio",
             "codex",
             Vec::new(),
             &overlay,
@@ -26373,7 +26373,7 @@ pub(crate) mod tests {
         let worker = StageWorker {
             id: "worker-a".to_string(),
             kind: WorkerKind::Implementer,
-            driver: "acp-ws".to_string(),
+            driver: "ws".to_string(),
             harness: "codex".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
@@ -26447,7 +26447,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dispatch_driver_config_applies_hermes_acp_ws_defaults() {
+    fn dispatch_driver_config_applies_hermes_ws_defaults() {
         let token_env = "ORGASMIC_TEST_HERMES_TOKEN_APPLY_DEFAULTS";
         // Environment lock only, no flock: the key is unique to this test, so
         // nothing else in the binary reads it and the heavy live tests have no
@@ -26457,7 +26457,7 @@ pub(crate) mod tests {
         let worker = StageWorker {
             id: "worker-hermes".to_string(),
             kind: WorkerKind::Implementer,
-            driver: "acp-ws".to_string(),
+            driver: "ws".to_string(),
             harness: "hermes".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
@@ -26472,7 +26472,7 @@ pub(crate) mod tests {
         };
         let defaults = DriverDefaults {
             hermes: crate::config::HermesDriverDefaults {
-                acp_ws: crate::config::AcpWsDriverDefaults {
+                ws: crate::config::WsDriverDefaults {
                     endpoint: Some("ws://127.0.0.1:9090/acp".to_string()),
                     session_token_env: Some(token_env.to_string()),
                 },
@@ -26495,10 +26495,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn driver_defaults_only_apply_to_hermes_acp_ws() {
+    fn driver_defaults_only_apply_to_hermes_ws() {
         let defaults = DriverDefaults {
             hermes: crate::config::HermesDriverDefaults {
-                acp_ws: crate::config::AcpWsDriverDefaults {
+                ws: crate::config::WsDriverDefaults {
                     endpoint: Some("ws://127.0.0.1:9090/acp".to_string()),
                     session_token_env: None,
                 },
@@ -26506,7 +26506,7 @@ pub(crate) mod tests {
         };
         let cfg = apply_driver_defaults(
             DriverConfig::from_value(json!({"endpoint": ""})),
-            "acp-stdio",
+            "stdio",
             "codex",
             &defaults,
         );
@@ -26519,7 +26519,7 @@ pub(crate) mod tests {
     fn explicit_hermes_driver_config_wins_over_defaults() {
         let defaults = DriverDefaults {
             hermes: crate::config::HermesDriverDefaults {
-                acp_ws: crate::config::AcpWsDriverDefaults {
+                ws: crate::config::WsDriverDefaults {
                     endpoint: Some("ws://127.0.0.1:9090/acp".to_string()),
                     session_token_env: None,
                 },
@@ -26527,7 +26527,7 @@ pub(crate) mod tests {
         };
         let cfg = apply_driver_defaults(
             DriverConfig::from_value(json!({"endpoint": "ws://explicit/acp"})),
-            "acp-ws",
+            "ws",
             "hermes",
             &defaults,
         );
@@ -26542,7 +26542,7 @@ pub(crate) mod tests {
         let worker = StageWorker {
             id: "worker-a".to_string(),
             kind: WorkerKind::Implementer,
-            driver: "acp-stdio".to_string(),
+            driver: "stdio".to_string(),
             harness: "codex".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
@@ -28752,7 +28752,7 @@ pub(crate) mod tests {
                 "project": "orgasmic",
                 "task_id": "TASK-036-GRILL",
                 // orgasmic:task_3NJ9K — this POST launches a real stage run
-                // through the live daemon; `acp-stdio`/`codex` made it exec
+                // through the live daemon; `stdio`/`codex` made it exec
                 // `codex app-server` on any host with codex on `$PATH`.
                 "mode": crate::driver_resolution::STUB_MODE,
                 "harness": crate::driver_resolution::STUB_HARNESS,
@@ -29065,7 +29065,7 @@ pub(crate) mod tests {
             boot_id: "boot-test".into(),
         };
         let project_root = tmp.path().join("proj");
-        write_nonterminal_session(&project_root, identity, "acp/1", "implementer-claude-acp");
+        write_nonterminal_session(&project_root, identity, "claude-code-stream-json/1", "implementer-claude-stream-json");
 
         let (recovered, _inventory) = classify_session_files(
             &home,
@@ -29515,7 +29515,7 @@ pub(crate) mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-FAILED-RECOVER".into(),
                     kind: "implementer".into(),
-                    worker_id: "implementer-claude-acp".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
                 })
                 .unwrap(),
             )
@@ -30637,7 +30637,7 @@ pub(crate) mod tests {
             force_inert: false,
             task_id: "TASK-FAILED-RECOVER".into(),
             kind: "worker".into(),
-            worker_id: "implementer-claude-acp".into(),
+            worker_id: "implementer-claude-stream-json".into(),
             role: "implementer".into(),
             requires_worker_finalize: true,
             transport: "tmux".into(),
@@ -30826,7 +30826,7 @@ pub(crate) mod tests {
             event: serde_json::to_value(Lifecycle::Acquire {
                 task_id: "TASK-NATIVE".into(),
                 kind: "implementer".into(),
-                worker_id: "implementer-claude-acp".into(),
+                worker_id: "implementer-claude-stream-json".into(),
             })
             .unwrap(),
         }];
@@ -30861,9 +30861,9 @@ pub(crate) mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         write(
             path.clone(),
-            r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-HIST","kind":"implementer","worker_id":"implementer-claude-acp"}}
+            r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-HIST","kind":"implementer","worker_id":"implementer-claude-stream-json"}}
 {"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"continuation","previous_run":"run-prior","previous_session_path":"/tmp/run-prior.jsonl","diff_summary":"1 file changed","acceptance_criteria":["gate passes"]}}
-{"seq":2,"time":"2026-05-21T20:00:02Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"driver_event","event":{"type":"ready","protocol_version":"acp/1","capabilities":{}}}
+{"seq":2,"time":"2026-05-21T20:00:02Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"driver_event","event":{"type":"ready","protocol_version":"claude-code-stream-json/1","capabilities":{}}}
 "#,
         );
         let envelopes = read_session_file(&path).unwrap();
@@ -32972,7 +32972,7 @@ pub(crate) mod tests {
     #[test]
     fn artifact_address_override_from_regenerate_replaces_whole_record() {
         let body = ArtifactRegenerateRequest {
-            mode: Some("acp-ws".into()),
+            mode: Some("ws".into()),
             harness: Some("codex".into()),
             harness_args: vec!["--new".into()],
             model: Some("gpt-custom".into()),
@@ -32984,7 +32984,7 @@ pub(crate) mod tests {
         assert_eq!(
             override_addr,
             ArtifactLaunchAddress {
-                mode: "acp-ws".into(),
+                mode: "ws".into(),
                 harness: "codex".into(),
                 harness_args: vec!["--new".into()],
                 model: Some("gpt-custom".into()),
@@ -33018,7 +33018,7 @@ pub(crate) mod tests {
         assert_eq!(override_addr.effort, None);
 
         let saved = ArtifactLaunchAddress {
-            mode: "acp-ws".into(),
+            mode: "ws".into(),
             harness: "codex".into(),
             harness_args: vec!["--keep".into()],
             model: Some("old-model".into()),

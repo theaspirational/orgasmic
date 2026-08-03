@@ -655,7 +655,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -689,7 +689,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -798,7 +798,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -831,7 +831,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -903,7 +903,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -985,7 +985,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1038,7 +1038,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1091,7 +1091,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1167,7 +1167,7 @@ async fn dispatch_rejects_any_overlapping_open_task() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1199,7 +1199,7 @@ async fn dispatch_rejects_any_overlapping_open_task() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1336,7 +1336,7 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -1418,7 +1418,7 @@ async fn reviewer_close_verdict_ship_closes_done() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -1495,7 +1495,7 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -1577,7 +1577,7 @@ async fn multi_task_dispatch_writes_one_start_and_per_task_closes() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1708,7 +1708,7 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -1866,7 +1866,7 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2053,14 +2053,14 @@ async fn dispatch_address_shows_in_dry_run_plan() {
             "--brief",
             brief.to_str().unwrap(),
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--dry-run",
         ],
     );
     assert!(stdout.contains("dispatch plan:"));
-    assert!(stdout.contains("mode:     acp-stdio"));
+    assert!(stdout.contains("mode:     stdio"));
     assert!(stdout.contains("harness:  codex"));
 
     let _ = running.shutdown.send(());
@@ -2135,9 +2135,9 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
 
     for (task, kind, worktree, expected) in cases {
         let (mode, harness) = match *kind {
-            "reviewer" => ("acp-stdio", "codex"),
-            "architector" => ("acp-stdio", "codex"),
-            _ => ("acp-ws", "codex"),
+            "reviewer" => ("stdio", "codex"),
+            "architector" => ("stdio", "codex"),
+            _ => ("ws", "codex"),
         };
         let stderr = run_orgasmic_failure(
             &home,
@@ -2232,7 +2232,7 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2324,7 +2324,7 @@ async fn dispatch_default_worktree_lives_under_project_dispatch_dir() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2379,7 +2379,7 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2446,7 +2446,7 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2637,7 +2637,7 @@ async fn dispatch_close_with_recorded_run_id_does_not_enumerate_runs() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -2741,7 +2741,7 @@ async fn dispatch_sleeping_implementer(
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -3717,7 +3717,7 @@ async fn dispatch_finalize_writes_last_txt_verbatim_no_scrollback_contamination(
 /// down the driver, and the driver reaps the harness's whole setsid process
 /// group (`reap_process_group`) — the `orgasmic dispatch finalize` process is a
 /// member of that group, so the release signals the very process that used to
-/// owe the tx afterwards. On acp-stdio it lost the tx 3 times out of 3.
+/// owe the tx afterwards. On stdio it lost the tx 3 times out of 3.
 /// `ORGASMIC_TEST_FINALIZE_KILL_SELF_AFTER_RELEASE` SIGKILLs the CLI at exactly
 /// that point: whatever the daemon has not already recorded is gone for good.
 ///
@@ -3827,7 +3827,7 @@ async fn dispatch_finalize_terminal_tx_survives_client_death_at_release() {
 /// The skew is real and routine: CLI and daemon ship in one runtime bundle, but
 /// a source build — or the window between installing a runtime and kickstarting
 /// the daemon — puts a new CLI in front of an old daemon. That daemon ignores
-/// the unknown `terminal_tx` field, performs the release, and on acp-stdio the
+/// the unknown `terminal_tx` field, performs the release, and on stdio the
 /// release reaps the finalize process's own group before any client-side
 /// fallback could run. Committed, reported to last.txt, lease released, nothing
 /// on record: the exact defect TASK-WGXKD closed.
@@ -4167,7 +4167,7 @@ async fn dispatch_finalize_reports_without_closing_and_releases_lease() {
             "--kind",
             "reviewer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -4545,7 +4545,7 @@ async fn stale_close_retry_does_not_touch_a_successor_dispatch_for_the_same_task
             "--kind",
             "reviewer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -4655,7 +4655,7 @@ async fn stale_close_retry_does_not_touch_a_successor_dispatch_for_the_same_task
             "--kind",
             "reviewer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -5048,7 +5048,7 @@ async fn dispatch_finalize_commit_binds_to_worktree_when_orgasmic_is_uncommitted
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -5244,12 +5244,12 @@ async fn dispatch_finalize_refuses_commit_when_git_root_does_not_match_dispatche
     let _ = running.join.await;
 }
 
-/// TASK-P4MGK: `orgasmic dispatch finalize` is accepted from acp-stdio, not
-/// only rmux/acp-ws. PATH has no `codex` so the driver stays Simulated and
+/// TASK-P4MGK: `orgasmic dispatch finalize` is accepted from stdio, not
+/// only rmux/ws. PATH has no `codex` so the driver stays Simulated and
 /// the lease stays live until finalize (protocol-end is not the success
 /// signal).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dispatch_finalize_from_acp_stdio_mode() {
+async fn dispatch_finalize_from_stdio_mode() {
     // orgasmic:TASK-P4MGK
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
@@ -5262,11 +5262,11 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     write_git_proxy(&bin_dir);
-    // No `codex` on PATH → acp-stdio stays Simulated (Ready only, lease live).
+    // No `codex` on PATH → stdio stays Simulated (Ready only, lease live).
     let path_env = path_only(&bin_dir);
     let brief = tmp.path().join("brief.md");
-    let worktree = tmp.path().join("worktrees/task-dispatch-acp-stdio");
-    write(&brief, "acp-stdio finalize smoke");
+    let worktree = tmp.path().join("worktrees/task-dispatch-stdio");
+    write(&brief, "stdio finalize smoke");
 
     let running = boot(home.clone()).await;
     let dispatch_stdout = run_orgasmic(
@@ -5282,7 +5282,7 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -5292,9 +5292,9 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
             "--worktree",
             worktree.to_str().unwrap(),
             "--branch",
-            "task-dispatch-acp-stdio-impl",
+            "task-dispatch-stdio-impl",
             "--reason",
-            "acp-stdio finalize smoke",
+            "stdio finalize smoke",
         ],
     );
     assert!(
@@ -5303,7 +5303,7 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     );
 
     let summary_path = tmp.path().join("summary.md");
-    write(&summary_path, "acp-stdio finalize report");
+    write(&summary_path, "stdio finalize report");
     let finalize_stdout = run_orgasmic(
         &home,
         &running,
@@ -5325,12 +5325,12 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     let last_path = finalized_last_path(&finalize_stdout);
     assert_eq!(
         std::fs::read_to_string(&last_path).unwrap(),
-        "acp-stdio finalize report"
+        "stdio finalize report"
     );
     let tx_raw = tx_log(&project_root);
     assert!(
         tx_raw.contains(":TYPE:         implementer.reported"),
-        "acp-stdio finalize must emit implementer.reported: {tx_raw}"
+        "stdio finalize must emit implementer.reported: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
@@ -5466,7 +5466,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-stdio",
+            "stdio",
             "--harness",
             "codex",
             "--brief",
@@ -5699,7 +5699,7 @@ fn seed_stage_workers(home: &Home) {
         write(
             &home.user().join(format!("workers/{id}.org")),
             format!(
-                "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:             {kind}\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest {kind}.\n"
+                "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:             {kind}\n:DRIVER:                      stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest {kind}.\n"
             ),
         );
     }
@@ -5742,7 +5742,7 @@ async fn start_stage_on_main(
         .json(&serde_json::json!({
             "project": "orgasmic",
             "task_id": task_id,
-            "mode": "acp-stdio",
+            "mode": "stdio",
             "harness": "codex",
             "reason": "stage finalize smoke",
         }))
@@ -6241,7 +6241,7 @@ fn run_dispatch_with_model_effort_output(
         "--kind",
         "implementer",
         "--mode",
-        "acp-ws",
+        "ws",
         "--harness",
         "codex",
         "--brief",
@@ -6595,7 +6595,7 @@ async fn dispatch_status_from_dispatch_worktree_refuses_frozen_snapshot_answer()
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",
@@ -6700,7 +6700,7 @@ async fn dispatch_finalize_still_works_from_inside_its_own_worktree() {
             "--kind",
             "implementer",
             "--mode",
-            "acp-ws",
+            "ws",
             "--harness",
             "codex",
             "--brief",

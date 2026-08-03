@@ -22,14 +22,14 @@
 //! that both mux modes deliberately swap for the harness's real binary.
 //!
 //! The fence exists because a daemon unit test once built a
-//! `StageWorker { driver: "acp-stdio", harness: "hermes" }` and guarded the
+//! `StageWorker { driver: "stdio", harness: "hermes" }` and guarded the
 //! spawn with the comment *"unreachable without a hermes binary"* — true on CI,
 //! false on the developer machine where the test then spawned real, billed
 //! agents that outlived it, became PPID-1 orphans, and mutated `main`
 //! (TASK-3NJ9K, the class behind TASK-95SGV.2). The mechanism was mechanical,
-//! not exotic: `acp-stdio` upgrades a simulated acquire to a real subprocess
+//! not exotic: `stdio` upgrades a simulated acquire to a real subprocess
 //! whenever `command_available(<harness binary>)` says the harness is on
-//! `$PATH` (`modes/acp_stdio.rs`), so the same test was inert on one host and a
+//! `$PATH` (`modes/stdio.rs`), so the same test was inert on one host and a
 //! provider spawn on another.
 //!
 //! Three properties matter and are all load-bearing:
@@ -85,7 +85,7 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 /// session the test created, or execs through the daemon's verified pinned
 /// executable.
 ///
-/// Everything else — `acp-stdio`, `acp-ws`, `subprocess-stream-json`, and any
+/// Everything else — `stdio`, `ws`, `subprocess-stream-json`, and any
 /// mode added later — execs the harness binary itself, resolved from `$PATH`,
 /// with no pane and no gate between the test and a billed provider turn. Those
 /// are refused, always.
@@ -420,15 +420,15 @@ mod tests {
     /// callers' "unsupported pair" rejections stay reachable from a test.
     #[test]
     fn unknown_pairs_still_answer_none() {
-        assert!(resolve_driver("acp-stdio", "not-a-harness").is_none());
+        assert!(resolve_driver("stdio", "not-a-harness").is_none());
         assert!(resolve_driver("not-a-mode", "claude").is_none());
         assert!(resolve_driver_by_transport("not-a-transport").is_none());
     }
 
     #[test]
-    #[should_panic(expected = "refuses to resolve the real transport acp-stdio/hermes")]
-    fn resolving_acp_stdio_hermes_panics() {
-        let _ = resolve_driver("acp-stdio", "hermes");
+    #[should_panic(expected = "refuses to resolve the real transport stdio/hermes")]
+    fn resolving_stdio_hermes_panics() {
+        let _ = resolve_driver("stdio", "hermes");
     }
 
     /// The fence is only worth having if it is the *only* way into a
@@ -438,19 +438,19 @@ mod tests {
     ///
     /// Without it the guard is a convention, and the next author to write
     /// `use orgasmic_drivers::driver_for_mode_harness` — or
-    /// `AcpStdioDriver::new(HermesAdapter::new())` — in a test walks straight
+    /// `StdioDriver::new(HermesAdapter::new())` — in a test walks straight
     /// past it, which is exactly the move that produced the incident. The mux
     /// drivers are absent from the list on purpose: they are this fence's
     /// declared allowance ([`LIVE_TOOLING_MODES`]).
     #[test]
     fn nothing_outside_this_module_reaches_the_driver_registry() {
-        // `AcpWsDriver` without the `::` is `AcpWsDriverDefaults`, a config
+        // `WsDriver` without the `::` is `WsDriverDefaults`, a config
         // struct; prose naming a driver is not a call. Both are matched out
         // rather than special-cased later.
         const FORBIDDEN: &[&str] = &[
             "driver_for",
-            "AcpStdioDriver::",
-            "AcpWsDriver::",
+            "StdioDriver::",
+            "WsDriver::",
             "SubprocessStreamJsonDriver::",
         ];
 
@@ -547,9 +547,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "refuses to resolve the real transport acp-ws/codex")]
-    fn resolving_acp_ws_codex_panics() {
-        let _ = resolve_driver("acp-ws", "codex");
+    #[should_panic(expected = "refuses to resolve the real transport ws/codex")]
+    fn resolving_ws_codex_panics() {
+        let _ = resolve_driver("ws", "codex");
     }
 
     #[test]

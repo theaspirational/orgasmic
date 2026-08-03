@@ -3889,7 +3889,7 @@ mod tests {
             (
                 "transport alone",
                 Box::new(|entry: &mut RunCatalogEntry| {
-                    entry.transport = Some("acp-stdio".to_string());
+                    entry.transport = Some("stdio".to_string());
                 }),
             ),
             (
@@ -4579,7 +4579,7 @@ mod tests {
         for pane in ["rmux", "tmux", "tmux-tui"] {
             assert!(class_is_reclaimable("rendered_tui", Some(pane)), "{pane}");
         }
-        for structured in ["acp-stdio", "acp-claude", "cursor-acp", "external"] {
+        for structured in ["stdio", "acp-claude", "cursor-acp", "external"] {
             assert!(
                 !class_is_reclaimable("rendered_tui", Some(structured)),
                 "{structured}: a structured transport's text_chunk is evidence"
