@@ -5115,3 +5115,69 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-03 Mon 02:53:26 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4332
+:TIME:         [2026-08-03 Mon 02:53:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-3CM0Q to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-03 Mon 02:53:27 manager.dispatch_started TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4333
+:TIME:         [2026-08-03 Mon 02:53:27]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:BRANCH:       task-3cm0q-impl-cont
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q.md
+:STARTED_AT:   [2026-08-03 Mon 02:53:27]
+:LIVENESS:     a409197e02ca801c0190d1383d4bd320670512e4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Resumed from a409197, the WIP preserved when the first outage killed it six minutes in. Its brief now carries the CORRECTED prohibition — never set ORGASMIC_HOME for any invocation — rather than the narrow lifecycle-verb version that was in force when it died, and distinguishes that from the safe act of UNSETTING a leaked value in the gates.
+:END:
+
+* TX 2026-08-03 Mon 02:53:27 run.created TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4334
+:TIME:         [2026-08-03 Mon 02:53:27]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-3CM0Q-implementer-20260803T025326.jsonl
+:REASON:       Resumed from a409197, the WIP preserved when the first outage killed it six minutes in. Its brief now carries the CORRECTED prohibition — never set ORGASMIC_HOME for any invocation — rather than the narrow lifecycle-verb version that was in force when it died, and distinguishes that from the safe act of UNSETTING a leaked value in the gates.
+:RUN_ID:       run-20260803T025326-cb72e5123870426391c3c0528fd9454a
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q-945f0be5d78746a49ffaab9d779d54c5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-3cm0q/brief-3cm0q-945f0be5d78746a49ffaab9d779d54c5-stdout.log
+:DISPATCH_ATTEMPT: 945f0be5d78746a49ffaab9d779d54c5
+:DISPATCH_TX:  tx-20260803-orgasmic-4333
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
