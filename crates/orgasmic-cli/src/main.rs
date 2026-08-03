@@ -1020,6 +1020,12 @@ enum ManagerCmd {
     Register(manager::ManagerRegisterArgs),
     /// Explicit deregistration for `register` (no-op if nothing is registered).
     Release(manager::ManagerReleaseArgs),
+    // orgasmic:TASK-3CM0Q
+    /// Record the process tier computed for a task, and the triggers that
+    /// fired, as a `manager.tier` tx. A manager may not edit source directly
+    /// for a task with no declaration. Omit `--tier` to read back what was
+    /// declared.
+    Tier(manager::ManagerTierArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -3593,6 +3599,7 @@ fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
         ManagerCmd::LeaseRelease(args) => manager::cmd_lease_release(home, args),
         ManagerCmd::Register(args) => manager::cmd_manager_register(home, args),
         ManagerCmd::Release(args) => manager::cmd_manager_release(home, args),
+        ManagerCmd::Tier(args) => manager::cmd_manager_tier(home, args),
         ManagerCmd::State => {
             let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
             runtime.block_on(async move {

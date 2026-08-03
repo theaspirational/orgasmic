@@ -675,6 +675,11 @@ pub fn router(state: ApiState) -> Router {
         .route("/manager/register", post(post_manager_register))
         .route("/manager/release", post(post_manager_release))
         .route("/manager/state", get(get_manager_state))
+        // orgasmic:TASK-3CM0Q
+        .route(
+            "/manager/tier",
+            post(post_manager_tier).get(get_manager_tier),
+        )
         .route("/managers/drivers", get(get_manager_drivers))
         .route("/tmux/:run_id/attach", get(stub("TASK-007")))
         .route("/question", post(post_question))
@@ -3119,6 +3124,336 @@ async fn get_manager_state(
     State(state): State<ApiState>,
 ) -> Json<crate::supervisor::SupervisorSnapshot> {
     Json(state.supervisor.snapshot().await)
+}
+
+// orgasmic:TASK-3CM0Q
+/// The tx type a tier declaration lands under. Its own type rather than a
+/// `manager.action` variant, because the acceptance is that the *absence* of a
+/// declaration is detectable — and an absent type is greppable in a way an
+/// absent property of a generic entry is not.
+pub const MANAGER_TIER_TX_TYPE: &str = "manager.tier";
+
+// orgasmic:TASK-3CM0Q
+/// The three process tiers `shipped/workflows/default.org` computes, cheapest
+/// first. The order is load-bearing: a re-declaration may raise the tier and
+/// may not lower it, which is that workflow's "the floor is a floor" made
+/// mechanical.
+pub const MANAGER_TIERS: &[&str] = &["trivial", "ordinary", "risky"];
+
+// orgasmic:TASK-3CM0Q
+/// The four countable triggers the workflow's floor rule adds up (TASK-YGB1R),
+/// spelled as the wire and the CLI take them.
+pub const MANAGER_TIER_TRIGGERS: &[&str] = &["priority", "blast_radius", "breadth", "coupling"];
+
+fn manager_tier_rank(tier: &str) -> Option<usize> {
+    MANAGER_TIERS.iter().position(|known| *known == tier)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ManagerTierRequest {
+    /// Project whose ledger records the declaration.
+    pub project: String,
+    /// Task the declaration is about.
+    pub task: String,
+    /// One of [`MANAGER_TIERS`].
+    pub tier: String,
+    /// Triggers that fired, each one of [`MANAGER_TIER_TRIGGERS`].
+    #[serde(default)]
+    pub triggers: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// Accept a downgrade of an existing declaration, recording it as a
+    /// correction rather than a recomputation.
+    #[serde(default)]
+    pub lower: bool,
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerTierResponse {
+    /// `declared` on the first declaration for a task, `redeclared` after.
+    pub status: String,
+    pub tx_id: String,
+    pub tier: String,
+    pub triggers: Vec<String>,
+    pub previous_tier: Option<String>,
+    /// True when this entry records a downgrade of an earlier declaration.
+    pub lowered: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ManagerTierQuery {
+    pub project: String,
+    pub task: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagerTierDeclaration {
+    pub tier: String,
+    pub triggers: Vec<String>,
+    pub reason: Option<String>,
+    pub tx_id: String,
+    pub time: String,
+    pub actor: String,
+    pub lowered: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerTierStatusResponse {
+    pub task: String,
+    pub project: String,
+    /// False when nothing has ever declared a tier for this task — the state
+    /// in which manager-direct source editing is out of policy.
+    pub declared: bool,
+    pub current: Option<ManagerTierDeclaration>,
+    /// How many declarations the ledger holds for this task, so a reader can
+    /// see a mid-task raise happened without pulling the whole ledger.
+    pub declarations: usize,
+}
+
+/// Every tier declaration recorded for `task`, oldest first.
+///
+/// Reads the tx index rather than a cache: the ledger is the record, and a
+/// declaration that is not on it did not happen as far as this policy is
+/// concerned.
+async fn manager_tier_declarations(
+    state: &ApiState,
+    project: &str,
+    task: &str,
+) -> Vec<ManagerTierDeclaration> {
+    let snap = state.index.snapshot().await;
+    let mut found: Vec<_> = snap
+        .tx
+        .iter()
+        .filter(|record| {
+            record.project_id.as_deref() == Some(project)
+                && record.entry.ty == MANAGER_TIER_TX_TYPE
+                && record.entry.task.as_deref() == Some(task)
+        })
+        .map(|record| {
+            let extra = |key: &str| {
+                record
+                    .entry
+                    .extra
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.trim().to_string())
+            };
+            let triggers = extra("TRIGGERS")
+                .filter(|value| value != "none")
+                .map(|value| {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|part| !part.is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            ManagerTierDeclaration {
+                tier: extra("TIER").unwrap_or_default(),
+                triggers,
+                reason: record.entry.reason.clone(),
+                tx_id: record.entry.tx_id.clone(),
+                time: record.entry.time.clone(),
+                actor: record.entry.actor.clone(),
+                lowered: extra("LOWERED").as_deref() == Some("yes"),
+            }
+        })
+        .collect();
+    // Org timestamps are fixed-width and zero-padded, so lexical order is
+    // chronological order.
+    found.sort_by(|a, b| a.time.cmp(&b.time));
+    found
+}
+
+// orgasmic:TASK-3CM0Q
+/// Record the manager's computed process tier for a task (TASK-3CM0Q).
+///
+/// The workflow already tells a manager to compute the tier before its first
+/// source edit, but that is a *reading* obligation, and an agent under
+/// execution momentum skims one without noticing. This is the writing
+/// obligation: it costs one command, it lands on the append-only ledger, and
+/// its absence is therefore detectable after the run.
+///
+/// It is a statement, not a question. Nothing here waits on an operator and
+/// nothing asks one — the tier is computed from countable triggers, so there is
+/// no decision to escalate (TASK-4YX1K).
+async fn post_manager_tier(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerTierRequest>,
+) -> Result<Json<ManagerTierResponse>, ApiError> {
+    let project = req.project.trim().to_string();
+    if project.is_empty() {
+        return Err(ApiError::bad_request(
+            "a tier declaration lands on a project ledger; `project` is required",
+        ));
+    }
+    let task = req.task.trim().to_string();
+    if task.is_empty() {
+        return Err(ApiError::bad_request(
+            "a tier declaration names the task it is about; `task` is required",
+        ));
+    }
+    let tier = req.tier.trim().to_ascii_lowercase();
+    let rank = manager_tier_rank(&tier).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unknown tier `{tier}`; the workflow computes one of: {}",
+            MANAGER_TIERS.join(", ")
+        ))
+    })?;
+
+    let mut triggers: Vec<String> = Vec::new();
+    for raw in &req.triggers {
+        for part in raw.split(',') {
+            let trigger = part.trim().to_ascii_lowercase();
+            if trigger.is_empty() {
+                continue;
+            }
+            if !MANAGER_TIER_TRIGGERS.contains(&trigger.as_str()) {
+                return Err(ApiError::bad_request(format!(
+                    "unknown trigger `{trigger}`; the workflow counts: {}",
+                    MANAGER_TIER_TRIGGERS.join(", ")
+                )));
+            }
+            if !triggers.contains(&trigger) {
+                triggers.push(trigger);
+            }
+        }
+    }
+    let reason = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    // The floor rule, checked rather than trusted: the tier only rises when a
+    // trigger fires, so a tier above `trivial` that names none is arithmetic a
+    // reader cannot check — which is the acceptance this verb exists to meet.
+    if rank > 0 && triggers.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "tier `{tier}` is above the floor, and the floor only rises when a trigger fires — \
+             name the ones that did with `triggers` (one or more of: {}), so a reader can check \
+             the arithmetic instead of taking the tier on trust",
+            MANAGER_TIER_TRIGGERS.join(", ")
+        )));
+    }
+    // `trivial` with a trigger fired is reachable, but only through the
+    // workflow's no-tracked-source exemption. Naming it costs a sentence and
+    // separates the exemption from a miscount.
+    if rank == 0 && !triggers.is_empty() && reason.is_none() {
+        return Err(ApiError::bad_request(
+            "trivial with a trigger fired is the workflow's exemption for a task that changes no \
+             tracked source, not the floor — pass `reason` saying so, or drop the triggers if none \
+             really fired",
+        ));
+    }
+
+    let prior = manager_tier_declarations(&state, &project, &task).await;
+    let previous = prior.last().cloned();
+    let previous_rank = previous
+        .as_ref()
+        .and_then(|declaration| manager_tier_rank(&declaration.tier));
+    let lowering = matches!(previous_rank, Some(prev) if rank < prev);
+    if lowering {
+        let prev_tier = previous
+            .as_ref()
+            .map(|declaration| declaration.tier.clone())
+            .unwrap_or_default();
+        if !req.lower {
+            return Err(ApiError::bad_request(format!(
+                "{task} is already declared `{prev_tier}`, and the floor is a floor: a \
+                 re-declaration may raise the tier and not lower it. Scope that grew mid-task \
+                 re-declares upward and needs no flag. If the first declaration was simply wrong, \
+                 pass `lower` with a `reason`, which records the downgrade as a correction rather \
+                 than hiding it"
+            )));
+        }
+        if reason.is_none() {
+            return Err(ApiError::bad_request(
+                "`lower` records a correction, so it needs a `reason` saying what the earlier \
+                 declaration got wrong",
+            ));
+        }
+    }
+
+    let trigger_summary = if triggers.is_empty() {
+        "none".to_string()
+    } else {
+        triggers.join(", ")
+    };
+    let tx_reason = reason.clone().unwrap_or_else(|| {
+        if triggers.is_empty() {
+            format!("tier {tier}; no trigger fired")
+        } else {
+            format!("tier {tier}; triggers fired: {trigger_summary}")
+        }
+    });
+
+    let mut extra = vec![
+        ("TIER".to_string(), tier.clone()),
+        ("TRIGGERS".to_string(), trigger_summary),
+    ];
+    if let Some(declaration) = &previous {
+        extra.push(("PREVIOUS_TIER".to_string(), declaration.tier.clone()));
+    }
+    if lowering {
+        extra.push(("LOWERED".to_string(), "yes".to_string()));
+    }
+
+    let tx_id = record_api_tx(
+        &state,
+        ApiTxRequest {
+            ty: MANAGER_TIER_TX_TYPE.to_string(),
+            actor: None,
+            project: Some(project),
+            task: Some(task),
+            target: None,
+            reason: tx_reason,
+            request_id: req.request_id,
+            extra,
+        },
+    )
+    .await?;
+
+    Ok(Json(ManagerTierResponse {
+        status: if previous.is_some() {
+            "redeclared".to_string()
+        } else {
+            "declared".to_string()
+        },
+        tx_id,
+        tier,
+        triggers,
+        previous_tier: previous.map(|declaration| declaration.tier),
+        lowered: lowering,
+    }))
+}
+
+// orgasmic:TASK-3CM0Q
+/// Read back the tier declared for a task, so the omission this verb exists to
+/// make detectable can actually be detected without reading the raw ledger.
+async fn get_manager_tier(
+    State(state): State<ApiState>,
+    Query(q): Query<ManagerTierQuery>,
+) -> Result<Json<ManagerTierStatusResponse>, ApiError> {
+    let project = q.project.trim().to_string();
+    let task = q.task.trim().to_string();
+    if project.is_empty() || task.is_empty() {
+        return Err(ApiError::bad_request(
+            "`project` and `task` are both required to read a tier declaration",
+        ));
+    }
+    let declarations = manager_tier_declarations(&state, &project, &task).await;
+    Ok(Json(ManagerTierStatusResponse {
+        task,
+        project,
+        declared: !declarations.is_empty(),
+        declarations: declarations.len(),
+        current: declarations.last().cloned(),
+    }))
 }
 
 #[derive(Debug, Serialize)]
