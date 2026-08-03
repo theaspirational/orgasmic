@@ -655,3 +655,92 @@ worth more than the removal itself.
 - Shipped prompt-studio no longer carries the architector spec or context pack.
 - Focused suites green (see the brief; the full workspace suite is deliberately
   not a gate for this stage).
+
+* IN_PROGRESS TASK-YN5FJ Review cannot precede merge: the overlap guard plus an unverified --merge-sha structurally push unreviewed code to main :cli:manager:process:
+:PROPERTIES:
+:ID: TASK-YN5FJ
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**
+:END:
+
+** Description
+Today the tool structurally PRESSURES a manager to merge unreviewed code to
+main, and then cannot tell whether they did. Both halves are verified in source
+[2026-08-03], reproduced live on the TASK-XCJYC close.
+
+*The forcing chain, in three facts:*
+
+1. =build_dispatch_plan= (=manager.rs:2320=) refuses any dispatch while an open
+   dispatch overlaps the same task. Its own comment names the case:
+   "dispatching the reviewer before closing the implementer". So a reviewer
+   cannot start until the implementer generation is CLOSED.
+2. =dispatch-close --status done= on an implementer REQUIRES =--merge-sha=
+   (=manager.rs:801-806=), so closing asserts a merge already happened.
+3. Therefore: review requires close, close requires a merge -> the merge
+   precedes the review. Structurally, not by anyone's choice.
+
+*And the assertion is unverified.* =merge_sha= is
+=args.merge_sha.map(sanitize_tx_value).filter(|s| !s.is_empty())=
+(=manager.rs:796-800=), where =sanitize_tx_value= (=:5279=) only strips newlines
+and trims. Nothing calls git. Nothing checks the sha exists, is a merge commit,
+contains the worker's commit, or is on any particular branch. It is recorded as
+tx property =MERGE_SHA= and never read back as evidence.
+
+So orgasmic does not require merging to MAIN — it requires ASSERTING a merge.
+That is the worst of both worlds: pressure to merge early, and no ability to
+tell whether the merge happened, where it landed, or whether anyone reviewed it.
+
+** What to change, in priority order
+
+*1. Let a reviewer dispatch against a reported-but-open implementer generation.*
+This is the minimal fix and it removes the forcing entirely. The overlap guard
+exists to stop two workers colliding on one branch and worktree; a reviewer
+reading a branch is not that collision. Permit a DIFFERENT =--kind= on a task
+whose open dispatch is already =reported=. With this alone, review can precede
+the close, so it can precede the merge.
+
+*2. Make =--merge-sha= evidence instead of an assertion.* Verify it resolves
+(=git rev-parse --verify=), that it is a merge commit, and that it contains the
+recorded =--worker-commit=. Then the useful rule becomes expressible: REFUSE a
+close whose merge lands on the repo's default branch unless a reviewer verdict
+tx exists for that generation. That is what turns "no unreviewed code on main"
+from a convention into something the tool can enforce.
+
+*3. Consider a close status that does not claim a merge* (=--status handed-off=
+or similar), so an implementer generation can close cleanly while its branch
+waits for review. Lower priority if 1 lands, since 1 removes the need.
+
+** The operator's hypothesis: is =.orgasmic/= on main the cause?
+NO for this defect — the two guards above are, and they are independent of
+where state lives. But the instinct points at a real second-order problem worth
+recording:
+
+The daemon writes =.orgasmic/= live at the REPO ROOT CHECKOUT, so state and code
+are pinned to the same branch. A protected-main workflow (integrate on a branch,
+fast-forward main only on APPROVE) is therefore awkward: every dispatch tx and
+task transition would have to land on the integration branch too, and main would
+lag its own state. Option 4 below is a change today with ZERO code
+(=--merge-sha= is unverified, so merging to an integration branch already
+satisfies the close) — but this coupling is what makes it uncomfortable rather
+than obvious.
+
+There is also a KNOWN DEFECT in the same family, already recorded: a dispatched
+reviewer's worktree carries a FROZEN SNAPSHOT of =.orgasmic/= and cannot see the
+live daemon's uncommitted writes, which has produced false negatives on
+state-touching review. Any redesign of where state lives should fix that too,
+rather than treating it separately.
+
+*4. Integration branch* — workers merge to =integration=, review happens there,
+main is fast-forwarded only on APPROVE. Works today without code changes.
+Evaluate against 1+2 rather than instead of them: 1+2 fix the mechanism, 4 is a
+policy that still depends on a manager following it.
+
+** Acceptance
+- A reviewer can be dispatched for a task whose implementer has reported but
+  whose generation is not yet closed.
+- A close recording a merge sha that does not resolve, is not a merge commit, or
+  does not contain the worker commit, is refused by name.
+- A close whose merge lands on the default branch without a reviewer verdict for
+  that generation is refused by name — and the refusal states the remedy.
+- The unverified-string behaviour is covered by a regression test, since it is
+  what made the current state invisible.
