@@ -83,7 +83,7 @@ pub struct TransportProfile {
     pub harness: String,
     /// Human-facing label, e.g. "Claude (tmux)".
     pub display_name: String,
-    /// Standalone transport label, e.g. "tmux" / "acp".
+    /// Standalone transport label, e.g. "tmux" / "stdio".
     pub mode_label: String,
     /// Standalone provider label, e.g. "Claude" / "Codex".
     pub harness_label: String,
@@ -196,7 +196,7 @@ pub async fn runtime_options_by_harness() -> Vec<HarnessRuntimeOptions> {
 /// never launches the harness CLI and never parses harness text.
 ///
 /// The adapter consulted is the one a `(mode, harness)` pair would build for
-/// this harness under its first supported mode, so a harness whose ACP adapter
+/// this harness under its first supported mode, so a harness whose stdio adapter
 /// differs from its subprocess adapter is answered by the adapter that actually
 /// carries its catalog.
 pub async fn harness_runtime_options(harness: &str) -> HarnessRuntimeOptions {
@@ -298,14 +298,13 @@ pub fn harness_label(harness: &str) -> &str {
     }
 }
 
-/// Standalone transport label for a mode, e.g. "tmux" / "acp". The first choice
-/// a UI groups drivers by.
+/// Standalone transport label for a mode, e.g. "tmux" / "stdio". The first
+/// choice a UI groups drivers by.
+///
+/// A mode names the wire and nothing else (TASK-XCJYC), so every label is the
+/// mode id itself apart from the one mode whose id is a mouthful.
 pub fn mode_label(mode: &str) -> &str {
     match mode {
-        "tmux" => "tmux",
-        "rmux" => "rmux",
-        "acp-stdio" => "acp",
-        "acp-ws" => "acp-ws",
         "subprocess-stream-json" => "stream-json",
         other => other,
     }
@@ -393,7 +392,7 @@ mod tests {
     fn mode_binary_status_only_tracks_rmux() {
         assert!(mode_binary_status("rmux").is_some());
         assert!(mode_binary_status("tmux").is_none());
-        assert!(mode_binary_status("acp-stdio").is_none());
+        assert!(mode_binary_status("stdio").is_none());
     }
 
     #[test]
@@ -435,7 +434,7 @@ mod tests {
             RuntimeOptionsSource::ProtocolRpc {
                 method: "model/list".into()
             },
-            "codex options come from the ACP model/list RPC"
+            "codex options come from the app-server model/list RPC"
         );
         // The harness with no catalog surface at all is still listed, with the
         // adapter's own refusal as the reason.

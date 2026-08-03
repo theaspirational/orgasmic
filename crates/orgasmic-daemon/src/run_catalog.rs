@@ -1230,7 +1230,7 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
 ///
 /// Check 5 is the one the first four do not cover. Path and fingerprint prove
 /// which BYTES an entry is about; they prove nothing about what it says those
-/// bytes mean. A record claiming a live ACP session is a terminal rmux run
+/// bytes mean. A record claiming a live stdio session is a terminal rmux run
 /// passed all four checks and then authorized its own deletion.
 ///
 /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
@@ -1790,7 +1790,7 @@ fn compact_envelopes(envelopes: &[SessionEnvelope]) -> Vec<SessionEnvelope> {
 /// orgasmic:TASK-FZB6T.2 finding 4 — snapshot admission checked JSON shape,
 /// version, session path and file fingerprint, then took `lifecycle`,
 /// `terminal`, `driver` and `transport` VERBATIM. A valid-JSON but semantically
-/// corrupt snapshot could therefore present a live ACP run as a terminal rmux
+/// corrupt snapshot could therefore present a live stdio run as a terminal rmux
 /// one, and a steady-state refresh treats the unchanged fingerprint as a cache
 /// hit and never re-derives it.
 ///
@@ -2670,7 +2670,7 @@ fn scan_envelope_discriminators(line: &[u8]) -> Option<EnvelopeDiscriminators> {
 /// `text_chunk` that is a screen repaint and a `text_chunk` that is the
 /// assistant's actual words. A pane transport (rmux/tmux) had no other channel
 /// before dec_WDR5K item 7, so its legacy `text_chunk` lines are rendered TUI
-/// output; an `acp-*` transport's `text_chunk` is the model's or a subprocess's
+/// output; a structured transport's `text_chunk` is the model's or a subprocess's
 /// content, which is evidence and must never be reclaimed.
 ///
 /// orgasmic:TASK-FZB6T.2 finding 5 — the definition now lives in
@@ -2694,9 +2694,9 @@ pub use orgasmic_core::session::transport_is_pane;
 /// - `unparsed`, `blank`, and `torn` are refused on principle — a line this
 ///   accounting could not classify is the last line that should be deleted on
 ///   its say-so;
-/// - a `text_chunk` from an `acp-*` transport, or from a run whose transport
+/// - a `text_chunk` from a structured transport, or from a run whose transport
 ///   was never recorded, is structured harness/subprocess evidence. The old
-///   rule reclaimed all of it, which would have deleted every ACP assistant
+///   rule reclaimed all of it, which would have deleted every structured assistant
 ///   turn and tool result on the board.
 pub fn class_is_reclaimable(event_class: &str, transport: Option<&str>) -> bool {
     event_class == "rendered_tui" && transport.is_some_and(transport_is_pane)
@@ -3889,7 +3889,7 @@ mod tests {
             (
                 "transport alone",
                 Box::new(|entry: &mut RunCatalogEntry| {
-                    entry.transport = Some("acp-stdio".to_string());
+                    entry.transport = Some("stdio".to_string());
                 }),
             ),
             (
@@ -4579,7 +4579,18 @@ mod tests {
         for pane in ["rmux", "tmux", "tmux-tui"] {
             assert!(class_is_reclaimable("rendered_tui", Some(pane)), "{pane}");
         }
-        for structured in ["acp-stdio", "acp-claude", "cursor-acp", "external"] {
+        // `acp-stdio` and `acp-ws` are the pre-TASK-XCJYC spellings, still on
+        // disk in 71 runs. The rule reads the recorded string, so a rename must
+        // not turn a historical run's evidence into reclaimable bytes.
+        for structured in [
+            "stdio",
+            "ws",
+            "acp-stdio",
+            "acp-ws",
+            "acp-claude",
+            "cursor-acp",
+            "external",
+        ] {
             assert!(
                 !class_is_reclaimable("rendered_tui", Some(structured)),
                 "{structured}: a structured transport's text_chunk is evidence"
@@ -4611,7 +4622,7 @@ mod tests {
     /// them is a record maintenance would then have deleted.
     #[test]
     fn a_nested_type_never_decides_an_envelope_class() {
-        // The headline case: an ACP tool result whose content block is a
+        // The headline case: a harness tool result whose content block is a
         // `text_chunk`, stated BEFORE the event's own discriminator.
         let collision = br#"{"seq":1,"kind":"driver_event","event":{"output":{"content":[{"type":"text_chunk","text":"hi"}]},"type":"tool_result"}}"#;
         assert_eq!(classify_history_line(collision), "semantic");

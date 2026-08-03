@@ -3,7 +3,7 @@
 //! Codex app-server harness adapter.
 //!
 //! Connects to a running `codex` app-server over the standard JSON-RPC port.
-//! Same simulated-mode escape hatch as the Claude ACP driver: when no
+//! Same simulated-mode escape hatch as the Claude stream-json adapter: when no
 //! endpoint is configured, the driver emits Ready + RunComplete on release,
 //! which is enough for supervisor lease / JSONL tests on CI.
 
@@ -18,9 +18,9 @@ use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
-    AcpWsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome,
-    StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
+    BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome, StdioSpawn,
+    TransitionRequest, UserInputRequest, WireMessage, WsProtocol,
 };
 
 /// How `codex login status` reports each login state.
@@ -185,10 +185,10 @@ impl HarnessEventAdapter for CodexAdapter {
         let endpoint = websocket_endpoint(endpoint);
         self.ctx = Some(ctx.clone());
         self.cfg = Some(cfg.clone());
-        Ok(HarnessRequest::AcpWs {
+        Ok(HarnessRequest::Ws {
             endpoint,
             headers: Default::default(),
-            protocol: AcpWsProtocol::JsonRpc,
+            protocol: WsProtocol::JsonRpc,
             session_init: json!({
                 "initialize": initialize_params(),
                 "thread_start": thread_start_params(ctx, &cfg)?,

@@ -4692,7 +4692,7 @@ pub(crate) enum WorkEvidence {
 /// Everything a [`WorkEvidenceProbe`] is allowed to know about a run.
 #[derive(Debug, Clone)]
 pub(crate) struct WorkProbeTarget {
-    /// Driver transport (`rmux`, `tmux`, `acp-stdio`, …).
+    /// Driver transport (`rmux`, `tmux`, `stdio`, …).
     transport: String,
     /// Run identity — for pane transports this is what names the mux session.
     identity: RuntimeIdentity,
@@ -4837,8 +4837,9 @@ fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path
 /// differs is only the binary, how the run's session is named, and how a
 /// non-default server is addressed.
 ///
-/// `acp-*` transports are deliberately absent: they stream turn events
-/// straight into the stall clock and need no pane channel.
+/// The structured transports (`stdio`, `ws`, `subprocess-stream-json`) are
+/// deliberately absent: they stream turn events straight into the stall clock
+/// and need no pane channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneMux {
     Rmux,
@@ -5738,7 +5739,7 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
 }
 
 /// TUI transports emit a terminal driver event when their pane/process exits.
-/// ACP / subprocess modes use their stream-end path for protocol termination.
+/// The structured modes use their stream-end path for protocol termination.
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
@@ -6656,13 +6657,13 @@ mod tests {
         }
     }
 
-    /// TASK-VZMZE's measured shape: an acp-stdio harness that reaches `ready`,
+    /// TASK-VZMZE's measured shape: an stdio harness that reaches `ready`,
     /// never begins a turn, and emits a heartbeat every interval forever.
-    struct HeartbeatOnlyAcpDriver {
+    struct HeartbeatOnlyStructuredDriver {
         event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
     }
 
-    impl HeartbeatOnlyAcpDriver {
+    impl HeartbeatOnlyStructuredDriver {
         fn new() -> Self {
             Self {
                 event_tx: Arc::new(Mutex::new(None)),
@@ -6677,9 +6678,9 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl WorkerDriver for HeartbeatOnlyAcpDriver {
+    impl WorkerDriver for HeartbeatOnlyStructuredDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         fn harness(&self) -> Option<&'static str> {
@@ -6695,7 +6696,7 @@ mod tests {
             *self.event_tx.lock().await = Some(tx.clone());
             let _ = tx
                 .send(DriverEvent::Ready {
-                    protocol_version: "acp/1".into(),
+                    protocol_version: "claude-code-stream-json/1".into(),
                     capabilities: json!({}),
                 })
                 .await;
@@ -6814,16 +6815,16 @@ mod tests {
         }
     }
 
-    /// ACP-shaped test driver: emits Ready + RunComplete then drops the
+    /// Structured-transport test driver: emits Ready + RunComplete then drops the
     /// event sender so the supervisor stream-end path runs. Transport is
-    /// `acp-stdio` so protocol-end must NOT auto-release as Completed
+    /// `stdio` so protocol-end must NOT auto-release as Completed
     /// success (TASK-P4MGK).
-    struct ProtocolEndAcpDriver;
+    struct ProtocolEndStructuredDriver;
 
     #[async_trait::async_trait]
-    impl WorkerDriver for ProtocolEndAcpDriver {
+    impl WorkerDriver for ProtocolEndStructuredDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -6835,7 +6836,7 @@ mod tests {
             tokio::spawn(async move {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -6850,14 +6851,14 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
         }
     }
 
-    struct ProtocolEndAcpControl;
+    struct ProtocolEndStructuredControl;
 
     /// Holds the driver stream open until the test signals `gate`, so in-flight
     /// submit can be prepared before protocol-end (TASK-99W9C).
@@ -6868,7 +6869,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for GatedProtocolEndDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -6881,7 +6882,7 @@ mod tests {
             tokio::spawn(async move {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -6896,14 +6897,14 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
         }
     }
 
-    /// TUI-shaped test driver: same as [`ProtocolEndAcpDriver`] but transport
+    /// TUI-shaped test driver: same as [`ProtocolEndStructuredDriver`] but transport
     /// is `tmux-tui` so terminal events (not stream-end) claim release.
     struct ProtocolEndTuiDriver;
 
@@ -6936,7 +6937,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -6944,7 +6945,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl DriverControl for ProtocolEndAcpControl {
+    impl DriverControl for ProtocolEndStructuredControl {
         async fn transition_state(
             &mut self,
             _req: TransitionRequest,
@@ -6974,7 +6975,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for NoPidReadyOnlyDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -6986,7 +6987,7 @@ mod tests {
             tokio::spawn(async move {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -6995,7 +6996,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -7008,7 +7009,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for NoPidStderrWorkDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7020,7 +7021,7 @@ mod tests {
             tokio::spawn(async move {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -7036,7 +7037,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -7044,13 +7045,13 @@ mod tests {
     }
 
     /// Holds the event channel open until `release`, then emits RunComplete
-    /// and drops — models finalize-then-protocol-end for ACP modes.
+    /// and drops — models finalize-then-protocol-end for structured modes.
     struct FinalizeThenProtocolEndDriver;
 
     #[async_trait::async_trait]
     impl WorkerDriver for FinalizeThenProtocolEndDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7061,7 +7062,7 @@ mod tests {
             let (tx, rx) = tokio::sync::mpsc::channel(8);
             let _ = tx
                 .send(DriverEvent::Ready {
-                    protocol_version: "test-acp/1".into(),
+                    protocol_version: "test-stdio/1".into(),
                     capabilities: json!({"simulated": true}),
                 })
                 .await;
@@ -7117,7 +7118,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for QueuedBeforeTimeoutDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7129,7 +7130,7 @@ mod tests {
             *self.event_tx.lock().await = Some(tx.clone());
             let _ = tx
                 .send(DriverEvent::Ready {
-                    protocol_version: "test-acp/1".into(),
+                    protocol_version: "test-stdio/1".into(),
                     capabilities: json!({"simulated": true}),
                 })
                 .await;
@@ -7329,7 +7330,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for HungProducerDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7412,7 +7413,7 @@ mod tests {
         fn transport(&self) -> &'static str {
             // The transport of the measured incident, and one that
             // `terminal_event_releases_transport` does not allow-list.
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7553,7 +7554,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for PidBackedControllableDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7575,7 +7576,7 @@ mod tests {
             if self.send_ready {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -7659,7 +7660,7 @@ mod tests {
     impl WorkerDriver for FatalThenSilentDriver {
         fn transport(&self) -> &'static str {
             // The incident's transport. A mux transport would already release.
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7761,7 +7762,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for FatalBeforeBookkeepingDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7813,7 +7814,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for FatalDriverErrorDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -7825,7 +7826,7 @@ mod tests {
             tokio::spawn(async move {
                 let _ = tx
                     .send(DriverEvent::Ready {
-                        protocol_version: "test-acp/1".into(),
+                        protocol_version: "test-stdio/1".into(),
                         capabilities: json!({"simulated": true}),
                     })
                     .await;
@@ -7840,7 +7841,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(ProtocolEndAcpControl),
+                control: Box::new(ProtocolEndStructuredControl),
                 producer: None,
                 native_runtime: None,
             })
@@ -8113,7 +8114,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for SemanticTurnCountDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         async fn acquire(
@@ -8180,7 +8181,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for CredentialModeDriver {
         fn transport(&self) -> &'static str {
-            "acp-stdio"
+            "stdio"
         }
 
         fn harness(&self) -> Option<&'static str> {
@@ -8247,7 +8248,7 @@ mod tests {
         // readable and simply report nothing.
         let legacy = json!({
             "phase": "run_meta",
-            "transport": "acp-stdio",
+            "transport": "stdio",
             "driver_config": {},
         });
         let Ok(Lifecycle::RunMeta {
@@ -8385,7 +8386,7 @@ mod tests {
             RuntimeIdentity::new(run_id, "boot-previous"),
             RunKind::Worker,
             task_id.to_string(),
-            "implementer-claude-acp".to_string(),
+            "implementer-claude-stream-json".to_string(),
             "implementer".to_string(),
             true,
             Some("orgasmic".to_string()),
@@ -8816,7 +8817,7 @@ mod tests {
         AcquireRequest {
             task_id: task.into(),
             kind: RunKind::Worker,
-            worker_id: "implementer-claude-acp".into(),
+            worker_id: "implementer-claude-stream-json".into(),
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
@@ -9767,7 +9768,7 @@ mod tests {
     #[tokio::test]
     async fn heartbeats_are_liveness_not_work_so_a_wedged_run_still_stalls() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = HeartbeatOnlyAcpDriver::new();
+        let driver = HeartbeatOnlyStructuredDriver::new();
         let req = manual_req("TASK-HEARTBEAT-WEDGE", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -9798,7 +9799,7 @@ mod tests {
     #[tokio::test]
     async fn a_heartbeat_refreshes_liveness_but_not_the_work_clock() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = HeartbeatOnlyAcpDriver::new();
+        let driver = HeartbeatOnlyStructuredDriver::new();
         let req = manual_req("TASK-HEARTBEAT-CLOCKS", dir.path(), Some(600), None);
         let resp = sup.acquire(&driver, req).await.unwrap();
         wait_for_event_count(&sup, &resp.run_id, 1).await;
@@ -9934,7 +9935,7 @@ mod tests {
             &DriverEvent::Heartbeat { seq: 7 }
         ));
         assert!(!driver_event_advances_stall_clock(&DriverEvent::Ready {
-            protocol_version: "acp/1".into(),
+            protocol_version: "claude-code-stream-json/1".into(),
             capabilities: json!({}),
         }));
         assert!(!driver_event_advances_stall_clock(
@@ -10002,7 +10003,7 @@ mod tests {
             .expect("spawn cpu burner");
         let pid = burner.id();
         let target = WorkProbeTarget {
-            transport: "acp-stdio".into(),
+            transport: "stdio".into(),
             identity: probe_identity(),
             pid: Some(pid),
         };
@@ -10051,7 +10052,7 @@ mod tests {
             .expect("spawn idle child");
         let pid = sleeper.id();
         let observed = ProcessSubtreeCpuProbe::default().observe(&WorkProbeTarget {
-            transport: "acp-stdio".into(),
+            transport: "stdio".into(),
             identity: probe_identity(),
             pid: Some(pid),
         });
@@ -12375,7 +12376,7 @@ mod tests {
         assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }
 
-    // TASK-P4MGK: ACP protocol-end vs worker finalize must not double-release
+    // TASK-P4MGK: structured protocol-end vs worker finalize must not double-release
     // or race the lease. Cover finalize-then-protocol-end, protocol-end-then-
     // finalize, and finalize against an already-released run.
 
@@ -12435,7 +12436,7 @@ mod tests {
     async fn protocol_end_then_finalize_is_clean_run_not_found() {
         // orgasmic:TASK-P4MGK
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let resp = sup
             .acquire(
                 &driver,
@@ -12482,7 +12483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalize_after_already_released_acp_run_is_clean_run_not_found() {
+    async fn finalize_after_already_released_stdio_run_is_clean_run_not_found() {
         // orgasmic:TASK-P4MGK
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
@@ -12509,15 +12510,15 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
-            "finalize on already-released ACP run must be clean RunNotFound, got {err}"
+            "finalize on already-released stdio run must be clean RunNotFound, got {err}"
         );
     }
 
     #[test]
-    fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
+    fn stream_end_release_downgrades_dispatch_stdio_protocol_complete_to_failed() {
         // orgasmic:TASK-P4MGK
         let (reason, outcome) =
-            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), true);
+            stream_end_release_for_transport("stdio", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
@@ -12543,7 +12544,7 @@ mod tests {
         // (babysitter, architect stage without last_path, etc.) still treat
         // protocol-end as success.
         let (reason, outcome) =
-            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), false);
+            stream_end_release_for_transport("stdio", Some(ReleaseOutcome::Completed), false);
         assert_eq!(reason, "driver stream closed");
         assert_eq!(outcome, ReleaseOutcome::Completed);
     }
@@ -12837,7 +12838,7 @@ mod tests {
     async fn failed_protocol_end_writes_failed_tombstone_without_continuation_spawn() {
         // orgasmic:TASK-QPKCD — failure ends at tombstone; no auto-continuation.
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let mut req = dispatch_impl_req("TASK-NO-AUTO-CONT", dir.path());
         req.role = "implementer".into();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -12919,7 +12920,7 @@ mod tests {
     #[tokio::test]
     async fn custom_terminal_protocol_end_is_exempt_from_finalize_contract() {
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let mut req = manager_req("manager.launch:proj:custom", dir.path());
         req.role = "terminal".into();
         let _resp = sup.acquire(&driver, req).await.unwrap();
@@ -13174,7 +13175,7 @@ mod tests {
     async fn grill_protocol_end_without_finalize_is_failed() {
         // orgasmic:TASK-S52X9
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let resp = sup
             .acquire(&driver, stage_grill_req("TASK-GRILL-PROTO", dir.path()))
             .await
@@ -13248,7 +13249,7 @@ mod tests {
     async fn artifactor_protocol_end_without_submit_is_failed() {
         // orgasmic:TASK-S52X9
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let resp = sup
             .acquire(
                 &driver,
@@ -13349,7 +13350,7 @@ mod tests {
         // orgasmic:TASK-S52X9 — unexpected protocol death without release
         // is Failed (anomaly), not silent Completed.
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let driver = ProtocolEndStructuredDriver;
         let resp = sup
             .acquire(&driver, manager_req("manager.launch:dead", dir.path()))
             .await
@@ -13608,9 +13609,9 @@ mod tests {
         assert!(ack.accepted);
     }
 
-    /// Renamed from `acp_stdio_acquire_auto_spawns_babysitter_jsonl`
+    /// Renamed from `stdio_acquire_auto_spawns_babysitter_jsonl`
     /// (TASK-3NJ9K). What it proves is that a non-mux worker acquire
-    /// auto-spawns the babysitter JSONL; the acp-stdio address it used to name
+    /// auto-spawns the babysitter JSONL; the stdio address it used to name
     /// was incidental to that, and on a host with `codex` installed it made
     /// this unit test spawn `codex app-server`.
     #[tokio::test]
@@ -13657,7 +13658,7 @@ mod tests {
             .join(format!("{}.babysitter.jsonl", impl_run.run_id));
         assert!(
             bs_path.exists(),
-            "babysitter JSONL exists for acp-stdio implementer"
+            "babysitter JSONL exists for stdio implementer"
         );
     }
 
@@ -14753,7 +14754,7 @@ mod tests {
 
     /// orgasmic:TASK-HAREX — the measured 2026-07-26 orphan, replayed.
     ///
-    /// A dispatch worker on acp-stdio whose process is gone and whose driver
+    /// A dispatch worker on stdio whose process is gone and whose driver
     /// left a sender behind. Before the drain gained a release-scoped bound,
     /// this run was unreleasable by anything short of restarting the daemon:
     /// the PID watcher fired and requested shutdown, the producer was aborted,
@@ -15172,7 +15173,7 @@ mod tests {
     /// harness to exit. TASK-TJKFC.
     ///
     /// Before this, `terminal_event_releases_transport` allowlisted only the
-    /// mux transports, so on acp-stdio a `run_fail` set the outcome and
+    /// mux transports, so on stdio a `run_fail` set the outcome and
     /// released nothing. The real run's lease stayed held and its process
     /// stayed alive for seventy minutes, which `dispatch-status` reported as
     /// `[pid-alive]` — indistinguishable from work in progress.

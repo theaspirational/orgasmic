@@ -90,7 +90,7 @@ const RMUX_SESSION_CLI_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often pane output is coalesced into one [`DriverEvent::PaneActivity`]
 /// (TASK-RWCRN). A working TUI writes bytes continuously, so this only has to
 /// be short enough that the supervisor's 600 s `DEFAULT_STALL_TIMEOUT` cannot
-/// expire between two events — 30 s matches the acp-stdio heartbeat cadence and
+/// expire between two events — 30 s matches the stdio heartbeat cadence and
 /// leaves 20x headroom. It must stay long enough that a chatty pane cannot
 /// re-create the JSONL bloat `dec_WDR5K` item 7 removed: at 30 s a four-hour
 /// run adds at most 480 content-free lines.
@@ -1797,7 +1797,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         {
             args.push("--dangerously-skip-permissions".to_string());
         }
-        // A dispatched worker gets none of the operator's MCP servers. The acp
+        // A dispatched worker gets none of the operator's MCP servers. The stdio
         // path has isolated its worker since it was written (adapters/claude.rs,
         // `ClaudeCredentialMode::NativeLogin`) and the TUI path did not, so the
         // same persona ran with a different blast radius depending only on which
@@ -1808,7 +1808,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         // `--strict-mcp-config` alone, deliberately: rmux launches are
         // `NativeLogin` (they resolve no credential mode at all), so `--bare`
         // would restrict auth to ANTHROPIC_API_KEY/apiKeyHelper and break every
-        // subscription-auth worker. `--safe-mode` is the acp path's separate
+        // subscription-auth worker. `--safe-mode` is the stdio path's separate
         // claim about hooks/plugins/CLAUDE.md and is not this task's argument.
         // orgasmic:TASK-NYF7Z
         if !args.iter().any(|arg| arg == "--strict-mcp-config") {

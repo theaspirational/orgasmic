@@ -219,8 +219,8 @@ async fn post_dispatch(
 fn transport_for_worker_label(worker_id: Option<&str>) -> (&'static str, &'static str) {
     match worker_id {
         Some(id) if id.contains("cursor") => ("subprocess-stream-json", "cursor-agent"),
-        Some(id) if id.contains("stdio") => ("acp-stdio", "codex"),
-        _ => ("acp-ws", "codex"),
+        Some(id) if id.contains("stdio") => ("stdio", "codex"),
+        _ => ("ws", "codex"),
     }
 }
 
@@ -318,15 +318,15 @@ fn terminate_pid(pid: u64) {
 fn asserted_worker_labels_match_the_daemons_naming_rule() {
     for (label, kind, mode, harness) in [
         (
-            "implementer-codex-acp-ws",
+            "implementer-codex-ws",
             WorkerKind::Implementer,
-            "acp-ws",
+            "ws",
             "codex",
         ),
         (
-            "implementer-codex-acp-stdio",
+            "implementer-codex-stdio",
             WorkerKind::Implementer,
-            "acp-stdio",
+            "stdio",
             "codex",
         ),
         (
@@ -335,12 +335,7 @@ fn asserted_worker_labels_match_the_daemons_naming_rule() {
             "subprocess-stream-json",
             "cursor-agent",
         ),
-        (
-            "reviewer-codex-acp-ws",
-            WorkerKind::Reviewer,
-            "acp-ws",
-            "codex",
-        ),
+        ("reviewer-codex-ws", WorkerKind::Reviewer, "ws", "codex"),
     ] {
         assert_eq!(worker_label(kind, mode, harness), label);
     }
@@ -353,7 +348,7 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-CODEX";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -387,15 +382,15 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
     );
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["worker_id"], worker_id);
-    assert_eq!(body["driver"], "acp-ws");
+    assert_eq!(body["driver"], "ws");
     assert_eq!(body["harness"], "codex");
     assert!(!body["run_id"].as_str().unwrap().is_empty());
     assert!(PathBuf::from(body["session_path"].as_str().unwrap()).exists());
-    assert_eq!(body["pid"], 0, "acp-ws does not own a child process");
+    assert_eq!(body["pid"], 0, "ws does not own a child process");
 
     let raw = wait_for_run_created(&project_root, worker_id).await;
     assert!(raw.contains(":DRIVER:"));
-    assert!(raw.contains("acp-ws"));
+    assert!(raw.contains("ws"));
     assert!(raw.contains(":HARNESS:"));
     assert!(raw.contains("codex"));
 
@@ -410,11 +405,11 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-BABYSITTER-SPAWN";
     write(
         &home.config(),
-        "dispatch:\n  implementer:\n    babysitter:\n      mode: acp-ws\n      harness: codex\n",
+        "dispatch:\n  implementer:\n    babysitter:\n      mode: ws\n      harness: codex\n",
     );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -483,13 +478,13 @@ dispatch:
     max_iterations: 10
     context_budget: 50000
     babysitter:
-      mode: acp-ws
+      mode: ws
       harness: codex
   "implementer,codex":
     max_iterations: 20
     context_budget_chars: 80000
     babysitter:
-      mode: acp-ws
+      mode: ws
       harness: codex
       model: inherited-kind-harness-model
       effort: high
@@ -523,7 +518,7 @@ dispatch:
 
     // Layer 3 inheritance: kind+harness babysitter address wins over kind-only.
     let mut inherited_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
-    inherited_body["mode"] = serde_json::json!("acp-ws");
+    inherited_body["mode"] = serde_json::json!("ws");
     inherited_body["harness"] = serde_json::json!("codex");
     let inherited = post_dispatch(&running, &token, "proj-dispatch", task_id, inherited_body).await;
     assert!(
@@ -561,7 +556,7 @@ dispatch:
 
     // Layer 4 explicit null disables inherited babysitter for this request.
     let mut disabled_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
-    disabled_body["mode"] = serde_json::json!("acp-ws");
+    disabled_body["mode"] = serde_json::json!("ws");
     disabled_body["harness"] = serde_json::json!("codex");
     disabled_body["governance"] = serde_json::json!({ "babysitter": null });
     let disabled = post_dispatch(
@@ -590,11 +585,11 @@ dispatch:
 
     // Explicit per-request object replaces inherited address for this dispatch.
     let mut explicit_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
-    explicit_body["mode"] = serde_json::json!("acp-ws");
+    explicit_body["mode"] = serde_json::json!("ws");
     explicit_body["harness"] = serde_json::json!("codex");
     explicit_body["governance"] = serde_json::json!({
         "babysitter": {
-            "mode": "acp-ws",
+            "mode": "ws",
             "harness": "codex",
             "model": "request-explicit-model",
             "effort": "low"
@@ -651,7 +646,7 @@ async fn state_flip_to_in_progress_does_not_spawn_worker() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let pipeline_worker = "implementer-codex-acp-ws";
+    let pipeline_worker = "implementer-codex-ws";
     let task_worker = "pinned-implementer";
     let task_id = "TASK-NO-AUTOSPAWN";
     seed_project_with_task_worker(
@@ -716,12 +711,12 @@ async fn dispatch_with_task_worker_property_still_spawns_via_explicit_path() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let pipeline_worker = "implementer-codex-acp-ws";
+    let pipeline_worker = "implementer-codex-ws";
     // A stale `:WORKER:` pin left on the task. It is a label the task carries,
     // never routing authority — the dispatch address decides, and the run must
     // come back under the address-derived id, not this one.
     let task_worker = "pinned-implementer";
-    let dispatched_label = "implementer-codex-acp-ws";
+    let dispatched_label = "implementer-codex-ws";
     let task_id = "TASK-WORKER-PIN";
     seed_project_with_task_worker(
         &home,
@@ -791,12 +786,12 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-SANDBOX-OVERRIDE";
     write(
         &home.user().join(format!("workers/{worker_id}.org")),
         format!(
-            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
+            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
         ),
     );
     write(
@@ -890,7 +885,7 @@ dispatch:
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let mut body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
-    body["mode"] = serde_json::json!("acp-ws");
+    body["mode"] = serde_json::json!("ws");
     body["harness"] = serde_json::json!("codex");
     body["governance"] = serde_json::json!({
         "sandbox_permissions": {
@@ -931,7 +926,7 @@ async fn dispatch_endpoint_lease_held_returns_409() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-LEASE";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -1058,10 +1053,10 @@ async fn dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_
 
 #[tokio::test]
 #[ignore = "requires codex installed"]
-async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
+async fn dispatch_endpoint_routes_stdio_codex_through_supervisor() {
     let available = codex_available();
     if skip_test_if_missing(
-        "dispatch_endpoint_routes_acp_stdio_codex_through_supervisor",
+        "dispatch_endpoint_routes_stdio_codex_through_supervisor",
         &[("codex", available)],
     ) {
         assert_required_test_tooling(&[ToolRequirement::new("codex", 1, available)]);
@@ -1072,7 +1067,7 @@ async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-stdio";
+    let worker_id = "implementer-codex-stdio";
     let task_id = "TASK-CODEX-STDIO";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -1106,7 +1101,7 @@ async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
     );
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["worker_id"], worker_id);
-    assert_eq!(body["driver"], "acp-stdio");
+    assert_eq!(body["driver"], "stdio");
     assert_eq!(body["harness"], "codex");
     let pid = body["pid"].as_u64().unwrap();
     assert!(pid > 0);
@@ -1114,7 +1109,7 @@ async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
 
     let raw = wait_for_run_created(&project_root, worker_id).await;
     assert!(raw.contains(":DRIVER:"));
-    assert!(raw.contains("acp-stdio"));
+    assert!(raw.contains("stdio"));
     assert!(raw.contains(":HARNESS:"));
     assert!(raw.contains("codex"));
 
@@ -1128,7 +1123,7 @@ async fn dispatch_unsupported_transport_is_path_free() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-UNSUPPORTED-TRANSPORT";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = project_root.join("brief.txt");
@@ -1176,7 +1171,7 @@ async fn dispatch_rejects_missing_worktree_with_sanitized_error() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-MISSING-WT";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -1224,7 +1219,7 @@ async fn dispatch_rejects_file_worktree_with_sanitized_error() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-FILE-WT";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -1273,7 +1268,7 @@ async fn dispatch_override_off_list_model_passes_through_with_warn() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-OVERRIDE";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -1898,8 +1893,8 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
-    let reviewer_worker_id = "reviewer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
+    let reviewer_worker_id = "reviewer-codex-ws";
     let task_id = "TASK-BACKTOBACK";
     seed_dual_kind_project(
         &home,
@@ -1974,7 +1969,7 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
         task_id,
         serde_json::json!({
             "kind": "reviewer",
-            "mode": "acp-ws",
+            "mode": "ws",
             "harness": "codex",
             "brief_path": review_brief,
             "worktree_path": review_worktree,
@@ -2054,7 +2049,7 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
         "dispatch:\n  implementer:\n    linked_skills:\n      - missing-skill\n",
     );
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-SKILL-BEFORE-BRIEF";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let missing_brief = tmp.path().join("missing-brief.md");
@@ -2189,7 +2184,7 @@ async fn dispatch_grace_path_writes_artifacts_without_terminal_session_marker() 
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-stdio";
+    let worker_id = "implementer-codex-stdio";
     let task_id = "TASK-GRACE-PATH";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-grace-path.md");
@@ -2272,7 +2267,7 @@ async fn dispatch_started_tx_empty_reason_has_no_trailing_whitespace() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     let task_id = "TASK-EMPTY-REASON";
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-empty-reason.md");
@@ -2765,7 +2760,7 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-acp-ws";
+    let worker_id = "implementer-codex-ws";
     seed_project(
         &home,
         &project_root,
@@ -3314,7 +3309,7 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -3398,7 +3393,7 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!("task-cleanup-ep-impl");
@@ -3477,7 +3472,7 @@ async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -3553,7 +3548,7 @@ async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!(branch);
@@ -3620,7 +3615,7 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -3701,7 +3696,7 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!(branch);
@@ -3791,7 +3786,7 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -3830,7 +3825,7 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["driver_config"] = serde_json::json!({
         "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
@@ -3930,7 +3925,7 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
 /// closed old-CLI/new-daemon: `terminal_tx` is optional on the payload, so a
 /// `finalized_by_worker: true` release carrying none released the run anyway
 /// and answered 200 with `terminal_tx_id: null`, expecting the caller to post
-/// its own `/tx` afterwards. On acp-stdio there is no afterwards — the release
+/// its own `/tx` afterwards. On stdio there is no afterwards — the release
 /// tears down the driver, the driver reaps the harness's setsid process group
 /// with a direct `kill(-pgid, …)`, and the finalize CLI is in that group. The
 /// run ends released, `Completed`, with no terminal tx AND no orphan flag,
@@ -3950,16 +3945,16 @@ async fn dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused() {
     std::fs::create_dir_all(&project_root).unwrap();
     let project_id = "proj-dispatch";
     let task_id = "TASK-SKEW-TX";
-    // acp-stdio specifically: this is the transport where the loss is total
+    // stdio specifically: this is the transport where the loss is total
     // (3/3 in TASK-WGXKD's measurements) because the group reap is a direct
     // kill rather than a round trip through an mux server.
-    let worker_id = "implementer-codex-acp-stdio";
+    let worker_id = "implementer-codex-stdio";
     seed_project(&home, &project_root, project_id, worker_id, task_id);
     write(
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
-    // The harness never has to answer: the ACP handshake blocks on its stdout,
+    // The harness never has to answer: the app-server handshake blocks on its stdout,
     // which is exactly the live-run state a finalize is issued from.
     let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
     let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-skew-tx");
@@ -4132,7 +4127,7 @@ async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -4167,7 +4162,7 @@ async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["driver_config"] = serde_json::json!({
         "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
@@ -4328,7 +4323,7 @@ async fn dispatch_endpoint_restart_waits_for_a_release_admitted_but_not_yet_regi
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -4365,7 +4360,7 @@ async fn dispatch_endpoint_restart_waits_for_a_release_admitted_but_not_yet_regi
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["driver_config"] = serde_json::json!({
         "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
@@ -4496,7 +4491,7 @@ async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
         &home,
         &project_root,
         project_id,
-        "implementer-codex-acp-ws",
+        "implementer-codex-ws",
         task_id,
     );
     write(
@@ -4577,7 +4572,7 @@ async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-acp-ws"),
+        Some("implementer-codex-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt_b);
     dispatch["branch"] = serde_json::json!(branch);

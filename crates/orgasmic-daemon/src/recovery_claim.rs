@@ -2276,7 +2276,7 @@ mod tests {
                 force_inert,
                 task_id: "TASK-1".into(),
                 kind: "worker".into(),
-                worker_id: "implementer-claude-acp".into(),
+                worker_id: "implementer-claude-stream-json".into(),
                 role: "implementer".into(),
                 requires_worker_finalize: true,
                 transport: "tmux".into(),
@@ -2616,7 +2616,7 @@ mod tests {
                 serde_json::to_value(orgasmic_core::session::Lifecycle::Acquire {
                     task_id: "TASK-1".into(),
                     kind: "worker".into(),
-                    worker_id: "implementer-claude-acp".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
                 })
                 .unwrap(),
             )
@@ -2908,7 +2908,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-1".into(),
                     kind: "worker".into(),
-                    worker_id: "implementer-claude-acp".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
                 })
                 .unwrap(),
             )
@@ -2997,7 +2997,7 @@ mod tests {
             planned_tmux_session: Some("orgasmic-run-temp-replacement-rt-temp".into()),
             task_id: Some("TASK-1".into()),
             kind: Some("worker".into()),
-            worker_id: Some("implementer-claude-acp".into()),
+            worker_id: Some("implementer-claude-stream-json".into()),
             role: Some("implementer".into()),
             requires_worker_finalize: Some(true),
             transport: Some("tmux".into()),
@@ -3049,7 +3049,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-1".into(),
                     kind: "worker".into(),
-                    worker_id: "implementer-claude-acp".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
                 })
                 .unwrap(),
             )

@@ -1,7 +1,7 @@
 // arch: arch_A53QX.2
 // orgasmic:arch_A53QX, dec_ASB1A
 //! `WorkerDriver` trait — one typed execution surface for every runtime kind
-//! orgasmic supports (claude-acp, codex-appserver, hermes, tmux-tui).
+//! orgasmic supports (claude-stream-json, codex-appserver, hermes, tmux-tui).
 //!
 //! Adapted from HAR's `src/drivers/`. Differences from HAR:
 //!
@@ -107,10 +107,10 @@ pub enum HarnessRequest {
     },
     /// WebSocket mode. `session_init` is interpreted by the selected wire
     /// protocol, while all harness event mapping stays in the adapter.
-    AcpWs {
+    Ws {
         endpoint: String,
         headers: BTreeMap<String, String>,
-        protocol: AcpWsProtocol,
+        protocol: WsProtocol,
         session_init: Value,
     },
     /// Tmux-pane mode.
@@ -122,7 +122,7 @@ pub enum HarnessRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AcpWsProtocol {
+pub enum WsProtocol {
     JsonRpc,
     RawJson,
 }
@@ -158,7 +158,7 @@ impl HarnessControlOutcome {
     }
 }
 
-/// Subprocess invocation template for the acp-stdio mode pairing.
+/// Subprocess invocation template for the stdio mode pairing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StdioSpawn {
     pub command: String,
@@ -240,7 +240,7 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         PreflightOutcome::default()
     }
 
-    /// Subprocess invocation for the acp-stdio mode pairing.
+    /// Subprocess invocation for the stdio mode pairing.
     /// Returns `None` when this adapter does not participate in stdio mode.
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
         None
@@ -258,7 +258,7 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         None
     }
 
-    /// Returns true when this adapter wants the acp-stdio mode to upgrade a
+    /// Returns true when this adapter wants the stdio mode to upgrade a
     /// [`HarnessRequest::Simulated`] to a real detached subprocess via
     /// [`Self::stdio_spawn`]. Default false preserves the Simulated
     /// short-circuit for adapters that emit Ready/run-complete events directly
@@ -267,9 +267,9 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         false
     }
 
-    /// JSON-RPC session bootstrap for acp-stdio when the harness speaks
+    /// JSON-RPC session bootstrap for stdio when the harness speaks
     /// request/response over newline-delimited stdin/stdout (for example
-    /// `codex app-server`). Default: unsupported — acp-stdio uses plain
+    /// `codex app-server`). Default: unsupported — stdio uses plain
     /// subprocess stream-json for that adapter instead.
     fn stdio_session_init(
         &mut self,
@@ -279,7 +279,7 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         Err(DriverError::Unsupported("stdio_session_init"))
     }
 
-    /// When acp-stdio upgrades a simulated acquire to a real subprocess, the
+    /// When stdio upgrades a simulated acquire to a real subprocess, the
     /// adapter may supply an initial stdin payload (for example JSON-RPC
     /// handshakes). Default: no initial write.
     fn stdio_initial_payload(

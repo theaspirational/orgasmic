@@ -1144,7 +1144,7 @@ enum RunHistoryCmd {
     ///
     /// Only ended runs are candidates (a live run's session file is held open
     /// by the writer), and only records proven to be rendered pane output are
-    /// reclaimed: structured ACP/subprocess evidence, lifecycle, and any record
+    /// reclaimed: structured harness/subprocess evidence, lifecycle, and any record
     /// the accounting could not classify are never touched. Every original is
     /// archived whole before its file is replaced, and
     /// `orgasmic run history rollback` restores them byte for byte. Nothing is

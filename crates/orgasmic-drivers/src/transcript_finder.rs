@@ -1666,4 +1666,79 @@ mod tests {
         assert_eq!(lookup.cwd.as_deref(), Some(Path::new("/tmp/wt")));
         assert_eq!(lookup.session_id.as_deref(), Some("sess-xyz"));
     }
+
+    // orgasmic:TASK-XCJYC
+    /// A run recorded before the `acp-stdio` → `stdio` rename still resolves to
+    /// its harness-native transcript.
+    ///
+    /// This is what makes "no alias table" (dec_WDR5K item 10) safe here: the
+    /// finder keys on `harness`, and no harness id changed. Seventy runs on the
+    /// operator's board carry `transport: "acp-stdio"` and one carries
+    /// `"acp-ws"`; if the finder ever starts consulting `transport`, this test
+    /// is what says those runs' transcripts went dark.
+    #[test]
+    fn pre_rename_transport_still_yields_a_native_lookup() {
+        for historical in ["acp-stdio", "acp-ws"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("run.jsonl");
+            let identity = RuntimeIdentity {
+                run_id: "run-historical".into(),
+                runtime_id: "rt".into(),
+                boot_id: "boot".into(),
+            };
+            let mut writer = SessionWriter::open(&path, identity).unwrap();
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    json!({
+                        "phase": "acquire",
+                        "task_id": "TASK-1",
+                        "kind": "worker",
+                        "worker_id": format!("implementer-claude-{historical}")
+                    }),
+                )
+                .unwrap();
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    json!({
+                        "phase": "run_meta",
+                        "transport": historical,
+                        "harness": "claude",
+                        "worktree": "/tmp/wt",
+                        "driver_config": {}
+                    }),
+                )
+                .unwrap();
+            writer
+                .append(
+                    SessionEventKind::DriverEvent,
+                    json!({
+                        "type": "ready",
+                        // The protocol_version those runs actually wrote.
+                        "protocol_version": "acp/1",
+                        "capabilities": { "session_id": "sess-historical" }
+                    }),
+                )
+                .unwrap();
+            drop(writer);
+
+            let envelopes = orgasmic_core::read_session_file(&path).unwrap();
+            let lookup = lookup_from_envelopes(&envelopes)
+                .unwrap_or_else(|| panic!("no lookup for historical transport {historical}"));
+            assert_eq!(lookup.harness, "claude", "{historical}");
+            assert_eq!(lookup.session_id.as_deref(), Some("sess-historical"));
+
+            // And the finder routes it at the claude adapter rather than
+            // refusing the harness outright.
+            let roots = TranscriptRoots::from_home(tmp.path());
+            assert!(
+                !matches!(
+                    find_native_transcript(&lookup, &roots),
+                    TranscriptFindResult::Unsupported { .. }
+                ),
+                "{historical}: a pre-rename record must still reach the claude adapter"
+            );
+        }
+    }
 }

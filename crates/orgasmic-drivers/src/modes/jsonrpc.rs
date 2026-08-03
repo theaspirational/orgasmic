@@ -1,6 +1,6 @@
 // arch: arch_A53QX.4
 // orgasmic:arch_A53QX, dec_ASB1A
-//! Transport-agnostic JSON-RPC request/response helpers for acp-ws and acp-stdio.
+//! Transport-agnostic JSON-RPC request/response helpers for ws and stdio.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};

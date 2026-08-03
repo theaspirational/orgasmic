@@ -2,8 +2,11 @@
 // orgasmic:arch_A53QX, dec_ASB1A
 //! orgasmic-drivers — fixed mode drivers composed with fixed harness adapters.
 //!
-//! Legacy transport ids such as `claude-acp` and `codex-appserver` remain
-//! registry aliases. The first-class shape is `(mode, harness)`.
+//! Legacy transport ids such as `claude-stream-json` and `codex-appserver`
+//! remain registry aliases. The first-class shape is `(mode, harness)`, where
+//! the mode names only the wire and the harness decides the protocol spoken
+//! over it (TASK-XCJYC). See [`RESERVED_MODES`] for the ids that are off
+//! limits.
 
 use async_trait::async_trait;
 
@@ -26,13 +29,13 @@ pub use catalog::{
     HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
 pub use modes::rmux::{probe_rmux_binary, RmuxBinaryProbe};
-pub use modes::{AcpStdioDriver, AcpWsDriver, RmuxDriver, SubprocessStreamJsonDriver, TmuxDriver};
+pub use modes::{RmuxDriver, StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver};
 pub use r#trait::{
-    build_babysitter_request, implementer_tool_is_allowed, AcpWsProtocol, AttachOutcome, Attached,
-    BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
-    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta,
-    Preflight, PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest,
-    UserInputAck, UserInputRequest, WireMessage, WorkerDriver,
+    build_babysitter_request, implementer_tool_is_allowed, AttachOutcome, Attached, BabysitterAck,
+    BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError, DriverSession,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight,
+    PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
+    UserInputRequest, WireMessage, WorkerDriver, WsProtocol,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
@@ -46,7 +49,7 @@ pub use transcript_finder::{
 
 /// Stable legacy transport ids known to the registry.
 pub const TRANSPORTS: &[&str] = &[
-    "claude-acp",
+    "claude-stream-json",
     "codex-appserver",
     "cursor-acp",
     "cursor-agent",
@@ -59,13 +62,30 @@ pub const TRANSPORTS: &[&str] = &[
 /// `rmux` is a **bounded smoke** mode (TASK-104), not a production replacement
 /// for `tmux`. It is registered so the driver-catalog can surface it with its
 /// own (separately checked) `rmux` binary requirement.
-pub const MODES: &[&str] = &[
-    "subprocess-stream-json",
-    "acp-stdio",
-    "acp-ws",
-    "tmux",
-    "rmux",
-];
+pub const MODES: &[&str] = &["subprocess-stream-json", "stdio", "ws", "tmux", "rmux"];
+
+// orgasmic:TASK-XCJYC, term_YX8AG
+/// Mode ids reserved for the **Agent Client Protocol** and unusable for
+/// anything else.
+///
+/// ACP is a specific open standard (Zed Industries, August 2025): JSON-RPC 2.0
+/// over stdio for local agents, HTTP/WebSocket for remote, standardising the
+/// editor↔agent boundary the way MCP standardises tool access. Until
+/// TASK-XCJYC orgasmic spelled two of its own modes `acp-stdio` and `acp-ws`,
+/// and neither carried ACP: `acp-stdio`+claude ran Claude Code's own
+/// stream-json wire, `acp-ws`+codex ran `codex app-server`'s own JSON-RPC.
+/// Readers twice took two unrelated native protocols for one protocol's two
+/// implementations, and the name a real ACP mode would want was already spent.
+///
+/// The modes were renamed to the wire they actually name (`stdio`, `ws`); the
+/// harness field already decides the protocol. These ids stay empty so that an
+/// orgasmic mode called `acp-*` can only ever mean ACP. If you are adding real
+/// ACP, take one — remove it from here in the same change that registers it.
+///
+/// [`reserved_modes_are_unused`] is what makes this a rule rather than a
+/// comment: it fails if any reserved id reappears in [`MODES`], [`SUPPORTED`],
+/// or [`TRANSPORTS`].
+pub const RESERVED_MODES: &[&str] = &["acp", "acp-stdio", "acp-ws"];
 
 /// First-class harness ids. `custom` is the pseudo-harness for a bare PTY
 /// terminal session (no agent CLI — the operator runs any tool by hand).
@@ -99,7 +119,7 @@ pub fn harness_execs_provider_binary(harness: &str) -> bool {
 /// session — `codex-tui` for the interactive TUI, `codex_exec` for `codex
 /// exec` — unless [`CODEX_ORIGINATOR_ENV`] overrides it. The app-server driver
 /// gets there by a second route: codex adopts the validated `clientInfo.name`
-/// from `initialize`, which is why acp-ws sessions have always recorded
+/// from `initialize`, which is why ws sessions have always recorded
 /// `orgasmic` while mux-launched TUI sessions recorded `codex-tui`.
 ///
 /// [`transcript_finder`] uses this value as the correlator for its codex
@@ -120,12 +140,12 @@ pub const CODEX_ORIGINATOR: &str = "orgasmic";
 /// attach-session`), so it offers the same interactive harnesses. It still
 /// requires a separately provisioned `rmux` binary (checked independently).
 pub const SUPPORTED: &[(&str, &str)] = &[
-    ("acp-stdio", "claude"),
-    ("acp-stdio", "codex"),
-    ("acp-stdio", "cursor-agent"),
-    ("acp-stdio", "hermes"),
-    ("acp-ws", "codex"),
-    ("acp-ws", "hermes"),
+    ("stdio", "claude"),
+    ("stdio", "codex"),
+    ("stdio", "cursor-agent"),
+    ("stdio", "hermes"),
+    ("ws", "codex"),
+    ("ws", "hermes"),
     ("subprocess-stream-json", "cursor-agent"),
     ("tmux", "claude"),
     ("tmux", "codex"),
@@ -162,7 +182,7 @@ pub fn validate_supported_pair(mode: &str, harness: &str) -> Result<(), String> 
     ))
 }
 
-pub struct ClaudeAcpDriver;
+pub struct ClaudeStreamJsonDriver;
 pub struct CodexAppserverDriver;
 pub struct CursorAcpDriver;
 pub struct CursorAgentDriver;
@@ -172,7 +192,7 @@ pub struct TmuxTuiDriver;
 /// Build a boxed driver by legacy transport id. Returns `None` for unknown ids.
 pub fn driver_for(transport: &str) -> Option<Box<dyn WorkerDriver>> {
     match transport {
-        "claude-acp" => Some(Box::new(ClaudeAcpDriver)),
+        "claude-stream-json" => Some(Box::new(ClaudeStreamJsonDriver)),
         "codex-appserver" => Some(Box::new(CodexAppserverDriver)),
         "cursor-acp" => Some(Box::new(CursorAcpDriver)),
         "cursor-agent" => Some(Box::new(CursorAgentDriver)),
@@ -190,7 +210,7 @@ pub fn driver_for(transport: &str) -> Option<Box<dyn WorkerDriver>> {
 /// disagree about which adapter a pair actually uses.
 pub fn adapter_for_pair(mode: &str, harness: &str) -> Option<Box<dyn HarnessEventAdapter>> {
     match (mode, harness) {
-        ("acp-stdio", "cursor-agent") => Some(Box::new(CursorAcpAdapter::new())),
+        ("stdio", "cursor-agent") => Some(Box::new(CursorAcpAdapter::new())),
         _ => adapter_for(harness),
     }
 }
@@ -203,8 +223,8 @@ pub fn driver_for_mode_harness(mode: &str, harness: &str) -> Option<Box<dyn Work
     let adapter: Box<dyn HarnessEventAdapter> = adapter_for_pair(mode, harness)?;
     match mode {
         "subprocess-stream-json" => Some(Box::new(SubprocessStreamJsonDriver::new(adapter))),
-        "acp-stdio" => Some(Box::new(AcpStdioDriver::new(adapter))),
-        "acp-ws" => Some(Box::new(AcpWsDriver::new(adapter))),
+        "stdio" => Some(Box::new(StdioDriver::new(adapter))),
+        "ws" => Some(Box::new(WsDriver::new(adapter))),
         "tmux" => Some(Box::new(TmuxDriver::new(adapter))),
         "rmux" => Some(Box::new(RmuxDriver::new(adapter))),
         _ => None,
@@ -271,21 +291,58 @@ macro_rules! legacy_driver {
     };
 }
 
-legacy_driver!(ClaudeAcpDriver, "claude-acp", "acp-stdio", "claude");
-legacy_driver!(CodexAppserverDriver, "codex-appserver", "acp-ws", "codex");
-legacy_driver!(CursorAcpDriver, "cursor-acp", "acp-stdio", "cursor-agent");
+legacy_driver!(
+    ClaudeStreamJsonDriver,
+    "claude-stream-json",
+    "stdio",
+    "claude"
+);
+legacy_driver!(CodexAppserverDriver, "codex-appserver", "ws", "codex");
+legacy_driver!(CursorAcpDriver, "cursor-acp", "stdio", "cursor-agent");
 legacy_driver!(
     CursorAgentDriver,
     "cursor-agent",
     "subprocess-stream-json",
     "cursor-agent"
 );
-legacy_driver!(HermesDriver, "hermes", "acp-stdio", "hermes");
+legacy_driver!(HermesDriver, "hermes", "stdio", "hermes");
 legacy_driver!(TmuxTuiDriver, "tmux-tui", "tmux", "claude");
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // orgasmic:TASK-XCJYC
+    /// The reservation, enforced instead of remembered.
+    ///
+    /// A future contributor reaching for `acp-stdio` because it reads well is
+    /// exactly the move TASK-XCJYC undid; this fails on the way in and says
+    /// why. Removing an id from [`RESERVED_MODES`] is allowed — it is how real
+    /// ACP claims the name — and it is a visible, arguable edit rather than a
+    /// silent re-squat.
+    #[test]
+    fn reserved_modes_are_unused() {
+        for reserved in RESERVED_MODES {
+            assert!(
+                !MODES.contains(reserved),
+                "`{reserved}` is reserved for the real Agent Client Protocol and must not name \
+                 an orgasmic mode (TASK-XCJYC). A mode names its wire — use `stdio`, `ws`, \
+                 `subprocess-stream-json`, `tmux` or `rmux`; the `harness` field already says \
+                 which protocol runs over it. If this IS ACP, drop `{reserved}` from \
+                 RESERVED_MODES in the same change."
+            );
+            assert!(
+                !SUPPORTED.iter().any(|(mode, _)| mode == reserved),
+                "the SUPPORTED matrix pairs a harness with the reserved mode id `{reserved}` \
+                 (TASK-XCJYC)"
+            );
+            assert!(
+                !TRANSPORTS.contains(reserved),
+                "the legacy transport id `{reserved}` is reserved for the real Agent Client \
+                 Protocol (TASK-XCJYC)"
+            );
+        }
+    }
 
     #[test]
     fn registry_covers_every_transport() {
@@ -304,12 +361,12 @@ mod tests {
     }
 
     /// The pair adapter both the driver registry and the manager catalog build
-    /// from. `acp-stdio/cursor-agent` is the pair whose adapter is not simply
+    /// from. `stdio/cursor-agent` is the pair whose adapter is not simply
     /// `adapter_for(harness)`.
     #[test]
     fn pair_adapter_matches_the_registry_special_case() {
         assert_eq!(
-            adapter_for_pair("acp-stdio", "cursor-agent")
+            adapter_for_pair("stdio", "cursor-agent")
                 .expect("cursor ACP adapter")
                 .harness(),
             "cursor-agent"
@@ -346,7 +403,7 @@ mod tests {
                 );
             }
         }
-        assert!(driver_for_mode_harness("acp-ws", "cursor-agent").is_none());
+        assert!(driver_for_mode_harness("ws", "cursor-agent").is_none());
         assert!(driver_for_mode_harness("unknown", "claude").is_none());
         assert!(driver_for_mode_harness("tmux", "unknown").is_none());
     }

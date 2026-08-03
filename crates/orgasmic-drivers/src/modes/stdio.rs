@@ -1,10 +1,16 @@
 // arch: arch_A53QX.4
 // orgasmic:arch_A53QX, dec_ASB1A
-//! ACP-over-stdio mode.
+//! Stdio mode: the harness runs as a child process and the two speak over
+//! its stdin/stdout.
+//!
+//! The mode names the wire only; which protocol travels over it is the
+//! harness adapter's business — Claude Code's stream-json, `codex
+//! app-server`'s JSON-RPC, or genuine ACP for `cursor-agent acp` and `hermes
+//! acp` (TASK-XCJYC).
 //!
 //! Claude Code uses line-delimited stream JSON via the subprocess-stream-json
 //! plumbing inside this mode. Codex `app-server` uses newline-delimited JSON-RPC
-//! with a dedicated runtime (`run_acp_stdio`) that mirrors `acp_ws`.
+//! with a dedicated runtime (`run_stdio`) that mirrors `ws`.
 
 use std::collections::BTreeMap;
 use std::process::Stdio;
@@ -39,7 +45,7 @@ use crate::runtime_options::{
 };
 use crate::sandbox::allowlist_from_driver_config;
 
-const MODE: &str = "acp-stdio";
+const MODE: &str = "stdio";
 // orgasmic:TASK-P4MGK — protocol turn-end emits RunComplete but does not
 // release the daemon lease; `orgasmic dispatch finalize` is the primary
 // end-of-run (supervisor stream-end without finalize → orphan).
@@ -80,32 +86,32 @@ fn heartbeat_interval(config: &DriverConfig) -> std::time::Duration {
         .unwrap_or(HEARTBEAT_INTERVAL)
 }
 
-pub struct AcpStdioDriver {
+pub struct StdioDriver {
     adapter: Box<dyn HarnessEventAdapter>,
 }
 
-impl AcpStdioDriver {
+impl StdioDriver {
     pub fn new(adapter: Box<dyn HarnessEventAdapter>) -> Self {
         Self { adapter }
     }
 }
 
 /// Crate-visible so the claude adapter's own tests can compose through the
-/// exact wrapper `AcpStdioDriver::acquire` uses, rather than through a
+/// exact wrapper `StdioDriver::acquire` uses, rather than through a
 /// stand-in that cannot prove what the mode layer does to the request.
-pub(crate) struct AcpStdioComposeAdapter {
+pub(crate) struct StdioComposeAdapter {
     pub(crate) inner: Box<dyn HarnessEventAdapter>,
     pub(crate) jsonrpc_session_init: Option<Value>,
 }
 
 #[async_trait]
-impl HarnessEventAdapter for AcpStdioComposeAdapter {
+impl HarnessEventAdapter for StdioComposeAdapter {
     fn harness(&self) -> &'static str {
         self.inner.harness()
     }
 
     fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
-        Box::new(AcpStdioComposeAdapter {
+        Box::new(StdioComposeAdapter {
             inner: self.inner.clone_box(),
             jsonrpc_session_init: None,
         })
@@ -290,7 +296,7 @@ impl HarnessEventAdapter for AcpStdioComposeAdapter {
         config: &DriverConfig,
     ) -> Result<HarnessRequest, DriverError> {
         let spawn = self.inner.stdio_spawn().ok_or(DriverError::Unsupported(
-            "acp-stdio requires stdio_spawn adapter config",
+            "stdio requires stdio_spawn adapter config",
         ))?;
         let request = self.inner.compose_request(ctx, config)?;
         let (request, session_init) =
@@ -404,7 +410,7 @@ fn command_available(command: &str) -> bool {
 }
 
 #[async_trait]
-impl WorkerDriver for AcpStdioDriver {
+impl WorkerDriver for StdioDriver {
     fn transport(&self) -> &'static str {
         MODE
     }
@@ -413,7 +419,7 @@ impl WorkerDriver for AcpStdioDriver {
         Some(self.adapter.harness())
     }
 
-    /// ACP over the child's stdio: no terminal, no operator.
+    /// The child's stdio: no terminal, no operator.
     fn interaction(&self) -> TransportInteraction {
         TransportInteraction::Unattended
     }
@@ -433,7 +439,7 @@ impl WorkerDriver for AcpStdioDriver {
         ctx: DriverContext,
         config: DriverConfig,
     ) -> Result<DriverSession, DriverError> {
-        let mut compose = AcpStdioComposeAdapter {
+        let mut compose = StdioComposeAdapter {
             inner: self.adapter.clone_box(),
             jsonrpc_session_init: None,
         };
@@ -446,7 +452,7 @@ impl WorkerDriver for AcpStdioDriver {
 
         // The plain-subprocess shape belongs to subprocess-stream-json, and it
         // gets the request *this* composition produced. Composing again there
-        // meant every acp-stdio claude dispatch built its argv twice and probed
+        // meant every stdio claude dispatch built its argv twice and probed
         // its credentials twice, after the lease was held (TASK-KKBTP).
         if jsonrpc_init.is_none() && matches!(request, HarnessRequest::Subprocess { .. }) {
             return SubprocessStreamJsonDriver::acquire_composed(
@@ -470,7 +476,7 @@ impl WorkerDriver for AcpStdioDriver {
                     let _ = tx.send(event).await;
                 }
                 (
-                    AcpStdioControlMode::Simulated {
+                    StdioControlMode::Simulated {
                         adapter,
                         events: tx,
                     },
@@ -522,7 +528,7 @@ impl WorkerDriver for AcpStdioDriver {
                     )));
                 };
                 let peer_id = format!("stdio:{binary}");
-                let producer = tokio::spawn(run_acp_stdio(AcpStdioRuntime {
+                let producer = tokio::spawn(run_stdio(StdioRuntime {
                     binary,
                     child,
                     stdin,
@@ -536,21 +542,18 @@ impl WorkerDriver for AcpStdioDriver {
                     adapter,
                     heartbeat_interval,
                 }));
-                (
-                    AcpStdioControlMode::JsonRpc { commands, pid },
-                    Some(producer),
-                )
+                (StdioControlMode::JsonRpc { commands, pid }, Some(producer))
             }
             // Handled above, before this match, so the composed request is the
             // one that gets spawned.
-            _ => return Err(DriverError::Unsupported("acp-stdio request shape")),
+            _ => return Err(DriverError::Unsupported("stdio request shape")),
         };
 
         Ok(DriverSession {
             identity: ctx.identity.clone(),
             pid: control.pid(),
             events: rx,
-            control: Box::new(AcpStdioControl {
+            control: Box::new(StdioControl {
                 mode: control,
                 kind: ctx.run_kind,
                 released: false,
@@ -568,7 +571,7 @@ impl WorkerDriver for AcpStdioDriver {
         ctx: DriverContext,
         config: DriverConfig,
     ) -> Result<AttachOutcome, DriverError> {
-        SubprocessStreamJsonDriver::new(Box::new(AcpStdioComposeAdapter {
+        SubprocessStreamJsonDriver::new(Box::new(StdioComposeAdapter {
             inner: self.adapter.clone_box(),
             jsonrpc_session_init: None,
         }))
@@ -636,7 +639,7 @@ impl JsonRpcTransport for StdioJsonRpcTransport {
     }
 }
 
-struct AcpStdioRuntime {
+struct StdioRuntime {
     binary: String,
     child: Child,
     stdin: ChildStdin,
@@ -646,13 +649,13 @@ struct AcpStdioRuntime {
     session_init: Value,
     allowlist: orgasmic_core::SandboxAllowlist,
     events: mpsc::Sender<DriverEvent>,
-    command_rx: mpsc::Receiver<AcpStdioCommand>,
+    command_rx: mpsc::Receiver<StdioCommand>,
     adapter: Box<dyn HarnessEventAdapter>,
     heartbeat_interval: std::time::Duration,
 }
 
-async fn run_acp_stdio(runtime: AcpStdioRuntime) {
-    let AcpStdioRuntime {
+async fn run_stdio(runtime: StdioRuntime) {
+    let StdioRuntime {
         binary,
         mut child,
         stdin,
@@ -908,7 +911,7 @@ async fn run_acp_stdio(runtime: AcpStdioRuntime) {
             warn!(
                 binary,
                 budget_ms = RELEASE_DRAIN_BUDGET.as_millis() as u64,
-                "acp-stdio peer streams did not end within the post-release \
+                "stdio peer streams did not end within the post-release \
                  drain budget; synthesizing the exit from what was drained"
             );
         }
@@ -925,7 +928,7 @@ async fn run_acp_stdio(runtime: AcpStdioRuntime) {
 }
 
 async fn handle_stdio_command(
-    command: AcpStdioCommand,
+    command: StdioCommand,
     transport: &mut StdioJsonRpcTransport,
     events: &mpsc::Sender<DriverEvent>,
     ids: &mut RpcIds,
@@ -934,7 +937,7 @@ async fn handle_stdio_command(
     exit_summary: &mut SubprocessExitSummary,
 ) -> bool {
     match command {
-        AcpStdioCommand::TransitionState { req, ack } => {
+        StdioCommand::TransitionState { req, ack } => {
             let result = adapter.transition_state(req).await;
             let done =
                 handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
@@ -945,7 +948,7 @@ async fn handle_stdio_command(
             }));
             close
         }
-        AcpStdioCommand::BabysitterAction { req, ack } => {
+        StdioCommand::BabysitterAction { req, ack } => {
             let result = adapter.babysitter_action(req).await;
             let done =
                 handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
@@ -956,7 +959,7 @@ async fn handle_stdio_command(
             }));
             close
         }
-        AcpStdioCommand::SendInput { req, ack } => {
+        StdioCommand::SendInput { req, ack } => {
             let result = adapter.send_input(req).await;
             let done =
                 handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
@@ -967,7 +970,7 @@ async fn handle_stdio_command(
             }));
             close
         }
-        AcpStdioCommand::SwitchRuntimeOptions { req, ack } => {
+        StdioCommand::SwitchRuntimeOptions { req, ack } => {
             let result = adapter.switch_runtime_options(req).await;
             let done =
                 handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
@@ -978,14 +981,14 @@ async fn handle_stdio_command(
             }));
             close
         }
-        AcpStdioCommand::RuntimeOptionsCatalog { ack } => {
+        StdioCommand::RuntimeOptionsCatalog { ack } => {
             let result =
                 runtime_options_catalog_for_adapter(transport, events, ids, adapter, allowlist)
                     .await;
             let _ = ack.send(result);
             false
         }
-        AcpStdioCommand::Release { reason, ack } => {
+        StdioCommand::Release { reason, ack } => {
             let result = adapter.release(reason).await;
             let done =
                 handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
@@ -1014,7 +1017,7 @@ async fn handle_outcome_with_summary(
     Ok(outcome.close)
 }
 
-enum AcpStdioCommand {
+enum StdioCommand {
     TransitionState {
         req: TransitionRequest,
         ack: oneshot::Sender<Result<TransitionAck, DriverError>>,
@@ -1040,18 +1043,18 @@ enum AcpStdioCommand {
     },
 }
 
-enum AcpStdioControlMode {
+enum StdioControlMode {
     Simulated {
         adapter: Box<dyn HarnessEventAdapter>,
         events: mpsc::Sender<DriverEvent>,
     },
     JsonRpc {
-        commands: mpsc::Sender<AcpStdioCommand>,
+        commands: mpsc::Sender<StdioCommand>,
         pid: Option<u32>,
     },
 }
 
-impl AcpStdioControlMode {
+impl StdioControlMode {
     fn pid(&self) -> Option<u32> {
         match self {
             Self::Simulated { .. } => None,
@@ -1085,14 +1088,14 @@ async fn runtime_options_catalog_for_adapter(
     adapter.runtime_options_catalog().await
 }
 
-struct AcpStdioControl {
-    mode: AcpStdioControlMode,
+struct StdioControl {
+    mode: StdioControlMode,
     kind: RunKind,
     released: bool,
 }
 
 #[async_trait]
-impl DriverControl for AcpStdioControl {
+impl DriverControl for StdioControl {
     async fn transition_state(
         &mut self,
         req: TransitionRequest,
@@ -1101,7 +1104,7 @@ impl DriverControl for AcpStdioControl {
             return Err(DriverError::WorkerToolBlocked("transition_state".into()));
         }
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, events } => {
+            StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.transition_state(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(TransitionAck {
@@ -1109,15 +1112,14 @@ impl DriverControl for AcpStdioControl {
                     message: None,
                 })
             }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpStdioCommand::TransitionState { req, ack })
+                    .send(StdioCommand::TransitionState { req, ack })
                     .await
-                    .map_err(|_| DriverError::Transport("acp-stdio task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("acp-stdio transition ack dropped".into())
-                })?
+                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
+                rx.await
+                    .map_err(|_| DriverError::Transport("stdio transition ack dropped".into()))?
             }
         }
     }
@@ -1130,7 +1132,7 @@ impl DriverControl for AcpStdioControl {
             return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
         }
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, events } => {
+            StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.babysitter_action(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(BabysitterAck {
@@ -1138,22 +1140,21 @@ impl DriverControl for AcpStdioControl {
                     message: None,
                 })
             }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpStdioCommand::BabysitterAction { req, ack })
+                    .send(StdioCommand::BabysitterAction { req, ack })
                     .await
-                    .map_err(|_| DriverError::Transport("acp-stdio task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("acp-stdio babysitter ack dropped".into())
-                })?
+                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
+                rx.await
+                    .map_err(|_| DriverError::Transport("stdio babysitter ack dropped".into()))?
             }
         }
     }
 
     async fn send_input(&mut self, req: UserInputRequest) -> Result<UserInputAck, DriverError> {
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, events } => {
+            StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.send_input(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(UserInputAck {
@@ -1161,14 +1162,14 @@ impl DriverControl for AcpStdioControl {
                     message: None,
                 })
             }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpStdioCommand::SendInput { req, ack })
+                    .send(StdioCommand::SendInput { req, ack })
                     .await
-                    .map_err(|_| DriverError::Transport("acp-stdio task ended".into()))?;
+                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
                 rx.await
-                    .map_err(|_| DriverError::Transport("acp-stdio input ack dropped".into()))?
+                    .map_err(|_| DriverError::Transport("stdio input ack dropped".into()))?
             }
         }
     }
@@ -1178,7 +1179,7 @@ impl DriverControl for AcpStdioControl {
         req: RuntimeOptionsRequest,
     ) -> Result<RuntimeOptionsAck, DriverError> {
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, events } => {
+            StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.switch_runtime_options(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(RuntimeOptionsAck {
@@ -1186,14 +1187,14 @@ impl DriverControl for AcpStdioControl {
                     message: None,
                 })
             }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpStdioCommand::SwitchRuntimeOptions { req, ack })
+                    .send(StdioCommand::SwitchRuntimeOptions { req, ack })
                     .await
-                    .map_err(|_| DriverError::Transport("acp-stdio task ended".into()))?;
+                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
                 rx.await.map_err(|_| {
-                    DriverError::Transport("acp-stdio runtime options ack dropped".into())
+                    DriverError::Transport("stdio runtime options ack dropped".into())
                 })?
             }
         }
@@ -1201,17 +1202,15 @@ impl DriverControl for AcpStdioControl {
 
     async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, .. } => {
-                adapter.runtime_options_catalog().await
-            }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::Simulated { adapter, .. } => adapter.runtime_options_catalog().await,
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpStdioCommand::RuntimeOptionsCatalog { ack })
+                    .send(StdioCommand::RuntimeOptionsCatalog { ack })
                     .await
-                    .map_err(|_| DriverError::Transport("acp-stdio task ended".into()))?;
+                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
                 rx.await.map_err(|_| {
-                    DriverError::Transport("acp-stdio runtime options catalog dropped".into())
+                    DriverError::Transport("stdio runtime options catalog dropped".into())
                 })?
             }
         }
@@ -1223,15 +1222,15 @@ impl DriverControl for AcpStdioControl {
         }
         self.released = true;
         match &mut self.mode {
-            AcpStdioControlMode::Simulated { adapter, events } => {
+            StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.release(reason.to_string()).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(())
             }
-            AcpStdioControlMode::JsonRpc { commands, .. } => {
+            StdioControlMode::JsonRpc { commands, .. } => {
                 let (ack, rx) = oneshot::channel();
                 if commands
-                    .send(AcpStdioCommand::Release {
+                    .send(StdioCommand::Release {
                         reason: reason.to_string(),
                         ack,
                     })
@@ -1241,7 +1240,7 @@ impl DriverControl for AcpStdioControl {
                     return Ok(());
                 }
                 rx.await
-                    .map_err(|_| DriverError::Transport("acp-stdio release ack dropped".into()))?
+                    .map_err(|_| DriverError::Transport("stdio release ack dropped".into()))?
             }
         }
     }
@@ -1269,9 +1268,9 @@ mod tests {
 
     fn ctx() -> DriverContext {
         DriverContext {
-            identity: RuntimeIdentity::new("run-acp-stdio-test", "boot-test"),
+            identity: RuntimeIdentity::new("run-stdio-test", "boot-test"),
             run_kind: RunKind::Worker,
-            task_id: "TASK-ACP-STDIO".into(),
+            task_id: "TASK-STDIO".into(),
             worker_id: "test".into(),
             project_id: None,
             worktree: None,
@@ -1402,7 +1401,7 @@ mod tests {
     }
 
     /// The same assertion, on the real claude argv, through the compose wrapper
-    /// `AcpStdioDriver::acquire` actually delegates to.
+    /// `StdioDriver::acquire` actually delegates to.
     ///
     /// The test above uses a stand-in adapter and hand-written argv, so it can
     /// prove the mode preserves what it is handed but not that the credential
@@ -1445,7 +1444,7 @@ exit 3
         let saved_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("PATH", format!("{}:{saved_path}", dir.path().display()));
 
-        let mut mode_adapter = AcpStdioComposeAdapter {
+        let mut mode_adapter = StdioComposeAdapter {
             inner: Box::new(ClaudeAdapter::new()),
             jsonrpc_session_init: None,
         };

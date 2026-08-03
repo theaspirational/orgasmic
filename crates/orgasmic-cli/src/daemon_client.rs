@@ -444,7 +444,7 @@ mod tests {
             project_id: "orgasmic".into(),
             tasks: vec!["TASK-1".into()],
             kind: DispatchKind::Implementer,
-            mode: "acp-stdio".into(),
+            mode: "stdio".into(),
             harness: "cursor-agent".into(),
             harness_args: vec!["--betas".into(), "context-1m".into()],
             brief_path: PathBuf::from("/tmp/brief.md"),
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn dispatch_request_carries_mode_harness_and_raw_argv() {
         let request = build_dispatch_request(&sample_plan());
-        assert_eq!(request.mode, "acp-stdio");
+        assert_eq!(request.mode, "stdio");
         assert_eq!(request.harness, "cursor-agent");
         assert_eq!(
             request.harness_args,
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn preflight_rejection_is_an_unambiguous_local_rollback() {
         let err = anyhow::Error::msg(
-            r#"daemon returned 400 Bad Request: {"error":"acp-stdio/claude cannot start a worker: Not logged in - Please run /login"}"#,
+            r#"daemon returned 400 Bad Request: {"error":"stdio/claude cannot start a worker: Not logged in - Please run /login"}"#,
         );
         assert!(
             !DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),

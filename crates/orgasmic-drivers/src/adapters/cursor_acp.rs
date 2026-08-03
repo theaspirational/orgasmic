@@ -261,7 +261,7 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             })?;
             env.insert("CURSOR_API_KEY".into(), api_key);
         }
-        // acp-stdio upgrades this simulated request to `cursor-agent acp` when
+        // stdio upgrades this simulated request to `cursor-agent acp` when
         // the binary is present; otherwise this keeps CI deterministic.
         Ok(HarnessRequest::Simulated {
             events: vec![DriverEvent::Ready {

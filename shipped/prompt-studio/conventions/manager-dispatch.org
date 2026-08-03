@@ -61,8 +61,8 @@ back, you are rebuilding the surface that rule exists to remove.
 
 What is durable, and stays here:
 
-*Every dispatch runs in a TUI pane.* Not acp-stdio. A pane is attachable, so the
-operator can watch a live worker and intervene; an acp-stdio worker is a black
+*Every dispatch runs in a TUI pane.* Not =stdio=. A pane is attachable, so the
+operator can watch a live worker and intervene; a =stdio= worker is a black
 box until it writes its report. A pane `--mode` with `--kind reviewer` still
 selects the reviewer persona; there is no `--worker` flag.
 
@@ -177,7 +177,7 @@ What the stall detector can and cannot see on a pane: silence means silence, so 
 harness parked on an interactive gate (trust prompt, login) or one that finished
 without calling `dispatch finalize` is still released at 600 s. A harness that
 hangs while its TUI keeps animating a spinner still looks alive — same blind spot
-the acp-stdio heartbeat has, and the one TASK-VZMZE is about. The `bytes` count on
+the =stdio= heartbeat has, and the one TASK-VZMZE is about. The `bytes` count on
 each `pane_activity` event is diagnostic volume only — it is NOT a progress
 classifier. The supervisor never interprets it; any `pane_activity` resets the
 same clock. A full-screen renderer can repaint thousands of bytes for a
@@ -278,7 +278,7 @@ check the rest of the invocation too.
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
-   The CLI atomically: creates the per-task git worktree at =/tmp/orgasmic-worktrees/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=); writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking ACP (JSON-RPC 2.0) over stdio to the daemon. Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
+   The CLI atomically: creates the per-task git worktree at =/tmp/orgasmic-worktrees/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=); writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking codex's own JSON-RPC 2.0 app-server protocol over stdio to the daemon. That is not ACP: orgasmic's =stdio= mode names the wire only, and the harness decides the protocol (TASK-XCJYC; see the glossary term =term_YX8AG= transport mode). Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
 3. *Wait.* Prefer the harness completion notification. If a shell watcher is
    needed, install exactly one watcher for the dispatch and declare a finite
    observation deadline before starting it. The watcher may observe the

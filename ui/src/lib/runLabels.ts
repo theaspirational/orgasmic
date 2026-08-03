@@ -41,18 +41,23 @@ export function runUsesPtyTerminal(run: { driver?: string | null; kind?: string 
 }
 
 // Readable provider/transport from the driver tag. The tag is a transport mode
-// like `tmux-tui`, `codex-stdio`, `claude-acp`; we surface a human label and
-// keep the raw id out of the primary tab title (it lives in the tooltip).
+// like `tmux-tui`, `codex-stdio`, `claude-stream-json`; we surface a human
+// label and keep the raw id out of the primary tab title (it lives in the
+// tooltip).
+//
+// Pre-TASK-XCJYC ids (`acp-stdio`, `acp-ws`, `claude-acp`) are deliberately
+// absent: no alias table (dec_WDR5K item 10), so a historical run renders the
+// transport string it actually recorded.
 const TRANSPORT_LABELS: Record<string, string> = {
-  'acp-stdio': 'ACP stdio',
-  'acp-ws': 'ACP websocket',
+  stdio: 'Stdio',
+  ws: 'WebSocket',
   'subprocess-stream-json': 'Subprocess JSON',
   rmux: 'rmux',
   'tmux-tui': 'Claude tmux',
   tmux: 'Claude tmux',
   'codex-stdio': 'Codex',
   'codex-appserver': 'Codex',
-  'claude-acp': 'Claude',
+  'claude-stream-json': 'Claude',
   'cursor-acp': 'Cursor',
   hermes: 'Hermes',
   chat: 'Chat',

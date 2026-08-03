@@ -1483,7 +1483,7 @@ mod tests {
 :END:
 "#;
         let first = ArtifactLaunchAddress {
-            mode: "acp-ws".into(),
+            mode: "ws".into(),
             harness: "codex".into(),
             harness_args: vec!["--flag".into(), " spaced ".into()],
             model: Some(" gpt-custom ".into()),

@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn supported_pair_accepted() {
-        validate_supported_pair("acp-stdio", "codex").unwrap();
+        validate_supported_pair("stdio", "codex").unwrap();
         validate_supported_pair("rmux", "custom").unwrap();
     }
 
@@ -77,13 +77,13 @@ mod tests {
     #[test]
     fn empty_fields_rejected() {
         assert!(validate_supported_pair("", "codex").is_err());
-        assert!(validate_supported_pair("acp-stdio", "").is_err());
+        assert!(validate_supported_pair("stdio", "").is_err());
     }
 
     #[test]
     fn compatibility_label_is_not_routing_authority() {
-        let id = compatibility_worker_id(WorkerKind::Implementer, "acp-stdio", "cursor-agent");
-        assert_eq!(id, "implementer-cursor-agent-acp-stdio");
+        let id = compatibility_worker_id(WorkerKind::Implementer, "stdio", "cursor-agent");
+        assert_eq!(id, "implementer-cursor-agent-stdio");
     }
 
     #[test]

@@ -447,16 +447,15 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
     let missing_worktree = tmp.path().join("pruned-worktree");
     let fixtures = [
         // Terminal tombstone carrying the huge transcript.
-        SessionFixture::new("run-terminal-huge", "acp-stdio", Some("claude"))
+        SessionFixture::new("run-terminal-huge", "stdio", Some("claude"))
             .released(ReleaseOutcome::Completed)
             .transcript_bytes(HUGE_TRANSCRIPT_BYTES),
         // Failed tombstone: immutable, recoverable, never attach-probed.
-        SessionFixture::new("run-failed", "acp-stdio", Some("claude"))
-            .released(ReleaseOutcome::Failed),
+        SessionFixture::new("run-failed", "stdio", Some("claude")).released(ReleaseOutcome::Failed),
         // Non-terminal on a transport with no reattachable handle.
-        SessionFixture::new("run-interrupted", "acp-stdio", Some("claude")),
+        SessionFixture::new("run-interrupted", "stdio", Some("claude")),
         // Non-terminal whose recorded worktree is gone.
-        SessionFixture::new("run-missing-worktree", "acp-stdio", Some("claude"))
+        SessionFixture::new("run-missing-worktree", "stdio", Some("claude"))
             .worktree(missing_worktree),
         // Non-terminal whose driver attach never answers.
         SessionFixture::new("run-hanging-attach", "tmux", Some("claude"))
@@ -627,7 +626,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         // rendered TUI output, a structured transport's is the assistant's
         // words and its tool results. The accounting has to tell them apart,
         // and a board with only one of them cannot prove that it does.
-        let transport = if index % 2 == 0 { "rmux" } else { "acp-stdio" };
+        let transport = if index % 2 == 0 { "rmux" } else { "stdio" };
         SessionFixture::new(&format!("run-scale-{index:03}"), transport, Some("claude"))
             .released(ReleaseOutcome::Completed)
             .transcript_bytes(bytes)
@@ -765,7 +764,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
     );
     assert!(
         report["reclaimable_by_driver"]
-            .get("acp-stdio/claude")
+            .get("stdio/claude")
             .is_none(),
         "a structured transport's text_chunk is evidence, not reclaimable space: {}",
         report["reclaimable_by_driver"]
@@ -782,7 +781,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
     );
     assert!(
         buckets.iter().any(|b| b["event_class"] == "rendered_tui"
-            && b["driver"] == "acp-stdio/claude"
+            && b["driver"] == "stdio/claude"
             && b["reclaimable"] == false),
         "the SAME class from a structured transport is refused: {}",
         report["buckets"]

@@ -10,11 +10,11 @@ use orgasmic_drivers::modes::rmux::test_tooling::{
     skip_unless_billing_allowed, ToolRequirement,
 };
 use orgasmic_drivers::{
-    driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
-    CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
-    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
-    Preflight, PreflightOutcome, RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver,
-    WorkerDriver, HARNESSES, MODES, SUPPORTED,
+    driver_for, driver_for_mode_harness, ClaudeAdapter, CodexAdapter, CodexAppserverDriver,
+    CursorAdapter, DriverConfig, DriverContext, DriverError, DriverSession, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, HermesAdapter, Preflight, PreflightOutcome, RunKind,
+    StdioDriver, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, WsDriver,
+    WsProtocol, HARNESSES, MODES, SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -181,21 +181,21 @@ fn registry_matrix_matches_supported_const() {
             );
         }
     }
-    assert!(driver_for_mode_harness("acp-ws", "cursor-agent").is_none());
+    assert!(driver_for_mode_harness("ws", "cursor-agent").is_none());
 }
 
 #[test]
-fn supported_matrix_includes_acp_stdio_codex() {
-    assert!(SUPPORTED.contains(&("acp-stdio", "codex")));
+fn supported_matrix_includes_stdio_codex() {
+    assert!(SUPPORTED.contains(&("stdio", "codex")));
 }
 
 #[test]
-fn acp_stdio_codex_driver_resolves() {
-    assert!(driver_for_mode_harness("acp-stdio", "codex").is_some());
+fn stdio_codex_driver_resolves() {
+    assert!(driver_for_mode_harness("stdio", "codex").is_some());
 }
 
 #[test]
-fn acp_stdio_codex_adapter_provides_stdio_spawn_config() {
+fn stdio_codex_adapter_provides_stdio_spawn_config() {
     let adapter = CodexAdapter::new();
     let spawn = adapter.stdio_spawn().expect("codex stdio_spawn");
     assert_eq!(spawn.command, "codex");
@@ -560,8 +560,8 @@ fn simulated_ready_request() -> HarnessRequest {
 }
 
 #[tokio::test]
-async fn acp_stdio_keeps_simulated_when_adapter_does_not_upgrade() {
-    let driver = AcpStdioDriver::new(Box::new(MockAdapter {
+async fn stdio_keeps_simulated_when_adapter_does_not_upgrade() {
+    let driver = StdioDriver::new(Box::new(MockAdapter {
         request: simulated_ready_request(),
     }));
     let mut session = driver.acquire(ctx(), DriverConfig::empty()).await.unwrap();
@@ -573,11 +573,9 @@ async fn acp_stdio_keeps_simulated_when_adapter_does_not_upgrade() {
 }
 
 #[tokio::test]
-async fn acp_stdio_codex_jsonrpc_handshake_mock_peer() {
-    let stdin_log = std::env::temp_dir().join(format!(
-        "orgasmic-acp-stdio-stdin-{}.log",
-        std::process::id()
-    ));
+async fn stdio_codex_jsonrpc_handshake_mock_peer() {
+    let stdin_log =
+        std::env::temp_dir().join(format!("orgasmic-stdio-stdin-{}.log", std::process::id()));
     let _ = fs::remove_file(&stdin_log);
 
     const MOCK_PEER: &str = r#"
@@ -693,7 +691,7 @@ done
         }
     }
 
-    let driver = AcpStdioDriver::new(Box::new(CodexStdioMockHarness {
+    let driver = StdioDriver::new(Box::new(CodexStdioMockHarness {
         inner: CodexAdapter::new(),
         stdin_log_path: stdin_log.clone(),
     }));
@@ -782,15 +780,15 @@ done
 }
 
 /// TASK-100.3: while a codex turn is in flight but the harness produces no
-/// output (it is buffering a long subprocess), the acp-stdio loop must emit
+/// output (it is buffering a long subprocess), the stdio loop must emit
 /// `Heartbeat` driver events on a cadence so the supervisor's stall detector
 /// stays reset. Here the mock peer completes the handshake, starts a turn, then
 /// goes silent (reading stdin, emitting nothing) until it sees `turn/interrupt`.
 #[tokio::test]
-async fn acp_stdio_codex_emits_heartbeats_during_quiet_turn() {
+async fn stdio_codex_emits_heartbeats_during_quiet_turn() {
     // Mock peer: answer the handshake, start a turn, then emit nothing until
     // interrupted. The trailing `read` loop keeps stdin (and the process) alive
-    // so the acp-stdio loop sits quiet — the only events it can produce in this
+    // so the stdio loop sits quiet — the only events it can produce in this
     // window are heartbeats.
     const QUIET_PEER: &str = r#"
 while IFS= read -r line; do
@@ -883,7 +881,7 @@ done
         }
     }
 
-    let driver = AcpStdioDriver::new(Box::new(QuietCodexHarness {
+    let driver = StdioDriver::new(Box::new(QuietCodexHarness {
         inner: CodexAdapter::new(),
     }));
     // 100ms cadence == the production floor (TASK-100.5); keeps the test fast
@@ -964,11 +962,11 @@ done
 /// fix that only watches the pipe would tick heartbeats forever. With the
 /// `child.try_wait()` gate, heartbeats stop once the main process exits.
 #[tokio::test]
-async fn acp_stdio_heartbeats_stop_when_child_exits_with_pipe_held_open() {
+async fn stdio_heartbeats_stop_when_child_exits_with_pipe_held_open() {
     // Peer: handshake + turn, ~3 heartbeat windows of quiet, then spawn a
     // background `sleep` that inherits stdout (holding the pipe open past our
     // exit) and exit the main shell. The grandchild keeps fd 1 alive so the
-    // acp-stdio transport never sees EOF.
+    // stdio transport never sees EOF.
     const EXITING_PEER: &str = r#"
 while IFS= read -r line; do
   [ -z "$line" ] && continue
@@ -1062,7 +1060,7 @@ done
         }
     }
 
-    let driver = AcpStdioDriver::new(Box::new(ExitingCodexHarness {
+    let driver = StdioDriver::new(Box::new(ExitingCodexHarness {
         inner: CodexAdapter::new(),
     }));
     // 100ms cadence == the production floor; the test must keep working at it.
@@ -1286,19 +1284,19 @@ async fn run_codex_stdio_approval_handshake(
     expect_approved: bool,
 ) -> (PathBuf, PathBuf) {
     let stdin_log = std::env::temp_dir().join(format!(
-        "orgasmic-acp-stdio-stdin-{}-{}.log",
+        "orgasmic-stdio-stdin-{}-{}.log",
         std::process::id(),
         uuid_simple()
     ));
     let approval_log = std::env::temp_dir().join(format!(
-        "orgasmic-acp-stdio-approval-{}-{}.log",
+        "orgasmic-stdio-approval-{}-{}.log",
         std::process::id(),
         uuid_simple()
     ));
     let _ = fs::remove_file(&stdin_log);
     let _ = fs::remove_file(&approval_log);
 
-    let driver = AcpStdioDriver::new(Box::new(CodexStdioApprovalHarness {
+    let driver = StdioDriver::new(Box::new(CodexStdioApprovalHarness {
         inner: CodexAdapter::new(),
         mock_peer: MOCK_PEER_WITH_APPROVAL,
         stdin_log_path: stdin_log.clone(),
@@ -1366,7 +1364,7 @@ fn uuid_simple() -> u64 {
 }
 
 #[tokio::test]
-async fn acp_stdio_codex_approval_request_auto_grants_with_default_allowlist() {
+async fn stdio_codex_approval_request_auto_grants_with_default_allowlist() {
     let (stdin_log, approval_log) = run_codex_stdio_approval_handshake(
         DriverConfig::from_value(json!({
             "model": "gpt-fixture",
@@ -1391,7 +1389,7 @@ async fn acp_stdio_codex_approval_request_auto_grants_with_default_allowlist() {
 }
 
 #[tokio::test]
-async fn acp_stdio_codex_approval_request_denies_when_exec_disallowed() {
+async fn stdio_codex_approval_request_denies_when_exec_disallowed() {
     let (stdin_log, approval_log) = run_codex_stdio_approval_handshake(
         DriverConfig::from_value(json!({
             "model": "gpt-fixture",
@@ -1412,8 +1410,8 @@ async fn acp_stdio_codex_approval_request_denies_when_exec_disallowed() {
 }
 
 #[tokio::test]
-async fn acp_stdio_routes_stdout_through_adapter() {
-    let driver = AcpStdioDriver::new(Box::new(MockAdapter {
+async fn stdio_routes_stdout_through_adapter() {
+    let driver = StdioDriver::new(Box::new(MockAdapter {
         request: subprocess_request("stdio"),
     }));
     let mut session = driver.acquire(ctx(), DriverConfig::empty()).await.unwrap();
@@ -1425,7 +1423,7 @@ async fn acp_stdio_routes_stdout_through_adapter() {
 }
 
 #[tokio::test]
-async fn acp_ws_routes_frames_through_adapter() {
+async fn ws_routes_frames_through_adapter() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -1441,11 +1439,11 @@ async fn acp_ws_routes_frames_through_adapter() {
             .unwrap();
     });
 
-    let driver = AcpWsDriver::new(Box::new(MockAdapter {
-        request: HarnessRequest::AcpWs {
+    let driver = WsDriver::new(Box::new(MockAdapter {
+        request: HarnessRequest::Ws {
             endpoint: format!("ws://{addr}/acp"),
             headers: BTreeMap::new(),
-            protocol: AcpWsProtocol::RawJson,
+            protocol: WsProtocol::RawJson,
             session_init: json!({"type": "spawn"}),
         },
     }));
@@ -1550,7 +1548,7 @@ async fn hermes_connect_error_is_emitted_on_event_stream() {
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
-    let driver = driver_for_mode_harness("acp-ws", "hermes").expect("acp-ws hermes driver");
+    let driver = driver_for_mode_harness("ws", "hermes").expect("ws hermes driver");
     let cfg = DriverConfig::from_value(json!({
         "endpoint": format!("ws://{addr}"),
         "session_token": "fixture-token",
@@ -1887,15 +1885,20 @@ async fn legacy_drivers_and_explicit_pairs_emit_equivalent_start_events() {
         return;
     }
     let cases = [
-        ("claude-acp", "acp-stdio", "claude", DriverConfig::empty()),
-        ("codex-appserver", "acp-ws", "codex", DriverConfig::empty()),
+        (
+            "claude-stream-json",
+            "stdio",
+            "claude",
+            DriverConfig::empty(),
+        ),
+        ("codex-appserver", "ws", "codex", DriverConfig::empty()),
         (
             "cursor-agent",
             "subprocess-stream-json",
             "cursor-agent",
             DriverConfig::empty(),
         ),
-        ("hermes", "acp-stdio", "hermes", DriverConfig::empty()),
+        ("hermes", "stdio", "hermes", DriverConfig::empty()),
         ("tmux-tui", "tmux", "claude", force_inert_tmux_config()),
     ];
 
@@ -2115,7 +2118,7 @@ async fn installed_harnesses_answer_their_own_readiness_probe() {
     let cases = vec![
         Case {
             binary: "claude",
-            driver: Box::new(AcpStdioDriver::new(Box::new(
+            driver: Box::new(StdioDriver::new(Box::new(
                 orgasmic_drivers::adapters::claude::ClaudeAdapter::new(),
             ))),
             // A non-empty endpoint keeps this off the simulated path, where
@@ -2124,14 +2127,14 @@ async fn installed_harnesses_answer_their_own_readiness_probe() {
         },
         Case {
             binary: "cursor-agent",
-            driver: Box::new(AcpStdioDriver::new(Box::new(
+            driver: Box::new(StdioDriver::new(Box::new(
                 orgasmic_drivers::adapters::cursor_acp::CursorAcpAdapter::new(),
             ))),
             config: serde_json::json!({}),
         },
         Case {
             binary: "codex",
-            driver: Box::new(AcpStdioDriver::new(Box::new(
+            driver: Box::new(StdioDriver::new(Box::new(
                 orgasmic_drivers::adapters::codex::CodexAdapter::new(),
             ))),
             config: serde_json::json!({}),

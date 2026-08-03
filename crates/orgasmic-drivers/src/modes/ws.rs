@@ -1,6 +1,10 @@
 // arch: arch_A53QX.4
 // orgasmic:arch_A53QX, dec_ASB1A
-//! WebSocket mode for JSON-RPC and ACP-shaped harnesses.
+//! WebSocket mode.
+//!
+//! The mode names the wire only; the harness adapter decides the protocol
+//! spoken over it — `codex app-server`'s own JSON-RPC, or genuine ACP for
+//! `hermes` (TASK-XCJYC).
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
@@ -22,30 +26,30 @@ use crate::modes::jsonrpc::{
     send_driver_error, JsonRpcTransport, RpcIds,
 };
 use crate::r#trait::{
-    preflight_via_adapter, AcpWsProtocol, AttachOutcome, BabysitterAck, BabysitterRequest,
-    DriverConfig, DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
-    HarnessRequest, PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck,
-    UserInputRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
+    DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter, HarnessRequest,
+    PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
+    WorkerDriver, WsProtocol,
 };
 use crate::runtime_options::{RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsRequest};
 use crate::sandbox::allowlist_from_driver_config;
 
-const MODE: &str = "acp-ws";
+const MODE: &str = "ws";
 // orgasmic:TASK-P4MGK — protocol turn-end is not the dispatch success
 // signal; `orgasmic dispatch finalize` is the primary end-of-run.
 
-pub struct AcpWsDriver {
+pub struct WsDriver {
     adapter: Box<dyn HarnessEventAdapter>,
 }
 
-impl AcpWsDriver {
+impl WsDriver {
     pub fn new(adapter: Box<dyn HarnessEventAdapter>) -> Self {
         Self { adapter }
     }
 }
 
 #[async_trait]
-impl WorkerDriver for AcpWsDriver {
+impl WorkerDriver for WsDriver {
     fn transport(&self) -> &'static str {
         MODE
     }
@@ -54,7 +58,7 @@ impl WorkerDriver for AcpWsDriver {
         Some(self.adapter.harness())
     }
 
-    /// ACP over a websocket: no terminal, no operator.
+    /// A websocket: no terminal, no operator.
     fn interaction(&self) -> TransportInteraction {
         TransportInteraction::Unattended
     }
@@ -86,14 +90,14 @@ impl WorkerDriver for AcpWsDriver {
                     let _ = tx.send(event).await;
                 }
                 (
-                    AcpWsControlMode::Simulated {
+                    WsControlMode::Simulated {
                         adapter,
                         events: tx,
                     },
                     None,
                 )
             }
-            HarnessRequest::AcpWs {
+            HarnessRequest::Ws {
                 endpoint,
                 headers,
                 protocol,
@@ -138,7 +142,7 @@ impl WorkerDriver for AcpWsDriver {
                                 .await;
                             }
                             Ok(Ok((ws, response))) => {
-                                run_acp_ws(AcpWsRuntime {
+                                run_ws(WsRuntime {
                                     endpoint: connect_endpoint,
                                     ws,
                                     status: response.status().as_u16(),
@@ -165,7 +169,7 @@ impl WorkerDriver for AcpWsDriver {
                             DriverError::Transport(format!("websocket connect {endpoint}: {e}"))
                         })?;
 
-                    tokio::spawn(run_acp_ws(AcpWsRuntime {
+                    tokio::spawn(run_ws(WsRuntime {
                         endpoint,
                         ws,
                         status: response.status().as_u16(),
@@ -177,16 +181,16 @@ impl WorkerDriver for AcpWsDriver {
                         adapter,
                     }))
                 };
-                (AcpWsControlMode::Real { commands }, Some(producer))
+                (WsControlMode::Real { commands }, Some(producer))
             }
-            _ => return Err(DriverError::Unsupported("acp-ws request shape")),
+            _ => return Err(DriverError::Unsupported("ws request shape")),
         };
 
         Ok(DriverSession {
             identity: ctx.identity.clone(),
             pid: None,
             events: rx,
-            control: Box::new(AcpWsControl {
+            control: Box::new(WsControl {
                 mode: control,
                 kind: ctx.run_kind,
                 released: false,
@@ -205,23 +209,23 @@ impl WorkerDriver for AcpWsDriver {
     }
 }
 
-struct AcpWsRuntime<S> {
+struct WsRuntime<S> {
     endpoint: String,
     ws: WebSocketStream<S>,
     status: u16,
-    protocol: AcpWsProtocol,
+    protocol: WsProtocol,
     session_init: Value,
     allowlist: orgasmic_core::SandboxAllowlist,
     events: mpsc::Sender<DriverEvent>,
-    command_rx: mpsc::Receiver<AcpWsCommand>,
+    command_rx: mpsc::Receiver<WsCommand>,
     adapter: Box<dyn HarnessEventAdapter>,
 }
 
-async fn run_acp_ws<S>(runtime: AcpWsRuntime<S>)
+async fn run_ws<S>(runtime: WsRuntime<S>)
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    let AcpWsRuntime {
+    let WsRuntime {
         endpoint,
         mut ws,
         status,
@@ -235,14 +239,14 @@ where
     let mut commands = command_rx;
     let mut ids = RpcIds::new();
     let init_result = match protocol {
-        AcpWsProtocol::RawJson => {
+        WsProtocol::RawJson => {
             if let Err(e) = ws.send(Message::Text(session_init.to_string())).await {
                 send_driver_error(&events, true, format!("websocket session init: {e}")).await;
                 return;
             }
             adapter.on_ws_connected(json!({ "status": status })).await
         }
-        AcpWsProtocol::JsonRpc => {
+        WsProtocol::JsonRpc => {
             let mut transport = WsJsonRpcTransport { ws: &mut ws };
             if let Err(e) = run_jsonrpc_handshake(
                 &mut transport,
@@ -263,7 +267,7 @@ where
         }
     };
 
-    if let AcpWsProtocol::RawJson = protocol {
+    if let WsProtocol::RawJson = protocol {
         match init_result {
             Ok(outgoing) => crate::modes::jsonrpc::emit_events(&events, outgoing).await,
             Err(e) => {
@@ -370,7 +374,7 @@ where
 }
 
 async fn handle_ws_command<S>(
-    command: AcpWsCommand,
+    command: WsCommand,
     ws: &mut WebSocketStream<S>,
     events: &mpsc::Sender<DriverEvent>,
     ids: &mut RpcIds,
@@ -382,7 +386,7 @@ where
 {
     let mut transport = WsJsonRpcTransport { ws };
     match command {
-        AcpWsCommand::TransitionState { req, ack } => {
+        WsCommand::TransitionState { req, ack } => {
             let result = adapter.transition_state(req).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
             let close = matches!(done, Ok(true));
@@ -395,7 +399,7 @@ where
             }));
             close
         }
-        AcpWsCommand::BabysitterAction { req, ack } => {
+        WsCommand::BabysitterAction { req, ack } => {
             let result = adapter.babysitter_action(req).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
             let close = matches!(done, Ok(true));
@@ -408,7 +412,7 @@ where
             }));
             close
         }
-        AcpWsCommand::SendInput { req, ack } => {
+        WsCommand::SendInput { req, ack } => {
             let result = adapter.send_input(req).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
             let close = matches!(done, Ok(true));
@@ -421,7 +425,7 @@ where
             }));
             close
         }
-        AcpWsCommand::SwitchRuntimeOptions { req, ack } => {
+        WsCommand::SwitchRuntimeOptions { req, ack } => {
             let result = adapter.switch_runtime_options(req).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
             let close = matches!(done, Ok(true));
@@ -434,7 +438,7 @@ where
             }));
             close
         }
-        AcpWsCommand::RuntimeOptionsCatalog { ack } => {
+        WsCommand::RuntimeOptionsCatalog { ack } => {
             let result = runtime_options_catalog_for_adapter(
                 &mut transport,
                 events,
@@ -446,7 +450,7 @@ where
             let _ = ack.send(result);
             false
         }
-        AcpWsCommand::Release { reason, ack } => {
+        WsCommand::Release { reason, ack } => {
             let result = adapter.release(reason).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
             let close = matches!(done, Ok(true));
@@ -472,7 +476,7 @@ fn message_to_json(message: Message) -> Result<Option<Value>, DriverError> {
     }
 }
 
-enum AcpWsCommand {
+enum WsCommand {
     TransitionState {
         req: TransitionRequest,
         ack: oneshot::Sender<Result<TransitionAck, DriverError>>,
@@ -523,24 +527,24 @@ async fn runtime_options_catalog_for_adapter(
     adapter.runtime_options_catalog().await
 }
 
-enum AcpWsControlMode {
+enum WsControlMode {
     Simulated {
         adapter: Box<dyn HarnessEventAdapter>,
         events: mpsc::Sender<DriverEvent>,
     },
     Real {
-        commands: mpsc::Sender<AcpWsCommand>,
+        commands: mpsc::Sender<WsCommand>,
     },
 }
 
-struct AcpWsControl {
-    mode: AcpWsControlMode,
+struct WsControl {
+    mode: WsControlMode,
     kind: RunKind,
     released: bool,
 }
 
 #[async_trait]
-impl DriverControl for AcpWsControl {
+impl DriverControl for WsControl {
     async fn transition_state(
         &mut self,
         req: TransitionRequest,
@@ -549,7 +553,7 @@ impl DriverControl for AcpWsControl {
             return Err(DriverError::WorkerToolBlocked("transition_state".into()));
         }
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, events } => {
+            WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.transition_state(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(TransitionAck {
@@ -557,10 +561,10 @@ impl DriverControl for AcpWsControl {
                     message: None,
                 })
             }
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpWsCommand::TransitionState { req, ack })
+                    .send(WsCommand::TransitionState { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await.map_err(|_| {
@@ -578,7 +582,7 @@ impl DriverControl for AcpWsControl {
             return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
         }
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, events } => {
+            WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.babysitter_action(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(BabysitterAck {
@@ -586,10 +590,10 @@ impl DriverControl for AcpWsControl {
                     message: None,
                 })
             }
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpWsCommand::BabysitterAction { req, ack })
+                    .send(WsCommand::BabysitterAction { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await.map_err(|_| {
@@ -601,7 +605,7 @@ impl DriverControl for AcpWsControl {
 
     async fn send_input(&mut self, req: UserInputRequest) -> Result<UserInputAck, DriverError> {
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, events } => {
+            WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.send_input(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(UserInputAck {
@@ -609,10 +613,10 @@ impl DriverControl for AcpWsControl {
                     message: None,
                 })
             }
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpWsCommand::SendInput { req, ack })
+                    .send(WsCommand::SendInput { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await
@@ -626,7 +630,7 @@ impl DriverControl for AcpWsControl {
         req: RuntimeOptionsRequest,
     ) -> Result<RuntimeOptionsAck, DriverError> {
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, events } => {
+            WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.switch_runtime_options(req).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(RuntimeOptionsAck {
@@ -634,10 +638,10 @@ impl DriverControl for AcpWsControl {
                     message: None,
                 })
             }
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpWsCommand::SwitchRuntimeOptions { req, ack })
+                    .send(WsCommand::SwitchRuntimeOptions { req, ack })
                     .await
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await.map_err(|_| {
@@ -649,11 +653,11 @@ impl DriverControl for AcpWsControl {
 
     async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, .. } => adapter.runtime_options_catalog().await,
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Simulated { adapter, .. } => adapter.runtime_options_catalog().await,
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 commands
-                    .send(AcpWsCommand::RuntimeOptionsCatalog { ack })
+                    .send(WsCommand::RuntimeOptionsCatalog { ack })
                     .await
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await.map_err(|_| {
@@ -669,15 +673,15 @@ impl DriverControl for AcpWsControl {
         }
         self.released = true;
         match &mut self.mode {
-            AcpWsControlMode::Simulated { adapter, events } => {
+            WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.release(reason.to_string()).await?;
                 crate::modes::jsonrpc::emit_events(events, outcome.events).await;
                 Ok(())
             }
-            AcpWsControlMode::Real { commands } => {
+            WsControlMode::Real { commands } => {
                 let (ack, rx) = oneshot::channel();
                 if commands
-                    .send(AcpWsCommand::Release {
+                    .send(WsCommand::Release {
                         reason: reason.to_string(),
                         ack,
                     })
