@@ -4228,3 +4228,87 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 01:33:57 task.property_updated TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4282
+:TIME:         [2026-08-03 Mon 01:33:57]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       record the two open-question answers on the task
+:DECISION_ROLLBACK_COMPAT: v1 projection covers Staged and Committed — every stage that could have moved the live file; not Planned or Archived
+:DECISION_TOMBSTONE_SCOPE: machine-local; ledger moves to .orgasmic/tmp/run-tombstones.json (gitignored), never travels with the repository
+:END:
+
+* TX 2026-08-03 Mon 01:37:49 implementer.reported TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4283
+:TIME:         [2026-08-03 Mon 01:37:49]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:RUN_ID:       run-20260803T005028-f417a74dd2594efd9e488a4b6a06c2ee
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.4/worktree
+:SHA:          8b7eac4107053e9c785542425172a243bda2053c
+:END:
+
+* TX 2026-08-03 Mon 01:43:16 implementer.done TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4284
+:TIME:         [2026-08-03 Mon 01:43:16]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:REASON:       All four P1 findings closed with red-then-green regressions, both open questions answered and recorded as drawer properties, and the P2 closed as a consequence of answering question 1. Finding 1 was fixed structurally rather than locally: with_detached_session_lease gives the lease and the blocking transaction one spawned owner, so dropping the caller cancels nothing — the third appearance of the same lifetime-mismatch shape, fixed as a shape. THE AUTHOR CORRECTED THE REVIEWER WITH A MEASUREMENT: finding 3's vertical-tab half does not reproduce, because Rust's is_ascii_whitespace follows WhatWG Infra and excludes 0x0b; the real hole was form feed 0x0c, and both bytes are pinned anyway by a generated differential over every token boundary. It also named a trap that would have voided its own proof — the cancellation test uses Box::pin rather than tokio::pin!, because the latter drops only a Pin<&mut _> and the future survives on the stack.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    6acad7a
+:BRANCH:       task-fzb6t.4-impl
+:WALL:         25m
+:REVIEWED_DIFF: ffe6fe4..6acad7a
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; FULL daemon lib 696/704 with all 8 failures GREEN in isolation (live-mux class, none in the changed code); core lib 158/0; required_test_tooling_is_present GREEN; git check-ignore confirms the relocated ledger is covered by .orgasmic/.gitignore
+:CLOSED_TX:    tx-20260803-orgasmic-4280
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 01:43:16 task.state_transitioned TASK-FZB6T.4
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4285
+:TIME:         [2026-08-03 Mon 01:43:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.4
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-FZB6T.4 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 01:43:16 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4286
+:TIME:         [2026-08-03 Mon 01:43:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-FZB6T.4 landed (merge 6acad7a); round-4 review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
