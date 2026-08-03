@@ -2345,6 +2345,40 @@ from the home the installed LaunchAgent already serves. A per-user service
 mutated as a side effect of a per-home read is a trap for every caller, and the
 =install.sh= trailing-status trap already recorded in the runtime-reinstall
 memory is the same defect wearing a different hat.
+THE SAFE PATTERN, found by the TASK-3CM0Q worker and CONFIRMED BY MEASUREMENT
+[2026-08-03]. This is what every test and probe that needs a real daemon should
+have been doing all along.
+
+Set =ORGASMIC_DAEMON_URL= on the CHILD process. =ensure_running= returns before
+=start_via_selected_adapter= is ever reached, so no adapter starts, no
+LaunchAgent is written, and the operator daemon is never touched. The existing
+=crates/orgasmic-cli/tests/manager_register.rs= already relies on this; it was
+simply never written down as the rule.
+
+=crates/orgasmic-cli/tests/manager_tier_cli.rs= spawns the built binary against a
+real booted daemon and walks a full undeclared-read -> declare -> read-back ->
+refuse -> re-declare sequence. The manager ran it and then checked
+=~/Library/LaunchAgents/orgasmic.daemon.plist=: mtime UNCHANGED. So the pattern
+is verified, not merely argued.
+
+Contrast with what the three outages did: stage an =ORGASMIC_HOME= and invoke a
+verb, which has nothing listening, so =ensure_running= proceeds to the adapter
+and rewrites the one real per-user plist.
+
+*The rule to write into briefs and tests from now on:*
+- need a real daemon in a test => point the CHILD at one with
+  =ORGASMIC_DAEMON_URL=;
+- never stage =ORGASMIC_HOME= to get isolation, because it does not isolate the
+  LaunchAgent;
+- =env -u ORGASMIC_HOME= to strip a LEAKED value is the opposite of staging one
+  and remains correct.
+
+This also sharpens the code fix this task asks for. =ensure_running= already has
+a cheap correct path when it is told where the daemon is; the defect is that
+absent that, it silently escalates to mutating a per-user service. Refusing —
+or at minimum warning — when the home it is asked to start differs from the one
+the installed LaunchAgent serves would have turned all three outages into an
+error message.
 
 ** Description
 

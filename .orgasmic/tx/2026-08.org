@@ -5262,3 +5262,86 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-03 Mon 03:13:48 implementer.reported TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4340
+:TIME:         [2026-08-03 Mon 03:13:48]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:RUN_ID:       run-20260803T025326-cb72e5123870426391c3c0528fd9454a
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3cm0q/worktree
+:SHA:          7e5920e65f6996685f17f7bc9eb537ae35c9b799
+:END:
+
+* TX 2026-08-03 Mon 03:16:07 implementer.done TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4341
+:TIME:         [2026-08-03 Mon 03:16:07]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:REASON:       The verb exists and the default is inverted. Its best decision is the asymmetry on re-declaration: growth re-declares upward with no flag and no permission, because the tier is computed from countable triggers and a recomputation is not a decision anyone can approve — but LOWERING is refused without --lower and a reason stating the first declaration was wrong, since 'it looked smaller once I was inside it' is the exact rationalization the floor rule exists to stop and must not be spellable as a fresh computation. On the inherited WIP it found the daemon half complete but entirely unwired with no test, and the CLI verb non-existent; it verified the handler against the acceptance rather than trusting it. It also found the SAFE way to drive a real daemon from a test — ORGASMIC_DAEMON_URL on the child makes ensure_running return before any adapter start — which is the pattern TASK-48SFW's three outages should have used, and the manager confirmed the plist mtime was unchanged after running it.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    40d5229
+:BRANCH:       task-3cm0q-impl-cont
+:WALL:         22m
+:REVIEWED_DIFF: aa400dc..HEAD
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:GATES:        fmt clean; clippy -D warnings clean; cli_parity 3/0; core fixtures 26/0; manager_tier_endpoint 4/0; manager_tier_cli production probe 1/0 with the LaunchAgent plist mtime VERIFIED unchanged afterwards
+:CLOSED_TX:    tx-20260803-orgasmic-4333
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 03:16:07 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4342
+:TIME:         [2026-08-03 Mon 03:16:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-3CM0Q to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-03 Mon 03:16:07 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4343
+:TIME:         [2026-08-03 Mon 03:16:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed and gated; production probe verified not to touch the LaunchAgent.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 03:16:33 task.edited TASK-48SFW
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4344
+:TIME:         [2026-08-03 Mon 03:16:33]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-48SFW
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-48SFW
+:NODE_ID:      TASK-48SFW
+:END:
