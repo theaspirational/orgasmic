@@ -21007,6 +21007,45 @@ Tests: drivers 261/0. supervisor module 97 passed, with
 2 of 3 runs on HEAD without these changes and 2 of 3 with them, so pre-existing
 (TASK-STWVB). dispatch_endpoint has 3 failures, identical on HEAD, from stale
 worker fixtures ("legacy user/workers directory ignored").
+=== READ THIS FIRST — STATUS, 2026-08-03 ===
+
+*THIS TASK IS COMPLETE. It has now misrouted TWO dispatches and there is no work
+left in it.*
+
+The body above opens with "PARTIAL IMPLEMENTATION" and then, roughly 250 lines
+later, ends with a "COMPLETE (2026-07-25)" block that supersedes every earlier
+NOT LANDED / STILL NOT LANDED list. Anyone scoping from the top concludes there
+is remaining work. There is not. That misreading dispatched a worker on
+2026-07-26 ("no adapter probes and no atomic abort") and again on 2026-08-03
+("what remains is the atomic-abort half" — that was the manager, who read the
+first section and never reached the last).
+
+The 2026-08-03 worker wrote no code and instead REPRODUCED every claim in the
+COMPLETE block by running its tests. All green, no billed turn:
+
+- atomic abort — =f80b577=. =terminal_failure_releases_any_transport=, consumed
+  in =take_driver_terminal_release=; a terminal Failed event now releases on
+  EVERY transport, and releasing reaps the process group. Proof:
+  =a_declared_failure_releases_without_waiting_for_the_harness_to_exit= — its
+  driver stream never ends, so the 2s bound IS the assertion.
+- race test — =f80b577=.
+  =a_failure_declared_before_the_run_is_recorded_still_ends_the_run=, driven by
+  =FatalBeforeBookkeepingDriver= which pushes Ready -> "Please run /login" ->
+  fatal SYNCHRONOUSLY inside =acquire=, so the queue is guaranteed non-empty at
+  the instant the supervisor inserts the run record. Asserts release, exactly one
+  release, no surviving lease, and that the reason still reached the session.
+- end-to-end absence — =dd1fb9b=.
+  =an_unusable_credential_leaves_no_lease_no_session_and_no_run= in
+  =crates/orgasmic-daemon/tests/dispatch_preflight.rs=: a real dispatch returns
+  400 with no session file, no lease in =/api/runs=, no =run.created= in tx, and
+  a SECOND dispatch refused 400 rather than 409 — so the lease is genuinely free,
+  not merely unreported. Maintained since by S0QRM, GEZHQ and KKBTP, which is
+  stronger evidence than its mere presence.
+
+LESSON FOR LONG HEADINGS, cheap to apply: a heading that records its own history
+in chronological order will be read top-down and scoped from the FIRST status
+block a reader meets. Put the CURRENT status at the TOP, or the record keeps
+re-dispatching finished work. That is what this block is.
 ** Evidence
 Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
 
