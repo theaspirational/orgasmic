@@ -5571,3 +5571,92 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 03:35:46 implementer.reported TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4358
+:TIME:         [2026-08-03 Mon 03:35:46]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:RUN_ID:       run-20260803T032424-50330c51b0fe49e783fcf8bca31efe41
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8ed6v/worktree
+:SHA:          0816547ae097e0528c98b3b5b857726b9287a30c
+:END:
+
+* TX 2026-08-03 Mon 03:36:09 implementer.reported TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4359
+:TIME:         [2026-08-03 Mon 03:36:09]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:RUN_ID:       run-20260803T032855-a1772376f13e46b9956460cff50dbd72
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tjkfc/worktree
+:END:
+
+* TX 2026-08-03 Mon 03:37:15 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4360
+:TIME:         [2026-08-03 Mon 03:37:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Already complete as of 2026-07-26 (f80b577, dd1fb9b); verified 2026-08-03 by re-running every test the COMPLETE block cites — atomic abort, the race test, and the end-to-end no-lease/no-session/no-run test — all green. No further work exists.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 03:37:27 manager.dispatch_aborted TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4361
+:TIME:         [2026-08-03 Mon 03:37:27]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:REASON:       Closed ABORTED rather than done because no code was written and there is nothing to merge — but the run was a success, not a failure, and it corrects ME. TASK-TJKFC was already COMPLETE: its heading opens with PARTIAL IMPLEMENTATION and ends ~250 lines later with a COMPLETE block superseding every earlier NOT LANDED list, and I scoped the brief from the first section without reading to the end. That misrouted a dispatch on 2026-07-26 and again today. Rather than write duplicate code, the worker reproduced every claim by RUNNING its tests: atomic abort (f80b577), the race test driven by a driver pushing fatal synchronously inside acquire, and the end-to-end test proving 400 with no session, no lease, no run.created, and a second dispatch refused 400 not 409 so the lease is genuinely free. All green, no billed turn. It also declined fmt/clippy/full-suite with reasoning: it changed no source, and the machine was not calm because I had dispatched 8ED6V concurrently — the exact condition my own brief names as making those reds spurious.
+:CLOSED_TX:    tx-20260803-orgasmic-4356
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tjkfc/worktree
+:LIFECYCLE_FROM: done
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 03:37:27 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4362
+:TIME:         [2026-08-03 Mon 03:37:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-TJKFC to todo
+:FROM_STATE:   done
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-03 Mon 03:37:28 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4363
+:TIME:         [2026-08-03 Mon 03:37:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Already complete as of 2026-07-26 (f80b577, dd1fb9b); verified 2026-08-03 by re-running every test the COMPLETE block cites — all green. No further work exists.
+:FROM_STATE:   todo
+:TO_STATE:     done
+:END:
