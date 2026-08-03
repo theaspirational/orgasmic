@@ -25,12 +25,16 @@ Manager startup:
    runtime is available.
 4. Run `orgasmic manager register`.
 
-Manager-implementer: when the manager edits source directly in this session
-instead of dispatching a worker (single-worker setups), follow the resolved
-`default` workflow printed below before the first source edit. Compute the tier
-from that workflow's triggers and say which ones fired - a manager already
-implementing is exactly where the tier gets skipped, so compute it even when the
-change looks obvious.
+Manager-implementer: the manager may edit source directly in this session
+(single-worker setups) only for a task whose tier it has declared, and only when
+that tier is trivial. Compute the tier from the resolved `default` workflow's
+triggers, then record it before the first source edit with `orgasmic manager
+tier --task TASK-XXXXX --tier trivial`. Nothing on the ledger means
+unclassified, not trivial: with no declaration the edit is out of policy and
+dispatching is the route. Declaring is a statement, not a request - it blocks on
+nothing and asks nobody - and it is what makes a skipped tier findable
+afterwards, because the same verb without `--tier` reads back what was recorded
+and exits non-zero when nothing was.
 
 ** Human checkpoints
 Proceed by default. Asking is the exception and needs a reason that names which
