@@ -2557,6 +2557,55 @@ round.
 :WRITE_SCOPE: crates/orgasmic-daemon/**, crates/orgasmic-cli/**, shipped/**
 :END:
 
+DECISION [2026-08-03]: take option 2, the shared =CARGO_TARGET_DIR=. The
+operator chose it after the cost of option 1 was measured (it disables the whole
+orgasmic-cli integration suite, including the =cli_parity= false-verb guard).
+
+CONCURRENCY IS HANDLED BY CARGO, PROVEN NOT ASSUMED. Two =cargo build= runs
+against one target dir were started 2s apart; the second printed:
+
+: Blocking waiting for file lock on artifact directory
+: Finished `dev` profile ... in 0.13s
+
+So workers need no coordination protocol and cannot corrupt each other — the
+second simply waits. That answers the "how does a worker know" question: it does
+not have to.
+
+THREE THINGS THE LOCK DOES NOT COVER, and they are the real design work:
+
+1. *The lock covers BUILDING, not TESTING.* Once artifacts exist, =cargo test=
+   just runs binaries, and two workers can run suites concurrently against the
+   same target dir with no lock at all. That is exactly the load condition
+   measured FIVE times this session to redden the live-mux and process-probe
+   tests spuriously. A shared target dir does not cause that, but it removes the
+   incidental staggering that per-worktree builds provided.
+
+2. *Flag divergence causes rebuild thrashing.* =cargo clippy --all-targets=,
+   =cargo test -p orgasmic-daemon --lib= and =cargo build --release= select
+   different artifact sets; workers alternating between them invalidate each
+   other and each waits for a rebuild of what the other just discarded. With a
+   25 GB target and multi-minute daemon builds this is the dominant cost, and it
+   is worse than the lock wait. MITIGATION: briefs should name ONE gate command
+   set and workers should not improvise flags — largely already true, and now
+   load-bearing rather than stylistic.
+
+3. *Shared blast radius.* One worker running =cargo clean=, or a disk-pressure
+   cleanup, destroys every concurrent workers artifacts mid-run. Worth an
+   explicit "never cargo clean in a dispatch" line alongside the other
+   prohibitions.
+
+ONE CLEAR WIN, measured: each worktree currently carries its own target —
+=task-8ed6v= alone is 3.0 GB against the shared 25 GB. Sharing removes that
+duplication per concurrent worker, which also reduces the =syspolicyd= scan
+surface, since the gotcha attributes the bursts to executing freshly written
+binaries.
+
+IMPLEMENTATION NOTE: the daemon composes the worker environment, so
+=CARGO_TARGET_DIR= belongs there rather than in a per-brief instruction — a
+prose instruction is skippable and this needs to hold for every dispatch. Point
+it at the repo-root =target/=, which already holds the TCC grant; that is what
+makes the prompts stop.
+
 ** Description
 
 macOS TCC keys Documents-folder access by BINARY PATH. Every dispatch worktree
