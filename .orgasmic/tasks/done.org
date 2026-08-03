@@ -20494,3 +20494,132 @@ independence.
 - The transport guidance names the property that makes a transport safe, not a
   mode that was safe on one date.
 
+* DONE TASK-FZB6T.5 Fix reviewer findings by wiring existing machinery, adding nothing new
+:PROPERTIES:
+:ID: TASK-FZB6T.5
+:IMPLEMENTS: TASK-FZB6T
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/src/run_catalog.rs, crates/orgasmic-daemon/src/run_history.rs, crates/orgasmic-daemon/src/api.rs
+:FIX_SUBTASK: t
+:END:
+
+** Description
+
+Round-4 review returned NEEDS FIXES / BLOCK SHIP: three P1 and one P2
+(=reviewer.done= tx =tx-20260803-orgasmic-4313=).
+
+*THE CONSTRAINT ON THIS ROUND IS DIFFERENT FROM THE FINDINGS, AND IT MATTERS
+MORE. ADD NO NEW MECHANISM.*
+
+Four rounds, roughly twenty-one blocking findings, and the pattern is no longer
+ambiguous: *every finding in this round lives in machinery a previous round
+introduced to satisfy a previous finding.* Findings 1 and 2 are in the durable
+tombstone ledger that round 3 added to close a round-2 finding. Finding 3 is in
+the lease/rollback interaction that round 3 changed to close another. Round 3's
+own headline finding was in the lease that round 2 added.
+
+So the failure mode of this task is not "the code has bugs". It is that each fix
+enlarges the surface faster than the reviews shrink it. A fifth round that adds a
+fifth mechanism will produce a fifth review.
+
+Therefore: close these three by making EXISTING machinery consistent, not by
+adding more. Concretely, all three are consistency gaps in things that already
+exist —
+
+- =blocks_attach()= already exists and is already correct. Two call sites do not
+  use it. That is a wiring fix, not a design.
+- =refresh_dir= already loads the ledger. It applies it to one of its two output
+  paths. That is a wiring fix.
+- Forward compaction already has the fence assertion rollback lacks
+  (=run_history.rs:1034-1040=). Rollback needs the same assertion over the same
+  lease, not a new locking scheme.
+
+*IF A FIX SEEMS TO REQUIRE NEW MACHINERY, STOP AND SAY SO IN YOUR REPORT INSTEAD
+OF BUILDING IT.* That is the single most useful thing you can do for this task,
+and it is explicitly permitted — the manager needs to know, because the standing
+alternative is to defer the compaction/rollback verb entirely rather than run a
+sixth round.
+
+** Findings
+
+*1. P1 BLOCKS SHIP — boot reattach bypasses tombstoned and unprovable authority.*
+=api.rs:9854-9940,10016-10035,10139-10142,10305-10320=,
+=run_catalog.rs:270-275=.
+
+=WorktreeAuthority::blocks_attach= is correct and the polled inventory uses it
+(=api.rs:10781-10794=). =boot_reattach_candidate= checks truncation, terminal
+state and external registration, then returns the recorded worktree WITHOUT
+consulting =entry.worktree_authority=; the cold collector accepts it and passes
+the recorded worktree to =Supervisor::reattach=. So after a restart a durably
+tombstoned run — or one whose ledger is corrupt and therefore =Unprovable= — is
+auto-reattached even though =/api/runs= refuses exactly that authority.
+
+FIX: consult =blocks_attach()= on the boot path, same as the inventory path.
+
+*2. P1 BLOCKS SHIP — ledger authority is ignored on catalog cache hits.*
+=run_catalog.rs:846-865,945-997,934-943,1029-1041,1554-1565,1589-1609=,
+=api.rs:10110-10131=.
+
+=refresh_dir= routes every unchanged fingerprint into =recheck=, and phase 3
+applies =Tombstoned=/=Unprovable= only to freshly REBUILT entries. Cache-hit
+updates come only from the filesystem probe; a still-present =Verified= path
+returns no update, and =Unprovable= is not probed at all. Boot loads a disposable
+snapshot before refreshing it, so a crash that leaves an older =Verified=
+snapshot beside a later durable tombstone gives a cache hit the ledger never
+overrules. A newly corrupt ledger likewise leaves cached entries =Verified=; and
+once an entry becomes =Unprovable=, repairing the ledger cannot clear it within
+the same catalog instance.
+
+The regression at =run_catalog.rs:3211-3287= misses all three cases because it
+deletes the snapshot and constructs a NEW =RunCatalog= both before damage and
+after repair — so it never exercises a cache hit.
+
+FIX: apply ledger authority to the recheck path too. Add regressions that keep
+ONE catalog instance across damage and repair.
+
+*3. P1 BLOCKS SHIP — rollback leases one manifest generation and executes
+another.* =api.rs:7423-7445=, =run_history.rs:1775-1798,1820-1830,1034-1040=,
+=writer.rs:725-734=.
+
+The route reads paths first and starts the detached leased transaction later.
+=manifest_session_paths= does two UNLOCKED manifest reads and maps absent,
+unreadable or inconsistent state to an EMPTY path set; the blocking rollback then
+takes the maintenance lock and independently decodes whatever manifest exists at
+that later instant. Unlike forward compaction, rollback never asserts that each
+path it renames is actually in its lease.
+
+The concrete race the reviewer names: compaction holds its lease and the
+maintenance lock but has not written the manifest; rollback sees no manifest and
+takes an EMPTY lease; rollback blocks on the maintenance lock; compaction commits
+and releases; rollback reads the now-valid manifest and starts restoring; then
+compaction's detached owner releases its writer lease, so deferred lifecycle
+appends resume while rollback is renaming those same paths — the orphaned-inode
+window the lease was introduced to prevent.
+
+FIX: give rollback the same fence assertion forward compaction already has, over
+the same lease. If the decoded plan names a path not in the lease, refuse.
+
+*4. P2, not blocking, do NOT fix here — split it.* =run_history.rs:1756-1766,2936-3018=.
+Format-1 rollback hashes a replacement rebuilt by the CURRENT =build_compacted=,
+whose classifier differs from =9bee827='s first-textual-match version, so the
+reconstruction is only usually identical; and the compatibility test creates its
+"old" compacted bytes by calling the current =apply=, so it proves field-shape
+compatibility rather than recognition of bytes the format-1 implementation
+actually emitted. It is SAFE-FAILING — rollback refuses rather than overwriting,
+so no archive is destroyed — and the reviewer says to split it. File it as its
+own task; do not grow this round.
+
+** Acceptance
+
+- Findings 1, 2 and 3 closed by making existing machinery consistent, with
+  red-then-green regressions. Finding 2's regression must hold ONE catalog
+  instance across damage and repair.
+- NO new mechanism, lock, file, or state enum. If one seems required, stop and
+  report.
+- Finding 4 filed separately, not fixed here.
+- fmt, clippy -D warnings, the four injection artifacts, and ONE full
+  =cargo test -p orgasmic-daemon --lib= on a calm machine with the isolation
+  control applied to anything it reddens.
+- Never set =ORGASMIC_HOME=; never run the billed harness test; do not loop the
+  full workspace suite.
+

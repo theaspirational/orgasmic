@@ -4929,3 +4929,86 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-03 Mon 02:41:32 implementer.reported TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4321
+:TIME:         [2026-08-03 Mon 02:41:32]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:RUN_ID:       run-20260803T022035-9f8deab55600460e9b325ad0050ea001
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-fzb6t.5/worktree
+:END:
+
+* TX 2026-08-03 Mon 02:46:15 implementer.done TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4322
+:TIME:         [2026-08-03 Mon 02:46:15]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:REASON:       The constraint held: no new lock, file, module or state enum — every change is an existing function called from a place that did not call it, and the author states explicitly that nothing seemed to require new machinery, which is the answer the defer-or-continue decision needed. Two things beyond the findings. Its finding-2 regression is THREE tests rather than one, each holding a single RunCatalog across damage and repair, split deliberately because a combined test stops at the first assertion under pre-fix code — which is exactly how TASK-FZB6T.3's finding 5 produced a replay that pinned the wrong red; it learned that from this chain's own history. And it caught a FALSE GREEN on a shipped artifact: the TASK-FZB6T.1 injection stopped reproducing one of its three pinned reds because finding 2's fix re-tombstones on the same refresh pass, so rather than accept a passing verify it re-cut the patch to restore the tree state the .1 defect was observed in. Residual declared: two operator-initiated recovery reattach call sites still do not consult blocks_attach(), judged a product decision about whether an operator may force a recovery.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 8c8ceb2
+:MERGE_SHA:    bb6e77f
+:BRANCH:       task-fzb6t.5-impl
+:WALL:         18m
+:REVIEWED_DIFF: 6fddea2..bb6e77f
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:NEW_MECHANISM: none
+:GATES:        fmt clean; clippy -D warnings clean; FULL daemon lib 703/709 with all 6 failures GREEN in isolation (live-mux class, none in changed code); core lib 158/0; sentinel GREEN; author reported 709/0 on a quieter machine and all four artifacts PASS
+:CLOSED_TX:    tx-20260803-orgasmic-4319
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-03 Mon 02:46:15 task.state_transitioned TASK-FZB6T.5
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4323
+:TIME:         [2026-08-03 Mon 02:46:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T.5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-FZB6T.5 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-03 Mon 02:46:16 task.state_transitioned TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4324
+:TIME:         [2026-08-03 Mon 02:46:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-FZB6T.5 landed (merge bb6e77f); round-5 review of the delta
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-03 Mon 02:46:41 task.created TASK-YPK0D
+:PROPERTIES:
+:TX_ID:        tx-20260803-orgasmic-4325
+:TIME:         [2026-08-03 Mon 02:46:41]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YPK0D
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Declared as a residual by the TASK-FZB6T.5 implementer, which fixed the boot path the reviewer cited and deliberately did not widen to the operator-initiated routes because refusing there is a product decision rather than a consistency fix.
+:END:
