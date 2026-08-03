@@ -5,54 +5,68 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         5ea9e8f85d37fa06c8057ce1e7043b3b176da339
+:LIVENESS:         e04ac420d7e96c0daa3efc6f70cc301b69eeb43d
 :LIVENESS_AT:      [2026-08-03 Mon]
 :UPDATED_AT:       [2026-08-03 Mon]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-02/03. Sixteen tasks closed, eleven filed from what the work
-uncovered, two dispatch-wide outages survived, and one defect class isolated by
-experiment rather than by guessing.
+Session 2026-08-02/03. Seventeen tasks closed, thirteen filed from what the work
+uncovered, three dispatch-wide outages survived, and one defect root-caused in
+source after two wrong diagnoses.
 
 THE THREE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
-1. A DISPATCH CAN KILL EVERY OTHER DISPATCH. A worker that runs any daemon
-lifecycle verb — =orgasmic daemon start|stop|restart=, =orgasmic restart=,
-=orgasmic serve= — rewrites THE ONE REAL USER LAUNCHAGENT regardless of
-=ORGASMIC_HOME=, because that path is per-user and not per-home. The daemon
-restarts and every live run dies at once. That cost FIVE WORKERS in two events
-ten minutes apart tonight. The cause was isolated by elimination (TASK-48SFW):
-a ten-minute watch cleared the manager''s own =orgasmic status= polling, and a
-lone read-only worker carrying an explicit prohibition then completed untouched,
-which cleared the dispatch path. PUT THE PROHIBITION IN EVERY BRIEF until the CLI
-refuses it. It has held on every dispatch since.
+1. NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.
+Not =entry=, not a read verb, not in a subshell. From source:
+=ensure_running= -> =start_via_selected_adapter= -> =daemon_service::start=,
+whose macOS adapter WRITES AND LOADS
+=~/Library/LaunchAgents/orgasmic.daemon.plist=. That path is PER-USER and
+=ORGASMIC_HOME= does not scope it. A staged home has nothing listening, so an
+ordinary verb restarts the REAL daemon and every live run on the machine dies at
+once. FIVE WORKERS in three outages tonight.
+
+*This wording is the corrected one and the correction matters.* The first
+prohibition said "do not run daemon lifecycle verbs", which is TOO NARROW and
+missed the trigger entirely — two more outages happened after it was in place.
+The manager also wrote the instruction that caused it ("stage an =ORGASMIC_HOME=
+for the render check") and then published a "safe" rewrite that still ran an
+=orgasmic= verb against a staged home. Full evidence chain, including the three
+wrong diagnoses, in =gotchas.org= and TASK-48SFW.
+
+To verify shipped content WITHOUT a daemon, which is what the render check was
+for: =cargo test -p orgasmic-core --test fixtures= parses the shipped files,
+=cargo test -p orgasmic-cli --test cli_parity= resolves every =orgasmic=
+invocation and named flag in =shipped/= against the real binary, and
+=shipped_conventions.rs= asserts exact strings in the convention. Ask for those.
 
 2. A RED SUITE IS NOT EVIDENCE ABOUT YOUR DIFF UNTIL 8 SECONDS HAVE DISPROVED THE
-MACHINE. Reproduced FOUR times tonight on four different trees: the full daemon
-lib returns 6-14 failures, and every one passes when re-run alone against the
-same already-built binary. The class is always live-mux and process-probe tests.
-The discriminator is =syspolicyd=, which has hard-rebooted this Mac twice.
+MACHINE. Reproduced FIVE times tonight on five trees: the full daemon lib returns
+6-14 failures, always the live-mux and process-probe class, and every one passes
+re-run alone against the same already-built binary. Discriminator is
+=syspolicyd=, which has hard-rebooted this Mac twice.
 : env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME \
 :   target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1
-The mitigation is NOT free, and the bill came due tonight: a TASK-FZB6T.2
-regression reached main and survived a full review round because the author, the
-reviewer and the manager all ran FOCUSED filters. Run the full crate suite once
-when the machine is calm, then isolate whatever it reddens.
+The mitigation is NOT free: running FOCUSED filters to spare the machine let a
+TASK-FZB6T.2 regression reach main and survive a full review round. Run the full
+crate suite once when the machine is calm, then isolate whatever it reddens.
 
 3. A PASSING =orgasmic verify= PROVES THE RED HAPPENS, NOT THAT IT IS THE RIGHT
-RED. A re-cut injection passed the manager''s replay while never reaching the
-assertions it claimed to pin, because an earlier assertion panicked first. Treat
-a PASS as necessary and never sufficient for a RE-CUT artifact; read the patch.
+RED. Twice tonight. A re-cut injection passed the manager's replay while never
+reaching the assertions it claimed to pin, because an earlier assertion panicked
+first; and later a shipped artifact became a FALSE GREEN when a fix made its
+defect unreproducible, which a worker caught and re-cut. Treat a PASS as
+necessary and never sufficient for a re-cut artifact — read the patch.
 
-WHAT THE WORKERS DID BETTER THAN THE BRIEFS ASKED, worth repeating as a pattern:
-three separate workers CHECKED A PREMISE they were handed instead of accepting
-it. One re-measured the claude spinner frames from the installed binary and found
-the manager''s cited byte offset was eight bytes off; one calibrated a tier rule
-against the live task graph and found the brief described a task by what the
-manager had DONE to it rather than by its heading; one refuted half of a reviewer
-finding by measuring =is_ascii_whitespace= directly. Briefs should keep inviting
-that.
+WHAT THE WORKERS DID BETTER THAN THE BRIEFS ASKED, and it should keep being
+invited: five separate workers CHECKED A PREMISE they were handed rather than
+accepting it. One re-measured the claude spinner frames and found the manager's
+cited byte offset eight bytes off; one calibrated a tier rule against the live
+graph and found the brief described a task by what the manager had DONE to it
+rather than by its heading; one refuted half a reviewer finding by measuring
+=is_ascii_whitespace= directly; one found and ran two gates the brief omitted,
+having read the tests instead of trusting the list; and one argued against half
+its own recommendation using its own near-miss as the evidence.
 
 ** Done so far
 Session 2026-08-02/03. Everything below was gated by the manager independently
@@ -236,6 +250,38 @@ ADDENDUM 3 — the run-catalog chain reached round 4, and two outages were survi
 - TASK-4CSMY and TASK-JQ8AV SHIPPED after four review rounds. It closed because
   the final round stopped fixing the symptom and made the glyph table AUDITABLE
   AGAINST THE INSTALLED BINARY, so it cannot drift silently again.
+ADDENDUM 4 — the run-catalog chain reached round 5, and the constraint finally
+broke the pattern.
+
+- TASK-FZB6T.4 (merge =6acad7a=) closed round 3s four P1s. TASK-FZB6T.5 (merge
+  =bb6e77f=) closed round 4s three, UNDER AN EXPLICIT CONSTRAINT: add no new
+  mechanism. It held — every change is an existing function called from a place
+  that did not call it — and the author stated plainly that nothing seemed to
+  require new machinery. That statement is the input the defer-or-continue
+  decision needed, because the pattern through rounds 1-4 was that each fix
+  introduced the next rounds findings.
+
+- Cumulative on TASK-FZB6T: five fix rounds, seven workers, five review rounds,
+  roughly twenty-four blocking findings. The catalog and inventory half has held
+  up in every review; the recurring blockers were concentrated in
+  =run history compact= and in machinery added to satisfy earlier findings.
+  THE SCOPING DECISION IS RECORDED ON TASK-FZB6T.4 and is still open: split the
+  compaction/rollback verb out and defer it, rather than run a sixth round.
+  Nothing reachable calls compaction and the installed runtime contains none of
+  this code, so deferring costs nothing today.
+
+- Two workers demonstrated the verification lesson without being told. One split
+  a regression into three tests because a combined one stops at the first
+  assertion under pre-fix code — which is exactly how TASK-FZB6T.3s finding 5
+  produced a replay that pinned the wrong red. The other caught a shipped
+  artifact that had become a FALSE GREEN and re-cut it rather than accepting the
+  pass.
+
+- TASK-VEGRV closed on its FOURTH attempt, the first with the render check
+  REMOVED rather than warned about. Three workers contributed; the first two were
+  killed by TASK-48SFW with their work committed. The stored per-stage model
+  matrix is gone from shipped content, replaced by a pointer to the router plus a
+  deliberate tombstone line so the next author does not re-add one.
 
 ** Next likely actions
 1. WAIT FOR THE FZB6T ROUND-4 REVIEW (=tx-20260803-orgasmic-4287=, tmux / codex /
