@@ -66,6 +66,54 @@ fn entry_router_names_every_retired_path_and_its_deciding_node() {
     }
 }
 
+/// The file-content guard above is not enough on its own: `orgasmic entry`
+/// renders the router rather than printing it, and the workflow injection
+/// truncates everything from `** Default workflow` onward. A section that
+/// drifted below that point would still satisfy the guard and reach no agent.
+/// This drives the real binary over the real shipped router.
+#[test]
+fn entry_output_carries_the_retired_content_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let shipped = repo_root().join("shipped");
+    for rel in ["entry/router.org", "workflows/default.org"] {
+        let source = shipped.join(rel);
+        write(
+            &home.source().join("shipped").join(rel),
+            &std::fs::read_to_string(&source)
+                .unwrap_or_else(|e| panic!("read {}: {e}", source.display())),
+        );
+    }
+
+    let output = orgasmic_command()
+        .arg("entry")
+        .env("ORGASMIC_HOME", &home.root)
+        .current_dir(tmp.path())
+        .output()
+        .expect("run orgasmic entry");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "entry failed\nstdout={stdout}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        stdout.contains("** Retired content"),
+        "`orgasmic entry` output has no `** Retired content` section\nstdout={stdout}"
+    );
+    for entry in RETIRED_CONTENT {
+        assert!(
+            stdout.contains(entry.rel_path) && stdout.contains(entry.deciding_node),
+            "`orgasmic entry` output does not name `{}` with `{}`; the section is in the \
+             file but not in what an agent reads\nstdout={stdout}",
+            entry.rel_path,
+            entry.deciding_node
+        );
+    }
+}
+
 /// Doctor names the residue, says which decision retired it, and offers removal.
 #[test]
 fn doctor_reports_retired_content_with_deciding_node_and_offers_removal() {
