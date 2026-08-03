@@ -5,48 +5,54 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         56819e754766a7545e2b055fa5707d2b6c63ca7e
+:LIVENESS:         7d8478f03e0325e96f485a7ef91da2618d4b68c1
 :LIVENESS_AT:      [2026-08-03 Mon]
 :UPDATED_AT:       [2026-08-03 Mon]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-02/03, second half: four fix rounds landed, four review rounds
-run, two production incidents, and one measurement that changes how every test
-number on this project should be read.
+Session 2026-08-02/03. Sixteen tasks closed, eleven filed from what the work
+uncovered, two dispatch-wide outages survived, and one defect class isolated by
+experiment rather than by guessing.
 
-THE ONE THING TO KNOW
-A red suite here is not evidence about your diff until you have spent 8 seconds
-disproving the machine. Twice, on two different trees, a full
-=cargo test -p orgasmic-daemon --lib= returned 14 failures and took 660-820s
-against a 43-86s comparable — and both times all 14 passed when re-run ONE AT A
-TIME against the SAME already-built binary in the SAME worktree, in 8 seconds
-total. The cause was =syspolicyd= at 586% CPU, the scan chain that has
-hard-rebooted this Mac twice. Two beliefs recorded in =gotchas.org= turned out
-wrong: the Developer Tools grant does NOT prevent the burst (Warp holds it and
-the burst happened anyway), and the trigger is test EXECUTION, not compilation.
+THE THREE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
-THE SECOND THING: TWO WORKER REPORTS WERE LOST TONIGHT, BY TWO UNRELATED
-MECHANISMS, ON THE SAME TASK.
-- TASK-FZB6T.1's worker committed 4,004 good lines and was killed eight minutes
-  later by the tmux stall ceiling, because the installed daemon predates
-  TASK-4CSMY's tmux liveness channel.
-- TASK-FZB6T.2's worker was killed by the manager's own daemon restart, which
-  was needed because the daemon's WRITER TASK had died and every write was
-  failing while reads still looked healthy (TASK-BX5SR).
-Both times the CODE survived and only the report was lost. Both times the
-recovery was the same: read the branch, gate it yourself, merge, close with the
-salvage recorded. =dispatch finalize= has no durable fallback — assume any
-worker can lose its report and make its commits the thing you rely on.
+1. A DISPATCH CAN KILL EVERY OTHER DISPATCH. A worker that runs any daemon
+lifecycle verb — =orgasmic daemon start|stop|restart=, =orgasmic restart=,
+=orgasmic serve= — rewrites THE ONE REAL USER LAUNCHAGENT regardless of
+=ORGASMIC_HOME=, because that path is per-user and not per-home. The daemon
+restarts and every live run dies at once. That cost FIVE WORKERS in two events
+ten minutes apart tonight. The cause was isolated by elimination (TASK-48SFW):
+a ten-minute watch cleared the manager''s own =orgasmic status= polling, and a
+lone read-only worker carrying an explicit prohibition then completed untouched,
+which cleared the dispatch path. PUT THE PROHIBITION IN EVERY BRIEF until the CLI
+refuses it. It has held on every dispatch since.
 
-THE THIRD: THE SUPERVISOR MECHANISM TOOK FOUR ROUNDS AND EACH ROUND FOUND A REAL
-DEFECT THE PREVIOUS ONE INTRODUCED. Round 2 made column 0 the discriminator, and
-claude paints its assistant bullet flush left too. Round 3 replaced that with a
-glyph allowlist, and the allowlist was missing a real frame — trading a
-false-rescue for a false-KILL, which is the failure direction no at-rest test can
-see. That is not the process failing; it is the only reason those defects are
-known. But it is why TASK-4CSMY.2 is scoped to the COMPLETENESS GUARD rather
-than to the missing glyph.
+2. A RED SUITE IS NOT EVIDENCE ABOUT YOUR DIFF UNTIL 8 SECONDS HAVE DISPROVED THE
+MACHINE. Reproduced FOUR times tonight on four different trees: the full daemon
+lib returns 6-14 failures, and every one passes when re-run alone against the
+same already-built binary. The class is always live-mux and process-probe tests.
+The discriminator is =syspolicyd=, which has hard-rebooted this Mac twice.
+: env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME \
+:   target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1
+The mitigation is NOT free, and the bill came due tonight: a TASK-FZB6T.2
+regression reached main and survived a full review round because the author, the
+reviewer and the manager all ran FOCUSED filters. Run the full crate suite once
+when the machine is calm, then isolate whatever it reddens.
+
+3. A PASSING =orgasmic verify= PROVES THE RED HAPPENS, NOT THAT IT IS THE RIGHT
+RED. A re-cut injection passed the manager''s replay while never reaching the
+assertions it claimed to pin, because an earlier assertion panicked first. Treat
+a PASS as necessary and never sufficient for a RE-CUT artifact; read the patch.
+
+WHAT THE WORKERS DID BETTER THAN THE BRIEFS ASKED, worth repeating as a pattern:
+three separate workers CHECKED A PREMISE they were handed instead of accepting
+it. One re-measured the claude spinner frames from the installed binary and found
+the manager''s cited byte offset was eight bytes off; one calibrated a tier rule
+against the live task graph and found the brief described a task by what the
+manager had DONE to it rather than by its heading; one refuted half of a reviewer
+finding by measuring =is_ascii_whitespace= directly. Briefs should keep inviting
+that.
 
 ** Done so far
 Session 2026-08-02/03. Everything below was gated by the manager independently
@@ -201,30 +207,62 @@ ADDENDUM 2, the run-catalog chain and the process trio:
   that dec_WDR5K item 9 forbids, and =manager.org= points every manager at it
   from four places. It also still says =--mode tmux=, which on the installed
   daemon is the failure that destroyed the TASK-FZB6T.1 report.
+ADDENDUM 3 — the run-catalog chain reached round 4, and two outages were survived.
+
+- TASK-FZB6T.3 (merge =84e4257=) and TASK-FZB6T.4 (merge =6acad7a=) closed the
+  round-2 and round-3 findings. Round 4 is under review as this was written.
+  Cumulative on this one task: FOUR fix rounds, SIX workers, EIGHTEEN blocking
+  findings. The catalog and inventory half has held up throughout; every
+  recurring blocker has been in =run history compact=, and three of them were the
+  same shape — a resource whose lifetime is not the transactions (the fence not
+  held across the rename, the lease dying with the HTTP request, the lease
+  dropped by request cancellation while =spawn_blocking= continued). TASK-FZB6T.4
+  fixed it as a shape with a single detached owner.
+
+- TWO DISPATCH-WIDE OUTAGES, ten minutes apart, five workers lost. Diagnosed by
+  elimination rather than by guessing, and the first diagnosis was WRONG: rmux had
+  died in the first event so it looked causal, then the second event killed two
+  tmux workers and refuted that. See TASK-48SFW for the full evidence chain and
+  the two experiments that isolated it.
+
+- THE PROCESS TRIO AND 0JY7M LANDED (merges =2c24bb3=, =9192c49=). Tier adjectives
+  are now four countable triggers with a floor rule; the "ask the user if the tier
+  is unclear" escape hatch is DELETED because it only fires when an agent notices
+  ambiguity; checkpoint classes are stated by property; and the once-per-session
+  agent-selection ask is framed as the elicitation that buys silence rather than
+  as one more confirmation. The calibration check that matters: the tier rule
+  classifies its own dispatch as =ordinary=, which is how it was run.
+
+- TASK-4CSMY and TASK-JQ8AV SHIPPED after four review rounds. It closed because
+  the final round stopped fixing the symptom and made the glyph table AUDITABLE
+  AGAINST THE INSTALLED BINARY, so it cannot drift silently again.
 
 ** Next likely actions
-1. WAIT FOR THE TWO IN-FLIGHT DISPATCHES, close them, and act on the verdicts.
-   That is the only live work; everything below is ordered behind it.
-   - TASK-4CSMY.2 implementer: merge, gate (fmt, clippy, focused supervisor set
-     INCLUDING =required_test_tooling_is_present=, both verify artifacts), close,
-     then a round-4 review of the delta. This mechanism has taken four rounds and
-     each one found a real defect the previous introduced — so review it, but
-     weigh whether a remaining finding is a blocker or a follow-up task. SHIP is
-     a real option and the round-3 reviewer was told so.
-   - TASK-FZB6T reviewer: on a SHIP, TASK-FZB6T and TASK-FZB6T.2 close and the
-     run-catalog chain is done. On NEEDS FIXES, mint TASK-FZB6T.3 the same way.
+1. WAIT FOR THE FZB6T ROUND-4 REVIEW (=tx-20260803-orgasmic-4287=, tmux / codex /
+   gpt-5.6-sol / high) and act on the verdict. On SHIP, TASK-FZB6T and all four
+   fix subtasks close and the run-catalog chain is done — which unblocks item 2.
+   On NEEDS FIXES, mint TASK-FZB6T.5 the same way, but READ THE SCOPING QUESTION
+   recorded on TASK-FZB6T.4 first: four rounds and eighteen blocking findings have
+   been concentrated in =run history compact=, while the catalog and inventory
+   half has held up across every review. Splitting the compaction verb out and
+   deferring it would remove most of the recurring class at no cost today,
+   because nothing reachable calls it and the installed runtime contains none of
+   this code. That is a scope decision for the operator or a deliberate manager
+   call — not something to keep grinding past.
 
-2. REBUILD AND REINSTALL THE RUNTIME FROM SOURCE, once the verdicts are in.
-   The operator authorized this explicitly 2026-08-03 ("free to rebuild and
-   restart the daemon from source when needed") and it was DELIBERATELY deferred
-   all session, because everything merged since =57e35de= was unreviewed and the
-   run-catalog work is deletion code that rewrites the daemon's own evidence.
-   That judgement was vindicated — the first review of it returned five HIGH
-   blocking findings. The deferral EXPIRES once the reviews are clean, because:
-   - tmux dispatches stay unsafe until the rebuild lands, which is what killed
-     the TASK-FZB6T.1 report;
-   - TASK-4CSMY's entire point (tmux liveness) is unverifiable in practice until
-     the code is actually in the running daemon.
+2. REBUILD AND REINSTALL THE RUNTIME FROM SOURCE, once the review is clean. The
+   operator authorized it explicitly on 2026-08-03 and it has been deferred all
+   session on purpose, because the run-catalog work is deletion code and the
+   installed daemon (=57e35de=) contains none of it — so there is NO live
+   exposure today, only exposure at rebuild. That judgement was vindicated three
+   times: the first review of that code returned five HIGH blockers, the second
+   three more, the third four more. The deferral EXPIRES the moment the review is
+   clean, because until the rebuild lands:
+   - TASK-4CSMY''s tmux liveness channel is not in the running daemon, so tmux
+     dispatches die on the wall clock and need =--governance-json
+     {"stall_timeout_secs":3600}=;
+   - and the alternative transport is TASK-4DTBZ (P1), which killed three workers
+     at once tonight.
    Recipe and traps: memory =orgasmic-runtime-reinstall=. The sharp one is that
    =install.sh= SKIPS the unpack when =runtimes/<version>-<target>/= already
    exists and the version string does NOT change between local builds — move the
@@ -232,38 +270,36 @@ ADDENDUM 2, the run-catalog chain and the process trio:
    old from new with =current/runtime-manifest.json='s =commit=, never the
    version string.
 
-3. TASK-BX5SR (P1, filed tonight) — the writer-death defect. Sharper than its
-   age suggests: it cost a worker its report and, through the restart needed to
-   recover, its life. Until it is fixed, a manager cannot tell a healthy daemon
-   from one that has stopped persisting, because reads keep working.
+3. TASK-48SFW (P1) — make the daemon lifecycle verbs REFUSE from inside a
+   dispatch. Right now one paragraph of brief prose is the only thing preventing
+   a repeat of tonight''s five-worker loss, and prose is skippable by exactly the
+   agent under momentum who would run the command.
 
-4. TASK-A55J7 (P1, backlog) — refuse to dispatch when no model resolves, and
-   persist resolved model/effort on RunMeta, the dispatch tx, run list and
-   dispatch-status. Resolution is =--model= > task drawer > REFUSE.
+4. TASK-BX5SR (P1) — the writer task dies on one failing transaction and every
+   write then fails while reads keep succeeding, so the daemon looks healthy.
+   Detection currently requires a log grep.
 
-5. TASK-NTNK0 — decide the rmux/tmux shadowing question deliberately (default
-   the workaround, stop shadowing, or make the sentinel louder in a worker
-   context). Every rmux dispatch is exposed to it, and rmux is currently the only
-   safe transport.
+5. TASK-4DTBZ (P1, raised tonight) — rmux dies silently and takes every pane with
+   it. No log since 2026-07-26, no crash report, three pid cycles in one session.
 
-6. TASK-0JY7M (P1, todo) — ask once per session for agent selection and echo
-   driver/harness/model/effort after each dispatch. Done by hand this session:
-   reviewers on codex/gpt-5.6-sol/high, implementers on claude/opus-5/high.
+6. TASK-VEGRV (P1) — resume from the preserved WIP. =da77b18= rewrote the
+   transport guidance and =6b199eb= holds one more stale model id found in the
+   sweep. Its brief is =.orgasmic/tmp/brief-vegrv-continue.md=.
 
-7. TASK-T7KSH (P2) — the unbounded =inspect_rmux_binary= child, on the rmux probe
-   path that every current dispatch uses.
+7. TASK-3CM0Q (P1) — resume from =a409197=, six minutes of work on the
+   =manager tier= verb. YGB1R landed the derivable triggers it depends on. Land
+   the VERB before the prose: =cli_parity= resolves every =orgasmic= invocation in
+   =shipped/= against the real binary and will correctly go red otherwise.
 
-8. TASK-STWVB (P2) — re-framed. First deliverable is a gate that returns a
-   defensible verdict on a loaded machine; the per-test root cause is second.
-   The 8-second isolation control is most of a design.
+8. TASK-A55J7 (P1) — refuse to dispatch when no model resolves, and persist
+   resolved model/effort on RunMeta and the dispatch tx.
 
-9. TASK-TJKFC (P1, in_progress) — partial implementation, no worker, untouched
-   for several sessions. Decide: finish it, or move it back to todo rather than
-   letting it sit in IN_PROGRESS claiming to be underway.
+9. TASK-NTNK0, TASK-GCTMA, TASK-T7KSH, TASK-WPC6G, TASK-Q8JEV, TASK-KF223 — the
+   filed-tonight tail, all with full evidence in their headings.
 
-10. TASK-WPC6G (P2) — put =gotchas.org= on the node write surface; it removes a
-    standing rule violation every session currently has to commit or drop
-    knowledge over.
+10. TASK-TJKFC (P1, in_progress) — partial implementation, no worker, untouched
+    for several sessions. Decide: finish it, or move it back to todo rather than
+    letting it sit in IN_PROGRESS claiming to be underway.
 
 ** In flight
 THREE DISPATCHES RUNNING, all =rmux= with a =3600s= stall override:
