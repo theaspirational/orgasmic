@@ -340,14 +340,16 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         Err(DriverError::Unsupported("ws_turn_start_params"))
     }
 
-    /// JSON-RPC session-start method for ACP-like runtimes. Codex app-server
-    /// uses `thread/start`; standard ACP agents use `session/new`.
+    /// JSON-RPC session-start method for session-oriented JSON-RPC runtimes.
+    /// Codex app-server uses `thread/start`; real ACP agents use `session/new`.
+    /// These are different protocols that happen to share a hook, not two
+    /// dialects of one (TASK-XCJYC).
     fn jsonrpc_session_start_method(&self) -> &'static str {
         "thread/start"
     }
 
-    /// JSON-RPC turn-start method for ACP-like runtimes. Codex app-server uses
-    /// `turn/start`; standard ACP agents use `session/prompt`.
+    /// JSON-RPC turn-start method for session-oriented JSON-RPC runtimes. Codex
+    /// app-server uses `turn/start`; real ACP agents use `session/prompt`.
     fn jsonrpc_turn_start_method(&self) -> &'static str {
         "turn/start"
     }

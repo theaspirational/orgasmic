@@ -25,7 +25,7 @@ export function isRunDockEligible(run: { driver?: string | null }): boolean {
 }
 
 // Drivers whose live surface is the PTY terminal (xterm pane) rather than the
-// ACP chat transcript. rmux attaches through the same daemon PTY bridge as
+// structured chat transcript. rmux attaches through the same daemon PTY bridge as
 // tmux (`rmux attach-session`), so it renders in the terminal stack too.
 export function isPtyTerminalDriver(driverTag: string): boolean {
   const normalized = driverTag.replaceAll('_', '-').toLowerCase();
