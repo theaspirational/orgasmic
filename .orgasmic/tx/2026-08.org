@@ -8396,3 +8396,145 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-05 Wed 19:04:24 manager.dispatch_started TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4525
+:TIME:         [2026-08-05 Wed 19:04:24]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx-review/worktree
+:BRANCH:       task-4wknx-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-review/task-4wknx-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 19:04:24]
+:LIVENESS:     e47b9b34760e9c27a2daa6152304b4c568ed0033
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: workflow-policy change touching close semantics and two shipped docs; codex family for independent priors
+:END:
+
+* TX 2026-08-05 Wed 19:04:24 run.created TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4526
+:TIME:         [2026-08-05 Wed 19:04:24]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4WKNX-reviewer-20260805T190424.jsonl
+:REASON:       workflow-policy change touching close semantics and two shipped docs; codex family for independent priors
+:RUN_ID:       run-20260805T190424-7a964ef2a82a466b90ee122de54ee545
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-review/task-4wknx-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-4wknx-review/task-4wknx-review-b8a19c2006de41b695cdfa0d0e88fad6-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-4wknx-review/task-4wknx-review-b8a19c2006de41b695cdfa0d0e88fad6-stdout.log
+:DISPATCH_ATTEMPT: b8a19c2006de41b695cdfa0d0e88fad6
+:DISPATCH_TX:  tx-20260805-orgasmic-4525
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 19:16:15 reviewer.reported TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4527
+:TIME:         [2026-08-05 Wed 19:16:15]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:RUN_ID:       run-20260805T190424-7a964ef2a82a466b90ee122de54ee545
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx-review/worktree
+:END:
+
+* TX 2026-08-05 Wed 19:17:33 reviewer.done TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4528
+:TIME:         [2026-08-05 Wed 19:17:33]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:REASON:       REJECT: FIX_ROUND_FINAL is spoofable through --property, so the new audit key is not a trustworthy record; confirmed against manager.rs:4718-4726 and extra() first-wins at :7027
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: a4199ed..2d9d8b8
+:VERDICT:      has-issues
+:FINDINGS:     1 BLOCK SHIP (P1, confirmed by manager); manager confirmed a third instance the reviewer missed
+:CLOSED_TX:    tx-20260805-orgasmic-4525
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 19:17:34 task.state_transitioned TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4529
+:TIME:         [2026-08-05 Wed 19:17:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4WKNX to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-05 Wed 19:18:18 task.edited TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4530
+:TIME:         [2026-08-05 Wed 19:18:18]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-4WKNX
+:NODE_ID:      TASK-4WKNX
+:END:
+
+* TX 2026-08-05 Wed 19:18:42 task.created TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4531
+:TIME:         [2026-08-05 Wed 19:18:42]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Fix round for the confirmed BLOCK SHIP on TASK-4WKNX's review: FIX_ROUND_FINAL is forgeable and contradictable through --property, and NO_REVIEW_REQUIRED has the same pre-existing hole
+:END:
+
+* TX 2026-08-05 Wed 19:18:46 task.property_updated TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4532
+:TIME:         [2026-08-05 Wed 19:18:46]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for a review finding; carries the FIX_SUBTASK marker the new default keys on
+:FIX_SUBTASK:  t
+:WRITE_SCOPE:  crates/orgasmic-cli/
+:END:
