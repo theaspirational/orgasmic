@@ -2813,6 +2813,81 @@ updating, and slot release has to be part of worktree teardown.
 lock measurement in hand and without this one; that choice should not be
 executed as recorded. Options 1 and 3 stand as previously described. Option 5 is
 the recommendation.
+** The cdhash measurement: option 5 withdrawn, and the general-vs-specific split
+OPTION 5 (STABLE WORKTREE SLOTS) IS WITHDRAWN AS THE TCC FIX. The manager
+recommended it on 2026-08-03 on the assumption that a STABLE BINARY PATH keeps a
+TCC grant. Measured 2026-08-05: it does not. The premise was wrong.
+
+*The measurement.* Decoding the =csreq= blob stored on each grant in the user
+TCC db:
+
+: worktree-built binary   -> cdhash H"b081c98ab06c6ab3611c357bdb900420b3e66d54"
+: installed runtime binary -> identifier "com.theaspirational.orgasmic" and
+:                            certificate root = H"a70531007cd128ff081597cb27bee0816613d86d"
+
+A grant for a linker/ad-hoc-signed binary is pinned to that binary's exact
+CONTENT HASH, not to its path. Rebuild the same file at the same path and the
+cdhash changes, so the grant no longer matches and macOS prompts again.
+
+*Consequence, and it inverts the recommendation.* Slots would make the prompt
+fire ONCE PER BUILD instead of once per dispatch — strictly WORSE than today,
+since a worker builds many times per dispatch. Any scheme whose mechanism is "a
+stable path earns a durable grant" fails for the same reason.
+
+*What actually makes a grant durable* is the second row: a stable SIGNING
+IDENTITY. =identifier ... and certificate root= survives rebuilds, which is
+exactly why the 2026-08-03 runtime reinstall kept its Documents access while
+the gotcha warns that a linker-signed binary is "a stranger to TCC". That is a
+real fix but not one orgasmic can apply generally — it cannot codesign arbitrary
+projects' build outputs, and requiring a signing identity to run a dispatch is a
+much heavier ask than the problem justifies.
+
+=== The remaining general fix is option 3, and the framework owns it
+Get dispatch worktrees OUT of TCC-guarded directories, rather than trying to
+make grants survive. macOS guards =~/Documents=, =~/Desktop=, =~/Downloads= and
+iCloud Drive; nothing outside them needs a grant at all, so there is no cdhash
+to invalidate and no prompt to answer.
+
+This is the right layer because ORGASMIC CREATES THE PROBLEM: it chooses to put
+worktrees at =<project>/.orgasmic/tmp/dispatch/<task>/worktree=, which inherits
+whatever guarded ancestor the project root has. A project rooted in
+=~/Documents= gets it for free and cannot opt out.
+
+*To verify before building* (do not assume, this task has already burned one
+assumption): a worktree outside Documents still has a =.git= file pointing at
+=<project>/.git/worktrees/<name>= INSIDE Documents. Confirm whether git
+operations from the worker trip a prompt, and if so whether a separate git dir
+or a shared clone avoids it.
+
+=== Is this orgasmic-specific or general? — general, with a specific accent
+GENERAL: any orgasmic project that (a) runs on macOS, (b) COMPILES BINARIES it
+then executes, and (c) is rooted under a guarded folder. Interpreted projects
+mostly escape it because the executed binary is the interpreter
+(=/usr/bin/python3=, =node=), which is already known to TCC; it is freshly
+COMPILED output that is a stranger. So Rust, Go, C/C++, CGo, Tauri and Electron
+projects hit it; plain Python/Node/Ruby ones typically do not.
+
+SPECIFIC to this repo: only the vocabulary of the disproved fix
+(=CARGO_TARGET_DIR=) and the fact that this project happens to live in
+=~/Documents=. Neither belongs in the framework.
+
+=== So: bundle the behaviour, do not write a convention
+- The FIX belongs in the daemon's worktree placement — one code path, applies to
+  every dispatch in every project, nothing to remember.
+- A repo-wide convention is the wrong instrument for the reason already recorded
+  here ("a prose instruction is skippable and this needs to hold for every
+  dispatch") and for a reason this session demonstrated three times: prohibitions
+  in prose get missed. The ORGASMIC_HOME outages happened WITH a written
+  prohibition in force.
+- Do NOT bundle toolchain knowledge. Orgasmic should not know what cargo is. If
+  a per-project environment is ever needed, it should be a generic
+  project-declared env map, not a =CARGO_TARGET_DIR= special case.
+
+=== What slots are still worth
+Bounded disk (N targets instead of one per concurrent worktree, measured at
+3.0 GB for a single worktree) and, if anyone ever revisits sharing a target dir,
+they are the only shape that keeps cargo sound. Keep them on the table as a
+disk/scale change; just not as the TCC answer.
 
 * BACKLOG TASK-RQ270 Excise the architecture layer from orgasmic and the UI (dec_HBK6A, staged A-E)    :daemon:cli:ui:shipped:
 :PROPERTIES:
