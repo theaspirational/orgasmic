@@ -2607,10 +2607,16 @@ mod anchored_dir {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     use std::path::Path;
 
-    /// Deepest nesting this will descend into before refusing. Build trees nest,
-    /// but not like this; anything deeper is likelier to be an attempt to
-    /// exhaust the fd table than a worktree, and refusing keeps the directory.
-    const MAX_DEPTH: u32 = 256;
+    /// Deepest nesting this will descend into before refusing.
+    ///
+    /// The recursion holds ONE open fd per active level, and macOS ships a
+    /// soft `RLIMIT_NOFILE` of 256 in many shells, so the bound has to sit well
+    /// under that or a deep tree exhausts the fd table instead of being
+    /// removed. 64 levels is already far past any real build tree; beyond it,
+    /// refusing and keeping the directory is the right answer. A shallower
+    /// `EMFILE` behaves the same way — `openat` fails, the removal reports the
+    /// error, and the worktree survives.
+    const MAX_DEPTH: u32 = 64;
 
     /// Open a directory without following a symlink at the final component.
     /// A symlink yields `ELOOP` (or `EMLINK` on some BSDs) and a non-directory
