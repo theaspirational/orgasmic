@@ -8888,3 +8888,160 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-05 Wed 19:57:21 task.state_transitioned TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4556
+:TIME:         [2026-08-05 Wed 19:57:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       POLICY, NOT A CORRECTION: this is a FIX_SUBTASK, and the installed runtime still closes those straight to done while refusing a reviewer dispatch from done. TASK-4WKNX merged the fix for exactly this (a fix-subtask close now lands in_review by default) but it is INERT until the runtime reinstall — so its own fix round needs the manual flip the change exists to remove
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-05 Wed 19:57:22 manager.dispatch_started TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4557
+:TIME:         [2026-08-05 Wed 19:57:22]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1-review/worktree
+:BRANCH:       task-4wknx.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-1-review/task-4wknx-1-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 19:57:22]
+:LIVENESS:     740e99f63914d55d9affbad673efa710ee4320ce
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review the fix round for the forgeable manager-owned close-tx keys; the goal requires a BLOCK SHIP fix to pass a fresh review before its chain closes
+:END:
+
+* TX 2026-08-05 Wed 19:57:22 run.created TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4558
+:TIME:         [2026-08-05 Wed 19:57:22]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4WKNX.1-reviewer-20260805T195722.jsonl
+:REASON:       review the fix round for the forgeable manager-owned close-tx keys; the goal requires a BLOCK SHIP fix to pass a fresh review before its chain closes
+:RUN_ID:       run-20260805T195722-432bb4b3af0143c0b912ab7cb91154cf
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-1-review/task-4wknx-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-4wknx-1-review/task-4wknx-1-review-24d31f560e0143d894d1df17ba108671-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-4wknx-1-review/task-4wknx-1-review-24d31f560e0143d894d1df17ba108671-stdout.log
+:DISPATCH_ATTEMPT: 24d31f560e0143d894d1df17ba108671
+:DISPATCH_TX:  tx-20260805-orgasmic-4557
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 20:06:43 reviewer.reported TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4559
+:TIME:         [2026-08-05 Wed 20:06:43]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:RUN_ID:       run-20260805T195722-432bb4b3af0143c0b912ab7cb91154cf
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1-review/worktree
+:END:
+
+* TX 2026-08-05 Wed 20:08:28 reviewer.done TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4560
+:TIME:         [2026-08-05 Wed 20:08:28]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:REASON:       REJECT: the table is a three-key denylist, not the class rule the task asked for. Manager confirmed the extension — CLOSED_TX and CLEANUP_STATUS are CONSUMED by close_matching_dispatch and close_tx_ran_cleanup, so forging them misdirects reconciliation and can suppress cleanup, which is worse than a false audit record
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: f60af0a..caf06ae
+:VERDICT:      has-issues
+:FINDINGS:     1 BLOCK SHIP (P1, confirmed by manager and extended)
+:CLOSED_TX:    tx-20260805-orgasmic-4557
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 20:08:28 task.state_transitioned TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4561
+:TIME:         [2026-08-05 Wed 20:08:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-4WKNX.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-05 Wed 20:08:59 task.edited TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4562
+:TIME:         [2026-08-05 Wed 20:08:59]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-4WKNX.1
+:NODE_ID:      TASK-4WKNX.1
+:END:
+
+* TX 2026-08-05 Wed 20:09:24 task.created TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4563
+:TIME:         [2026-08-05 Wed 20:09:24]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       round 3: the round-2 table is a three-key denylist while CLOSED_TX and CLEANUP_STATUS are forgeable AND consumed; the manager's round-2 brief under-specified the class, which is why the table came out finite
+:END:
+
+* TX 2026-08-05 Wed 20:09:25 task.property_updated TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4564
+:TIME:         [2026-08-05 Wed 20:09:25]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for a review finding
+:FIX_SUBTASK:  t
+:WRITE_SCOPE:  crates/orgasmic-cli/
+:END:
