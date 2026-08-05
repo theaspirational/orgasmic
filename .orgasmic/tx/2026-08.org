@@ -8724,3 +8724,47 @@
 :REASON:       stage B touches source markers and the CLI only; no shipped/, no UI, no .orgasmic state
 :WRITE_SCOPE:  crates/**,scripts/**
 :END:
+
+* TX 2026-08-05 Wed 19:27:55 task.state_transitioned TASK-YN5FJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4545
+:TIME:         [2026-08-05 Wed 19:27:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       chain complete: merged bb2fb24, reviewed REJECT, fix round TASK-YN5FJ.1.1 merged 14b9660 and reviewed APPROVE with no findings. The in_progress stage was an artifact of the installed runtime's reviewer_done_stage routing a non-clean verdict there; the work itself is finished and the goal's Reached-When (a BLOCK SHIP is closed only when its fix round passes a fresh review) is satisfied
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-05 Wed 19:27:55 task.state_transitioned TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4546
+:TIME:         [2026-08-05 Wed 19:27:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       chain complete: merged b20fba5, reviewed REJECT with three BLOCK SHIP findings. The manager ruling that followed was to gate the verb off rather than patch a third time; TASK-M47E5.3 did that (a1cd738) and was reviewed APPROVE with no findings. The six surviving findings are carried by TASK-RMA18, which owns the redesign. Nothing on this task remains actionable
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-05 Wed 19:28:16 task.edited TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4547
+:TIME:         [2026-08-05 Wed 19:28:16]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-M47E5.1
+:NODE_ID:      TASK-M47E5.1
+:END:

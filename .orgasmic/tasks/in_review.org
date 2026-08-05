@@ -58,4 +58,37 @@ THE STRICTLY-NARROW GRANT BECOMES IMPLEMENTABLE AGAIN IF TASK-A1KJW LANDS. That 
 A SECOND WORKTREE-DERIVED INFERENCE WAS FOUND THAT THE BRIEF DID NOT NAME — which is why the brief asked for a grep rather than a point fix. =cursor_acp::project_root()= fell back to =worktree.parent()=; post-move that names =~/.orgasmic/worktrees/<project-id>=, so the dispatch-artifact READ grant would have keyed on a =.orgasmic/tmp/dispatch= path inside the managed worktree root, a surface no project owns. Deleting the fallback only ever narrows; the daemon always supplies =project_root= (=api.rs:4331=, required parameter), and the sibling =cursor.rs= adapter already had no fallback, so this matches the shape that was already correct. A third hit was a test-only opt-in transcript probe encoding the in-project layout, also corrected.
 
 Gates, re-run by the manager on the MERGED tree: =scripts/run-tests.sh -p orgasmic-drivers= GREEN 0 failures; =cargo clippy --workspace --all-targets -- -D warnings= exit 0; =cargo fmt --all --check= exit 0; =orgasmic verify TASK-M47E5.1= PASS.
+** Owed review — found by a hygiene sweep
+**This task merged and was never reviewed.** Found by a board-hygiene sweep, not
+by anything failing.
+
+The ledger is unambiguous: =implementer.done= at
+[2026-08-05 Wed 18:09:04], =LIFECYCLE_TO: in_review=, and no
+=manager.dispatch_started= of kind =reviewer= for this task afterwards. It has
+sat in =in_review= ever since — a stage that looks correct and healthy, which is
+precisely why it went unnoticed. Every OTHER task on this board that stalled did
+so in =in_progress=, the shape the handoff tells you to grep for. This one
+stalled in the stage that means "waiting for a reviewer" while no reviewer was
+ever asked for.
+
+WHY IT HAPPENED, so the shape is recognisable rather than just recorded: this
+task was dispatched CONCURRENTLY with TASK-M47E5.2's review, deliberately
+scoped to =crates/orgasmic-drivers/**= so the two could not collide. When the
+M47E5.2 review came back REJECT with three BLOCK SHIP findings, the manager's
+attention went to the ruling that produced TASK-M47E5.3, and the quietly
+successful concurrent dispatch was never picked back up. A REJECT is loud; a
+clean close that needs a follow-up action is silent.
+
+THE REVIEW IS STILL OWED. Under the active goal, merged work gets reviewed, and
+this is merged work. Nothing about the delay makes the review less necessary —
+the diff removed a permission grant, which is exactly the class where "it looked
+fine" is not evidence.
+
+WHAT THE REVIEWER SHOULD BE TOLD, since the judgement call here was real: the
+task asked whether the "own dispatch artifacts" variant still meant anything once
+it could no longer key on the worktree. The implementer's answer was that it did
+not, so the narrower grant was REMOVED and callers routed to the sibling rather
+than leaving two names for one predicate. The specific thing to attack is whether
+that removal WIDENED anything: the brief's hard constraint was that the fix
+restores exactly what the grant used to allow and not one path more.
 
