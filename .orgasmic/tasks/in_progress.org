@@ -243,6 +243,10 @@ Note the asymmetry that makes this easy to miss: `close_property_value` (:5790) 
 - Independent re-verification by the reviewer: `orgasmic verify TASK-4WKNX` PASS, `cli_parity` 3 passed.
 
 **Deferred, not folded in:** the reviewer suggests a close-time next-action line or a `dispatch-status` diagnostic for a `FIX_SUBTASK` parked `in_review` with no reviewer dispatch. That is a usability follow-up on a workflow that now works; it does not belong in a fix round for an audit hole.
+** Follow-up filed from the review's Open Questions
+The reviewer's second open question — a close-time next-action line or a =dispatch-status= diagnostic for a =FIX_SUBTASK= parked =in_review= with no reviewer dispatch — is filed as TASK-3HR8R, and it was UPGRADED from the usability follow-up the manager first called it.
+
+A board-hygiene sweep the same day found TASK-M47E5.1 merged at 18:09 and never reviewed, stalled in exactly this shape. So the reviewer reasoned FORWARD from a design change and the sweep reasoned BACKWARD from a real miss, and both landed on the same gap. It is a review the goal requires going missing silently, not polish.
 
 * IN_PROGRESS TASK-4WKNX.1 Reserve manager-owned close-tx keys from the generic --property channel
 :PROPERTIES:
