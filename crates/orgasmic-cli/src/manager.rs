@@ -199,12 +199,19 @@ enum ManagerOwnedClosePropertyPolicy {
     AliasedVerdict,
 }
 
-/// A close-tx key whose authoritative value comes from manager-owned close
-/// semantics rather than the generic `--property` channel.
+/// A close-tx key whose generic `--property` spelling earns a LOUD REFUSAL.
 ///
-/// New entries are reserved by default. The only exception is `VERDICT`: its
-/// property spelling predates the typed flag and deliberately remains a
-/// free-text alias, with the existing both-spellings conflict.
+/// orgasmic:TASK-4WKNX.1.1 — this is deliberately NOT the manager-owned
+/// namespace. Value precedence is settled by construction: `close_done_request`
+/// accumulates every structured value in `manager_extra` and the caller's
+/// properties can only join through `finish_close_tx_extras`, which appends
+/// them last, so first-wins readers take the manager's value for any key,
+/// listed or not. Entries here exist for the keys where being silently
+/// overridden is not enough — the deliberate bypass flags, where forging the
+/// spelling must be an error rather than a no-op.
+///
+/// The only alias is `VERDICT`: its property spelling predates the typed flag
+/// and deliberately remains free-text, with the both-spellings conflict.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct ManagerOwnedCloseProperty {
     key: &'static str,
@@ -230,9 +237,12 @@ impl ManagerOwnedCloseProperty {
     }
 }
 
-// orgasmic:TASK-4WKNX.1 — one declared policy table for the manager-owned
-// close-tx namespace. A new manager-owned key enters as `reserved`; preserving
-// a property alias must be an explicit compatibility decision like VERDICT's.
+// orgasmic:TASK-4WKNX.1.1 — the loud-refusal list, NOT the manager-owned
+// namespace. DO NOT add a structural key here to make the manager's value win:
+// it already does, by construction, via `finish_close_tx_extras`. Adding one
+// would re-create the enumeration dependency round 3 removed — a key protected
+// only if someone remembered to list it. Add a key here only when its generic
+// spelling must be REFUSED, which today means the deliberate bypass flags.
 const MANAGER_OWNED_CLOSE_PROPERTIES: &[ManagerOwnedCloseProperty] = &[
     ManagerOwnedCloseProperty::reserved("FIX_ROUND_FINAL", "--fix-round-final"),
     ManagerOwnedCloseProperty::reserved("NO_REVIEW_REQUIRED", "--no-review-required"),

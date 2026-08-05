@@ -9176,3 +9176,82 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-05 Wed 20:34:17 task.state_transitioned TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4572
+:TIME:         [2026-08-05 Wed 20:34:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       POLICY, NOT A CORRECTION: FIX_SUBTASK closes land done on the installed runtime, which refuses a reviewer dispatch from done. TASK-4WKNX fixed this on main but it is inert until the reinstall
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-05 Wed 20:34:18 manager.dispatch_started TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4573
+:TIME:         [2026-08-05 Wed 20:34:18]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1.1-review/worktree
+:BRANCH:       task-4wknx.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-1-1-review/task-4wknx-1-1-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 20:34:18]
+:LIVENESS:     718705435c94953c712584e774b2afc4f0da59e0
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: third round on this namespace; the reviewer is the check on whether it has converged
+:END:
+
+* TX 2026-08-05 Wed 20:34:18 run.created TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4574
+:TIME:         [2026-08-05 Wed 20:34:18]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-4WKNX.1.1-reviewer-20260805T203418.jsonl
+:REASON:       third round on this namespace; the reviewer is the check on whether it has converged
+:RUN_ID:       run-20260805T203418-9cdd3a7b9d734b6a89dd1180897cbd08
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-4wknx-1-1-review/task-4wknx-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-4wknx-1-1-review/task-4wknx-1-1-review-bbc447da215f4e2e9f44c0db107651ec-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-4wknx-1-1-review/task-4wknx-1-1-review-bbc447da215f4e2e9f44c0db107651ec-stdout.log
+:DISPATCH_ATTEMPT: bbc447da215f4e2e9f44c0db107651ec
+:DISPATCH_TX:  tx-20260805-orgasmic-4573
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 20:44:57 reviewer.reported TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4575
+:TIME:         [2026-08-05 Wed 20:44:57]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:RUN_ID:       run-20260805T203418-9cdd3a7b9d734b6a89dd1180897cbd08
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1.1-review/worktree
+:END:
