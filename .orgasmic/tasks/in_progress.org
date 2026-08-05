@@ -346,3 +346,4 @@ Integration gates, re-run by the manager on the MERGED tree:
 - The DAEMON suite was not re-run by the manager: the daemon diff against base is COMMENT-ONLY, verified by filtering the diff to non-comment lines and getting an empty result. The implementer ran it twice, red both times with NO OVERLAP between the failing tests, all green in isolation.
 
 THE FIRST GATE RUN WAS RED, AND THAT RED WAS USEFUL. =sigterm_exits_through_graceful_shutdown_rather_than_default_disposition= failed as REAL — unregistered. It is TASK-37WN7, filed earlier the same day and deliberately left out of the registry for want of a captured signature. The gate handed one over. Registered in =898c7e3= with the signature pinned to the =status.signal()= assertion only, so a failure on the deadline or exit-code branch still reads REAL.
+

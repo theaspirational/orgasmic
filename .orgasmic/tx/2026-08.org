@@ -7997,3 +7997,132 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       two review rounds, six BLOCK SHIP findings, all on the destructive path — this needs design, not a third patch round
 :END:
+
+* TX 2026-08-05 Wed 18:11:14 task.state_transitioned TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4503
+:TIME:         [2026-08-05 Wed 18:11:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-M47E5.3 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-05 Wed 18:11:15 manager.dispatch_started TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4504
+:TIME:         [2026-08-05 Wed 18:11:15]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.3/worktree
+:BRANCH:       task-m47e5.3-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-3/task-m47e5-3-brief.md
+:STARTED_AT:   [2026-08-05 Wed 18:11:15]
+:LIVENESS:     5b8d84a7cb03bc665c18e8aafb146e80e3c5633c
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0 safety gate; small by design so it is obviously correct on inspection — the redesign is TASK-RMA18
+:END:
+
+* TX 2026-08-05 Wed 18:11:15 run.created TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4505
+:TIME:         [2026-08-05 Wed 18:11:15]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-M47E5.3-implementer-20260805T181115.jsonl
+:REASON:       P0 safety gate; small by design so it is obviously correct on inspection — the redesign is TASK-RMA18
+:RUN_ID:       run-20260805T181115-fbb11f71dd194b81aecc69096c80b6bd
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.3/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-3/task-m47e5-3-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-m47e5-3/task-m47e5-3-8b2af45070c8483989174db08e270555-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-m47e5-3/task-m47e5-3-8b2af45070c8483989174db08e270555-stdout.log
+:DISPATCH_ATTEMPT: 8b2af45070c8483989174db08e270555
+:DISPATCH_TX:  tx-20260805-orgasmic-4504
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 18:24:22 implementer.reported TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4506
+:TIME:         [2026-08-05 Wed 18:24:22]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:RUN_ID:       run-20260805T181115-fbb11f71dd194b81aecc69096c80b6bd
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.3/worktree
+:SHA:          c7d8e51b9075f0c95d397ca2624a990ca76b089e
+:END:
+
+* TX 2026-08-05 Wed 18:29:58 task.edited TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4507
+:TIME:         [2026-08-05 Wed 18:29:58]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-M47E5.3
+:NODE_ID:      TASK-M47E5.3
+:END:
+
+* TX 2026-08-05 Wed 18:30:01 implementer.done TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4508
+:TIME:         [2026-08-05 Wed 18:30:01]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:REASON:       gate verified on the real binary (exit 1 both forms, dispatch-status clean); retained impl proven unchanged by the manager
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    a1cd738
+:BRANCH:       task-m47e5.3-impl
+:CLOSED_TX:    tx-20260805-orgasmic-4504
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 18:30:01 task.state_transitioned TASK-M47E5.3
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4509
+:TIME:         [2026-08-05 Wed 18:30:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-M47E5.3 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
