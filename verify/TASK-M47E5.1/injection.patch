@@ -1,0 +1,71 @@
+diff --git a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+index f41d69d..1a0efd2 100644
+--- a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
++++ b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+@@ -98,16 +98,14 @@ impl CursorAcpAdapter {
+         self.ctx.as_ref().and_then(|ctx| ctx.worktree.clone())
+     }
+ 
+-    // orgasmic:TASK-M47E5.1
+-    /// The configured project root, and nothing inferred from the worktree.
+-    /// Since TASK-M47E5 the managed worktree lives at
+-    /// `~/.orgasmic/worktrees/<project-id>/<task>/`, so its parent names the
+-    /// managed worktree root rather than a project — a path allowlist keyed on
+-    /// that would grant a surface no project owns. The daemon always sends
+-    /// `project_root` in the driver config, so with the guess removed the
+-    /// grants either key on the real root or refuse.
+     fn project_root(&self) -> Option<PathBuf> {
+-        self.cfg.as_ref().and_then(|cfg| cfg.project_root.clone())
++        self.cfg
++            .as_ref()
++            .and_then(|cfg| cfg.project_root.clone())
++            .or_else(|| {
++                self.worktree()
++                    .and_then(|p| p.parent().map(Path::to_path_buf))
++            })
+     }
+ }
+ 
+@@ -998,19 +996,8 @@ impl CursorAcpAdapter {
+         } else if reason.is_some() {
+             return false;
+         }
+-        // orgasmic:TASK-M47E5.1
+-        // The second grant used to be `path_under_own_dispatch_artifacts`,
+-        // which named this attempt's stem directory as `worktree.parent()`.
+-        // TASK-M47E5 moved managed worktrees out of the project, so that
+-        // parent is now the managed worktree root and the grant could never
+-        // fire. Nothing this adapter holds identifies the attempt's stem
+-        // either — the stem is derived from the operator-chosen brief file
+-        // name (`dispatch_artifact_stem` in the CLI), and the driver is handed
+-        // a task id, a run id and a worktree, none of which name it. So the
+-        // narrower grant does not survive the move: the honest predicate left
+-        // is the project's dispatch surface, the same one the read grant above
+-        // already allows.
+-        self.path_under_worktree(&summary_file) || self.path_under_dispatch_artifacts(&summary_file)
++        self.path_under_worktree(&summary_file)
++            || self.path_under_own_dispatch_artifacts(&summary_file)
+     }
+ 
+     fn git_c_command_allowed(&self, words: &[String]) -> bool {
+@@ -1048,6 +1035,20 @@ impl CursorAcpAdapter {
+             .unwrap_or(false)
+     }
+ 
++    fn path_under_own_dispatch_artifacts(&self, path: &Path) -> bool {
++        let Some(worktree) = self.worktree().filter(|path| path.is_absolute()) else {
++            return false;
++        };
++        let Some(dispatch_attempt) = worktree.parent() else {
++            return false;
++        };
++        let Some(project_root) = self.project_root() else {
++            return false;
++        };
++        let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
++        path_is_under(dispatch_attempt, &dispatch_root) && path_is_under(path, dispatch_attempt)
++    }
++
+     fn path_is_worktree(&self, path: &Path) -> bool {
+         self.worktree()
+             .filter(|path| path.is_absolute())
