@@ -1597,6 +1597,415 @@ async fn dispatch_close_rejects_unverified_merge_evidence_and_records_review_byp
     let _ = running.join.await;
 }
 
+/// TASK-YN5FJ.1: the defect was that the refusal's own remedy did not clear the
+/// refusal. `VERDICT` had no flag — only the generic `--property VERDICT=` set
+/// it — so an operator who followed "dispatch and close a reviewer for that
+/// reported generation" verbatim produced an ordinary `reviewer.done` with no
+/// `VERDICT` and was refused again with the same message. A test that only
+/// asserts `--verdict` is accepted cannot see that, so this walks the whole
+/// loop: refuse, follow the PRINTED remedy, succeed.
+async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &str)) {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let implementer_brief = tmp.path().join("codex/verdict-remedy-impl.md");
+    let implementer_worktree = tmp.path().join("worktrees/verdict-remedy-impl");
+
+    let running = boot(home.clone()).await;
+    let implementer_started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &implementer_worktree,
+        &implementer_brief,
+    )
+    .await;
+    write(
+        &implementer_worktree.join("verdict-remedy-change.txt"),
+        "worker output\n",
+    );
+    let summary = tmp.path().join("verdict-remedy-summary.md");
+    write(&summary, "reported implementer");
+    run_orgasmic(
+        &home,
+        &running,
+        &implementer_worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    let worker_sha = run_git(&implementer_worktree, &["rev-parse", "HEAD"]);
+
+    run_git(&project_root, &["checkout", "main"]);
+    run_git(
+        &project_root,
+        &[
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge reviewed worker",
+            "task-dispatch-test-impl",
+        ],
+    );
+    let merge_sha = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let implementer_close = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        implementer_started_tx.as_str(),
+        "--status",
+        "done",
+        "--merge-sha",
+        merge_sha.as_str(),
+        "--worker-commit",
+        worker_sha.as_str(),
+    ];
+
+    let refusal = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &implementer_close,
+    );
+    assert!(
+        refusal.contains("no reviewer verdict exists"),
+        "default-branch refusal must name the missing verdict: {refusal}"
+    );
+    // The whole point of the fix: the refusal has to be SELF-CONTAINED — it
+    // names the requirement (a reviewer.done carrying a VERDICT) and the exact
+    // flag that records one, values included.
+    assert!(
+        refusal.contains("carries a VERDICT")
+            && refusal.contains("--verdict <approve|approve-with-follow-ups|reject>")
+            && refusal.contains("including reject"),
+        "refusal must name the verdict requirement and the --verdict remedy: {refusal}"
+    );
+
+    // `--verdict` belongs to the reviewer close, fenced the same way
+    // `--no-review-required` is fenced to the implementer close.
+    let verdict_on_implementer = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[&implementer_close[..], &["--verdict", verdict]].concat(),
+    );
+    assert!(
+        verdict_on_implementer
+            .contains("--verdict is valid only when closing a reviewer dispatch as done"),
+        "--verdict on a non-reviewer close must be refused by name: {verdict_on_implementer}"
+    );
+
+    // Follow the printed remedy VERBATIM: dispatch a reviewer for that reported
+    // generation, then close it with `--verdict <value>`.
+    let reviewer_brief = tmp.path().join("codex/verdict-remedy-review.md");
+    write(&reviewer_brief, "review the reported implementer");
+    let reviewer_worktree = tmp.path().join("worktrees/verdict-remedy-review");
+    let reviewer_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            reviewer_brief.to_str().unwrap(),
+            "--from",
+            &worker_sha,
+            "--worktree",
+            reviewer_worktree.to_str().unwrap(),
+            "--branch",
+            "task-verdict-remedy-review",
+        ],
+    );
+    let reviewer_started_tx = started_tx_from_dispatch_stdout(&reviewer_stdout);
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &reviewer_started_tx,
+            "--status",
+            "done",
+            "--verdict",
+            verdict,
+            "--reviewed-diff",
+            "main..task-dispatch-test-impl",
+        ],
+    );
+    let tx_after_review = tx_log(&project_root);
+    assert!(
+        tx_after_review
+            .lines()
+            .any(|line| line.starts_with(":VERDICT:") && line.contains(verdict)),
+        "--verdict must record the same VERDICT property the gate reads: {tx_after_review}"
+    );
+    assert_task_stage(
+        &project_root,
+        "TASK-DISPATCH",
+        expected_stage.0,
+        expected_stage.1,
+    );
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &implementer_close,
+    );
+    assert!(
+        close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="),
+        "following the refusal's printed remedy must clear the refusal: {close_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn review_gate_refusal_remedy_clears_the_refusal() {
+    review_gate_refusal_remedy_loop("approve", ("DONE", "done")).await;
+}
+
+/// TASK-YN5FJ.1 RULING 1: a `reject` verdict satisfies the gate too. The gate
+/// asks whether an independent review happened and said something, not whether
+/// it approved — a reject the manager then resolves in a follow-up commit is a
+/// normal outcome here, and the alternative (`--no-review-required`) would
+/// stamp NO_REVIEW_REQUIRED=true on a dispatch that WAS reviewed. The reject's
+/// consequence lands on the task's stage instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn review_gate_is_cleared_by_a_reject_verdict() {
+    review_gate_refusal_remedy_loop("reject", ("IN_PROGRESS", "in_progress")).await;
+}
+
+/// TASK-YN5FJ.1 RULING 3: both spellings write the same `VERDICT` key and the
+/// property reader is last-wins, so a conflict is an error rather than a silent
+/// winner.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_close_refuses_verdict_flag_alongside_property_verdict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let codex_dir = tmp.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    let brief = codex_dir.join("task-verdict-conflict-brief.md");
+    write(&brief, "reviewer verdict conflict brief");
+    let worktree = tmp.path().join("worktrees/task-verdict-conflict");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-SHIP-CLEAN",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "stdio",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-verdict-conflict",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let close_prefix = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-SHIP-CLEAN",
+        "--started-tx",
+        started_tx.as_str(),
+        "--status",
+        "done",
+    ];
+    let conflict = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            &close_prefix[..],
+            &["--verdict", "approve", "--property", "VERDICT=clean"],
+        ]
+        .concat(),
+    );
+    assert!(
+        conflict.contains("--verdict approve") && conflict.contains("--property VERDICT=clean"),
+        "a VERDICT conflict must name both spellings: {conflict}"
+    );
+
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            &close_prefix[..],
+            &[
+                "--verdict",
+                "approve",
+                "--property",
+                "RECOMMENDED_SUBTASKS=-",
+            ],
+        ]
+        .concat(),
+    );
+    // `approve` joins the legacy `clean`/`ship` as a clean verdict.
+    assert_task_stage(&project_root, "TASK-SHIP-CLEAN", "DONE", "done");
+    let tx = tx_log(&project_root);
+    assert!(
+        tx.lines()
+            .any(|line| line.starts_with(":VERDICT:") && line.contains("approve")),
+        "--verdict must write the VERDICT property: {tx}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-YN5FJ.1: the stage mapping is a pure superset of today's — the two
+/// non-clean canonical verdicts land where every other non-clean value already
+/// lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reviewer_close_non_clean_verdict_flags_stay_in_progress() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let codex_dir = tmp.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+
+    let running = boot(home.clone()).await;
+    for (task, verdict, slug) in [
+        ("TASK-HAS-ISSUES", "reject", "task-verdict-reject"),
+        (
+            "TASK-REVIEW-ISSUES",
+            "approve-with-follow-ups",
+            "task-verdict-follow-ups",
+        ),
+    ] {
+        let brief = codex_dir.join(format!("{slug}-brief.md"));
+        write(&brief, "reviewer verdict stage brief");
+        let worktree = tmp.path().join("worktrees").join(slug);
+        let dispatch_stdout = run_orgasmic(
+            &home,
+            &running,
+            &project_root,
+            &path_env,
+            &[
+                "manager",
+                "dispatch",
+                "--task",
+                task,
+                "--kind",
+                "reviewer",
+                "--mode",
+                "stdio",
+                "--harness",
+                "codex",
+                "--brief",
+                brief.to_str().unwrap(),
+                "--from",
+                &head,
+                "--worktree",
+                worktree.to_str().unwrap(),
+                "--branch",
+                slug,
+            ],
+        );
+        let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+        run_orgasmic(
+            &home,
+            &running,
+            &project_root,
+            &path_env,
+            &[
+                "manager",
+                "dispatch-close",
+                "--task",
+                task,
+                "--started-tx",
+                &started_tx,
+                "--status",
+                "done",
+                "--verdict",
+                verdict,
+                "--property",
+                "RECOMMENDED_SUBTASKS=-",
+            ],
+        );
+        assert_task_stage(&project_root, task, "IN_PROGRESS", "in_progress");
+    }
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_endpoint_failure_restores_bundled_lifecycle() {
     let tmp = tempfile::tempdir().unwrap();

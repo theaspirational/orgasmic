@@ -1,0 +1,26 @@
+# Pinned from the real red run of 2026-08-05 with the injection applied.
+#
+# The injection removes ONE thing: the `close_done_request` push that writes
+# the flag's value to the close tx's `VERDICT` key. Everything else survives —
+# the flag parses, `--help` documents it, the refusal prints the corrected
+# remedy naming it. So the operator follows self-contained instructions,
+# `dispatch-close --verdict approve` reports success, and the merge is refused
+# anyway. That is the shape of a fix that changed only the prose, and it is
+# why the acceptance test walks the loop instead of asserting the flag is
+# accepted.
+exit: 101
+
+# THE DEFECT: a documented remedy that records nothing the gate can read. This
+# is the FIRST failing assertion under this injection — the earlier refusal-
+# text assertions all pass, which is exactly the point.
+contains: --verdict must record the same VERDICT property the gate reads
+
+# The remedy WAS followed and DID report success: the panic dumps the tx log,
+# and the reviewer's terminal tx is in it — carrying no VERDICT. Without this
+# line a replay that simply failed to dispatch a reviewer at all would read as
+# this defect reproducing.
+contains: :TYPE:         reviewer.done
+
+# One test, and it is this one. A binary that collapses wholesale is a
+# different failure and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

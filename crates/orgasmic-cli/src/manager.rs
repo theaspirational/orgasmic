@@ -132,6 +132,67 @@ pub enum DispatchCloseStatus {
     Aborted,
 }
 
+// orgasmic:TASK-YN5FJ.1
+/// The canonical verdict vocabulary a reviewer close records.
+///
+/// RULING 1 (TASK-YN5FJ.1): EVERY value here satisfies the default-branch
+/// review gate, `Reject` included. The gate's question is "did an independent
+/// review happen and say something", not "did the reviewer approve":
+///
+/// 1. Merge still precedes review in practice here, so a reject the manager
+///    then resolves in a follow-up commit is a normal, good outcome — it is
+///    what happened on TASK-XCJYC (`d54fba5` reviewed REJECT, fixed in
+///    `dd494ab`).
+/// 2. If a reject blocked the close, the only way out would be
+///    `--no-review-required --reason`, which stamps `NO_REVIEW_REQUIRED=true`
+///    on a dispatch that WAS reviewed. That is strictly worse evidence than
+///    recording the reject.
+/// 3. The consequence of a bad verdict already has a home: `reviewer_done_stage`
+///    sends a non-clean verdict's task back to `in_progress`. Making the gate
+///    also judge verdict content would give one value two jobs.
+///
+/// RULING 2: this set is a SUPERSET of the legacy free-text vocabulary rather
+/// than a replacement. `clean`, `ship`, `has-issues` and anything else stay
+/// reachable through `--property VERDICT=...` with their current behaviour;
+/// `--verdict` deliberately does not accept them, so there is one canonical
+/// surface and one documented compatibility path.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ReviewVerdict {
+    #[value(name = "approve")]
+    Approve,
+    #[value(name = "approve-with-follow-ups")]
+    ApproveWithFollowUps,
+    #[value(name = "reject")]
+    Reject,
+}
+
+impl ReviewVerdict {
+    /// The string written to the close tx's `VERDICT` property. One storage
+    /// key shared with the legacy `--property VERDICT=` spelling — the flag is
+    /// a typed front door onto the same value, not a second property.
+    fn as_str(self) -> &'static str {
+        match self {
+            ReviewVerdict::Approve => "approve",
+            ReviewVerdict::ApproveWithFollowUps => "approve-with-follow-ups",
+            ReviewVerdict::Reject => "reject",
+        }
+    }
+
+    /// The value list the refusal and the conflict error print, so an operator
+    /// never has to go looking for the vocabulary.
+    fn value_list() -> String {
+        [
+            ReviewVerdict::Approve,
+            ReviewVerdict::ApproveWithFollowUps,
+            ReviewVerdict::Reject,
+        ]
+        .iter()
+        .map(|verdict| verdict.as_str())
+        .collect::<Vec<_>>()
+        .join("|")
+    }
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct DispatchCloseArgs {
     /// Task id whose dispatch is being closed; repeatable for a multi-task
@@ -164,6 +225,15 @@ pub struct DispatchCloseArgs {
     /// Additional `KEY=VALUE` properties recorded on the close tx; repeatable.
     #[arg(long = "property", value_parser = parse_close_property)]
     pub properties: Vec<(String, String)>,
+    /// Reviewer verdict, recorded as `VERDICT` on the close tx; ANY verdict
+    /// clears the default-branch review gate, `reject` included — the verdict
+    /// steers the task's next stage, not the merge.
+    ///
+    /// Valid only on a close that records `reviewer.done`. Legacy free-text
+    /// spellings (`clean`, `ship`, `has-issues`, …) stay reachable through
+    /// `--property VERDICT=<value>`; passing both is an error.
+    #[arg(long = "verdict", value_enum)]
+    pub verdict: Option<ReviewVerdict>,
     /// Tokens the worker run consumed, recorded on the close tx.
     #[arg(long)]
     pub tokens: Option<u64>,
@@ -833,6 +903,30 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     {
         bail!("--no-review-required requires --reason so the bypass is auditable");
     }
+    // orgasmic:TASK-YN5FJ.1 — RULING 3: both spellings write the same VERDICT
+    // property, and `close_property_value` is last-wins, so silently letting
+    // one win is the kind of thing nobody finds until it matters. Refuse, and
+    // name both.
+    if let (Some(flag), Some(property)) = (args.verdict, close_property_value(&args, "VERDICT")) {
+        bail!(
+            "--verdict {} and --property VERDICT={} both set the same VERDICT property on this \
+             close: pass exactly one (--verdict <{}> for the canonical vocabulary, \
+             --property VERDICT=<value> for a legacy free-text spelling)",
+            flag.as_str(),
+            property,
+            ReviewVerdict::value_list()
+        );
+    }
+    // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
+    // only on the close that records the reviewer's own terminal tx.
+    if args.verdict.is_some()
+        && !(args.status == DispatchCloseStatus::Done && tx_type == "reviewer.done")
+    {
+        bail!(
+            "--verdict is valid only when closing a reviewer dispatch as done: it records the \
+             VERDICT property on the reviewer.done tx that the default-branch review gate reads"
+        );
+    }
     let verified_merge = if matches!(tx_type, "implementer.done" | "architector.done") {
         merge_sha
             .as_deref()
@@ -849,13 +943,23 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             && !args.no_review_required
             && !reviewer_verdict_exists(&project_root, &tasks, &open.tx_id)?
         {
+            // orgasmic:TASK-YN5FJ.1 — the remedy printed here has to be one an
+            // operator can follow verbatim. It used to say only "dispatch and
+            // close a reviewer", while the gate also requires that close to
+            // carry a non-empty VERDICT — so following it exactly earned the
+            // same refusal again. Name the requirement and the flag.
             bail!(
                 "refusing --merge-sha `{}` on the default branch: no reviewer verdict exists for \
-                 implementer generation {} and task(s) {}. Dispatch and close a reviewer for \
-                 that reported generation, or re-run with --no-review-required --reason <why>",
+                 implementer generation {} and task(s) {}. The gate needs a reviewer.done that \
+                 reviewed this generation AND carries a VERDICT. Dispatch a reviewer for that \
+                 reported generation and close it with `manager dispatch-close --task <task> \
+                 --started-tx <reviewer-tx> --status done --verdict <{}>` — any of those verdicts \
+                 clears the gate, including reject. Or re-run with --no-review-required \
+                 --reason <why>",
                 merge.sha,
                 open.tx_id,
-                task_list_property(&tasks)
+                task_list_property(&tasks),
+                ReviewVerdict::value_list()
             );
         }
     }
@@ -3174,6 +3278,12 @@ fn close_done_request(
     if let Some(reviewed_diff) = optional_value(args.reviewed_diff.as_deref()) {
         extra.push(("REVIEWED_DIFF".to_string(), reviewed_diff));
     }
+    // orgasmic:TASK-YN5FJ.1 — the flag writes the SAME `VERDICT` key the legacy
+    // `--property VERDICT=` spelling writes; `dispatch_close` has already
+    // refused a close that passes both, so exactly one of these can land.
+    if let Some(verdict) = args.verdict {
+        extra.push(("VERDICT".to_string(), verdict.as_str().to_string()));
+    }
     for (key, value) in &args.properties {
         extra.push((key.clone(), sanitize_tx_value(value)));
     }
@@ -4146,8 +4256,14 @@ fn close_lifecycle_transitions(
 }
 
 fn reviewer_done_stage(args: &DispatchCloseArgs) -> LifecycleStage {
-    let verdict_clean = close_property_value(args, "VERDICT")
-        .map(|value| value == "clean" || value == "ship")
+    // orgasmic:TASK-YN5FJ.1 — a pure superset of the legacy mapping: `approve`
+    // joins the free-text `clean`/`ship` as clean, and `approve-with-follow-ups`
+    // / `reject` land where every other non-clean value already lands. This,
+    // not the default-branch gate, is where a bad verdict has its consequence
+    // (RULING 1): the gate asks whether a review happened, this asks what it
+    // said.
+    let verdict_clean = close_verdict_value(args)
+        .map(|value| value == "clean" || value == "ship" || value == "approve")
         .unwrap_or(false);
     let recommended_empty = close_property_value(args, "RECOMMENDED_SUBTASKS")
         .map(recommended_subtasks_empty)
@@ -4157,6 +4273,14 @@ fn reviewer_done_stage(args: &DispatchCloseArgs) -> LifecycleStage {
     } else {
         LifecycleStage::InProgress
     }
+}
+
+/// The `VERDICT` this close records, whichever spelling wrote it. Only one can
+/// be present: `dispatch_close` refuses a close that passes both (RULING 3).
+fn close_verdict_value(args: &DispatchCloseArgs) -> Option<&str> {
+    args.verdict
+        .map(ReviewVerdict::as_str)
+        .or_else(|| close_property_value(args, "VERDICT"))
 }
 
 fn close_property_value<'a>(args: &'a DispatchCloseArgs, key: &str) -> Option<&'a str> {
@@ -5865,6 +5989,7 @@ mod tests {
             worker_session: None,
             reviewed_diff: None,
             properties: Vec::new(),
+            verdict: None,
             tokens: None,
             wall: None,
             reason: None,
