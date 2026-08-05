@@ -6493,3 +6493,30 @@
 :REASON:       edited task node TASK-3X5AQ
 :NODE_ID:      TASK-3X5AQ
 :END:
+
+* TX 2026-08-05 Wed 09:55:41 task.created TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4414
+:TIME:         [2026-08-05 Wed 09:55:41]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator approved filing; TASK-3X5AQ's cdhash measurement rules out every path-based fix, leaving relocation as the only general one
+:END:
+
+* TX 2026-08-05 Wed 09:55:51 task.edited TASK-3X5AQ
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4415
+:TIME:         [2026-08-05 Wed 09:55:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3X5AQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-3X5AQ
+:NODE_ID:      TASK-3X5AQ
+:END:
