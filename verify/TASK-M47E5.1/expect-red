@@ -1,29 +1,17 @@
-# Pinned from the real red run of 2026-08-05 with the injection applied.
+# Pinned from a real red run of 2026-08-05 against the narrowed injection.
 #
-# The injection restores `path_under_own_dispatch_artifacts` and the
-# `worktree.parent()` fallback in `project_root`, and routes the finalize
-# summary-file grant back to the "own" variant. That is the pre-fix tree
-# exactly: the "own" grant derives this attempt's stem directory as
-# `worktree.parent()` and requires it to sit under
-# `<project>/.orgasmic/tmp/dispatch`. Since TASK-M47E5 the managed worktree
-# lives at `~/.orgasmic/worktrees/<project-id>/<task>/`, so that parent is the
-# managed worktree root and the condition is permanently false.
+# The injection restores ONLY the `worktree.parent()` fallback in
+# `project_root`. Since TASK-M47E5 the managed worktree lives at
+# `~/.orgasmic/worktrees/<project-id>/<task>/`, so that parent is the managed
+# worktree root — a surface no project owns — and a path allowlist keyed on it
+# grants reads under a `.orgasmic/tmp/dispatch` path that is nobody's dispatch
+# directory.
 exit: 101
 
-# THE DEFECT, and the FIRST failing assertion of its test under the injection
-# (the red run panicked at cursor_acp.rs:2065, the test's opening assert): a
-# cursor-acp worker handing `dispatch finalize` a summary file that sits beside
-# its own brief, in the project dispatch dir, is refused.
-contains: a summary file under the project dispatch dir must stay reachable when the worktree lives outside the project
-
-# The other guess the same move invalidated, likewise the first assertion of
-# its own test (panic at cursor_acp.rs:2112): with no configured project root,
-# the pre-fix code fabricated one from `worktree.parent()` and granted reads
-# under a `.orgasmic/tmp/dispatch` path inside the managed worktree root, which
-# is no project's dispatch surface.
+# THE DEFECT, and the first failing assertion of its test under the injection.
 contains: an unconfigured project root must not be guessed from the worktree
 
-# Exactly these two, and no collateral. A binary that collapses wholesale, or a
-# run where the in-worktree summary path or the refusal list also broke, is a
-# different failure and has not reproduced the defect this artifact claims.
-contains: test result: FAILED. 0 passed; 2 failed
+# Exactly one, and no collateral. A binary that collapses wholesale, or a run
+# where the worktree grant also broke, is a different failure and has not
+# reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

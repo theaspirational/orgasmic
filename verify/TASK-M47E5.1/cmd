@@ -1,18 +1,14 @@
 # One line. Run from the repo root by `orgasmic verify TASK-M47E5.1`.
 #
-# `env -u ...` because a dispatch leaks its run id and home into subprocesses;
-# these are pure predicate tests but the drivers binary is shared with tests
-# that boot their own state, and the rule is uniform. The `--skip` is the one
-# `orgasmic verify` requires of anything touching the drivers suite.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+# The `--skip` is the one `orgasmic verify` requires of anything touching the
+# drivers suite.
 #
-# TWO tests, one per worktree-derived guess the move invalidated. The finalize
-# one is the defect the task names: with the worktree outside the project, a
-# summary file in the project's dispatch dir is refused. The second is the
-# other half — with no configured project root, the old code invented one from
-# `worktree.parent()`, which after the move names the managed worktree root.
-# A test that only asserted "in-worktree summary files still work" could see
-# neither: that path never went through the broken predicate.
-#
-# Both positional filters go after `--`, following `--skip` and its value.
-# libtest ORs any number of positional filters; cargo takes only one.
-env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events finalize_accepts_a_dispatch_dir_summary_file_from_an_out_of_project_worktree a_dispatch_artifact_grant_refuses_when_no_project_root_is_configured
+# NARROWED 2026-08-05 (TASK-M47E5.1.1.1). This artifact used to pin TWO
+# behaviours. The first — "a summary file under the project dispatch dir must
+# stay reachable" — was the WIDENING that TASK-M47E5.1's own review later ruled
+# a BLOCK SHIP, and TASK-M47E5.1.1/.1.1.1 replaced it. Re-cutting that half
+# would have re-asserted behaviour this project has since rejected, which is
+# worse than losing the proof. Only the still-true half survives here; the
+# finalize-grant scope is pinned by verify/TASK-M47E5.1.1.1/ instead.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events a_dispatch_artifact_grant_refuses_when_no_project_root_is_configured
