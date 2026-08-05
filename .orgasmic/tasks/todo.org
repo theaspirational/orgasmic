@@ -629,4 +629,79 @@ correctness.
 
 Logs kept for this session at the scratchpad paths named in the tx; the
 per-test panics are in each run's =suite.log=.
+** How to fix it — design [2026-08-05]
+The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
+(654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
+text against =verify/flake-registry.toml= (6 entries, each requiring an OPEN
+owning task and a literal panic SIGNATURE, so one name carrying two failure
+modes cannot be confused). Do not rebuild any of that.
+
+*THE GAP, precisely.* The classifier has exactly three outcomes:
+1. not in the registry -> REAL
+2. registered NAME but unregistered SIGNATURE -> REAL (the mislabel detector)
+3. registered + signature match + green alone -> FLAKE (exit 0 eligible)
+
+and NO HOST-STATE AWARENESS whatsoever — the only occurrence of "load" in the
+script is a comment. So the 2026-08-02 run (14 failures, 4 registered, all 14
+green alone in 8s, =syspolicyd= at 586% and load average 11.41) put 10 tests in
+branch 1 and returned RED. The verdict vocabulary has no way to say "the host
+was degraded, so this run has no verdict".
+
+*THE FIX IS NOT TO REGISTER THE TEN.* The registry's own header says an entry is
+"an excuse with an expiry" that must name an open owning task, and warns that
+"a registry that only grows is a graveyard". Ten environment-induced failures
+have no owner because there is no code defect to own. Registering them would
+corrupt the instrument that currently works.
+
+=== A. Attack the trigger — the only durable fix
+Test EXECUTION is the trigger, not compilation (measured 2026-08-02: a full
+rebuild at jobs=4 kept syspolicyd at 0-64%, while the test RUN pinned it at
+586%). The mux and process-probe suites write and exec MANY short-lived shim
+scripts per test, and first-exec of a newly written file is what gets scanned.
+
+- Create the shims ONCE PER SUITE RUN behind a shared fixture rather than once
+  per test, so repeated execs of an identical path+content hit a cached scan
+  verdict instead of a fresh one.
+- Prefer a long-lived helper process or an in-process fake over spawning a fresh
+  script per assertion.
+- Where a fresh script is unavoidable, reuse content-identical files from one
+  directory instead of minting a new temp path each time.
+
+This lowers scan load at the source. Everything else below is instrumentation
+around a load problem; this is the part that removes it.
+
+=== B. Make host state a first-class input to the verdict
+Sample load average and =syspolicyd= CPU before, during and after the run, and
+stamp it on the verdict. If the host was degraded past a threshold, the run
+returns *INCONCLUSIVE — re-run when calm*, which is a THIRD outcome the exit
+codes do not currently have (today: 0 clean/all-flake, 1 REAL, 2 registry).
+
+Two things this buys, and the second is the sharper one:
+- a red on a thrashing host stops being read as a code fact;
+- a GREEN on a thrashing host stops being trusted, which today it silently is.
+  Right now a degraded run that happens to pass reports clean, and nothing in
+  the output hints that the run was not worth believing.
+
+=== C. Separate two different facts that currently look identical
+"Passes alone because of a genuine race" is a code defect: it has an owner, an
+expiry, and belongs in the registry. "Passes alone because the host was
+thrashing" is an environmental fact with no owner at all. Branch 1 collapses
+both into REAL, and the obvious workaround collapses both into the registry.
+
+Add a classification for load-sensitivity that is valid ONLY when the run's
+MEASURED host state (from B) justifies it. That interlock is what keeps the
+"excuse with an expiry" discipline intact: the excuse is bounded by a
+measurement taken during that run, not by a name sitting on a list forever.
+
+=== Sequencing
+B before C — C is unsound without a measurement to gate it. A is independent and
+is the one that actually shrinks the problem, so it can run in parallel and
+should not wait on the gate work.
+
+=== What NOT to do
+- Do not serialize the whole suite. The original acceptance already rejected
+  this, and it hides the interference rather than naming it.
+- Do not raise timeouts to fit a degraded host; that makes every future run
+  slower and still returns a meaningless verdict.
+- Do not add registry entries for the ten unregistered 2026-08-02 failures.
 
