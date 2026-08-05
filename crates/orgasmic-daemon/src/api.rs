@@ -26023,16 +26023,24 @@ pub(crate) mod tests {
     }
 
     // orgasmic:TASK-M47E5.1.1.1
-    /// The daemon owns `last_path`, so the driver config must derive its
-    /// artifact directory from that production input rather than accepting an
-    /// already-correct expected directory from the test.
-    #[test]
-    fn dispatch_driver_config_derives_the_authoritative_artifact_dir_from_last_path() {
+    /// Exercise the real dispatch spawn edge so a change to its `last_path`
+    /// derivation is visible in the config persisted for the driver.
+    #[tokio::test]
+    async fn dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        seed_project(&home, &project_root, "project");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let state = direct_stage_test_state(home).await;
+
         let worker = StageWorker {
-            id: "implementer-cursor-acp".to_string(),
+            id: "implementer-stub".to_string(),
             kind: WorkerKind::Implementer,
-            driver: "stdio".to_string(),
-            harness: "cursor-agent".to_string(),
+            driver: crate::driver_resolution::STUB_MODE.to_string(),
+            harness: crate::driver_resolution::STUB_HARNESS.to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
             babysitter: None,
@@ -26044,24 +26052,55 @@ pub(crate) mod tests {
             sandbox_permissions: None,
             harness_args: Vec::new(),
         };
-        let last_path = FsPath::new(
-            "/tmp/project/.orgasmic/tmp/dispatch/task-attempt-7/task-attempt-7-last.txt",
-        );
-        let cfg = stage_driver_config_with_overrides(
-            &worker,
-            FsPath::new("/tmp/project"),
-            FsPath::new("/tmp/worktree"),
-            last_path.parent(),
-            "brief",
-            DriverOverrides::default(),
-            None,
-            &DriverDefaults::default(),
-            None,
-        );
+        let expected_artifact_dir = project_root
+            .join(".orgasmic")
+            .join("tmp")
+            .join("dispatch")
+            .join("task-attempt-7");
+        let last_path = expected_artifact_dir.join("task-attempt-7-last.txt");
+        let spawn = spawn_worker_run(
+            &state,
+            SpawnWorkerRequest {
+                project_id: "project",
+                task_id: "TASK-M47E5-DERIVATION",
+                worker,
+                run_kind: RunKind::Worker,
+                bundle: "last_path derivation regression",
+                overrides: DriverOverrides::default(),
+                project_root_path: &project_root,
+                worktree_path: &worktree,
+                last_path: Some(&last_path),
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                origin: "cli_dispatch",
+                dispatch_kind: Some("implementer"),
+                task_sandbox_permissions: None,
+                dispatch_governance: None,
+            },
+        )
+        .await
+        .unwrap_or_else(|failure| panic!("stub dispatch spawn: {}", failure.error.message));
+
+        let envelopes = read_session_file(&spawn.session_path).expect("read spawned session");
+        let run_meta = envelopes
+            .iter()
+            .find(|env| env.kind == SessionEventKind::Lifecycle && env.event["phase"] == "run_meta")
+            .expect("spawn persists run_meta");
+        let actual_artifact_dir = run_meta.event["driver_config"]["dispatch_artifact_dir"].clone();
+
+        let _ = state
+            .supervisor
+            .release(
+                &spawn.acquire.run_id,
+                "test cleanup",
+                ReleaseOutcome::Completed,
+            )
+            .await;
 
         assert_eq!(
-            cfg.0["dispatch_artifact_dir"],
-            json!(last_path.parent().unwrap())
+            actual_artifact_dir,
+            json!(expected_artifact_dir),
+            "spawn_worker_run must derive the driver artifact directory from last_path"
         );
     }
 
