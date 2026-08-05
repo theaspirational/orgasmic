@@ -8367,6 +8367,55 @@ fn tear_tx_property(project_root: &Path, key: &str) {
     std::fs::write(&path, format!("{}\n", torn.join("\n"))).unwrap();
 }
 
+/// TASK-M47E5.2: anchoring the root must not turn an ABSENT root into an early
+/// exit. That root not existing is exactly the state an operator who `rm -rf`'d
+/// `~/.orgasmic/worktrees` leaves behind, and it is the state in which stale
+/// `.git/worktrees` admin entries most need clearing — the relocation half's
+/// whole reason for running `git worktree prune`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_still_clears_stale_metadata_when_the_managed_root_is_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    add_managed_worktree(&home, &project_root, "task-swept", "task-swept-impl", &head);
+    // The operator's `rm -rf`: the whole managed root, not just one worktree.
+    std::fs::remove_dir_all(home.root.join("worktrees")).unwrap();
+    let listed = run_git(&project_root, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains("task-swept"),
+        "git must still be carrying the stale admin entry: {listed}"
+    );
+
+    let running = boot(home.clone()).await;
+    let pruned = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        pruned.contains("PRUNED_METADATA"),
+        "an absent managed root must not skip the metadata prune, got:\n{pruned}"
+    );
+    let listed = run_git(&project_root, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !listed.contains("task-swept"),
+        "the stale admin entry must be gone: {listed}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-M47E5.2 finding 1: a symlinked managed root redirected `remove_dir_all`
 /// outside the root entirely.
 ///

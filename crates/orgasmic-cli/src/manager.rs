@@ -3475,10 +3475,11 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     // Anchor before anything reads or removes: a root that is not a real
     // directory is refused here, and every removal below resolves against this
     // handle rather than against the path (TASK-M47E5.2 finding 1).
-    let Some(anchored_root) = AnchoredManagedRoot::open(&managed_root)? else {
-        println!("PRUNE_SUMMARY RECLAIMED=0 BYTES=0 SIZE=0B KEPT=0 SKIPPED=0");
-        return Ok(());
-    };
+    // An ABSENT root is not an error and not an early exit: it means there are
+    // no worktrees to classify, but `git worktree prune` below still has stale
+    // `.git/worktrees` admin entries to clear — which is precisely the state an
+    // operator who `rm -rf`'d `~/.orgasmic/worktrees` leaves behind.
+    let anchored_root = AnchoredManagedRoot::open(&managed_root)?;
     // Fail CLOSED on an unreachable daemon. Reclamation now requires the
     // daemon's cleanup reservation, and a daemon we cannot reach is a daemon
     // that cannot prove nothing is live in these directories — which used to be
@@ -3491,7 +3492,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     let live_runs = runtime
         .block_on(fetch_live_runs(&client))
         .context("read live runs before classifying managed worktrees")?;
-    let mut found = scan_managed_worktrees(&anchored_root, &project_root, &project_id, &live_runs)?;
+    let mut found = match anchored_root.as_ref() {
+        Some(root) => scan_managed_worktrees(root, &project_root, &project_id, &live_runs)?,
+        None => Vec::new(),
+    };
     if let Some(task) = args.task.as_deref() {
         let wanted = [
             worktree_stem(task, DispatchKind::Implementer),
@@ -3605,7 +3609,17 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
         };
         worktree_prune_pause_after_guard();
         let bytes = worktree.bytes.unwrap_or(0);
-        let outcome = reclaim_managed_worktree(&project_root, &anchored_root, worktree);
+        let outcome = match anchored_root.as_ref() {
+            Some(root) => reclaim_managed_worktree(&project_root, root, worktree),
+            // Unreachable by construction — nothing is reclaimable when there
+            // was no root to enumerate — and stated rather than unwrapped,
+            // because the alternative is a panic inside a destructive verb.
+            None => WorktreeRemovalOutcome {
+                removed: false,
+                salvage: None,
+                error: Some("the managed worktree root was not anchored".to_string()),
+            },
+        };
         finish_worktree_guard(&runtime, &client, &project_id, &task_property, &mut guard);
         if let Some(salvage) = &outcome.salvage {
             println!(
