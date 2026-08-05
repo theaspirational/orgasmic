@@ -1,0 +1,12 @@
+diff --git a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+--- a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
++++ b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+@@ -1014,7 +1014,7 @@ impl CursorAcpAdapter {
+         // TASK-A1KJW can supersede this config plumbing once dispatch stems are
+         // task-derived, but the security boundary must not wait on that work.
+         self.path_under_worktree(&summary_file)
+-            || self.path_under_own_dispatch_artifacts(&summary_file)
++            || self.path_under_dispatch_artifacts(&summary_file)
+     }
+ 
+     fn git_c_command_allowed(&self, words: &[String]) -> bool {

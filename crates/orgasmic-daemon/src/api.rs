@@ -3684,6 +3684,7 @@ async fn post_stage(
         &worker,
         &project.root,
         &project.root,
+        None,
         &bundle,
         overrides,
         None,
@@ -4340,6 +4341,7 @@ fn stage_driver_config(
         worker,
         project_root,
         worktree,
+        None,
         bundle,
         DriverOverrides::default(),
         None,
@@ -4353,6 +4355,7 @@ fn stage_driver_config_with_overrides(
     worker: &StageWorker,
     project_root: &FsPath,
     worktree: &FsPath,
+    dispatch_artifact_dir: Option<&FsPath>,
     bundle: &str,
     overrides: DriverOverrides,
     task_sandbox_permissions: Option<&SandboxAllowlist>,
@@ -4387,6 +4390,7 @@ fn stage_driver_config_with_overrides(
         "args": ["-lc", "echo orgasmic pipeline stage acquired; exec sh"],
         "cwd": worktree,
         "project_root": project_root,
+        "dispatch_artifact_dir": dispatch_artifact_dir,
         "prompt_bundle_text": bundle,
         "sandbox_permissions": sandbox_allowlist_to_csv(&resolved_sandbox),
     });
@@ -4567,6 +4571,7 @@ fn build_babysitter_auto_spawn(
         &babysitter,
         worktree,
         worktree,
+        None,
         &bundle,
         DriverOverrides {
             provider: None,
@@ -4759,6 +4764,10 @@ async fn spawn_worker_run(
         &worker,
         req.project_root_path,
         req.worktree_path,
+        // `last_path` is the per-attempt terminal artifact persisted on this
+        // run. Its parent is the authoritative dispatch stem; do not derive a
+        // stem from task_id. TASK-A1KJW can later collapse this plumbing.
+        req.last_path.and_then(FsPath::parent),
         req.bundle,
         req.overrides,
         req.task_sandbox_permissions.as_ref(),
@@ -26013,6 +26022,43 @@ pub(crate) mod tests {
         assert_eq!(verbatim_optional(None), None);
     }
 
+    // orgasmic:TASK-M47E5.1.1
+    /// The daemon owns `last_path`, so its parent must cross the driver-config
+    /// boundary byte-for-byte instead of being reconstructed by the adapter.
+    #[test]
+    fn dispatch_driver_config_persists_the_authoritative_artifact_dir() {
+        let worker = StageWorker {
+            id: "implementer-cursor-acp".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: "stdio".to_string(),
+            harness: "cursor-agent".to_string(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let artifact_dir = FsPath::new("/tmp/project/.orgasmic/tmp/dispatch/task-attempt-7");
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            Some(artifact_dir),
+            "brief",
+            DriverOverrides::default(),
+            None,
+            &DriverDefaults::default(),
+            None,
+        );
+
+        assert_eq!(cfg.0["dispatch_artifact_dir"], json!(artifact_dir));
+    }
+
     /// The daemon half of the credential-mode escape hatch: a dispatch's
     /// override must land in the driver config the harness adapter reads, in
     /// the shape that adapter accepts (TASK-S0QRM).
@@ -26039,6 +26085,7 @@ pub(crate) mod tests {
                 &worker,
                 FsPath::new("/tmp/project"),
                 FsPath::new("/tmp/worktree"),
+                None,
                 "brief",
                 DriverOverrides {
                     provider: None,
@@ -26105,6 +26152,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides {
                 provider: None,
@@ -26254,6 +26302,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides::default(),
             Some(&task_override),
@@ -26368,6 +26417,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides {
                 provider: None,
@@ -26405,6 +26455,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides {
                 provider: Some("openai".to_string()),
@@ -26461,6 +26512,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides::default(),
             None,
@@ -26548,6 +26600,7 @@ pub(crate) mod tests {
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
+            None,
             "brief",
             DriverOverrides::default(),
             Some(&task_override),

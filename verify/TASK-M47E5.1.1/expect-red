@@ -1,0 +1,15 @@
+# Pinned from the pre-fix red run. The injection restores the M47E5.1 widening:
+# finalize routes through the whole project dispatch tree instead of this
+# attempt's configured artifact directory.
+exit: 101
+
+# FIRST failing assertion in the single-threaded red log. This is the exact
+# command/path pair the rejected round omitted from its matrix.
+contains: a summary file in a sibling project dispatch stem must be refused
+
+# Missing driver config must refuse rather than fall back to project_root.
+contains: a finalize artifact grant with no configured artifact dir must fail closed
+
+# Both targeted tests fail for the vulnerable implementation, with no compile
+# failure or collateral test selected by the proof command.
+contains: test result: FAILED. 0 passed; 2 failed

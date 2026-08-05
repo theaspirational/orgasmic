@@ -1530,7 +1530,11 @@ mod tests {
     }
 
     /// Optional machine-local probe. Deterministic unit tests are the CI gate;
-    /// set `ORGASMIC_PROBE_TRANSCRIPTS=1` to exercise real homes + session JSONL.
+    /// Set `ORGASMIC_PROBE_TRANSCRIPTS=1` to exercise real homes + session JSONL.
+    /// From an out-of-project worktree, point the probe at the project's live
+    /// sessions directory explicitly:
+    ///
+    /// `ORGASMIC_PROBE_TRANSCRIPTS=1 ORGASMIC_PROBE_SESSIONS="$PWD/.orgasmic/tmp/sessions" cargo test -p orgasmic-drivers production_path_probe_when_local_homes_present -- --ignored --nocapture`
     #[test]
     fn production_path_probe_when_local_homes_present() {
         if std::env::var("ORGASMIC_PROBE_TRANSCRIPTS").as_deref() != Ok("1") {
@@ -1544,16 +1548,14 @@ mod tests {
         };
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         // orgasmic:TASK-M47E5.1
-        // Only the checkout this crate is compiled from, plus the operator's
-        // override. A third candidate used to walk five levels up to reach
-        // `<project>/.orgasmic/tmp/sessions` from a dispatch worktree; since
-        // TASK-M47E5 the managed worktree lives under
-        // `~/.orgasmic/worktrees/<project-id>/<task>/`, from which no relative
-        // walk reaches the project at all — that is what
-        // `ORGASMIC_PROBE_SESSIONS` is for.
+        // The five-level candidate still serves an explicit `--worktree` in
+        // the old in-project layout accepted by `manager dispatch`; managed
+        // out-of-project worktrees cannot reach the project by relative walk
+        // and must use the documented `ORGASMIC_PROBE_SESSIONS` override.
         let candidates = [
             std::env::var_os("ORGASMIC_PROBE_SESSIONS").map(PathBuf::from),
             Some(manifest.join("../../.orgasmic/tmp/sessions")),
+            Some(manifest.join("../../../../../tmp/sessions")),
         ];
         let Some(orgasmic_sessions) = candidates.into_iter().flatten().find(|p| p.is_dir()) else {
             panic!(
