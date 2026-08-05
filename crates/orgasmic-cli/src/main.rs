@@ -968,8 +968,15 @@ enum ManagerCmd {
     Dispatch(DispatchArgs),
     /// Close an open dispatch (done or aborted).
     DispatchClose(DispatchCloseArgs),
-    /// List open dispatches and run health.
+    /// List open dispatches and run health, and report which managed worktrees
+    /// are reclaimable and how many bytes they hold.
     DispatchStatus(DispatchStatusArgs),
+    // orgasmic:TASK-M47E5
+    /// Reclaim managed worktrees under `~/.orgasmic/worktrees/<project>/` that
+    /// no open dispatch owns. Explicit and operator-run: nothing removes a
+    /// worktree on a timer or at boot. Salvages first, never forces, and names
+    /// what it skipped and why.
+    WorktreePrune(manager::WorktreePruneArgs),
     /// Clear an orphaned dispatch lease (no live run). Never needs a daemon
     /// restart; refuses when a live run still holds the lease.
     LeaseRelease(manager::LeaseReleaseArgs),
@@ -3537,6 +3544,7 @@ fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
         ManagerCmd::Dispatch(args) => manager::cmd_dispatch(home, args),
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
         ManagerCmd::DispatchStatus(args) => manager::cmd_dispatch_status(home, args),
+        ManagerCmd::WorktreePrune(args) => manager::cmd_worktree_prune(home, args),
         ManagerCmd::LeaseRelease(args) => manager::cmd_lease_release(home, args),
         ManagerCmd::Register(args) => manager::cmd_manager_register(home, args),
         ManagerCmd::Release(args) => manager::cmd_manager_release(home, args),

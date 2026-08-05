@@ -291,6 +291,28 @@ pub struct DispatchStatusArgs {
     pub partial_closed: bool,
 }
 
+/// Explicit reclamation of managed worktrees under
+/// `<home>/worktrees/<project-id>/`. The ONLY surface that removes one outside
+/// `dispatch-close`; detection of what it could reclaim runs automatically in
+/// `dispatch-status`. Resolves the project from the cwd for the same reason
+/// `dispatch-status` does (TASK-GQPGR).
+// orgasmic:TASK-M47E5
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Refuses any worktree an OPEN dispatch names, whatever its run health: ending a
+dispatch is `dispatch-close`'s job, and an abandoned one is reported with the
+verb that releases it. Salvages a dirty tree to refs/orgasmic/salvage/<sha>
+first and then removes WITHOUT --force, so git's clean check still gates the
+removal. A worktree whose repo is gone cannot be salvaged and says so.")]
+pub struct WorktreePruneArgs {
+    /// Report what would be reclaimed and change nothing on disk.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Reclaim only the managed worktrees for this task id (both kinds).
+    #[arg(long)]
+    pub task: Option<String>,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct LeaseReleaseArgs {
     /// Task whose dispatch lease should be cleared (e.g. TASK-099).
@@ -667,12 +689,8 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
         if other_kind != plan.kind {
-            let other_default = default_worktree(
-                home,
-                &plan.project_id,
-                first_task(&plan.tasks),
-                other_kind,
-            )?;
+            let other_default =
+                default_worktree(home, &plan.project_id, first_task(&plan.tasks), other_kind)?;
             if normalize_path(&plan.worktree_path) == normalize_path(&other_default) {
                 bail!(
                     "{} worktree must not reuse {} default path: {}",
@@ -2209,6 +2227,22 @@ fn salvage_worktree_if_dirty(
         );
     }
 
+    salvage_worktree_onto(project_root, worktree, task, expected_branch_oid)
+}
+
+/// Commit a dirty worktree's contents onto `parent_oid` and anchor the result
+/// at `refs/orgasmic/salvage/<sha>`. The ONE salvage mechanism: the close path
+/// reaches it through `salvage_worktree_if_dirty` (which first proves the
+/// recorded dispatch branch has not moved), and `worktree-prune` reaches it
+/// directly with the worktree's own HEAD as the parent, because a worktree
+/// with no open dispatch has no recorded branch left to validate against.
+// orgasmic:TASK-M47E5
+fn salvage_worktree_onto(
+    project_root: &Path,
+    worktree: &Path,
+    task: &str,
+    parent_oid: &str,
+) -> Result<Option<SalvageCommit>> {
     let add = Command::new("git")
         .args(["add", "-A"])
         .current_dir(worktree)
@@ -2237,7 +2271,7 @@ fn salvage_worktree_if_dirty(
             "commit-tree",
             &tree,
             "-p",
-            expected_branch_oid,
+            parent_oid,
             "-m",
             &format!("{task}: manager-salvaged uncommitted worker output"),
         ])
@@ -2251,7 +2285,7 @@ fn salvage_worktree_if_dirty(
         );
     }
     let sha = String::from_utf8_lossy(&commit.stdout).trim().to_string();
-    let file_count = changed_file_count_between(worktree, expected_branch_oid, &sha)?;
+    let file_count = changed_file_count_between(worktree, parent_oid, &sha)?;
 
     // Point only this linked worktree at the synthetic commit. Plain checkout
     // is deliberately fail-closed: it refuses a concurrent late write instead
@@ -2395,11 +2429,12 @@ async fn resolve_finalize_run(
 
 pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-status")?;
+    let project_id = read_project_id(&project_root).ok();
     // orgasmic:task_EP3H1 — the command an operator runs after a close warns
     // about a lost lifecycle leg is this one. Repair before reporting, so what
     // it reports is the repaired state.
-    if let Ok(project_id) = read_project_id(&project_root) {
-        reconcile_torn_closes_best_effort(home, &project_root, &project_id);
+    if let Some(project_id) = project_id.as_deref() {
+        reconcile_torn_closes_best_effort(home, &project_root, project_id);
     }
     if args.cleanup_failed {
         let mut failures = scan_cleanup_failures(&project_root)?;
@@ -2415,6 +2450,13 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 record.status,
                 record.error.as_deref().unwrap_or("-")
             );
+        }
+        // TASK-M47E5: closing an orphan is exactly the moment its worktree
+        // becomes reclaimable, so say so here too. No live-run fetch on this
+        // leg — the ledger alone decides whether a worktree is held, and a run
+        // list would only sharpen the wording of an entry already refused.
+        if let Some(project_id) = project_id.as_deref() {
+            report_managed_worktrees(home, &project_root, project_id, &[]);
         }
         return Ok(());
     }
@@ -2489,6 +2531,617 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 .unwrap_or_default()
         );
     }
+    // TASK-M47E5: the automatic detection half. Managed worktrees now live
+    // outside the repo, where `git status` and the operator's eyes no longer
+    // find them, so the inventory verb has to name the ones nothing owns.
+    if let Some(project_id) = project_id.as_deref() {
+        report_managed_worktrees(home, &project_root, project_id, &live_runs);
+    }
+    Ok(())
+}
+
+// ===== TASK-M47E5: managed worktree reclamation ==========================
+//
+// RECLAMATION IS AN EXPLICIT VERB; DETECTION IS AUTOMATIC. The split is
+// deliberate and is the whole design, so it is recorded here rather than in a
+// commit message.
+//
+// Removing a worktree is the sharpest tool in this codebase. A worker's
+// uncommitted output is the single most easily destroyed thing here, and
+// TASK-2BPWM and TASK-D0GA3 exist because it was destroyed once already. A
+// reaper that fires on a timer, at daemon boot, or as a side effect of close
+// would put that loss one bug away from being automatic and unattended. So
+// nothing gains the authority to delete: `orgasmic manager worktree-prune` is
+// operator-run, and it is the only surface here that removes anything.
+//
+// But a verb nobody runs is exactly how invisible garbage accumulates, and
+// that is precisely why this shipped WITH the relocation instead of after it.
+// Before the move, a stray worktree sat inside the repo where `git status`,
+// `git worktree list` and the operator's own eyes found it. Under
+// `~/.orgasmic` the same leak is silent multi-GB accumulation. So DETECTION
+// runs automatically on every `manager dispatch-status` — the existing orphan
+// surface, not a parallel one — and names what is reclaimable, why, and how
+// many bytes it would return.
+
+/// A directory found directly under the managed worktree root, and what may be
+/// done with it.
+#[derive(Clone, Debug)]
+struct ManagedWorktree {
+    path: PathBuf,
+    disposition: WorktreeDisposition,
+    /// Recursive size, measured only for reclaimable entries. Sizing a held
+    /// worktree would put a multi-GB directory walk on the hot path of a status
+    /// verb to inform no decision.
+    bytes: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+enum WorktreeDisposition {
+    /// No open dispatch names it and its repository answers: reclaimable by
+    /// salvage followed by a NON-FORCED `git worktree remove`, exactly as
+    /// `dispatch-close` does it.
+    Unclaimed,
+    /// The worktree's `.git` link names an admin directory that is gone, so
+    /// there is no repository to run `git worktree remove` from. This case is
+    /// NEW with the relocation — worktrees used to die with their repo — and it
+    /// is reclaimable only by direct removal, with NO salvage possible.
+    RepoGone { detail: String },
+    /// Something still owns it. NEVER reclaimed, whatever the run's health: the
+    /// authority to remove a dispatched worktree belongs to `dispatch-close`,
+    /// which is also the only surface that knows the recorded branch a salvage
+    /// commit must be parented on.
+    Held { detail: String },
+}
+
+impl ManagedWorktree {
+    fn reclaimable(&self) -> bool {
+        !matches!(self.disposition, WorktreeDisposition::Held { .. })
+    }
+
+    fn why(&self) -> String {
+        match &self.disposition {
+            WorktreeDisposition::Unclaimed => "no open dispatch names it".to_string(),
+            WorktreeDisposition::RepoGone { detail } => {
+                format!("repo gone ({detail}); removable but NOT salvageable")
+            }
+            WorktreeDisposition::Held { detail } => detail.clone(),
+        }
+    }
+
+    fn name(&self) -> String {
+        self.path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("worktree")
+            .to_string()
+    }
+}
+
+/// Classify every directory under `<home>/worktrees/<project-id>/`.
+///
+/// `live_runs` may be empty — it only sharpens the wording of a held entry's
+/// reason. Whether an entry is held at all is decided by the tx ledger, so a
+/// daemon that cannot be reached can never turn a live worktree into a
+/// reclaimable one.
+// orgasmic:TASK-M47E5
+fn scan_managed_worktrees(
+    home: &Home,
+    project_root: &Path,
+    project_id: &str,
+    live_runs: &[RunSummary],
+) -> Result<Vec<ManagedWorktree>> {
+    let root = managed_worktree_root(home, project_id)?;
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => bail!("read managed worktree root {}: {err}", root.display()),
+    };
+    let open = scan_open_dispatches(project_root)?;
+    let cwd = std::env::current_dir().ok().map(|cwd| normalize_path(&cwd));
+
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // symlink_metadata, so a symlink planted in the root is never followed
+        // and never reported as a directory this verb may remove.
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_dir() => paths.push(path),
+            _ => continue,
+        }
+    }
+    paths.sort();
+
+    let mut found = Vec::with_capacity(paths.len());
+    for path in paths {
+        let normalized = normalize_path(&path);
+        let disposition = if cwd
+            .as_ref()
+            .is_some_and(|cwd| cwd == &normalized || cwd.starts_with(&normalized))
+        {
+            // Refuse the tree we are standing in before anything else. Nothing
+            // downstream should have to be careful about this.
+            WorktreeDisposition::Held {
+                detail: "the current directory is inside it".to_string(),
+            }
+        } else if let Some(record) = open.iter().find(|record| {
+            record
+                .worktree
+                .as_deref()
+                .is_some_and(|worktree| normalize_path(worktree) == normalized)
+        }) {
+            WorktreeDisposition::Held {
+                detail: held_by_dispatch_detail(record, live_runs),
+            }
+        } else if let Some(detail) = worktree_repo_gone(&path) {
+            WorktreeDisposition::RepoGone { detail }
+        } else {
+            WorktreeDisposition::Unclaimed
+        };
+        let bytes = matches!(disposition, WorktreeDisposition::Held { .. })
+            .then_some(None)
+            .unwrap_or_else(|| Some(directory_bytes(&path)));
+        found.push(ManagedWorktree {
+            path,
+            disposition,
+            bytes,
+        });
+    }
+    Ok(found)
+}
+
+/// Say WHY an open dispatch holds a worktree, and — when its run is already
+/// gone — which verb releases it. An abandoned dispatch is still a dispatch:
+/// prune refuses it and points at the close, rather than growing a second way
+/// to end a dispatch.
+fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) -> String {
+    let health = dispatch_health(record, live_runs);
+    let tasks = task_list_property(&record.tasks);
+    if health.run_alive || health.pid_alive {
+        format!(
+            "dispatch {} is open for {tasks} and its worker is alive [{}{}]",
+            record.tx_id,
+            if health.run_alive {
+                "run-live"
+            } else {
+                "run-gone"
+            },
+            if health.pid_alive {
+                " pid-alive"
+            } else {
+                " pid-gone"
+            }
+        )
+    } else {
+        format!(
+            "dispatch {} is open for {tasks} but its run is gone [run-gone pid-gone] — close it \
+             first (`orgasmic manager dispatch-close --task {tasks} --started-tx {}` or \
+             `orgasmic manager dispatch-status --cleanup-failed`), then prune",
+            record.tx_id, record.tx_id
+        )
+    }
+}
+
+/// `Some(detail)` when this directory has no reachable repository, so
+/// `git worktree remove` cannot help and direct removal is the only route.
+// orgasmic:TASK-M47E5
+fn worktree_repo_gone(path: &Path) -> Option<String> {
+    let dot_git = path.join(".git");
+    // A linked worktree's `.git` is a FILE holding `gitdir: <admin dir>`.
+    let Ok(contents) = std::fs::read_to_string(&dot_git) else {
+        return (!dot_git.is_dir()).then(|| "no .git link".to_string());
+    };
+    let gitdir = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))?
+        .trim()
+        .to_string();
+    let resolved = if Path::new(&gitdir).is_absolute() {
+        PathBuf::from(&gitdir)
+    } else {
+        path.join(&gitdir)
+    };
+    (!resolved.exists()).then(|| format!("gitdir {gitdir} no longer exists"))
+}
+
+/// Recursive apparent size in bytes. Symlinks are counted at their own size and
+/// never followed, so a link out of the tree can neither inflate the number nor
+/// walk the machine. Unreadable entries are skipped rather than failing the
+/// whole report — an under-count is honest, a missing report is not.
+fn directory_bytes(root: &Path) -> u64 {
+    let mut total: u64 = 0;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if let Ok(meta) = std::fs::symlink_metadata(entry.path()) {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    total
+}
+
+/// Compact size for a `KEY=value` field, so it carries no space.
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes}B")
+    } else {
+        format!("{value:.1}{}", UNITS[unit])
+    }
+}
+
+/// The automatic half of the split: every `dispatch-status` names what
+/// `worktree-prune` could reclaim. Best effort and never fatal — this is a
+/// report appended to an inventory verb, not the inventory itself.
+// orgasmic:TASK-M47E5
+fn report_managed_worktrees(
+    home: &Home,
+    project_root: &Path,
+    project_id: &str,
+    live_runs: &[RunSummary],
+) {
+    let found = match scan_managed_worktrees(home, project_root, project_id, live_runs) {
+        Ok(found) => found,
+        Err(err) => {
+            eprintln!("warning: could not scan managed worktrees: {err}");
+            return;
+        }
+    };
+    if found.is_empty() {
+        return;
+    }
+    let mut total: u64 = 0;
+    let mut count = 0usize;
+    for worktree in &found {
+        if worktree.reclaimable() {
+            let bytes = worktree.bytes.unwrap_or(0);
+            total = total.saturating_add(bytes);
+            count += 1;
+            println!(
+                "RECLAIMABLE_WORKTREE PATH={} BYTES={bytes} SIZE={} WHY={}",
+                worktree.path.display(),
+                format_bytes(bytes),
+                worktree.why()
+            );
+        } else {
+            println!(
+                "HELD_WORKTREE PATH={} WHY={}",
+                worktree.path.display(),
+                worktree.why()
+            );
+        }
+    }
+    if count > 0 {
+        println!(
+            "RECLAIMABLE_TOTAL COUNT={count} BYTES={total} SIZE={} RECLAIM_WITH=orgasmic manager worktree-prune",
+            format_bytes(total)
+        );
+    }
+}
+
+/// `git worktree prune` in the project, so `.git/worktrees/<name>` admin
+/// entries for directories removed out of band do not accumulate. Part 1 makes
+/// that MORE likely, not less: the new root is a plausible thing for an
+/// operator to `rm -rf`.
+fn git_worktree_prune(project_root: &Path, dry_run: bool) -> Result<String> {
+    let mut command = Command::new("git");
+    command.args(["worktree", "prune", "-v"]);
+    if dry_run {
+        command.arg("--dry-run");
+    }
+    let output = command
+        .current_dir(project_root)
+        .output()
+        .context("git worktree prune")?;
+    if !output.status.success() {
+        bail!(
+            "git worktree prune failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    // `-v` reports on stdout what it removed (or, with --dry-run, would).
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn worktree_head_oid(worktree: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .current_dir(worktree)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!oid.is_empty()).then_some(oid)
+}
+
+/// Reclaim one worktree. Salvage first, then a NON-FORCED removal, so a tree
+/// git still considers dirty survives and is reported instead of destroyed.
+// orgasmic:TASK-M47E5
+fn reclaim_managed_worktree(
+    project_root: &Path,
+    managed_root: &Path,
+    worktree: &ManagedWorktree,
+) -> WorktreeRemovalOutcome {
+    if let WorktreeDisposition::RepoGone { .. } = worktree.disposition {
+        return match remove_orphaned_worktree_dir(managed_root, &worktree.path) {
+            Ok(()) => WorktreeRemovalOutcome {
+                removed: true,
+                salvage: None,
+                error: None,
+            },
+            Err(err) => WorktreeRemovalOutcome {
+                removed: false,
+                salvage: None,
+                error: Some(err.to_string()),
+            },
+        };
+    }
+
+    let mut salvage = match worktree_has_uncommitted_changes(&worktree.path) {
+        Ok(false) => None,
+        Ok(true) => match worktree_head_oid(&worktree.path) {
+            Some(parent) => {
+                match salvage_worktree_onto(project_root, &worktree.path, &worktree.name(), &parent)
+                {
+                    Ok(salvage) => salvage,
+                    Err(err) => {
+                        return WorktreeRemovalOutcome {
+                            removed: false,
+                            salvage: None,
+                            error: Some(format!("salvage failed, worktree kept: {err}")),
+                        };
+                    }
+                }
+            }
+            None => {
+                return WorktreeRemovalOutcome {
+                    removed: false,
+                    salvage: None,
+                    error: Some(
+                        "worktree is dirty and its HEAD does not resolve, so its contents \
+                         cannot be salvaged; kept"
+                            .to_string(),
+                    ),
+                };
+            }
+        },
+        Err(err) => {
+            return WorktreeRemovalOutcome {
+                removed: false,
+                salvage: None,
+                error: Some(format!("could not read worktree status: {err}")),
+            };
+        }
+    };
+
+    // No `--force`, same as `dispatch-close`: git's own clean check is the last
+    // gate between this verb and a worker's unrecoverable output.
+    let output = match Command::new("git")
+        .args(["worktree", "remove"])
+        .arg(&worktree.path)
+        .current_dir(project_root)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => {
+            return WorktreeRemovalOutcome {
+                removed: false,
+                salvage,
+                error: Some(format!("git worktree remove: {err}")),
+            };
+        }
+    };
+    if !output.status.success() {
+        return WorktreeRemovalOutcome {
+            removed: false,
+            salvage,
+            error: Some(format!(
+                "git worktree remove refused: {}{}",
+                String::from_utf8_lossy(&output.stderr).trim(),
+                String::from_utf8_lossy(&output.stdout).trim()
+            )),
+        };
+    }
+    if let Some(salvage) = &mut salvage {
+        salvage.worktree_removed = true;
+    }
+    WorktreeRemovalOutcome {
+        removed: true,
+        salvage,
+        error: None,
+    }
+}
+
+/// Direct removal for the repo-gone case, which has no git to remove it. Every
+/// guard here exists because this is the one `remove_dir_all` in the dispatch
+/// path: the target must still be a real directory (never a symlink), must
+/// contain no `..`, and must be a DIRECT child of this project's managed root.
+// orgasmic:TASK-M47E5
+fn remove_orphaned_worktree_dir(managed_root: &Path, path: &Path) -> Result<()> {
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        bail!(
+            "refusing to remove a path containing ..: {}",
+            path.display()
+        );
+    }
+    if normalize_path(path.parent().unwrap_or(Path::new("/"))) != normalize_path(managed_root) {
+        bail!(
+            "refusing to remove {}: not a direct child of {}",
+            path.display(),
+            managed_root.display()
+        );
+    }
+    // Re-check immediately before the removal, not just at classification time.
+    let meta =
+        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+    if meta.file_type().is_symlink() {
+        bail!("refusing to remove a symlink: {}", path.display());
+    }
+    if !meta.is_dir() {
+        bail!("refusing to remove a non-directory: {}", path.display());
+    }
+    std::fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))
+}
+
+/// Explicit, operator-run reclamation of managed worktrees. See the design note
+/// at the top of this section for why removal never happens automatically.
+// orgasmic:TASK-M47E5
+pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+    let project_root = find_live_project_root(home, "manager worktree-prune")?;
+    let project_id = read_project_id(&project_root)?;
+    let managed_root = managed_worktree_root(home, &project_id)?;
+    let live_runs = match DaemonClient::from_home_autostart(home) {
+        Ok(client) => {
+            let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+            runtime
+                .block_on(fetch_live_runs(&client))
+                .unwrap_or_default()
+        }
+        Err(_) => Vec::new(),
+    };
+    let mut found = scan_managed_worktrees(home, &project_root, &project_id, &live_runs)?;
+    if let Some(task) = args.task.as_deref() {
+        let wanted = [
+            worktree_stem(task, DispatchKind::Implementer),
+            worktree_stem(task, DispatchKind::Reviewer),
+        ];
+        found.retain(|worktree| wanted.iter().any(|stem| *stem == worktree.name()));
+    }
+
+    // Say what is being left alone and why BEFORE doing anything, so a run that
+    // reclaims nothing still reads as a report rather than as a no-op.
+    let mut skipped = 0usize;
+    for worktree in found.iter().filter(|worktree| !worktree.reclaimable()) {
+        skipped += 1;
+        println!(
+            "SKIP PATH={} WHY={}",
+            worktree.path.display(),
+            worktree.why()
+        );
+    }
+    let reclaimable: Vec<ManagedWorktree> = found.into_iter().filter(|w| w.reclaimable()).collect();
+
+    if args.dry_run {
+        let mut total: u64 = 0;
+        for worktree in &reclaimable {
+            let bytes = worktree.bytes.unwrap_or(0);
+            total = total.saturating_add(bytes);
+            println!(
+                "WOULD_RECLAIM PATH={} BYTES={bytes} SIZE={} WHY={}",
+                worktree.path.display(),
+                format_bytes(bytes),
+                worktree.why()
+            );
+        }
+        match git_worktree_prune(&project_root, true) {
+            Ok(report) if !report.is_empty() => {
+                for line in report.lines() {
+                    println!("WOULD_PRUNE_METADATA {line}");
+                }
+            }
+            Ok(_) => {}
+            Err(err) => eprintln!("warning: {err}"),
+        }
+        println!(
+            "DRY_RUN RECLAIMABLE={} BYTES={total} SIZE={} SKIPPED={skipped}",
+            reclaimable.len(),
+            format_bytes(total)
+        );
+        return Ok(());
+    }
+
+    // One lock for the whole reclaim, shared with `dispatch-close`'s worktree
+    // removal. Held across the loop, so nothing below may take it again.
+    let _cleanup_lock = acquire_dispatch_cleanup_lock(&project_root)?;
+    // Re-read the ledger under the lock: a dispatch may have opened between the
+    // classification above and this point, and a live worker's tree must never
+    // be reclaimed on the strength of a stale read.
+    let now_open = scan_open_dispatches(&project_root)?;
+
+    let mut reclaimed = 0usize;
+    let mut failed = 0usize;
+    let mut reclaimed_bytes: u64 = 0;
+    for worktree in &reclaimable {
+        let normalized = normalize_path(&worktree.path);
+        if let Some(record) = now_open.iter().find(|record| {
+            record
+                .worktree
+                .as_deref()
+                .is_some_and(|path| normalize_path(path) == normalized)
+        }) {
+            skipped += 1;
+            println!(
+                "SKIP PATH={} WHY={}",
+                worktree.path.display(),
+                held_by_dispatch_detail(record, &live_runs)
+            );
+            continue;
+        }
+        let bytes = worktree.bytes.unwrap_or(0);
+        let outcome = reclaim_managed_worktree(&project_root, &managed_root, worktree);
+        if let Some(salvage) = &outcome.salvage {
+            println!(
+                "SALVAGED PATH={} SHA={} REF={} FILES={}",
+                worktree.path.display(),
+                salvage.sha,
+                salvage.ref_name,
+                salvage.file_count
+            );
+        }
+        if outcome.removed {
+            reclaimed += 1;
+            reclaimed_bytes = reclaimed_bytes.saturating_add(bytes);
+            println!(
+                "RECLAIMED PATH={} BYTES={bytes} SIZE={}",
+                worktree.path.display(),
+                format_bytes(bytes)
+            );
+        } else {
+            failed += 1;
+            println!(
+                "KEPT PATH={} WHY={}",
+                worktree.path.display(),
+                outcome.error.as_deref().unwrap_or("removal did not run")
+            );
+        }
+    }
+
+    match git_worktree_prune(&project_root, false) {
+        Ok(report) => {
+            for line in report.lines().filter(|line| !line.trim().is_empty()) {
+                println!("PRUNED_METADATA {line}");
+            }
+        }
+        Err(err) => {
+            failed += 1;
+            println!("KEPT PATH={} WHY={err}", project_root.display());
+        }
+    }
+
+    println!(
+        "PRUNE_SUMMARY RECLAIMED={reclaimed} BYTES={reclaimed_bytes} SIZE={} KEPT={failed} SKIPPED={skipped}",
+        format_bytes(reclaimed_bytes)
+    );
     Ok(())
 }
 
