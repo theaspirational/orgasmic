@@ -32,11 +32,13 @@ rendered as a badge, not a lifecycle column.
 
 ** Heading properties
 - :FIX_SUBTASK: optional boolean. The manager sets =:FIX_SUBTASK: t= only on
-  subtasks filed to address reviewer findings. =dispatch-close --kind
-  implementer --status done= treats true-ish values (=t=, =true=, =1=) as
-  one-round fix subtasks and transitions IN_PROGRESS -> DONE; parent-task
-  pointers alone do not trigger this shortcut. Omit this property for polish
-  or organizational subtasks that still need a reviewer pass.
+  subtasks filed to address reviewer findings; true-ish values are =t=, =true=,
+  =1=. It does NOT change where the close lands: since TASK-4WKNX an implementer
+  =dispatch-close --status done= transitions IN_PROGRESS -> IN_REVIEW for a fix
+  subtask exactly as for anything else, so the fix round reaches a reviewer
+  without a manual backwards transition. The only route to IN_PROGRESS -> DONE
+  is the explicit opt-out =dispatch-close --fix-round-final --reason <why>=,
+  which is valid only on a task carrying this property.
 
 * STATE-MACHINE goal-lifecycle
 :PROPERTIES:

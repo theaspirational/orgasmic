@@ -289,7 +289,7 @@ fn seed_project(home: &Home, project_root: &Path) {
     );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
-        "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH Dispatch CLI smoke :cli:\n:PROPERTIES:\n:ID:               TASK-DISPATCH\n:END:\n\n* BACKLOG TASK-ABORT Dispatch abort smoke :cli:\n:PROPERTIES:\n:ID:               TASK-ABORT\n:END:\n\n* BACKLOG TASK-FIX Fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX\n:END:\n\n* BACKLOG TASK-FIX-DECL Declarative fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-DECL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-NO-MERGE Missing merge smoke :cli:\n:PROPERTIES:\n:ID:               TASK-NO-MERGE\n:END:\n\n* BACKLOG TASK-BUNDLE-A Bundle smoke A :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-A\n:END:\n\n* BACKLOG TASK-BUNDLE-B Bundle smoke B :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-B\n:END:\n\n* BACKLOG TASK-CLEANUP Cleanup smoke :cli:\n:PROPERTIES:\n:ID:               TASK-CLEANUP\n:END:\n",
+        "#+title: backlog\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH Dispatch CLI smoke :cli:\n:PROPERTIES:\n:ID:               TASK-DISPATCH\n:END:\n\n* BACKLOG TASK-ABORT Dispatch abort smoke :cli:\n:PROPERTIES:\n:ID:               TASK-ABORT\n:END:\n\n* BACKLOG TASK-FIX Fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX\n:END:\n\n* BACKLOG TASK-FIX-DECL Declarative fix subtask smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-DECL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-FIX-FINAL Final fix round smoke :cli:\n:PROPERTIES:\n:ID:               TASK-FIX-FINAL\n:FIX_SUBTASK:      t\n:END:\n\n* BACKLOG TASK-NO-MERGE Missing merge smoke :cli:\n:PROPERTIES:\n:ID:               TASK-NO-MERGE\n:END:\n\n* BACKLOG TASK-BUNDLE-A Bundle smoke A :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-A\n:END:\n\n* BACKLOG TASK-BUNDLE-B Bundle smoke B :cli:\n:PROPERTIES:\n:ID:               TASK-BUNDLE-B\n:END:\n\n* BACKLOG TASK-CLEANUP Cleanup smoke :cli:\n:PROPERTIES:\n:ID:               TASK-CLEANUP\n:END:\n",
     );
     write(
         &project_root.join(".orgasmic/tasks/in_review.org"),
@@ -1187,7 +1187,166 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             &head,
         ],
     );
-    assert_task_stage(&project_root, "TASK-FIX-DECL", "DONE", "done");
+    // orgasmic:TASK-4WKNX — read the stage without asserting on it yet. The
+    // property under test is END TO END: the fix round must reach its reviewer
+    // with NO manual state transition in between, so the reviewer dispatch is
+    // the first thing allowed to fail. Asserting the stage first would report
+    // `expected IN_REVIEW` and say nothing about the refusal that is the
+    // actual production symptom.
+    let sprint_after_fix_decl_close = sprint_source(&project_root);
+    let fix_decl_review_brief = codex_dir.join("task-fix-decl-review-brief.md");
+    write(&fix_decl_review_brief, "fix round reviewer brief");
+    let fix_decl_review_worktree = tmp.path().join("worktrees/task-fix-decl-review");
+    let fix_decl_review_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-FIX-DECL",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "stdio",
+            "--harness",
+            "codex",
+            "--brief",
+            fix_decl_review_brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            fix_decl_review_worktree.to_str().unwrap(),
+            "--branch",
+            "task-fix-decl-review",
+        ],
+    );
+    assert!(fix_decl_review_stdout.contains("dispatched: TASK-FIX-DECL reviewer pid="));
+    assert!(
+        sprint_after_fix_decl_close.contains("* IN_REVIEW TASK-FIX-DECL"),
+        "a FIX_SUBTASK close must land in_review by default\n{sprint_after_fix_decl_close}"
+    );
+    // orgasmic:TASK-4WKNX — and the opt-out belongs to the implementer close
+    // that decides the fix round's stage, not to the reviewer's own close.
+    let fix_decl_review_started_tx = started_tx_from_dispatch_stdout(&fix_decl_review_stdout);
+    let on_reviewer = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-DECL",
+            "--started-tx",
+            &fix_decl_review_started_tx,
+            "--status",
+            "done",
+            "--verdict",
+            "approve",
+            "--fix-round-final",
+            "--reason",
+            "wrong close for this flag",
+        ],
+    );
+    let on_reviewer_stderr = String::from_utf8_lossy(&on_reviewer.stderr).to_string();
+    assert!(
+        !on_reviewer.status.success()
+            && on_reviewer_stderr.contains(
+                "--fix-round-final is valid only when closing an implementer dispatch as done"
+            ),
+        "unexpected --fix-round-final response on a reviewer close: {on_reviewer_stderr}"
+    );
+
+    // orgasmic:TASK-4WKNX — and the opt-out closes straight to done, but only
+    // with a `--reason`, on the same argument that makes `--no-review-required`
+    // require one: a bypass nobody has to justify is a bypass nobody audits.
+    let fix_final_brief = codex_dir.join("task-fix-final-brief.md");
+    write(&fix_final_brief, "final fix round brief");
+    let fix_final_worktree = tmp.path().join("worktrees/task-fix-final");
+    let fix_final_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            fix_final_brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            fix_final_worktree.to_str().unwrap(),
+            "--branch",
+            "task-fix-final-impl",
+        ],
+    );
+    let fix_final_started_tx = started_tx_from_dispatch_stdout(&fix_final_stdout);
+    let no_reason = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--started-tx",
+            &fix_final_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--fix-round-final",
+        ],
+    );
+    let no_reason_stderr = String::from_utf8_lossy(&no_reason.stderr).to_string();
+    assert!(
+        !no_reason.status.success()
+            && no_reason_stderr
+                .contains("--fix-round-final requires --reason so the skipped review is auditable"),
+        "unexpected reasonless --fix-round-final response: {no_reason_stderr}"
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--started-tx",
+            &fix_final_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--fix-round-final",
+            "--reason",
+            "one-line comment typo, nothing to review",
+        ],
+    );
+    assert_task_stage(&project_root, "TASK-FIX-FINAL", "DONE", "done");
+    assert!(
+        tx_log(&project_root).contains(":FIX_ROUND_FINAL: true"),
+        "the opt-out must be stamped on the close tx\n{}",
+        tx_log(&project_root)
+    );
 
     let abort_brief = codex_dir.join("task-abort-brief.md");
     write(&abort_brief, "abort brief");
@@ -1222,6 +1381,37 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     assert_task_stage(&project_root, "TASK-ABORT", "IN_PROGRESS", "in_progress");
     let _ = abort_last;
     let abort_started_tx = started_tx_from_dispatch_stdout(&abort_dispatch_stdout);
+    // orgasmic:TASK-4WKNX — the opt-out is a FIX_SUBTASK concept. On a task
+    // that carries no `:FIX_SUBTASK:` it would be a silent no-op (that close
+    // already lands `in_review`), so it is refused by name instead.
+    let not_a_fix_round = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-ABORT",
+            "--started-tx",
+            &abort_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--fix-round-final",
+            "--reason",
+            "not a fix round",
+        ],
+    );
+    let not_a_fix_round_stderr = String::from_utf8_lossy(&not_a_fix_round.stderr).to_string();
+    assert!(
+        !not_a_fix_round.status.success()
+            && not_a_fix_round_stderr
+                .contains("--fix-round-final is valid only for a task carrying :FIX_SUBTASK:"),
+        "unexpected --fix-round-final response on a non-fix task: {not_a_fix_round_stderr}"
+    );
     run_orgasmic(
         &home,
         &running,

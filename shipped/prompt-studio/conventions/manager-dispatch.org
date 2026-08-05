@@ -330,7 +330,7 @@ check the rest of the invocation too.
    Note the ordering consequence: dispatching the reviewer for a task before
    closing its implementer is rejected as an overlapping open dispatch — close
    first.
-5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer=. (There is no =--worker= flag; earlier revisions said =--worker reviewer-codex-acp= and that flag has never existed. =--kind= selects the persona.) Reviewer findings → fix subtasks minted as =TASK-<parent>.N= per the ID rule above, with =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
+5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer=. (There is no =--worker= flag; earlier revisions said =--worker reviewer-codex-acp= and that flag has never existed. =--kind= selects the persona.) Reviewer findings → fix subtasks minted as =TASK-<parent>.N= per the ID rule above, with =:FIX_SUBTASK: t= marking them as fix rounds → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks. Either way the round is reviewed: since TASK-4WKNX a fix round's close lands =in_review= like every other implementer close (see below).
 
    *Close the reviewer with a verdict, and know which vocabulary your runtime
    speaks.* =dispatch-close --verdict <approve|approve-with-follow-ups|reject>=
@@ -345,14 +345,21 @@ check the rest of the invocation too.
    =--property= leaves the task =in_progress=; use =ship=. Check the installed
    binary, not the source tree, before assuming which vocabulary is available.
 
-   *Two rules currently disagree about whether a fix round gets its own review*,
-   and you will hit it rather than read about it: =:FIX_SUBTASK: t= closes the task
-   straight to =done=, and a reviewer dispatch is refused from =done=. When the
-   active goal requires a fresh review of a BLOCK SHIP fix round, the close and the
-   goal point opposite ways and the only way through today is a manual =done= →
-   =in_review= transition before dispatching. TASK-4WKNX owns resolving this; until
-   it lands, make the flip deliberately and say in =--reason= that it is policy, not
-   a correction.
+   *A fix round gets its own review by default.* Closing a =:FIX_SUBTASK: t=
+   implementer dispatch as done lands the task in =in_review=, exactly like any
+   other implementer close, so the reviewer dispatch that the active goal requires
+   for a BLOCK SHIP fix round goes out with NO manual stage transition first
+   (TASK-4WKNX). For a round genuinely too trivial to review, opt out explicitly:
+   =orgasmic manager dispatch-close --task TASK-X.N --started-tx <tx> --status done
+   --merge-sha <sha> --fix-round-final --reason <why>= closes it straight to =done=
+   and stamps =FIX_ROUND_FINAL: true= on the close tx. The =--reason= is mandatory,
+   same as on =--no-review-required=, so a skipped review is auditable rather than
+   merely quiet.
+
+   Do not reach for =--no-review-required= to get this: it waives the
+   default-branch MERGE gate ("does a reviewer verdict exist for this merge"),
+   while =--fix-round-final= waives the fix round's own REVIEW ROUND ("does this
+   fix get reviewed at all"). Two flags because they are two questions.
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
 7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
 

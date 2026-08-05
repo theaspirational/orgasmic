@@ -1,0 +1,19 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 302f2cd..06a60ac 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -5703,6 +5703,14 @@ fn close_lifecycle_transitions(
+ /// recoverable, an unreviewed fix for a data-loss finding is what the goal
+ /// exists to prevent. Hence review by default, `--fix-round-final` to opt out.
+ fn implementer_done_stage(fix_subtask: bool, fix_round_final: bool) -> LifecycleStage {
++    // TASK-4WKNX injection: the pre-fix default. A fix round closes STRAIGHT TO
++    // `done` — where the reviewer dispatch is refused — so the only way to
++    // review it is a manual backwards stage transition. The opt-out flag still
++    // parses and is still stamped; it just no longer decides anything.
++    let _ = fix_round_final;
++    if fix_subtask {
++        return LifecycleStage::Done;
++    }
+     if fix_subtask && fix_round_final {
+         LifecycleStage::Done
+     } else {

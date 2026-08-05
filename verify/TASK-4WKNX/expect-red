@@ -1,0 +1,16 @@
+# Pinned from the real red run of 2026-08-05. Byte-identical to the PRE-fix red
+# on the same test, taken before `implementer_done_stage` existed: the injection
+# restores the old default (`:FIX_SUBTASK: t` closes straight to `done`) and
+# leaves the flag parsing and stamping, so nothing but the policy is reverted.
+exit: 101
+
+# THE defect, and it is the FIRST failing assertion in both the pre-fix and the
+# injected run. Not "the stage was wrong" — the end-to-end consequence: the fix
+# round cannot reach a reviewer at all without a manual backwards transition,
+# because the close put it somewhere reviewer dispatch is refused from.
+contains: task TASK-FIX-DECL is in lifecycle stage done; reviewer dispatch is allowed only from IN_REVIEW
+contains: test dispatch_close_uses_fix_subtask_property_and_abort_backlog ... FAILED
+
+# The refusal must come from the reviewer DISPATCH, not from the close. A red
+# run that fails earlier means the injection widened past the defect.
+contains: "--kind", "reviewer"
