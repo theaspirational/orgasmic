@@ -1,0 +1,4 @@
+# Run from the repo root by `orgasmic verify TASK-M47E5.1.1.1`.
+# The selected paired-authority test keeps sibling READ allowed while proving
+# that a root-equivalent configured artifact dir cannot grant sibling FINALIZE.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib -- --test-threads=1 --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events a_finalize_grant_is_scoped_to_the_current_attempt_artifact_dir

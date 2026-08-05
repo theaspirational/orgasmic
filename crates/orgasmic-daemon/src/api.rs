@@ -26022,11 +26022,12 @@ pub(crate) mod tests {
         assert_eq!(verbatim_optional(None), None);
     }
 
-    // orgasmic:TASK-M47E5.1.1
-    /// The daemon owns `last_path`, so its parent must cross the driver-config
-    /// boundary byte-for-byte instead of being reconstructed by the adapter.
+    // orgasmic:TASK-M47E5.1.1.1
+    /// The daemon owns `last_path`, so the driver config must derive its
+    /// artifact directory from that production input rather than accepting an
+    /// already-correct expected directory from the test.
     #[test]
-    fn dispatch_driver_config_persists_the_authoritative_artifact_dir() {
+    fn dispatch_driver_config_derives_the_authoritative_artifact_dir_from_last_path() {
         let worker = StageWorker {
             id: "implementer-cursor-acp".to_string(),
             kind: WorkerKind::Implementer,
@@ -26043,12 +26044,14 @@ pub(crate) mod tests {
             sandbox_permissions: None,
             harness_args: Vec::new(),
         };
-        let artifact_dir = FsPath::new("/tmp/project/.orgasmic/tmp/dispatch/task-attempt-7");
+        let last_path = FsPath::new(
+            "/tmp/project/.orgasmic/tmp/dispatch/task-attempt-7/task-attempt-7-last.txt",
+        );
         let cfg = stage_driver_config_with_overrides(
             &worker,
             FsPath::new("/tmp/project"),
             FsPath::new("/tmp/worktree"),
-            Some(artifact_dir),
+            last_path.parent(),
             "brief",
             DriverOverrides::default(),
             None,
@@ -26056,7 +26059,10 @@ pub(crate) mod tests {
             None,
         );
 
-        assert_eq!(cfg.0["dispatch_artifact_dir"], json!(artifact_dir));
+        assert_eq!(
+            cfg.0["dispatch_artifact_dir"],
+            json!(last_path.parent().unwrap())
+        );
     }
 
     /// The daemon half of the credential-mode escape hatch: a dispatch's

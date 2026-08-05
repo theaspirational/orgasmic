@@ -793,7 +793,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     if plan.dry_run {
         let attempt_id = mint_dispatch_attempt_id();
         let (brief, last, stdout) =
-            dispatch_artifact_paths_for_attempt(&plan.project_root, &plan.brief_path, &attempt_id);
+            dispatch_artifact_paths_for_attempt(&plan.project_root, &plan.brief_path, &attempt_id)?;
         print_dispatch_plan(&plan.with_artifacts(brief, last, stdout, attempt_id));
         return Ok(());
     }
@@ -6439,7 +6439,7 @@ fn default_branch(task: &str, kind: DispatchKind) -> String {
     }
 }
 
-fn dispatch_artifact_stem(brief_path: &Path) -> (String, String) {
+fn dispatch_artifact_stem(brief_path: &Path) -> Result<(String, String)> {
     let file_name = brief_path
         .file_name()
         .and_then(|s| s.to_str())
@@ -6454,7 +6454,16 @@ fn dispatch_artifact_stem(brief_path: &Path) -> (String, String) {
             .unwrap_or("dispatch")
             .to_string()
     };
-    (file_name, stem)
+    // orgasmic:TASK-M47E5.1.1.1
+    // These names would make `join(stem)` equal to the dispatch root (or its
+    // parent), colliding artifacts across dispatches before the adapter ever
+    // sees the resulting config.
+    if stem.is_empty() || stem == "." || stem == ".." {
+        bail!(
+            "refusing brief name {file_name:?}: dispatch artifact stem must not be empty, '.' or '..' (derived {stem:?})"
+        );
+    }
+    Ok((file_name, stem))
 }
 
 fn mint_dispatch_attempt_id() -> String {
@@ -6479,7 +6488,7 @@ impl DispatchArtifactReservation {
         for _ in 0..DISPATCH_ARTIFACT_RESERVE_RETRIES {
             let attempt_id = mint_dispatch_attempt_id();
             let (brief, last, stdout) =
-                dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+                dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id)?;
             if let Some(parent) = brief.parent() {
                 std::fs::create_dir_all(parent).with_context(|| {
                     format!("create dispatch artifact dir {}", parent.display())
@@ -6627,25 +6636,25 @@ fn dispatch_artifact_paths_for_attempt(
     project_root: &Path,
     brief_path: &Path,
     attempt_id: &str,
-) -> (PathBuf, PathBuf, PathBuf) {
-    let (file_name, stem) = dispatch_artifact_stem(brief_path);
+) -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let (file_name, stem) = dispatch_artifact_stem(brief_path)?;
     let dir = project_dispatch_dir(project_root).join(&stem);
-    (
+    Ok((
         dir.join(file_name),
         dir.join(format!("{stem}-{attempt_id}-last.txt")),
         dir.join(format!("{stem}-{attempt_id}-stdout.log")),
-    )
+    ))
 }
 
 /// Derive the last/stdout paths as siblings of an already-resolved brief when
 /// the attempt id is known (e.g. from a live run's recorded `last_path`).
-fn dispatch_sibling_artifact_paths(brief_path: &Path) -> (PathBuf, PathBuf) {
+fn dispatch_sibling_artifact_paths(brief_path: &Path) -> Option<(PathBuf, PathBuf)> {
     let parent = brief_path.parent().unwrap_or_else(|| Path::new("."));
-    let (_, stem) = dispatch_artifact_stem(brief_path);
-    (
+    let (_, stem) = dispatch_artifact_stem(brief_path).ok()?;
+    Some((
         parent.join(format!("{stem}-last.txt")),
         parent.join(format!("{stem}-stdout.log")),
-    )
+    ))
 }
 
 fn dispatch_sibling_artifact_paths_from_last(last_path: &Path) -> (PathBuf, PathBuf) {
@@ -7225,11 +7234,10 @@ fn derive_worker_pid(record: &DispatchRecord) -> Option<u32> {
         }
     }
     let brief_path = record.brief_path.as_ref()?;
-    let (last_path, _) = record
-        .last_path
-        .as_ref()
-        .map(|path| dispatch_sibling_artifact_paths_from_last(path))
-        .unwrap_or_else(|| dispatch_sibling_artifact_paths(brief_path));
+    let (last_path, _) = match record.last_path.as_ref() {
+        Some(path) => dispatch_sibling_artifact_paths_from_last(path),
+        None => dispatch_sibling_artifact_paths(brief_path)?,
+    };
     let last_path = last_path.display().to_string();
     let output = Command::new("ps")
         .args(["-axo", "pid=,command="])
@@ -7990,13 +7998,48 @@ mod tests {
         assert!(attempt.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
+    // orgasmic:TASK-M47E5.1.1.1
+    #[test]
+    fn dispatch_artifact_reservation_refuses_degenerate_brief_names_before_creating_artifacts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+
+        for (file_name, stem) in [
+            ("-brief.md", ""),
+            (".-brief.md", "."),
+            ("..-brief.md", ".."),
+        ] {
+            let brief = tmp.path().join(file_name);
+            let error = match DispatchArtifactReservation::reserve(&project_root, &brief) {
+                Ok(_) => {
+                    panic!("degenerate brief name unexpectedly reserved artifacts: {file_name}")
+                }
+                Err(error) => error,
+            };
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!("brief name {file_name:?}")),
+                "error must refuse the brief by name: {message}"
+            );
+            assert!(
+                message.contains(&format!("derived {stem:?}")),
+                "error must name the rejected stem: {message}"
+            );
+            assert!(
+                !project_dispatch_dir(&project_root).exists(),
+                "invalid brief {file_name} must be refused before creating dispatch artifacts"
+            );
+        }
+    }
+
     #[test]
     fn reserve_dispatch_artifact_pair_preserves_preexisting_collider() {
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path().join("repo");
         let brief = project_root.join("task-reserve-brief.md");
         let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
-        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        let (_, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt).unwrap();
         std::fs::create_dir_all(last.parent().unwrap()).unwrap();
         std::fs::write(&last, "existing").unwrap();
         assert!(matches!(
@@ -8013,7 +8056,8 @@ mod tests {
         let project_root = tmp.path().join("repo");
         let brief = project_root.join("task-reserve-brief.md");
         let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
-        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        let (_, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt).unwrap();
         std::fs::create_dir_all(last.parent().unwrap()).unwrap();
         std::fs::write(&last, "existing-last").unwrap();
         std::fs::write(&stdout, "existing-stdout").unwrap();
@@ -8036,7 +8080,7 @@ mod tests {
         let project_root = PathBuf::from("/repo/main");
         let brief = PathBuf::from("/elsewhere/task-045-impl-brief.md");
         let (resolved_brief, last, stdout) =
-            dispatch_artifact_paths_for_attempt(&project_root, &brief, "a1b2c3d4");
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, "a1b2c3d4").unwrap();
         assert_eq!(
             resolved_brief,
             PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md")
@@ -8064,8 +8108,10 @@ mod tests {
         let project_root = tmp.path().join("repo");
         let brief =
             project_root.join(".orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md");
-        let (_, last1, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt1");
-        let (_, last2, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2");
+        let (_, last1, _) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt1").unwrap();
+        let (_, last2, _) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2").unwrap();
         assert_ne!(last1, last2);
         std::fs::create_dir_all(last1.parent().unwrap()).unwrap();
         std::fs::write(&last1, "attempt 1 report").unwrap();
@@ -8644,7 +8690,8 @@ mod tests {
             .success());
         let brief = dispatch_dir.join(format!("{slug}-impl-brief.md"));
         let (_, last, stdout) =
-            dispatch_artifact_paths_for_attempt(&root, &brief, "aaaaaaaa11111111bbbbbbbb22222222");
+            dispatch_artifact_paths_for_attempt(&root, &brief, "aaaaaaaa11111111bbbbbbbb22222222")
+                .unwrap();
         std::fs::create_dir_all(last.parent().unwrap()).unwrap();
         std::fs::write(&last, "summary\n").unwrap();
         std::fs::write(&stdout, "output\n").unwrap();
