@@ -1,3 +1,142 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-M47E5 Move dispatch worktrees out of TCC-guarded directories, and give them a prune :daemon:cli:macos:dispatch:
+:PROPERTIES:
+:ID: TASK-M47E5
+:MOTIVATED_BY: TASK-3X5AQ
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**,shipped/**
+:END:
+
+** Description
+Implements the fix decided on TASK-3X5AQ. Read that task's two measurement
+sections first — "The cdhash measurement" and "Verification and recommended
+placement (2026-08-05)". Everything below is already measured; do not re-derive
+it, and in particular do NOT revive the shared =CARGO_TARGET_DIR= or the
+stable-slot idea. Both are disproved there, with reproductions.
+
+*Why the move works, in one line:* a TCC grant for a linker/ad-hoc-signed binary
+is pinned to its CDHASH, so no path scheme can make a grant survive a rebuild.
+The only durable answer is to stop needing a grant — put the worktree where
+macOS does not guard.
+
+=== Part 1 — move the managed worktree root
+Change the DEFAULT managed worktree path from
+=<project>/.orgasmic/tmp/dispatch/<task>/worktree= to:
+
+: ~/.orgasmic/worktrees/<project-id>/<task-id>/
+
+- Key on PROJECT ID, not display name — the id is what the CLI and daemon
+  already use (=--project <id>=) and names can collide or change.
+- MOVE ONLY THE SCRATCH. The dispatch RECORD — brief, =last.txt=, stdout log
+  under =.orgasmic/tmp/dispatch/<task>/= — STAYS in the project. It is small,
+  durable, written by the already-granted daemon, and leaving it keeps every
+  existing brief-path reference in gotchas, briefs and memories valid.
+- =orgasmic manager dispatch --worktree <PATH>= already exists as the override,
+  so this changes the managed default only and adds no new surface.
+- UNIVERSAL, not macOS-gated. Linux has no TCC, but the repo still stops
+  accumulating multi-GB build trees and =git status= stays clean. One code path
+  beats a platform branch.
+
+Verified already (TASK-3X5AQ): a worktree there resolves its =.git= back into
+the Documents-hosted repo, =status=/=log=/=remove= all work, the worktree's own
+=.orgasmic/project.org= keeps project resolution working, it is on the same
+filesystem, and the toolchain builds and runs from it.
+
+Rejected alternative, for the record: =~/Library/Caches/orgasmic/...= is the
+idiomatic macOS location and IS unguarded (zero TCC rows for Cache services) —
+but macOS may PURGE it under disk pressure and destroy a worktree mid-dispatch.
+
+=== Part 2 — pruning, which is NOT optional here
+This is a REQUIREMENT OF THE MOVE, not a follow-up. Today a stray worktree sits
+inside the repo where =git status=, =git worktree list= and the operator's own
+eyes find it. After the move it is invisible, so the same leak becomes silent
+multi-GB accumulation in =~/.orgasmic=. Shipping Part 1 alone trades visible
+garbage for invisible garbage.
+
+What exists today, measured 2026-08-05:
+- =dispatch-close --worktree-remove= (DEFAULT TRUE) salvages uncommitted work to
+  =refs/orgasmic/salvage/<sha>= and then removes WITHOUT =--force=, so git's
+  clean check gates it.
+- =dispatch-status --orphans-only= REPORTS dispatches whose run is gone.
+- =dispatch-status --cleanup-failed= writes the orphan close tx and clears
+  LEASES — not worktrees.
+
+What does NOT exist: any call to =git worktree prune=, any age-based GC, any
+boot-time or periodic sweep, any disk budget.
+
+So three leaks survive close today, and all three become invisible after Part 1:
+1. *A DIRTY worktree is never removed* — removal is deliberately non-forced.
+2. *An ABANDONED dispatch* (worker died, manager never closed) keeps its
+   worktree forever.
+3. *Stale =.git/worktrees/<name>= metadata* accrues if a directory is removed
+   out of band, which the move makes MORE likely because the new root is a
+   plausible thing for an operator to =rm -rf=.
+
+And Part 1 introduces a genuinely NEW failure mode to handle: a worktree whose
+REPO no longer exists. Today worktrees die with the repo; afterwards they are
+orphans pointing at a missing gitdir, and =git worktree remove= cannot help
+because there is no git to run it from. Detect and handle this explicitly.
+
+*Design constraints for the prune:*
+- NEVER remove a worktree with an open dispatch or a live run. Reuse the
+  existing health signals rather than inventing new ones.
+- Salvage before removing, reusing the existing =refs/orgasmic/salvage/<sha>=
+  path — do not add a second salvage mechanism.
+- REPORT WHAT IT SKIPPED AND WHY, and how many bytes it reclaimed. Silent
+  truncation reads as "cleaned everything" when it did not; this project has
+  been bitten by that shape repeatedly.
+- Prefer extending the existing orphan surface (=dispatch-status
+  --cleanup-failed= and its health checks) over building a parallel reaper.
+  Adding machinery where existing machinery can be made consistent is what took
+  a sibling chain five fix rounds.
+- Decide deliberately whether prune runs automatically (daemon boot and/or at
+  close) or only as an explicit verb, and SAY WHY. An automatic reaper that
+  deletes a worker's tree is a much sharper tool than a verb.
+
+=== Acceptance
+- A dispatch's managed worktree is created under
+  =~/.orgasmic/worktrees/<project-id>/<task-id>/= and nothing under
+  =~/Documents= is written by the worker's build.
+- The dispatch record (brief, report, logs) still lands in the project.
+- =--worktree <PATH>= still overrides.
+- Closing a dispatch still removes the worktree, still salvages first, and still
+  refuses to force-remove a dirty tree.
+- A prune surface reclaims worktrees for closed or absent dispatches, refuses to
+  touch live ones, names what it skipped and why, and reports bytes reclaimed.
+- A worktree whose repo is gone is detected and removable.
+- =git worktree prune= is run so stale =.git/worktrees= metadata does not
+  accumulate.
+- Gotchas, briefs and any shipped text naming
+  =.orgasmic/tmp/dispatch/<task>/worktree= are updated in the same change —
+  =cli_parity= resolves shipped invocations against the real binary and is the
+  gate that catches a doctrine edit that lags the code.
+** Evidence
+Landed =ffead86= (merge) / =e5ed186= (worker HEAD, 6 commits) on main, base =103ed7e=.
+
+Implementer: =implementer-claude-tmux= — driver tmux, harness claude, model claude-opus-5, effort high. Run =run-20260805T140235-4e4f74ec8c154ad48115bf43d5bbc97a=, started_tx =tx-20260805-orgasmic-4458=.
+
+NO DAEMON CODE CHANGED. The daemon worktree handling was already location-agnostic (=validate_dispatch_path= / =validate_dispatch_worktree_dir= check absolute + non-symlink + directory and nothing about the project), so the whole change is =orgasmic-cli= + =shipped/=.
+
+MANAGER PRODUCTION PROBE on the merged tree, with the freshly built binary (the installed =orgasmic= on PATH is older and cannot answer this):
+- default: =worktree: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb= — outside Documents, keyed on project id.
+- the dispatch RECORD still resolves under the project =.orgasmic/tmp/dispatch/=.
+- =--worktree /tmp/override-probe= still wins.
+- dry-run created nothing: neither =~/.orgasmic/worktrees= nor the override path existed afterwards.
+
+Integration gates, re-run by the manager on the MERGED tree:
+- =scripts/run-tests.sh -p orgasmic-cli= — GREEN, 0 failures, "environ: complete — no tool requirement was waived".
+- =cargo test -p orgasmic-cli --test cli_parity= — 3 passed. This is the gate the task named, and it is what proves the shipped doctrine edit did not lag the code.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0.
+- =cargo fmt --all --check= — exit 0.
+- The DAEMON suite was NOT re-run by the manager, deliberately and stated rather than implied: no daemon code changed (=git diff --stat= is cli + shipped only), and this host has no trustworthy full-run signal for that suite. The implementer ran it, saw 2 =supervisor::tests::a_probe_child_*= failures, and took the second measurement the brief demanded — both passed alone against the already-built binary in <0.6s.
+
+THE MANAGER RULING WAS IMPLEMENTED AND THEN SHARPENED BY THE IMPLEMENTER, correctly: prune refuses an open dispatch WHATEVER its run health, orphaned included, because reclaiming an abandoned dispatch tree would be a second way to end a dispatch. The skip line names the verb that actually releases it. That is a better reading of the ruling than the ruling itself had.
+
+SAFETY OF THE DELETE PATH, reviewed by the manager line by line rather than taken on report: =remove_orphaned_worktree_dir= is the only =remove_dir_all=; it refuses any path containing =..=, refuses anything that is not a DIRECT CHILD of this project managed root, and re-stats immediately before removing to refuse a symlink or a non-directory. Removal of a live repo worktree still goes through =git worktree remove= WITHOUT =--force=, so git own clean check gates it, same as =dispatch-close=. =managed_worktree_root= refuses a project id that could escape the root.
+
+NO INJECTION PROOF, and the reasoning is accepted. The defect needs live macOS TCC state, an operator prompt and a fresh cdhash per build — there is no assertion a test in this repo can make about it, which is exactly why TASK-3X5AQ measured it against the system TCC database instead. The remainder is relocation and new capability, not a bug with a red. Authoring a probe against the fixed tree would be a passing broken probe.
+
+MEASURED, NOT ASSUMED, by the implementer: =git worktree prune -v= writes its report to STDERR with stdout empty on git 2.52.0, so reading stdout would have silently reported "pruned nothing" every time; and =du= on this worktree real 7.6 GB target/ costs 0.084s warm, which is what justifies sizing reclaimable trees on the status path while deliberately NOT sizing held ones.
+

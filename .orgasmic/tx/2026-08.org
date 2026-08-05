@@ -7339,3 +7339,67 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-05 Wed 14:41:27 implementer.reported TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4465
+:TIME:         [2026-08-05 Wed 14:41:27]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:RUN_ID:       run-20260805T140235-4e4f74ec8c154ad48115bf43d5bbc97a
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5/worktree
+:SHA:          e5ed186754ed299e6737411e88b1116f0c295c9d
+:END:
+
+* TX 2026-08-05 Wed 14:47:35 task.edited TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4466
+:TIME:         [2026-08-05 Wed 14:47:35]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-M47E5
+:NODE_ID:      TASK-M47E5
+:END:
+
+* TX 2026-08-05 Wed 14:47:49 implementer.done TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4467
+:TIME:         [2026-08-05 Wed 14:47:49]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:REASON:       gates green on the merged tree including cli_parity; manager probed the new worktree path, the preserved record path and the override on the real binary
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: e5ed186
+:MERGE_SHA:    ffead86
+:BRANCH:       task-m47e5-impl
+:CLOSED_TX:    tx-20260805-orgasmic-4458
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 14:47:50 task.state_transitioned TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4468
+:TIME:         [2026-08-05 Wed 14:47:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-M47E5 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
