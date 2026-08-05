@@ -63,11 +63,11 @@ THE FOUR THINGS TO KNOW BEFORE YOU DO ANYTHING
    The surviving fix is TASK-M47E5: move worktrees OUT of TCC-guarded dirs.
 
 ** Done so far
-SESSION 2026-08-05 (this handoff's session), continuing 08-03/05. Two merges, both
-reviewed to a verdict; three tasks filed from things the work uncovered; 108 dead
-branches pruned.
+SESSION 2026-08-05, continuing 08-02/03. SEVEN merges, every one reviewed to a
+verdict; three of those reviews returned REJECT and each got a fix round. Five
+tasks filed from what the work uncovered; 108 dead branches pruned.
 
-MERGED
+MERGED, in order
 - =bb2fb24= TASK-YN5FJ.1 — =dispatch-close --verdict <approve|approve-with-follow-ups|reject>=.
   The default-branch gate demanded a =VERDICT= that only =--property VERDICT== could
   set, so the refusal named a remedy that did not clear the refusal. Three manager
@@ -79,38 +79,72 @@ MERGED
   last-wins. Reviewed REJECT, fixed, re-reviewed APPROVE.
 - =14b9660= TASK-YN5FJ.1.1 — the fix round for that REJECT. The refusal now prints
   =orgasmic manager dispatch-close --task <real id> …= with the executable and
-  every known token as its real value, and names its own placeholder set in prose.
-  The test now EARNS the word verbatim: it extracts the command from the refusal
-  that run produced, substitutes exactly two documented placeholders, ASSERTS every
-  other token is free of =<=/=>= (so a message that leaves a placeholder for
-  something it knew fails the MESSAGE), and execs =argv[0]= by name off PATH.
-  APPROVE, no findings.
+  every known token as its real value. The test EARNS the word verbatim: it
+  extracts the command from the refusal that run produced, substitutes exactly two
+  documented placeholders, ASSERTS every other token is free of =<=/=>= (so a
+  message that leaves a placeholder for something it knew fails the MESSAGE), and
+  execs =argv[0]= by name off PATH. APPROVE, no findings.
+- TASK-M47E5 — managed worktrees relocated OUT of the project to
+  =~/.orgasmic/worktrees/<project-id>/=, the surviving fix from TASK-3X5AQ's two
+  disproved ones. Reviewed, and the review found three P0/P1 defects on the
+  RECLAMATION half that shipped alongside it.
+- =b20fba5= TASK-M47E5.2 — the fix round for those three. REJECTED AGAIN, with
+  three MORE BLOCK SHIP findings. Six confirmed defects across two rounds, all on
+  one delete path.
+- =a1cd738= TASK-M47E5.3 — the ruling that followed: GATE THE VERB OFF rather than
+  patch it a third time. =worktree-prune= now refuses by construction with and
+  without =--dry-run=, the SCAN is gated too (a dry run still walked directories it
+  had no business walking), and =dispatch-status= no longer advertises reclaimable
+  trees. The implementation is KEPT, not deleted, and the reclamation tests are
+  =#[ignore]=d rather than removed — that coverage is what TASK-RMA18 un-ignores.
+  This decoupled the runtime reinstall from the landmine.
+- TASK-M47E5.1 — cursor-acp's own-dispatch-artifacts grant, which the relocation
+  had made permanently false (it derived the attempt dir from =worktree.parent()=).
+  The honest outcome was that the NARROWER grant no longer exists: it was removed
+  and callers routed to the sibling, rather than keeping two names for one
+  predicate. TASK-A1KJW would make it expressible again.
+- =2d9d8b8= TASK-4WKNX — a =:FIX_SUBTASK:= close now lands =in_review= by default;
+  =--fix-round-final= opts out, requires =--reason=, and stamps the ledger.
+  REJECTED on review — see In flight.
 
-TWO PROOFS SHIP FOR YN5FJ.1, AND THE SECOND IS THE INTERESTING ONE.
-=verify/TASK-YN5FJ.1-remedy/= removes ONLY the line that writes the flag's value:
-the flag still parses, =--help= still documents it, the refusal still prints the
-corrected remedy — and the loop still fails. That is a direct proof that a
-prose-only fix would not have been a fix.
+THE DEFAULT WAS INVERTED ON MEASUREMENT, NOT TASTE. 2026-08-05 ran five fix
+rounds and one of them — the fix for three data-loss findings — was itself
+rejected with three more BLOCK SHIP findings, two P0. Under the old default that
+round would have closed straight to =done= and six confirmed defects would be
+sitting on main unreviewed. The two failure modes are not symmetric: a trivial fix
+waiting for a cheap review is recoverable; an unreviewed fix for a data-loss
+finding is what the goal exists to prevent.
 
-THE RE-CUT WAS VERIFIED BEYOND ITS GREEN REPLAY. =TASK-YN5FJ.1/injection.patch=
-had to be re-cut (whole-file revert of the region the fix round edits). Manager
-checked independently: applies clean, injected =manager.rs= BYTE-IDENTICAL to
-=bb2fb24^1=, and the red log carries exactly ONE panic — the pinned label, quoting
-the pinned pre-fix text. A green =orgasmic verify= alone could not have told you any
-of that.
+PROOF DISCIPLINE, THE PART WORTH COPYING
+- TWO proofs ship for YN5FJ.1, and the second is the interesting one.
+  =verify/TASK-YN5FJ.1-remedy/= removes ONLY the line that writes the flag's
+  value: the flag still parses, =--help= still documents it, the refusal still
+  prints the corrected remedy — and the loop still fails. A direct proof that a
+  prose-only fix would not have been a fix.
+- The YN5FJ.1 re-cut was verified BEYOND its green replay: applies clean, injected
+  =manager.rs= BYTE-IDENTICAL to =bb2fb24^1=, red log carries exactly ONE panic,
+  the pinned label quoting the pinned pre-fix text. A green =orgasmic verify=
+  alone could not have told you any of that.
+- TASK-4WKNX's proof pins the END-TO-END SYMPTOM (=reviewer dispatch is allowed
+  only from IN_REVIEW=) rather than the stage assertion. A proof pinned on the
+  stage would have passed while the workflow stayed broken.
 
 FILED FROM WHAT THE WORK UNCOVERED
-- TASK-4WKNX (P2) — =:FIX_SUBTASK: t= closes straight to =done=, and a reviewer
-  dispatch is REFUSED from =done=; but the active goal requires a BLOCK SHIP fix
-  round to pass a fresh review. The two rules point opposite ways and the only way
-  through today is a manual =done= -> =in_review= flip. Hit live, not theorised.
-- TASK-37WN7 (P3) — =sigterm_exits_through_graceful_shutdown…= still flakes under
-  load DESPITE the TASK-Q07Y5 mitigation built for exactly that race. So it is not
-  an unmitigated race; it is a mitigation that does not hold. Deliberately NOT
-  registered in =flake-registry.toml=: no panic signature was captured, and a
-  signature-less entry makes every future failure of that test name read as this
-  known flake.
-- TASK-M47E5 was dispatched, not filed — see In flight.
+- TASK-RMA18 (P1) — the worktree-reclamation redesign, carrying all six BLOCK SHIP
+  findings and starting from the gated-off code.
+- TASK-4WKNX (P2, now merged) — hit live, not theorised: the =FIX_SUBTASK= close
+  and the reviewer-dispatch gate pointed opposite ways, and the only way through
+  was a manual backwards state flip performed three times in one day.
+- TASK-4WKNX.1 (P1) — see In flight.
+- TASK-A1KJW (P3) — the dispatch record dir is named from the BRIEF FILENAME,
+  never the task id.
+- TASK-37WN7 (P3) — =sigterm_exits_through_graceful_shutdown…= flakes DESPITE the
+  TASK-Q07Y5 mitigation built for exactly that race, so it is a mitigation that
+  does not hold, not an unmitigated race. NOW REGISTERED in
+  =verify/flake-registry.toml= with a captured signature — and the measurement
+  CORRECTED THE TASK'S OWN PREMISE: it reproduces WITHOUT load, at roughly 7% (one
+  failure in the first 14 isolated runs, then 12/12 clean), which contradicts the
+  "invisible on an idle machine" reading it was filed under.
 
 HOUSEKEEPING: 108 merged =task-*-impl= branches deleted with =git branch -d= (the
 safe form; every commit stays reachable from main). =git branch= is useful again.
