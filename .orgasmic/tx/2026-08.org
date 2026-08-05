@@ -7403,3 +7403,29 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-05 Wed 14:48:27 task.created TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4469
+:TIME:         [2026-08-05 Wed 14:48:27]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       declared by the TASK-M47E5 implementer as out-of-scope residual risk; confirmed against the code by the manager
+:END:
+
+* TX 2026-08-05 Wed 14:48:28 task.created TASK-A1KJW
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4470
+:TIME:         [2026-08-05 Wed 14:48:28]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A1KJW
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by manager probe during TASK-M47E5 integration; pre-existing, but the worktree move makes the mismatch visible and consequential
+:END:
