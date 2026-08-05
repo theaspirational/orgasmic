@@ -7160,3 +7160,51 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       hit live while closing TASK-YN5FJ.1.1; the board could not express 'fix round awaiting review'
 :END:
+
+* TX 2026-08-05 Wed 14:00:02 reviewer.reported TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4454
+:TIME:         [2026-08-05 Wed 14:00:02]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:RUN_ID:       run-20260805T134821-f10fa3a0c11f427d8754a9491dc38861
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-yn5fj.1.1-review/worktree
+:END:
+
+* TX 2026-08-05 Wed 14:00:46 reviewer.done TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4455
+:TIME:         [2026-08-05 Wed 14:00:46]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:REASON:       APPROVE, no findings. Recorded as VERDICT=ship not approve: the installed runtime predates --verdict and its reviewer_done_stage only maps clean/ship to done — the legacy compat path RULING 2 preserved, used in anger
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: e527e7e..14b9660
+:VERDICT:      ship
+:CLOSED_TX:    tx-20260805-orgasmic-4451
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 14:00:47 task.state_transitioned TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4456
+:TIME:         [2026-08-05 Wed 14:00:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-YN5FJ.1.1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
