@@ -3126,6 +3126,31 @@ Measured 2026-08-05 during TASK-YN5FJ.1, on =bb2fb24=:
 The change under test touched =dispatch-close= argument handling only and cannot
 reach =orgasmic serve=, so it is not a regression from that work.
 
+UPDATE 2026-08-05, and it CORRECTS this task own framing.
+
+The panic this task asked someone to capture arrived on its own, as the sole REAL
+failure of the =scripts/run-tests.sh -p orgasmic-cli= gate on the TASK-M47E5.2
+merge (=b20fba5=). The failing assertion is =status.signal()= — the process really
+did die on SIGTERM default disposition — NOT the 30s =try_wait= deadline. So the
+handler genuinely was not installed when the signal landed, which is exactly the
+window =wait_until_serve_awaits_signals= claims to close.
+
+THE LOAD-ONLY READING IS WRONG. This task, and the TASK-Q07Y5 comment it quotes,
+both say the window is "invisible on an idle machine". Measured immediately after
+the failure, alone, against the already-built binary: 1 failure in the first 14
+isolated runs, then 12/12 green. So it reproduces WITHOUT load at roughly 7%. The
+"passes in isolation" folklore — which the wrapper own isolation retry reinforces
+every time it goes green — has been hiding a defect that is not load-dependent at
+all. Anyone measuring this by running it once in isolation will conclude wrongly.
+
+REGISTERED, now that the bar this task set is met: =898c7e3= adds a
+signature-bearing entry owned by this task, pinned to the =status.signal()=
+assertion only, so a failure on the deadline branch or the exit-code branch still
+reads REAL. The first acceptance item ("the failing assertion is identified from a
+captured red, not inferred") is DONE. What remains is the second: strengthen
+=wait_until_serve_awaits_signals= so the window is genuinely closed, or record why
+it is not worth closing.
+
 ** Why it is NOT in verify/flake-registry.toml yet
 Deliberate, and this is the part to not undo casually. No panic signature was
 captured — the failure was observed through the wrapper verdict, not a saved log.

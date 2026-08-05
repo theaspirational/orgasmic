@@ -7634,3 +7634,82 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-05 Wed 15:49:43 implementer.reported TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4482
+:TIME:         [2026-08-05 Wed 15:49:43]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:RUN_ID:       run-20260805T150600-dfd05d136f1f4e4c984c960570bceb06
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.2/worktree
+:SHA:          f6f1ca27ae03d68aab928d4929638abb35f973be
+:END:
+
+
+* TX 2026-08-05 Wed 16:00:22 task.edited TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4483
+:TIME:         [2026-08-05 Wed 16:00:22]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-M47E5.2
+:NODE_ID:      TASK-M47E5.2
+:END:
+
+* TX 2026-08-05 Wed 16:00:30 implementer.done TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4484
+:TIME:         [2026-08-05 Wed 16:00:30]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:REASON:       all three P0/P1 findings fixed at the right layer; gates green, injection proof replays and demonstrates real destruction pre-fix
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: f6f1ca2
+:MERGE_SHA:    b20fba5
+:BRANCH:       task-m47e5.2-impl
+:CLOSED_TX:    tx-20260805-orgasmic-4479
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 16:00:30 task.state_transitioned TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4485
+:TIME:         [2026-08-05 Wed 16:00:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-M47E5.2 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-05 Wed 16:00:43 task.edited TASK-37WN7
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4486
+:TIME:         [2026-08-05 Wed 16:00:43]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-37WN7
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-37WN7
+:NODE_ID:      TASK-37WN7
+:END:
