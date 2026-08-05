@@ -540,3 +540,148 @@ therefore harmless, but the comment claims more than it delivers.
   sibling-stem assertion first.
 - Independent =run-tests.sh -p orgasmic-drivers= GREEN, 0 failures.
 
+* IN_PROGRESS TASK-M47E5.1.1.1 Validate the finalize artifact dir's shape, and stop the CLI minting a degenerate dispatch stem
+:PROPERTIES:
+:ID: TASK-M47E5.1.1.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-drivers/,crates/orgasmic-daemon/,crates/orgasmic-cli/,verify/TASK-M47E5.1.1.1/
+:END:
+
+** Description
+
+Fix round for the BLOCK SHIP on TASK-M47E5.1.1's review. The finding and its
+confirmed chain are on that task under "Review round 1 — REJECT (confirmed; two
+findings land on the manager's brief)". Read it there; do not re-derive it.
+
+In one line: round 3 fixed the finalize PREDICATE and left its INPUT unvalidated,
+so a degenerate dispatch stem makes =dispatch_artifact_dir= equal to the dispatch
+ROOT and the cross-stem grant returns.
+
+** The chain, confirmed by the manager
+
+1. =dispatch_artifact_stem= (=manager.rs:6442=) strips =-brief.md= with no
+   emptiness check: a brief named =-brief.md= gives =stem == ""=, =.-brief.md=
+   gives =".".
+2. =dispatch_artifact_paths_for_attempt= (=:6631=) joins that stem to the
+   dispatch dir, so =dir= IS the dispatch root.
+3. =api.rs:4764= persists =last_path.parent()= — the dispatch root — as
+   =dispatch_artifact_dir=.
+4. =path_is_under= accepts EQUALITY (=cursor_acp.rs:1530=), so both halves of
+   =path_under_own_dispatch_artifacts= pass for every sibling stem.
+
+** The ruling: fix it at BOTH ends
+
+*The adapter must not trust its input.* Require the artifact dir to be a STRICT,
+shape-validated child of the resolved dispatch root — preferably
+=resolved_artifact_dir.parent() == resolved_dispatch_root=, which matches the
+real stem layout and rejects equality, =stem/..=, and deeper-shape surprises in
+one condition rather than three.
+
+*The CLI must not mint a degenerate stem.* Reject empty, =.= and =..= stems in
+=dispatch_artifact_stem=. This is a real defect independently of the grant — a
+dispatch whose artifact dir IS the dispatch root would also collide artifacts
+across dispatches. *Scope is explicitly expanded to the CLI for this.*
+
+Neither alone is sufficient: the adapter fix is the security boundary and must
+hold against any input, while the CLI fix removes the only known route to that
+input and is cheap.
+
+** Acceptance
+
+- =dispatch_artifact_dir= equal to the dispatch root is REFUSED by the finalize
+  grant, and so is a traversal-equivalent value that resolves to it.
+- A brief path that would produce an empty, =.= or =..= stem is refused by name
+  at the CLI, before any dispatch artifacts are created.
+- The paired authority test is EXTENDED with the root-equivalent case: sibling
+  READ still allowed, sibling FINALIZE still refused. Keep the existing cases.
+- A daemon test that derives the config from a =last_path= rather than passing an
+  expected directory straight to the config helper. The current test only proves
+  serialization of an already-correct value, which is why this got through.
+- The injection proof covers the root-equivalent case.
+
+** Also in scope, small
+
+Correct the =ORGASMIC_PROBE_SESSIONS= example: it points at
+=$PWD/.orgasmic/tmp/sessions=, which does not exist in a dispatch worktree, so
+the documented command cannot provide the route it advertises. And either add the
+sixth parent so the restored candidate really reaches the old =<stem>/worktree=
+layout, or narrow the comment to the shallow custom layout the five-parent form
+actually supports — from the manifest it currently expands to
+=.orgasmic/tmp/tmp/sessions=, one parent short.
+
+** Baseline correction, so it is not repeated
+
+The TASK-M47E5.1.1 brief asked for a no-widening comparison against =d4922f7= as
+"pre-M47E5". That was WRONG: =d4922f7= already contains the managed-worktree
+move, at which point the old predicate was dead and the normal allowset was
+worktree-only. *The true pre-move comparison point is =103ed7e=*, where the
+intended shape was worktree plus =worktree.parent()= when that parent is under
+the dispatch root. Compare against =103ed7e=.
+** Landed and verified by the manager
+** Review round 1 — REJECT (test-only; production confirmed correct)
+Reviewer =reviewer-codex-tmux= (tmux/codex/gpt-5.6-sol/high) on merge =77b5e90=
+vs base =7ffbe73=. REJECT, one BLOCK SHIP — *test-only; the production fix is
+confirmed correct*.
+
+=== The finding, confirmed by the manager
+
+The daemon test computes the derivation itself:
+
+: let last_path = FsPath::new(".../task-attempt-7/task-attempt-7-last.txt");
+: let cfg = stage_driver_config_with_overrides(..., last_path.parent(), ...);
+: assert_eq!(cfg.0["dispatch_artifact_dir"], json!(last_path.parent().unwrap()));
+
+That asserts =parent() == parent()=. The production derivation —
+=req.last_path.and_then(FsPath::parent)= at =api.rs:4770= — is exercised by NO
+test. Swapping it for a grandparent derivation yields the DISPATCH ROOT, restores
+the cross-stem finalize grant, and leaves this test green.
+
+*This is the same acceptance criterion failing twice.* Round 4's brief demanded
+"a daemon test that derives the config from a =last_path=, rather than passing an
+expected directory straight to the config helper", precisely because round 3's
+test only proved serialization. Round 4 moved the =.parent()= call into the test
+and passed the result straight to the helper — satisfying the criterion's letter
+and not its substance. The blind spot survived the round written to close it.
+
+=== What the review CONFIRMED, independently — all of it accepted
+
+- *The manager's daemon-suite skip was valid.* Checked directly:
+  =git diff 3a825cb..77b5e90 -- crates/orgasmic-daemon/src/api.rs= changes only
+  code inside =#[cfg(test)]=. Production daemon code is unchanged from the
+  twice-run tree. The manager asked for this to be checked rather than trusted,
+  and it held.
+- *The stale-proof narrowing was right.* "Re-cutting the retired half would
+  assert the widening already ruled defective." Both narrowed and new proofs
+  replayed independently: PASS, byte-identical revert.
+- *The no-widening comparison against =103ed7e= holds*: the grant retains the
+  worktree path and restores the old one-attempt-directory shape without granting
+  the dispatch tree.
+- *=resolve_policy_path= makes the strict rule sound*: it canonicalizes, or
+  recursively canonicalizes the nearest existing parent, so the
+  =parent() == dispatch_root= check refuses equality, root-equivalent traversal,
+  deeper resolved shapes and symlink escape. Where a path cannot be resolved the
+  comparison *fails closed*.
+- *The =Option= propagation from the fallible stem is safe*: it is confined to
+  best-effort legacy Codex PID recovery when a record has no authoritative
+  =last_path=, where =None= is the pre-existing fail-soft contract.
+- *The CLI refusal lands early*: reservation propagates the error before
+  =create_dir_all= and before artifact-file reservation.
+- *The transcript-probe fix is real*:
+  =git rev-parse --path-format=absolute --git-common-dir= resolves a dispatch
+  worktree to the live checkout, and the six-parent fallback does reach the old
+  =<stem>/worktree= layout as claimed.
+
+=== The judgement worth carrying forward
+
+Four rounds, four reviews, and the recurring failure is not in the production
+reasoning — it is that each round's TEST proved something adjacent to the claim
+rather than the claim. The widening survived because the matrix checked sibling
+worktrees and not sibling stems; the input gap survived because the test
+hard-coded a well-formed directory; this gap survives because the test does
+production's arithmetic for it.
+
+The remedy adopted for round 5 is a mutation-shaped acceptance criterion: the
+test must FAIL if production derives the grandparent, the file itself, or =None=.
+Naming the mutations a test must catch is stronger than naming the value it
+should assert, and every round of this chain would have been caught by it.
