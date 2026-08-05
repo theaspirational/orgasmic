@@ -193,6 +193,52 @@ impl ReviewVerdict {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum ManagerOwnedClosePropertyPolicy {
+    Reserved,
+    AliasedVerdict,
+}
+
+/// A close-tx key whose authoritative value comes from manager-owned close
+/// semantics rather than the generic `--property` channel.
+///
+/// New entries are reserved by default. The only exception is `VERDICT`: its
+/// property spelling predates the typed flag and deliberately remains a
+/// free-text alias, with the existing both-spellings conflict.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ManagerOwnedCloseProperty {
+    key: &'static str,
+    typed_flag: &'static str,
+    policy: ManagerOwnedClosePropertyPolicy,
+}
+
+impl ManagerOwnedCloseProperty {
+    const fn reserved(key: &'static str, typed_flag: &'static str) -> Self {
+        Self {
+            key,
+            typed_flag,
+            policy: ManagerOwnedClosePropertyPolicy::Reserved,
+        }
+    }
+
+    const fn aliased_verdict() -> Self {
+        Self {
+            key: "VERDICT",
+            typed_flag: "--verdict",
+            policy: ManagerOwnedClosePropertyPolicy::AliasedVerdict,
+        }
+    }
+}
+
+// orgasmic:TASK-4WKNX.1 — one declared policy table for the manager-owned
+// close-tx namespace. A new manager-owned key enters as `reserved`; preserving
+// a property alias must be an explicit compatibility decision like VERDICT's.
+const MANAGER_OWNED_CLOSE_PROPERTIES: &[ManagerOwnedCloseProperty] = &[
+    ManagerOwnedCloseProperty::reserved("FIX_ROUND_FINAL", "--fix-round-final"),
+    ManagerOwnedCloseProperty::reserved("NO_REVIEW_REQUIRED", "--no-review-required"),
+    ManagerOwnedCloseProperty::aliased_verdict(),
+];
+
 #[derive(Args, Debug, Clone)]
 pub struct DispatchCloseArgs {
     /// Task id whose dispatch is being closed; repeatable for a multi-task
@@ -223,6 +269,8 @@ pub struct DispatchCloseArgs {
     #[arg(long = "reviewed-diff")]
     pub reviewed_diff: Option<String>,
     /// Additional `KEY=VALUE` properties recorded on the close tx; repeatable.
+    /// Manager-owned keys are reserved for their typed flags, except the
+    /// supported legacy `VERDICT` alias documented below.
     #[arg(long = "property", value_parser = parse_close_property)]
     pub properties: Vec<(String, String)>,
     /// Reviewer verdict, recorded as `VERDICT` on the close tx; ANY verdict
@@ -960,20 +1008,7 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     // cleanup, so a refusal from there would arrive with the worktree already
     // removed.
     validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
-    // orgasmic:TASK-YN5FJ.1 — RULING 3: both spellings write the same VERDICT
-    // property, and `close_property_value` is last-wins, so silently letting
-    // one win is the kind of thing nobody finds until it matters. Refuse, and
-    // name both.
-    if let (Some(flag), Some(property)) = (args.verdict, close_property_value(&args, "VERDICT")) {
-        bail!(
-            "--verdict {} and --property VERDICT={} both set the same VERDICT property on this \
-             close: pass exactly one (--verdict <{}> for the canonical vocabulary, \
-             --property VERDICT=<value> for a legacy free-text spelling)",
-            flag.as_str(),
-            property,
-            ReviewVerdict::value_list()
-        );
-    }
+    validate_manager_owned_close_properties(&args)?;
     // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
     // only on the close that records the reviewer's own terminal tx.
     if args.verdict.is_some()
@@ -5710,6 +5745,45 @@ fn implementer_done_stage(fix_subtask: bool, fix_round_final: bool) -> Lifecycle
     }
 }
 
+/// Enforce the generic-property policy for every manager-owned close-tx key.
+///
+/// This runs in `dispatch_close` with the other argument refusals, before merge
+/// verification, run release, cleanup, tx append, or lifecycle mutation.
+fn validate_manager_owned_close_properties(args: &DispatchCloseArgs) -> Result<()> {
+    for owned in MANAGER_OWNED_CLOSE_PROPERTIES {
+        let Some(property_value) = close_property_value(args, owned.key) else {
+            continue;
+        };
+        match owned.policy {
+            ManagerOwnedClosePropertyPolicy::Reserved => {
+                bail!(
+                    "--property {}={} cannot set manager-owned close property {}; use {} instead",
+                    owned.key,
+                    property_value,
+                    owned.key,
+                    owned.typed_flag
+                );
+            }
+            ManagerOwnedClosePropertyPolicy::AliasedVerdict => {
+                let Some(flag) = args.verdict else {
+                    continue;
+                };
+                // TASK-YN5FJ.1 RULING 3: preserve this refusal verbatim. Both
+                // spellings write the same key, so neither silently wins.
+                bail!(
+                    "--verdict {} and --property VERDICT={} both set the same VERDICT property on this \
+                     close: pass exactly one (--verdict <{}> for the canonical vocabulary, \
+                     --property VERDICT=<value> for a legacy free-text spelling)",
+                    flag.as_str(),
+                    property_value,
+                    ReviewVerdict::value_list()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Refuse a `--fix-round-final` that cannot mean what it says.
 ///
 /// orgasmic:TASK-4WKNX — `--reason` is required on the same argument that makes
@@ -7723,6 +7797,58 @@ mod tests {
                 from: LifecycleStage::InProgress,
                 to: LifecycleStage::Done,
             }]
+        );
+    }
+
+    #[test]
+    fn fix_round_final_fence_names_aborted_and_architector_closes() {
+        let args_for = |status| DispatchCloseArgs {
+            task: vec!["TASK-086".to_string()],
+            started_tx: Some("tx-start-arch".to_string()),
+            status,
+            merge_sha: Some("abc123".to_string()),
+            worker_commit: None,
+            worker_session: None,
+            reviewed_diff: None,
+            properties: Vec::new(),
+            verdict: None,
+            tokens: None,
+            wall: None,
+            reason: Some("not an implementer.done close".to_string()),
+            no_review_required: false,
+            fix_round_final: true,
+            worktree_remove: true,
+            no_worktree_remove: false,
+            branch_delete: false,
+        };
+        let tasks = vec!["TASK-086".to_string()];
+        let expected =
+            "--fix-round-final is valid only when closing an implementer dispatch as done";
+
+        let aborted = validate_fix_round_final(
+            Path::new("/unused"),
+            &tasks,
+            &args_for(DispatchCloseStatus::Aborted),
+            "manager.dispatch_aborted",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            aborted.contains(expected),
+            "aborted close must reach the named fence: {aborted}"
+        );
+
+        let architector = validate_fix_round_final(
+            Path::new("/unused"),
+            &tasks,
+            &args_for(DispatchCloseStatus::Done),
+            "architector.done",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            architector.contains(expected),
+            "architector.done close must reach the named fence: {architector}"
         );
     }
 
