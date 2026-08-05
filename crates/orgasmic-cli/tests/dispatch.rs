@@ -1466,6 +1466,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
                 .contains("--fix-round-final requires --reason so the skipped review is auditable"),
         "unexpected reasonless --fix-round-final response: {no_reason_stderr}"
     );
+    let forged_closed_tx = format!("CLOSED_TX={fix_decl_review_started_tx}");
     run_orgasmic(
         &home,
         &running,
@@ -1485,7 +1486,24 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "--fix-round-final",
             "--reason",
             "one-line comment typo, nothing to review",
+            "--property",
+            &forged_closed_tx,
         ],
+    );
+    // orgasmic:TASK-4WKNX.1.1 — this pins the consumed consequence, not merely
+    // the duplicate's order in the ledger. Before manager-first construction,
+    // close_matching_dispatch reads the forged CLOSED_TX, misses this dispatch,
+    // and leaves it open even though dispatch-close reported success.
+    let fix_final_status = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-FIX-FINAL"],
+    );
+    assert!(
+        fix_final_status.trim().is_empty(),
+        "a forged CLOSED_TX must not change which dispatch the close consumer terminates: {fix_final_status}"
     );
     assert_task_stage(&project_root, "TASK-FIX-FINAL", "DONE", "done");
     assert!(

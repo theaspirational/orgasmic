@@ -4709,62 +4709,59 @@ fn close_done_request(
         cleanup,
         transition,
     } = *facts;
-    let mut extra = Vec::new();
+    let mut manager_extra = Vec::new();
     if let Some(session) = optional_value(args.worker_session.as_deref()) {
-        extra.push(("WORKER_SESSION".to_string(), session));
+        manager_extra.push(("WORKER_SESSION".to_string(), session));
     }
     if let Some(model) = optional_value(open.model.as_deref()) {
-        extra.push(("MODEL".to_string(), model));
+        manager_extra.push(("MODEL".to_string(), model));
     }
     if let Some(effort) = optional_value(open.effort.as_deref()) {
-        extra.push(("EFFORT".to_string(), effort));
+        manager_extra.push(("EFFORT".to_string(), effort));
     }
     if let Some(commit) = worker_commit
         .map(str::to_string)
         .or_else(|| optional_value(args.worker_commit.as_deref()))
     {
-        extra.push(("WORKER_COMMIT".to_string(), commit));
+        manager_extra.push(("WORKER_COMMIT".to_string(), commit));
     }
     if matches!(tx_type, "implementer.done" | "architector.done") {
         if let Some(merge_sha) = merge_sha {
-            extra.push(("MERGE_SHA".to_string(), merge_sha.to_string()));
+            manager_extra.push(("MERGE_SHA".to_string(), merge_sha.to_string()));
         }
         if let Some(branch) = optional_value(open.branch.as_deref()) {
-            extra.push(("BRANCH".to_string(), branch));
+            manager_extra.push(("BRANCH".to_string(), branch));
         }
     }
     if let Some(wall) = optional_value(args.wall.as_deref()) {
-        extra.push(("WALL".to_string(), wall));
+        manager_extra.push(("WALL".to_string(), wall));
     }
     if let Some(tokens) = args.tokens {
-        extra.push(("TOKENS".to_string(), tokens.to_string()));
+        manager_extra.push(("TOKENS".to_string(), tokens.to_string()));
     }
     if let Some(reviewed_diff) = optional_value(args.reviewed_diff.as_deref()) {
-        extra.push(("REVIEWED_DIFF".to_string(), reviewed_diff));
+        manager_extra.push(("REVIEWED_DIFF".to_string(), reviewed_diff));
     }
     // orgasmic:TASK-YN5FJ.1 — the flag writes the SAME `VERDICT` key the legacy
     // `--property VERDICT=` spelling writes; `dispatch_close` has already
     // refused a close that passes both, so exactly one of these can land.
     if let Some(verdict) = args.verdict {
-        extra.push(("VERDICT".to_string(), verdict.as_str().to_string()));
-    }
-    for (key, value) in &args.properties {
-        extra.push((key.clone(), sanitize_tx_value(value)));
+        manager_extra.push(("VERDICT".to_string(), verdict.as_str().to_string()));
     }
     if args.no_review_required {
-        extra.push(("NO_REVIEW_REQUIRED".to_string(), "true".to_string()));
+        manager_extra.push(("NO_REVIEW_REQUIRED".to_string(), "true".to_string()));
     }
     // orgasmic:TASK-4WKNX — the opt-out is stamped, not just obeyed: the
     // difference between "this fix round was reviewed" and "this fix round was
     // declared not to need one" has to be readable off the ledger later.
     if args.fix_round_final {
-        extra.push(("FIX_ROUND_FINAL".to_string(), "true".to_string()));
+        manager_extra.push(("FIX_ROUND_FINAL".to_string(), "true".to_string()));
     }
-    extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
-    push_lifecycle_extra(&mut extra, transition);
-    push_cleanup_extra(&mut extra, cleanup);
+    manager_extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
+    push_lifecycle_extra(&mut manager_extra, transition);
+    push_cleanup_extra(&mut manager_extra, cleanup);
     if let Some(goal_id) = optional_value(open.goal_id.as_deref()) {
-        extra.push(("GOAL_ID".to_string(), goal_id));
+        manager_extra.push(("GOAL_ID".to_string(), goal_id));
     }
     TxAppendRequest {
         // Deterministic per (task, dispatch generation), not per invocation
@@ -4786,9 +4783,27 @@ fn close_done_request(
             .as_ref()
             .map(|s| sanitize_tx_value(s))
             .filter(|s| !s.is_empty()),
-        extra,
+        extra: finish_close_tx_extras(manager_extra, &args.properties),
         tx_path: None,
     }
+}
+
+/// Finish a close tx's extras without enumerating its manager-owned keys.
+///
+/// Tx-extra value readers are first-wins, so this consuming boundary appends
+/// the generic property channel only after every structured value. A future
+/// manager-owned key is protected by being pushed into `manager_extra`; it does
+/// not need a matching entry in [`MANAGER_OWNED_CLOSE_PROPERTIES`].
+fn finish_close_tx_extras(
+    mut manager_extra: Vec<(String, String)>,
+    properties: &[(String, String)],
+) -> Vec<(String, String)> {
+    manager_extra.extend(
+        properties
+            .iter()
+            .map(|(key, value)| (key.clone(), sanitize_tx_value(value))),
+    );
+    manager_extra
 }
 
 fn close_aborted_request(
@@ -7331,6 +7346,23 @@ mod tests {
             reported: false,
             closed: false,
         }
+    }
+
+    #[test]
+    fn future_manager_close_extra_wins_without_a_reserved_table_entry() {
+        const FUTURE_MANAGER_KEY: &str = "FUTURE_MANAGER_CLOSE_FACT";
+        assert!(!MANAGER_OWNED_CLOSE_PROPERTIES
+            .iter()
+            .any(|property| property.key == FUTURE_MANAGER_KEY));
+
+        let properties = vec![(FUTURE_MANAGER_KEY.to_string(), "forged".to_string())];
+        let mut close = TxEntry::new("tx-close", "implementer.done", "now", "agent", "host");
+        close.extra = finish_close_tx_extras(
+            vec![(FUTURE_MANAGER_KEY.to_string(), "authoritative".to_string())],
+            &properties,
+        );
+
+        assert_eq!(extra(&close, FUTURE_MANAGER_KEY), Some("authoritative"));
     }
 
     #[test]

@@ -1,0 +1,18 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -4796,10 +4796,12 @@ fn finish_close_tx_extras(
+     mut manager_extra: Vec<(String, String)>,
+     properties: &[(String, String)],
+ ) -> Vec<(String, String)> {
+-    manager_extra.extend(
++    let mut extra = Vec::new();
++    extra.extend(
+         properties
+             .iter()
+             .map(|(key, value)| (key.clone(), sanitize_tx_value(value))),
+     );
+-    manager_extra
++    extra.append(&mut manager_extra);
++    extra
+ }
