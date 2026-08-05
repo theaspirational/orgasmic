@@ -1,0 +1,27 @@
+# Pinned from the real red run of 2026-08-05 with the injection applied.
+#
+# The injection reverts the whole fix in `manager.rs`: `--verdict` stops
+# existing, and the default-branch refusal goes back to the text production
+# actually printed. That is the pre-fix state exactly — `VERDICT` was settable
+# only through the generic `--property VERDICT=...`, so every historical
+# `reviewer.done` (tx-20260803-orgasmic-4401, the TASK-XCJYC close, carries
+# REASON / REVIEWED_DIFF / CLOSED_TX / MODEL / EFFORT and no VERDICT) was an
+# ordinary, correctly-formed reviewer close that the gate rejected.
+exit: 101
+
+# THE DEFECT, and the reason a "does --verdict parse?" test could never find
+# it: the refusal names a remedy that does not satisfy the refusal. Follow
+# "Dispatch and close a reviewer for that reported generation" exactly and the
+# second attempt prints the same message, because the gate ALSO wants that
+# close to carry a non-empty VERDICT and nothing in the text says so. This is
+# the FIRST failing assertion under the injection, not a downstream one — the
+# red run's panic quotes the pre-fix message verbatim.
+contains: refusal must name the verdict requirement and the --verdict remedy
+
+# The pre-fix text itself, so a replay against some OTHER regression that
+# happens to break this assertion does not read as this defect reproducing.
+contains: Dispatch and close a reviewer for that reported generation
+
+# One test, and it is this one. A binary that collapses wholesale is a
+# different failure and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

@@ -1,0 +1,16 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -3278,12 +3278,6 @@ fn close_done_request(
+     if let Some(reviewed_diff) = optional_value(args.reviewed_diff.as_deref()) {
+         extra.push(("REVIEWED_DIFF".to_string(), reviewed_diff));
+     }
+-    // orgasmic:TASK-YN5FJ.1 — the flag writes the SAME `VERDICT` key the legacy
+-    // `--property VERDICT=` spelling writes; `dispatch_close` has already
+-    // refused a close that passes both, so exactly one of these can land.
+-    if let Some(verdict) = args.verdict {
+-        extra.push(("VERDICT".to_string(), verdict.as_str().to_string()));
+-    }
+     for (key, value) in &args.properties {
+         extra.push((key.clone(), sanitize_tx_value(value)));
+     }

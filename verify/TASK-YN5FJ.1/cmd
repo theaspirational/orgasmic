@@ -1,0 +1,14 @@
+# One line. Run from the repo root by `orgasmic verify TASK-YN5FJ.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+# `ORGASMIC_ALLOW_MISSING_TOOLS=tmux` because inside an orgasmic worker the
+# `tmux` on PATH is the rmux shim and the sentinel counts it as absent; this
+# test needs no multiplexer of its own.
+#
+# ONE test, and it is the loop one. A test that only asserts `--verdict` is
+# accepted cannot see this defect: the flag being parseable was never the
+# question, the printed remedy working was. So the replay walks the whole
+# operator loop — refuse, follow the printed text VERBATIM, succeed — and the
+# injection makes the first step's own instructions unfollowable again.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME ORGASMIC_ALLOW_MISSING_TOOLS=tmux cargo test -p orgasmic-cli --test dispatch review_gate_refusal_remedy_clears_the_refusal

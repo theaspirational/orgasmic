@@ -1,0 +1,9 @@
+# One line. Run from the repo root by `orgasmic verify TASK-YN5FJ.1-remedy`.
+#
+# The companion proof. `TASK-YN5FJ.1` pins the visible half — a refusal whose
+# printed remedy does not mention the verdict it requires. This one pins the
+# half a text-only fix would leave broken: `--verdict` documented and parsed,
+# but not actually writing the `VERDICT` the gate reads, so an operator who
+# follows the (now correct) text is still refused. Same test, different
+# injection, because the two failures are independent.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME ORGASMIC_ALLOW_MISSING_TOOLS=tmux cargo test -p orgasmic-cli --test dispatch review_gate_refusal_remedy_clears_the_refusal
