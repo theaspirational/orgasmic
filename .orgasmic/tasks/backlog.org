@@ -2888,6 +2888,96 @@ Bounded disk (N targets instead of one per concurrent worktree, measured at
 3.0 GB for a single worktree) and, if anyone ever revisits sharing a target dir,
 they are the only shape that keeps cargo sound. Keep them on the table as a
 disk/scale change; just not as the TCC answer.
+** Verification and recommended placement (2026-08-05)
+VERIFIED 2026-08-05, before building anything. Four measurements, one of which
+closes the option-5 question for good and one of which corrects an earlier
+assumption in this task.
+
+1. *A rebuild at a STABLE PATH changes the cdhash.* Built a tiny ad-hoc-signed
+   binary twice at one path:
+
+   : build 1: CDHash=16237ab166c90df05f15b3f29b0f25c03d7616c9
+   : build 2: CDHash=6cdc20d7c7e6574d879e6b72648f0c1922a79120
+
+   The TCC grant is pinned to the cdhash, so it cannot survive a rebuild. Option
+   5 (stable worktree slots) is CONFIRMED DEAD as the TCC fix — it would move
+   the prompt from once-per-dispatch to once-per-BUILD.
+
+2. *git is NOT exempt, but it is already satisfied and path-stable.* Earlier
+   reasoning here assumed git would be covered as an Apple binary. Wrong:
+   =/opt/homebrew/Cellar/git/2.52.0_1/bin/git= holds its own
+   =kTCCServiceSystemPolicyDocumentsFolder= grant, as do =tmux= and =rustup=.
+   They prompted once historically and stuck, because their paths are stable.
+   Crucially, across the FIVE recorded dispatch prompts, every grant was for a
+   freshly built =.../worktree/target/{debug,release}/orgasmic= — NEVER for git.
+   So git reaching into a Documents-hosted =.git= was already a solved case
+   during real dispatches. (A Homebrew git upgrade moves the path and re-prompts
+   once; that is pre-existing and unrelated to worktree placement.)
+
+3. *A worktree outside the repo works normally.* Created one at
+   =~/.orgasmic/worktrees/orgasmic/tcc-probe=: its =.git= file resolves back to
+   =<repo>/.git/worktrees/tcc-probe= inside Documents, =git status= and
+   =git log= work, =.orgasmic/project.org= is present so project resolution
+   still works from the worktree, and =git worktree remove= works from outside
+   the repo. Same filesystem (=/dev/disk3s5=), so no cross-volume concerns.
+
+4. *The toolchain builds and runs there.* cargo built and ran a fresh binary
+   under =~/.orgasmic/worktrees/...= with no issue.
+
+*LIMIT OF TEST 4, STATED SO NOBODY OVER-READS IT.* The probe binary also read
+the Documents-hosted repo successfully and RAISED NO PROMPT — but that proves
+nothing about dispatches. It ran under this shell, whose responsible process
+already holds Documents access; TCC attributes to the responsible process, and a
+dispatch's chain (daemon -> tmux -> harness -> cargo -> test binary) is
+different. The argument for the fix does NOT rest on that result. It rests on
+the fact that a worker whose worktree is outside Documents HAS NO REASON to read
+Documents at all: its cwd, sources, target dir and =.orgasmic= snapshot are all
+inside the worktree, and the only link back is the =.git= file, which git — a
+separately granted, path-stable binary — follows.
+
+=== Recommended placement
+: ~/.orgasmic/worktrees/<project-id>/<task-id>/
+
+Keyed on PROJECT ID, not display name: the id is what the CLI and daemon already
+use everywhere (=--project <id>=), and names can collide or change.
+
+Why a TOP-LEVEL =worktrees/= rather than the proposed
+=~/.orgasmic/user/projects/<name>/worktrees=:
+- =user/= currently means user-level CONFIG — it holds =auth/= and =board.org=,
+  both small. Worktrees are multi-GB regenerable scratch; mixing them buries the
+  largest thing on disk inside a config namespace.
+- =user/= also carries a bad association: =user/workers/= was the retired
+  residue that TASK-8ED6V was filed about. A new =user/projects/= invites the
+  same "is this live or dead?" question that incident was about.
+- Top-level makes the cost visible: =du -sh ~/.orgasmic/*= shows it at a glance.
+
+Why NOT =~/Library/Caches/orgasmic/...=, the otherwise idiomatic macOS choice:
+it is unguarded (confirmed: zero TCC rows for Cache services), but macOS may
+PURGE it under disk pressure, which would destroy a worktree mid-dispatch.
+Rejected on that alone.
+
+=== What moves and what stays
+Move only the SCRATCH. The dispatch RECORD — brief, report =last.txt=, stdout
+log under =.orgasmic/tmp/dispatch/<task>/= — stays in the project, because it is
+part of the durable record, it is small, and it is written by the daemon, which
+is identity-signed and already granted. Splitting on "record stays, scratch
+leaves" keeps every existing brief-path reference valid.
+
+=== Already has an escape hatch
+=orgasmic manager dispatch --worktree <PATH>= already exists ("omitted -> a
+managed path under =.orgasmic/tmp/dispatch/="). So this change is to the MANAGED
+DEFAULT only, and the override is precedent, not new surface.
+
+=== Make it universal, not macOS-gated
+Linux has no TCC, but the move is still correct there: the repo stops
+accumulating multi-GB build trees, =git status= in the repo stays clean, and
+disk is attributable per project. One code path beats a platform branch.
+
+=== Known follow-on work
+=.orgasmic/tmp/dispatch/<task>/worktree= is named in gotchas, briefs and
+memories; those need updating with the change. =dispatch-close
+--worktree-remove= must remove from the new root, and the salvage ref
+=refs/orgasmic/salvage/<sha>= is git-level so it is unaffected.
 
 * BACKLOG TASK-RQ270 Excise the architecture layer from orgasmic and the UI (dec_HBK6A, staged A-E)    :daemon:cli:ui:shipped:
 :PROPERTIES:
