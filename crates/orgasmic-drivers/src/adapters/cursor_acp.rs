@@ -109,6 +109,12 @@ impl CursorAcpAdapter {
     fn project_root(&self) -> Option<PathBuf> {
         self.cfg.as_ref().and_then(|cfg| cfg.project_root.clone())
     }
+
+    fn dispatch_artifact_dir(&self) -> Option<PathBuf> {
+        self.cfg
+            .as_ref()
+            .and_then(|cfg| cfg.dispatch_artifact_dir.clone())
+    }
 }
 
 impl Default for CursorAcpAdapter {
@@ -127,6 +133,8 @@ struct CursorAcpConfig {
     prompt_bundle_text: Option<String>,
     #[serde(default)]
     project_root: Option<PathBuf>,
+    #[serde(default)]
+    dispatch_artifact_dir: Option<PathBuf>,
     #[serde(default = "default_auto_start_turn")]
     auto_start_turn: bool,
 }
@@ -998,19 +1006,15 @@ impl CursorAcpAdapter {
         } else if reason.is_some() {
             return false;
         }
-        // orgasmic:TASK-M47E5.1
-        // The second grant used to be `path_under_own_dispatch_artifacts`,
-        // which named this attempt's stem directory as `worktree.parent()`.
-        // TASK-M47E5 moved managed worktrees out of the project, so that
-        // parent is now the managed worktree root and the grant could never
-        // fire. Nothing this adapter holds identifies the attempt's stem
-        // either — the stem is derived from the operator-chosen brief file
-        // name (`dispatch_artifact_stem` in the CLI), and the driver is handed
-        // a task id, a run id and a worktree, none of which name it. So the
-        // narrower grant does not survive the move: the honest predicate left
-        // is the project's dispatch surface, the same one the read grant above
-        // already allows.
-        self.path_under_worktree(&summary_file) || self.path_under_dispatch_artifacts(&summary_file)
+        // orgasmic:TASK-M47E5.1.1
+        // The daemon persists this attempt's authoritative artifact directory
+        // from the live run contract. Do not derive it from the task id or
+        // widen finalize to the project dispatch tree: a read grant and a
+        // finalize grant are different authorities over the same path.
+        // TASK-A1KJW can supersede this config plumbing once dispatch stems are
+        // task-derived, but the security boundary must not wait on that work.
+        self.path_under_worktree(&summary_file)
+            || self.path_under_own_dispatch_artifacts(&summary_file)
     }
 
     fn git_c_command_allowed(&self, words: &[String]) -> bool {
@@ -1046,6 +1050,21 @@ impl CursorAcpAdapter {
         self.project_root()
             .map(|root| path_is_under(path, &root.join(".orgasmic/tmp/dispatch")))
             .unwrap_or(false)
+    }
+
+    fn path_under_own_dispatch_artifacts(&self, path: &Path) -> bool {
+        let Some(dispatch_artifact_dir) = self
+            .dispatch_artifact_dir()
+            .filter(|configured| configured.is_absolute())
+        else {
+            return false;
+        };
+        let Some(project_root) = self.project_root() else {
+            return false;
+        };
+        let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
+        path_is_under(&dispatch_artifact_dir, &dispatch_root)
+            && path_is_under(path, &dispatch_artifact_dir)
     }
 
     fn path_is_worktree(&self, path: &Path) -> bool {
@@ -2028,27 +2047,28 @@ mod tests {
         ));
     }
 
-    // orgasmic:TASK-M47E5.1
-    /// TASK-M47E5 moved the managed worktree to
-    /// `~/.orgasmic/worktrees/<project-id>/<task>/`, so the worktree stopped
-    /// being a route back to the project — and with it to the dispatch record,
-    /// which deliberately did NOT move. The finalize grant has to key on the
-    /// project root the daemon already hands the driver; deriving anything from
-    /// the worktree's parent now names a directory in the managed worktree
-    /// root, which is nobody's dispatch surface.
+    // orgasmic:TASK-M47E5.1.1
+    /// A finalize grant and a read grant are separate authorities over the same
+    /// path. Finalize accepts this attempt's artifact directory, while the
+    /// project-root read grant remains broad enough to read a sibling brief.
     #[test]
-    fn finalize_accepts_a_dispatch_dir_summary_file_from_an_out_of_project_worktree() {
+    fn a_finalize_grant_is_scoped_to_the_current_attempt_artifact_dir() {
         let project_root = PathBuf::from("/tmp/orgasmic-m47e5-1-project");
         let worktrees_root =
             PathBuf::from("/tmp/orgasmic-m47e5-1-home/.orgasmic/worktrees/orgasmic");
         let worktree = worktrees_root.join("task-gymsp");
+        let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
+        let artifact_dir = dispatch_root.join("task-gymsp-attempt-1");
         let mut adapter = CursorAcpAdapter::new();
         let mut ctx = ctx();
         ctx.worktree = Some(worktree.clone());
         adapter
             .stdio_session_init(
                 &ctx,
-                &DriverConfig::from_value(json!({ "project_root": project_root })),
+                &DriverConfig::from_value(json!({
+                    "project_root": project_root,
+                    "dispatch_artifact_dir": artifact_dir,
+                })),
             )
             .unwrap();
 
@@ -2059,17 +2079,12 @@ mod tests {
             ))
         };
 
-        let in_dispatch_dir =
-            project_root.join(".orgasmic/tmp/dispatch/task-gymsp/task-gymsp-summary.md");
+        let current_summary = artifact_dir.join("report.md");
         assert!(
-            adapter.permission_allowed(&finalize(&in_dispatch_dir), &SandboxAllowlist::default()),
-            "a summary file under the project dispatch dir must stay reachable when the worktree lives outside the project"
+            adapter.permission_allowed(&finalize(&current_summary), &SandboxAllowlist::default()),
+            "a summary file in the current attempt artifact dir must be accepted"
         );
 
-        // The worktree remains the ordinary place to put it, and everything
-        // outside those two surfaces stays refused — including the managed
-        // worktree root, which is what the old worktree-derived grant would
-        // have started keying on after the move.
         assert!(
             adapter.permission_allowed(
                 &finalize(&worktree.join("summary.md")),
@@ -2089,6 +2104,52 @@ mod tests {
                 refused.display()
             );
         }
+
+        let sibling_summary = dispatch_root.join("task-other-attempt-1/report.md");
+        assert!(
+            adapter.read_args_allowed(&json!({
+                "path": sibling_summary.display().to_string()
+            })),
+            "the project dispatch read grant must keep working unchanged"
+        );
+        assert!(
+            !adapter.permission_allowed(&finalize(&sibling_summary), &SandboxAllowlist::default()),
+            "a summary file in a sibling project dispatch stem must be refused"
+        );
+    }
+
+    // orgasmic:TASK-M47E5.1.1
+    #[test]
+    fn b_finalize_artifact_grant_refuses_when_no_artifact_dir_is_configured() {
+        let project_root = PathBuf::from("/tmp/orgasmic-m47e5-1-project");
+        let artifact_dir = project_root.join(".orgasmic/tmp/dispatch/task-gymsp-attempt-1");
+        let worktree =
+            PathBuf::from("/tmp/orgasmic-m47e5-1-home/.orgasmic/worktrees/orgasmic/task-gymsp");
+        let mut adapter = CursorAcpAdapter::new();
+        let mut ctx = ctx();
+        ctx.worktree = Some(worktree);
+        adapter
+            .stdio_session_init(
+                &ctx,
+                &DriverConfig::from_value(json!({ "project_root": project_root })),
+            )
+            .unwrap();
+
+        let summary = artifact_dir.join("report.md");
+        assert!(
+            adapter.read_args_allowed(&json!({ "path": summary.display().to_string() })),
+            "the brief-read grant must not depend on the finalize artifact dir"
+        );
+        assert!(
+            !adapter.permission_allowed(
+                &nested_execute_permission(&format!(
+                    "`orgasmic dispatch finalize --summary-file {} --commit`",
+                    summary.display()
+                )),
+                &SandboxAllowlist::default()
+            ),
+            "a finalize artifact grant with no configured artifact dir must fail closed"
+        );
     }
 
     // orgasmic:TASK-M47E5.1
