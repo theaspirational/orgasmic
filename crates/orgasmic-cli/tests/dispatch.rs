@@ -1701,6 +1701,13 @@ async fn dispatch_close_rejects_unverified_merge_evidence_and_records_review_byp
 /// `VERDICT` and was refused again with the same message. A test that only
 /// asserts `--verdict` is accepted cannot see that, so this walks the whole
 /// loop: refuse, follow the PRINTED remedy, succeed.
+///
+/// TASK-YN5FJ.1.1 made "the PRINTED remedy" literal. The first pass wrote the
+/// word VERBATIM over a hand-built argv, so the message could stop being
+/// copyable — it shipped without its `orgasmic` token — with this test still
+/// green. The close below is now extracted from the refusal string this run
+/// produced, substituted only where the message says it is a placeholder, and
+/// executed by the name the message printed.
 async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &str)) {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
