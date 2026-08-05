@@ -9348,3 +9348,158 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-05 Wed 20:48:23 manager.dispatch_started TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4582
+:TIME:         [2026-08-05 Wed 20:48:23]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.1-review/worktree
+:BRANCH:       task-m47e5.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-1-review/task-m47e5-1-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 20:48:23]
+:LIVENESS:     d475607724000e14ad055f5fb4d4386e8eaaad24
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: the review this change never got: it merged at 18:09 and no reviewer was ever dispatched
+:END:
+
+* TX 2026-08-05 Wed 20:48:23 run.created TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4583
+:TIME:         [2026-08-05 Wed 20:48:23]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-M47E5.1-reviewer-20260805T204822.jsonl
+:REASON:       the review this change never got: it merged at 18:09 and no reviewer was ever dispatched
+:RUN_ID:       run-20260805T204822-6fbe0174d98f4ade9bd9db01f2e2fe62
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-1-review/task-m47e5-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-m47e5-1-review/task-m47e5-1-review-d169ddf4d22a48ceaff99088963020a5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-m47e5-1-review/task-m47e5-1-review-d169ddf4d22a48ceaff99088963020a5-stdout.log
+:DISPATCH_ATTEMPT: d169ddf4d22a48ceaff99088963020a5
+:DISPATCH_TX:  tx-20260805-orgasmic-4582
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 20:59:19 reviewer.reported TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4584
+:TIME:         [2026-08-05 Wed 20:59:19]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:RUN_ID:       run-20260805T204822-6fbe0174d98f4ade9bd9db01f2e2fe62
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5.1-review/worktree
+:END:
+
+* TX 2026-08-05 Wed 21:00:08 reviewer.done TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4585
+:TIME:         [2026-08-05 Wed 21:00:08]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:REASON:       REJECT: the finalize grant was widened from this attempt's stem to the whole project dispatch tree. The manager accepted this at close time on a read-grant equivalence argument that does not hold — finalize reads the bytes, may commit, writes them as this run's last.txt and emits the terminal tx, which is materially more authority than a read
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: d4922f7..ff5aee2
+:VERDICT:      has-issues
+:FINDINGS:     1 BLOCK SHIP + 2 NON-BLOCKING; the BLOCK SHIP overturns the manager acceptance decision
+:CLOSED_TX:    tx-20260805-orgasmic-4582
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 21:00:08 task.state_transitioned TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4586
+:TIME:         [2026-08-05 Wed 21:00:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-M47E5.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-05 Wed 21:00:41 task.edited TASK-M47E5.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4587
+:TIME:         [2026-08-05 Wed 21:00:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-M47E5.1
+:NODE_ID:      TASK-M47E5.1
+:END:
+
+* TX 2026-08-05 Wed 21:01:09 task.created TASK-M47E5.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4588
+:TIME:         [2026-08-05 Wed 21:01:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for the BLOCK SHIP on TASK-M47E5.1: the grant was widened so a worker can submit a sibling dispatch's report as its own terminal record; the manager accepted the widening on a read-equivalence argument that does not hold
+:END:
+
+* TX 2026-08-05 Wed 21:01:09 task.property_updated TASK-M47E5.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4589
+:TIME:         [2026-08-05 Wed 21:01:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round; scope includes the daemon because the authoritative artifact dir lives there, and the proof dir because the brief requires a proof — the omission of verify/ was a defect in the parent's brief
+:FIX_SUBTASK:  t
+:WRITE_SCOPE:  crates/orgasmic-drivers/,crates/orgasmic-daemon/,verify/TASK-M47E5.1.1/
+:END:
+
+* TX 2026-08-05 Wed 21:01:31 task.created TASK-3ZR2E
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4590
+:TIME:         [2026-08-05 Wed 21:01:31]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3ZR2E
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found with its mechanism by the TASK-M47E5.1 reviewer; two tests in one binary set and unset the same env var, so orgasmic-drivers is red in parallel and green in isolation
+:END:

@@ -140,3 +140,172 @@ NO INJECTION PROOF, and the reasoning is accepted. The defect needs live macOS T
 
 MEASURED, NOT ASSUMED, by the implementer: =git worktree prune -v= writes its report to STDERR with stdout empty on git 2.52.0, so reading stdout would have silently reported "pruned nothing" every time; and =du= on this worktree real 7.6 GB target/ costs 0.084s warm, which is what justifies sizing reclaimable trees on the status path while deliberately NOT sizing held ones.
 
+* IN_PROGRESS TASK-M47E5.1 cursor-acp's own-dispatch-artifacts grant became unreachable when worktrees moved out of the project :drivers:
+:PROPERTIES:
+:ID: TASK-M47E5.1
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-drivers/**
+:END:
+
+** Description
+Declared by the TASK-M47E5 implementer rather than buried, and confirmed by the
+manager against the code before filing.
+
+=path_under_own_dispatch_artifacts= (=crates/orgasmic-drivers/.../cursor_acp.rs=,
+~:1038) derives the dispatch attempt directory as =worktree.parent()= and then
+requires THAT to sit under =<project>/.orgasmic/tmp/dispatch=. After TASK-M47E5
+the managed worktree lives at =~/.orgasmic/worktrees/<project-id>/<task>/=, so
+=worktree.parent()= is =~/.orgasmic/worktrees/<project-id>= — never under the
+project. The condition is now ALWAYS FALSE.
+
+** Severity: fails closed, so this is correctness-of-intent, not a hole
+The grant only ever ADDED permission. Losing it denies more, never allows more.
+The common case still works: a summary file inside the worktree is allowed by
+=path_under_worktree=, and the brief-read grant is unaffected because
+=path_under_dispatch_artifacts= keys on the PROJECT ROOT rather than on
+=worktree.parent()=.
+
+What is actually wrong is that a cursor-acp worker passing =dispatch finalize
+--summary-file= a path inside the project dispatch stem directory is now refused,
+and that the function is dead logic asserting a state that can no longer occur.
+Dead code that describes an impossible world is how the next reader learns
+something false.
+
+** Fix
+Derive the dispatch artifact directory from the PROJECT ROOT, the way the sibling
+=path_under_dispatch_artifacts= already does, instead of from =worktree.parent()=.
+The worktree path stopped being a reliable route to the project the moment
+worktrees left the project — so any other place in the drivers crate that infers
+project location from the worktree needs the same read. Grep for it rather than
+fixing only this one call site.
+
+** Acceptance
+- A cursor-acp worker can pass a summary-file path under the project dispatch
+  stem directory again.
+- No grant widens beyond what it allowed before TASK-M47E5.
+- Any other worktree-to-project inference in =crates/orgasmic-drivers/**= is
+  either corrected or shown not to exist.
+** Evidence
+Landed =ff5aee2= (merge) on main. Implementer: =implementer-claude-tmux= (tmux / claude / claude-opus-5 / high), run =run-20260805T175326-b63f2fd760a94ef3a4f4c34c1d9754e2=, started_tx =tx-20260805-orgasmic-4491=.
+
+DESIGN CHOICE: the "own" variant is GONE, not narrowed. The attempt stem is not identifiable from anything the driver holds — it comes from the operator-chosen brief FILENAME (=dispatch_artifact_stem=), while =DriverContext= carries run id, task id, worker id, project id and worktree but never the stem or attempt token. Nothing could narrow the predicate honestly, and a distinctly-named function with a body identical to its sibling was ruled out, so the one caller routes to =path_under_dispatch_artifacts=.
+
+A GRANT WIDENING WAS DECLARED AGAINST AN EXPLICIT "never widen a grant" INSTRUCTION, AND THE MANAGER ACCEPTED IT after checking the argument in code rather than the summary. The grant went from "under this attempt own stem dir" to "under the project dispatch dir", so a sibling task stem dir is newly accepted for =--summary-file=. Verified: =read_args_allowed= (=cursor_acp.rs:827=) has ALWAYS allowed reading anything under =path_under_dispatch_artifacts=, so no file becomes reachable that was not already readable, and =dispatch_finalize_command_allowed= still pins =--task= and =--run-id= to this run own ctx. Bounded, and it adds no reachability. The alternative — drop the grant and require summary files inside the worktree — fails acceptance criterion 1 as written.
+
+THE STRICTLY-NARROW GRANT BECOMES IMPLEMENTABLE AGAIN IF TASK-A1KJW LANDS. That task makes the dispatch record stem TASK-DERIVED rather than brief-filename-derived, and a driver already holds =task_id=, so the "own attempt dir" predicate becomes expressible. Do it in that order rather than reopening this.
+
+A SECOND WORKTREE-DERIVED INFERENCE WAS FOUND THAT THE BRIEF DID NOT NAME — which is why the brief asked for a grep rather than a point fix. =cursor_acp::project_root()= fell back to =worktree.parent()=; post-move that names =~/.orgasmic/worktrees/<project-id>=, so the dispatch-artifact READ grant would have keyed on a =.orgasmic/tmp/dispatch= path inside the managed worktree root, a surface no project owns. Deleting the fallback only ever narrows; the daemon always supplies =project_root= (=api.rs:4331=, required parameter), and the sibling =cursor.rs= adapter already had no fallback, so this matches the shape that was already correct. A third hit was a test-only opt-in transcript probe encoding the in-project layout, also corrected.
+
+Gates, re-run by the manager on the MERGED tree: =scripts/run-tests.sh -p orgasmic-drivers= GREEN 0 failures; =cargo clippy --workspace --all-targets -- -D warnings= exit 0; =cargo fmt --all --check= exit 0; =orgasmic verify TASK-M47E5.1= PASS.
+** Owed review — found by a hygiene sweep
+**This task merged and was never reviewed.** Found by a board-hygiene sweep, not
+by anything failing.
+
+The ledger is unambiguous: =implementer.done= at
+[2026-08-05 Wed 18:09:04], =LIFECYCLE_TO: in_review=, and no
+=manager.dispatch_started= of kind =reviewer= for this task afterwards. It has
+sat in =in_review= ever since — a stage that looks correct and healthy, which is
+precisely why it went unnoticed. Every OTHER task on this board that stalled did
+so in =in_progress=, the shape the handoff tells you to grep for. This one
+stalled in the stage that means "waiting for a reviewer" while no reviewer was
+ever asked for.
+
+WHY IT HAPPENED, so the shape is recognisable rather than just recorded: this
+task was dispatched CONCURRENTLY with TASK-M47E5.2's review, deliberately
+scoped to =crates/orgasmic-drivers/**= so the two could not collide. When the
+M47E5.2 review came back REJECT with three BLOCK SHIP findings, the manager's
+attention went to the ruling that produced TASK-M47E5.3, and the quietly
+successful concurrent dispatch was never picked back up. A REJECT is loud; a
+clean close that needs a follow-up action is silent.
+
+THE REVIEW IS STILL OWED. Under the active goal, merged work gets reviewed, and
+this is merged work. Nothing about the delay makes the review less necessary —
+the diff removed a permission grant, which is exactly the class where "it looked
+fine" is not evidence.
+
+WHAT THE REVIEWER SHOULD BE TOLD, since the judgement call here was real: the
+task asked whether the "own dispatch artifacts" variant still meant anything once
+it could no longer key on the worktree. The implementer's answer was that it did
+not, so the narrower grant was REMOVED and callers routed to the sibling rather
+than leaving two names for one predicate. The specific thing to attack is whether
+that removal WIDENED anything: the brief's hard constraint was that the fix
+restores exactly what the grant used to allow and not one path more.
+** Review round 1 — REJECT (confirmed; it overturns the manager's acceptance)
+Reviewer =reviewer-codex-tmux= (tmux/codex/gpt-5.6-sol/high) on merge =ff5aee2=
+vs base =d4922f7=, dispatched hours late after a board sweep found the review had
+never happened. Verdict REJECT, one BLOCK SHIP plus two non-blocking. Manager
+confirmed all three against the code.
+
+=== The BLOCK SHIP overturns the MANAGER's decision, not the implementer's
+
+At close time the manager wrote on the tx: "declared grant widening verified
+bounded against =read_args_allowed= before acceptance". *That reasoning was
+wrong, and the error was mine rather than the worker's* — the implementer
+DECLARED the widening plainly and the manager waved it through.
+
+The argument was: =read_args_allowed= (=cursor_acp.rs:829=) already allows the
+whole project dispatch dir, so keying finalize on the same predicate exposes no
+NEW surface. The reviewer's counter is correct and is the more careful principle:
+*the acceptance criterion governs the command/path grant itself, not the
+transitive closure of separately granted actions.*
+
+Confirmed by reading what =dispatch finalize --summary-file X= actually does:
+reads X (=manager.rs:1804=), may COMMIT the worktree (=:1874=), writes X's bytes
+VERBATIM as this run's =last.txt= (=:1943=), and releases the lease carrying the
+terminal =*.done= tx (=:1985=). That is not a read. A worker on TASK-A can now
+name =<project>/.orgasmic/tmp/dispatch/task-b/report.md= and have another
+dispatch's report become its own terminal record. The pre-move predicate refused
+exactly that: it required the path to be under =worktree.parent()= AND that
+parent to be under the project dispatch root.
+
+=== The test matrix locks the widening in rather than detecting it
+
+=cursor_acp.rs:2080='s refused list covers a sibling managed WORKTREE, the
+sessions dir and an unrelated =/tmp= path — but *never a sibling project dispatch
+STEM*. So every assertion passes while the one newly-permitted pair goes
+unexercised. Manager confirmed by reading the list.
+
+That is the same shape as TASK-4WKNX's proof lesson from the same day: a check
+pinned one level away from the actual claim passes while the claim is false.
+
+=== P2 is a defect in the MANAGER'S BRIEF, not the worker's compliance
+
+The proof lives in =verify/TASK-M47E5.1/=, outside the task's declared
+=crates/orgasmic-drivers/**= write scope — because the brief DEMANDED an
+injection proof and then declared a write scope that excluded the only place a
+proof can live. The worker did the right thing and the boundary was wrong.
+Structural: every brief that requires a proof must include =verify/TASK-<id>/**=
+in scope. Fixed for future briefs; recorded here so the pattern is visible.
+
+=== P3, accepted and worth keeping
+
+=transcript_finder.rs=: after deleting the relative sessions candidate,
+=ORGASMIC_PROBE_SESSIONS= is the only route for an out-of-project worktree, and
+repo-wide search finds it documented nowhere — only in the function body and a
+failure string. The reviewer also found the deleted candidate is NOT globally
+unreachable: =manager.rs:3865= still accepts an arbitrary explicit =--worktree=,
+so an old-layout in-project override can still make the five-level walk valid.
+Affects only the machine-local opt-in probe.
+
+=== Accepted, no action
+
+- The =project_root= "daemon always sends it" claim is VERIFIED against the
+  daemon: =stage_driver_config_with_overrides= takes =project_root: &Path= and
+  always serializes it (=api.rs:4352=), and the shared dispatch spawn passes the
+  indexed root (=:4758=). =None= is reachable only through direct library/test
+  construction with =DriverConfig::empty()=, where grants fail CLOSED. No product
+  spawn path omits it.
+- The re-grep for other worktree-derived project inference found nothing beyond
+  the corrected code — an independent confirmation of the implementer's stated
+  negative.
+- =orgasmic verify TASK-M47E5.1= PASS, and the reviewer correctly notes the proof
+  is the right red for the two behaviours it claims *and does not cover the
+  no-widening criterion at all*. Both true.
+- =run-tests.sh -p orgasmic-drivers= RED on
+  =adapter_fixtures_cover_public_harness_event_shapes=, green on the isolation
+  rerun. Pre-existing and unrelated: two tests in the =driver_modes= binary race
+  on the process-global =ORGASMIC_DRIVER_SIMULATE= (=:1646= sets it, =:2152=
+  removes it). Neither reviewed file participates. Correctly reported REAL by the
+  runner because it is unregistered — that is the registry behaving as designed,
+  and it is a separate finding worth its own entry or fix.
+
