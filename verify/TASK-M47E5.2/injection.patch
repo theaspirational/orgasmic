@@ -1,5 +1,5 @@
 diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
-index 562db08..0073fa6 100644
+index 61899b4..0073fa6 100644
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
 @@ -572,25 +572,9 @@ struct LiveRunsSummaryResponse {
@@ -28,7 +28,7 @@ index 562db08..0073fa6 100644
  }
  
  #[derive(Clone, Debug)]
-@@ -2579,310 +2563,11 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()>
+@@ -2579,316 +2563,11 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()>
  // surface, not a parallel one — and names what is reclaimable, why, and how
  // many bytes it would return.
  
@@ -60,10 +60,16 @@ index 562db08..0073fa6 100644
 -    use std::os::unix::ffi::{OsStrExt, OsStringExt};
 -    use std::path::Path;
 -
--    /// Deepest nesting this will descend into before refusing. Build trees nest,
--    /// but not like this; anything deeper is likelier to be an attempt to
--    /// exhaust the fd table than a worktree, and refusing keeps the directory.
--    const MAX_DEPTH: u32 = 256;
+-    /// Deepest nesting this will descend into before refusing.
+-    ///
+-    /// The recursion holds ONE open fd per active level, and macOS ships a
+-    /// soft `RLIMIT_NOFILE` of 256 in many shells, so the bound has to sit well
+-    /// under that or a deep tree exhausts the fd table instead of being
+-    /// removed. 64 levels is already far past any real build tree; beyond it,
+-    /// refusing and keeping the directory is the right answer. A shallower
+-    /// `EMFILE` behaves the same way — `openat` fails, the removal reports the
+-    /// error, and the worktree survives.
+-    const MAX_DEPTH: u32 = 64;
 -
 -    /// Open a directory without following a symlink at the final component.
 -    /// A symlink yields `ELOOP` (or `EMLINK` on some BSDs) and a non-directory
@@ -339,7 +345,7 @@ index 562db08..0073fa6 100644
      disposition: WorktreeDisposition,
      /// Recursive size, measured only for reclaimable entries. Sizing a held
      /// worktree would put a multi-GB directory walk on the hot path of a status
-@@ -2906,20 +2591,11 @@ enum WorktreeDisposition {
+@@ -2912,20 +2591,11 @@ enum WorktreeDisposition {
      /// which is also the only surface that knows the recorded branch a salvage
      /// commit must be parented on.
      Held { detail: String },
@@ -361,7 +367,7 @@ index 562db08..0073fa6 100644
      }
  
      fn why(&self) -> String {
-@@ -2929,53 +2605,54 @@ impl ManagedWorktree {
+@@ -2935,53 +2605,54 @@ impl ManagedWorktree {
                  format!("repo gone ({detail}); removable but NOT salvageable")
              }
              WorktreeDisposition::Held { detail } => detail.clone(),
@@ -440,7 +446,7 @@ index 562db08..0073fa6 100644
          let normalized = normalize_path(&path);
          let disposition = if cwd
              .as_ref()
-@@ -2995,23 +2672,16 @@ fn scan_managed_worktrees(
+@@ -3001,23 +2672,16 @@ fn scan_managed_worktrees(
              WorktreeDisposition::Held {
                  detail: held_by_dispatch_detail(record, live_runs),
              }
@@ -470,7 +476,7 @@ index 562db08..0073fa6 100644
              disposition,
              bytes,
          });
-@@ -3019,47 +2689,6 @@ fn scan_managed_worktrees(
+@@ -3025,47 +2689,6 @@ fn scan_managed_worktrees(
      Ok(found)
  }
  
@@ -518,7 +524,7 @@ index 562db08..0073fa6 100644
  /// Say WHY an open dispatch holds a worktree, and — when its run is already
  /// gone — which verb releases it. An abandoned dispatch is still a dispatch:
  /// prune refuses it and points at the close, rather than growing a second way
-@@ -3092,78 +2721,26 @@ fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) ->
+@@ -3098,78 +2721,26 @@ fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) ->
      }
  }
  
@@ -608,7 +614,7 @@ index 562db08..0073fa6 100644
  }
  
  /// Recursive apparent size in bytes. Symlinks are counted at their own size and
-@@ -3217,17 +2794,7 @@ fn report_managed_worktrees(
+@@ -3223,17 +2794,7 @@ fn report_managed_worktrees(
      project_id: &str,
      live_runs: &[RunSummary],
  ) {
@@ -627,7 +633,7 @@ index 562db08..0073fa6 100644
          Ok(found) => found,
          Err(err) => {
              eprintln!("warning: could not scan managed worktrees: {err}");
-@@ -3251,14 +2818,8 @@ fn report_managed_worktrees(
+@@ -3257,14 +2818,8 @@ fn report_managed_worktrees(
                  worktree.why()
              );
          } else {
@@ -643,7 +649,7 @@ index 562db08..0073fa6 100644
                  worktree.path.display(),
                  worktree.why()
              );
-@@ -3314,60 +2875,27 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
+@@ -3320,60 +2875,27 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
  
  /// Reclaim one worktree. Salvage first, then a NON-FORCED removal, so a tree
  /// git still considers dirty survives and is reported instead of destroyed.
@@ -712,7 +718,7 @@ index 562db08..0073fa6 100644
      let mut salvage = match worktree_has_uncommitted_changes(&worktree.path) {
          Ok(false) => None,
          Ok(true) => match worktree_head_oid(&worktree.path) {
-@@ -3443,26 +2971,38 @@ fn reclaim_managed_worktree(
+@@ -3449,26 +2971,38 @@ fn reclaim_managed_worktree(
      }
  }
  
@@ -771,7 +777,7 @@ index 562db08..0073fa6 100644
  }
  
  /// Explicit, operator-run reclamation of managed worktrees. See the design note
-@@ -3472,30 +3012,16 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3478,30 +3012,16 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
      let project_root = find_live_project_root(home, "manager worktree-prune")?;
      let project_id = read_project_id(&project_root)?;
      let managed_root = managed_worktree_root(home, &project_id)?;
@@ -811,7 +817,7 @@ index 562db08..0073fa6 100644
      if let Some(task) = args.task.as_deref() {
          let wanted = [
              worktree_stem(task, DispatchKind::Implementer),
-@@ -3548,18 +3074,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3554,18 +3074,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
  
      // One lock for the whole reclaim, shared with `dispatch-close`'s worktree
      // removal. Held across the loop, so nothing below may take it again.
@@ -831,7 +837,7 @@ index 562db08..0073fa6 100644
      let now_open = scan_open_dispatches(&project_root)?;
  
      let mut reclaimed = 0usize;
-@@ -3581,46 +3099,8 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3587,46 +3099,8 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
              );
              continue;
          }
@@ -879,7 +885,7 @@ index 562db08..0073fa6 100644
          if let Some(salvage) = &outcome.salvage {
              println!(
                  "SALVAGED PATH={} SHA={} REF={} FILES={}",
-@@ -3915,163 +3395,13 @@ struct CloseGuardFinishResponse {
+@@ -3921,163 +3395,13 @@ struct CloseGuardFinishResponse {
  }
  
  fn close_guard_path(project_id: &str, open: &DispatchRecord, suffix: &str) -> String {
@@ -1044,7 +1050,7 @@ index 562db08..0073fa6 100644
  /// Take the daemon-owned worktree reservation a destructive `dispatch-close`
  /// must hold across its liveness decision and its removal (TASK-1T3FZ), and
  /// turn a refusal into the operator-facing error.
-@@ -4286,11 +3616,7 @@ fn finish_close_guard(
+@@ -4292,11 +3616,7 @@ fn finish_close_guard(
  /// one where it is not talking to the daemon at all. No-op unless the env var
  /// names a file.
  fn dispatch_close_pause_after_guard() {
@@ -1057,7 +1063,7 @@ index 562db08..0073fa6 100644
          return;
      };
      if raw.is_empty() {
-@@ -7163,145 +6489,6 @@ mod tests {
+@@ -7169,145 +6489,6 @@ mod tests {
          );
      }
  
