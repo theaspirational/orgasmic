@@ -299,6 +299,10 @@ pub struct DispatchStatusArgs {
 // orgasmic:TASK-M47E5
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
+GATED OFF by TASK-M47E5.3: every invocation refuses and reclaims nothing, and
+`--dry-run` refuses too because the scan it performs is one of the findings.
+TASK-RMA18 owns the redesign. What follows describes the gated implementation.
+
 Refuses any worktree an OPEN dispatch names, whatever its run health: ending a
 dispatch is `dispatch-close`'s job, and an abandoned one is reported with the
 verb that releases it. Salvages a dirty tree to refs/orgasmic/salvage/<sha>
