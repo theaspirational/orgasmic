@@ -9255,3 +9255,96 @@
 :RUN_ID:       run-20260805T203418-9cdd3a7b9d734b6a89dd1180897cbd08
 :WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4wknx.1.1-review/worktree
 :END:
+
+* TX 2026-08-05 Wed 20:47:30 task.created TASK-ARNA1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4576
+:TIME:         [2026-08-05 Wed 20:47:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ARNA1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by the manager checking the sibling of TASK-4WKNX.1.1's fix and confirmed by that round's reviewer; the flag is accepted and documented as recording, and records nothing
+:END:
+
+* TX 2026-08-05 Wed 20:47:56 task.edited TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4577
+:TIME:         [2026-08-05 Wed 20:47:56]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-4WKNX.1.1
+:NODE_ID:      TASK-4WKNX.1.1
+:END:
+
+* TX 2026-08-05 Wed 20:47:58 reviewer.done TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4578
+:TIME:         [2026-08-05 Wed 20:47:58]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:REASON:       APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. Reviewer audited the first-wins claim across Rust, UI, scripts and raw tx parsing and found one reader the manager missed (still first-match), and independently replayed the injection proof
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 07d271a..4339093
+:VERDICT:      ship
+:FINDINGS:     2 NON-BLOCKING; finding 2 fixed by the manager in 0247d4c, finding 1 filed as TASK-ARNA1
+:CLOSED_TX:    tx-20260805-orgasmic-4573
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 20:47:58 task.state_transitioned TASK-4WKNX.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4579
+:TIME:         [2026-08-05 Wed 20:47:58]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-4WKNX.1.1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-05 Wed 20:48:16 task.state_transitioned TASK-4WKNX.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4580
+:TIME:         [2026-08-05 Wed 20:48:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       chain complete: merged caf06ae, reviewed REJECT (the table was a three-key denylist while CLOSED_TX and CLEANUP_STATUS were forgeable AND consumed). Fix round TASK-4WKNX.1.1 merged 4339093 and reviewed APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. Both follow-ups discharged: the LOW doc contradiction fixed by the manager in 0247d4c, the abort-property gap filed as TASK-ARNA1
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-05 Wed 20:48:16 task.state_transitioned TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4581
+:TIME:         [2026-08-05 Wed 20:48:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       chain complete: merged 2d9d8b8 (a FIX_SUBTASK close lands in_review by default, --fix-round-final opts out with a mandatory reason), reviewed REJECT, and the resulting TASK-4WKNX.1 -> TASK-4WKNX.1.1 rounds both landed with the last one APPROVED and no BLOCK SHIP. The goal's Reached-When — a BLOCK SHIP is not closed until its fix round lands and passes a fresh review — is satisfied for every finding on this chain
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
