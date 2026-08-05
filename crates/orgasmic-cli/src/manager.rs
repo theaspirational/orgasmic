@@ -2854,8 +2854,10 @@ fn git_worktree_prune(project_root: &Path, dry_run: bool) -> Result<String> {
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    // `-v` reports on stdout what it removed (or, with --dry-run, would).
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    // Measured against git 2.52.0: `-v` reports what it removed (or, with
+    // --dry-run, would remove) on STDERR, and stdout stays empty. Reading
+    // stdout here silently reports "pruned nothing" on every run.
+    Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
 fn worktree_head_oid(worktree: &Path) -> Option<String> {

@@ -2997,15 +2997,18 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
 
     let running = boot(home.clone()).await;
 
-    // Default worktree suffixes mirror `default_worktree` in manager.rs.
+    // Default worktree suffixes mirror `default_worktree` in manager.rs: since
+    // TASK-M47E5 the managed root is `<home>/worktrees/<project-id>/`, keyed on
+    // the project id seeded by `seed_project` (`orgasmic`).
     // `TASK-DISPATCH` is BACKLOG (dispatchable as implementer);
     // `TASK-REVIEW-ISSUES` is IN_REVIEW (dispatchable as reviewer).
-    let dispatch_review_default = project_root
-        .join(".orgasmic/tmp/dispatch/task-dispatch-review/worktree")
+    let managed_root = home.root.join("worktrees/orgasmic");
+    let dispatch_review_default = managed_root
+        .join("task-dispatch-review")
         .display()
         .to_string();
-    let review_issues_impl_default = project_root
-        .join(".orgasmic/tmp/dispatch/task-review-issues/worktree")
+    let review_issues_impl_default = managed_root
+        .join("task-review-issues")
         .display()
         .to_string();
 
@@ -3182,9 +3185,14 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
     let _ = running.join.await;
 }
 
-/// Default dispatch worktrees live under `<project>/.orgasmic/tmp/dispatch/<stem>/worktree`.
+/// TASK-M47E5: default dispatch worktrees live under
+/// `<home>/worktrees/<project-id>/<stem>` — OUTSIDE the project, because a
+/// project rooted in a TCC-guarded directory (`~/Documents`) makes every
+/// freshly built worker binary a stranger to macOS. `--dry-run` is the surface
+/// a manager checks before trusting a dispatch, so the resolved path must be
+/// visible there.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dispatch_default_worktree_lives_under_project_dispatch_dir() {
+async fn dispatch_default_worktree_lives_under_the_home_worktrees_root() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -3222,13 +3230,32 @@ async fn dispatch_default_worktree_lives_under_project_dispatch_dir() {
             "--dry-run",
         ],
     );
-    let expected = project_root
+    let expected = home
+        .root
+        .join("worktrees/orgasmic/task-dispatch")
+        .display()
+        .to_string();
+    assert!(
+        stdout.contains(&format!("worktree: {expected}")),
+        "dry-run should show the managed home worktree path, got:\n{stdout}"
+    );
+    // And nothing may still point at the old in-project location.
+    let old_default = project_root
         .join(".orgasmic/tmp/dispatch/task-dispatch/worktree")
         .display()
         .to_string();
     assert!(
-        stdout.contains(&expected),
-        "dry-run should show project-local default worktree, got:\n{stdout}"
+        !stdout.contains(&old_default),
+        "dry-run must not name the retired in-project worktree path, got:\n{stdout}"
+    );
+    // The dispatch RECORD stays in the project: only the scratch moved.
+    let brief_dir = project_root
+        .join(".orgasmic/tmp/dispatch/task-dispatch")
+        .display()
+        .to_string();
+    assert!(
+        stdout.contains(&brief_dir),
+        "dry-run should still place brief/last/stdout in the project, got:\n{stdout}"
     );
 
     let _ = running.shutdown.send(());
@@ -3278,8 +3305,18 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
             "layout regression",
         ],
     );
-    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
-    assert!(worktree.is_dir(), "default worktree should exist");
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    assert!(
+        worktree.is_dir(),
+        "default worktree should exist at {}",
+        worktree.display()
+    );
+    assert!(
+        !project_root
+            .join(".orgasmic/tmp/dispatch/task-dispatch/worktree")
+            .exists(),
+        "nothing may be created at the retired in-project worktree path"
+    );
 
     let status = Command::new("git")
         .args(["status", "--porcelain"])
@@ -3294,7 +3331,7 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
     let porcelain = String::from_utf8_lossy(&status.stdout);
     assert!(
         !porcelain.contains(".orgasmic/tmp/dispatch"),
-        "dispatch worktree under .orgasmic/tmp must stay gitignored; git status:\n{porcelain}"
+        "the dispatch record under .orgasmic/tmp must stay gitignored; git status:\n{porcelain}"
     );
 
     let _ = running.shutdown.send(());
@@ -5921,10 +5958,9 @@ async fn dispatch_finalize_commit_binds_to_worktree_when_orgasmic_is_uncommitted
     let brief = tmp.path().join("codex/task-dispatch-brief.md");
     write(&brief, "stub implementer brief");
 
-    // Default worktree layout: nested under the project's own
-    // `.orgasmic/tmp/dispatch/<task>/worktree` — exactly the layout that
-    // escaped to the manager root pre-fix.
-    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+    // Default worktree layout: since TASK-M47E5 the managed root is
+    // `<home>/worktrees/<project-id>/<task>` — outside the project entirely.
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
 
     let running = boot(home.clone()).await;
     let dispatch_stdout = run_orgasmic(
@@ -7421,9 +7457,16 @@ async fn dispatch_status_from_dispatch_worktree_refuses_frozen_snapshot_answer()
         ],
     );
     assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
-    // Default layout: the worktree is nested inside the project it snapshots.
-    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
-    assert!(worktree.is_dir(), "default worktree should exist");
+    // Since TASK-M47E5 the default layout puts the worktree under the HOME,
+    // not inside the project. The guard this test is about is about the frozen
+    // `.orgasmic/` a LINKED WORKTREE carries, not about where that worktree
+    // sits, so it must keep firing from the new location.
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    assert!(
+        worktree.is_dir(),
+        "default worktree should exist at {}",
+        worktree.display()
+    );
     assert!(
         worktree.join(".orgasmic/project.org").is_file(),
         "the worktree must carry the frozen .orgasmic snapshot this test is about"
@@ -7526,7 +7569,7 @@ async fn dispatch_finalize_still_works_from_inside_its_own_worktree() {
         ],
     );
     assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
-    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
     assert!(
         worktree.join(".orgasmic/project.org").is_file(),
         "carve-out is only meaningful when the worktree carries the snapshot"
@@ -7576,7 +7619,10 @@ async fn task_update_from_dispatch_worktree_lands_in_the_live_ledger() {
     std::fs::create_dir_all(&bin_dir).unwrap();
     let path_env = path_with_stub(&bin_dir);
 
-    // A real dispatch-shaped worktree at the default layout, frozen at `head`.
+    // A real dispatch-shaped worktree at the RETIRED in-project layout, frozen
+    // at `head`. Kept there deliberately (TASK-M47E5): worktrees created before
+    // the managed root moved are still on disk after an upgrade, and every verb
+    // a worker runs from one has to keep working.
     let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
     run_git(
         &project_root,
@@ -7941,6 +7987,353 @@ async fn client_timeout_reports_load_not_daemon_death() {
     );
 
     drop(hanging);
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+// ===== TASK-M47E5: managed worktree relocation and reclamation ===========
+
+/// Create a managed-layout worktree by hand, the way `manager dispatch` now
+/// does: `<home>/worktrees/<project-id>/<stem>`.
+fn add_managed_worktree(
+    home: &Home,
+    project_root: &Path,
+    stem: &str,
+    branch: &str,
+    from: &str,
+) -> PathBuf {
+    let path = home.root.join("worktrees/orgasmic").join(stem);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    run_git(
+        project_root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            path.to_str().unwrap(),
+            from,
+        ],
+    );
+    path
+}
+
+fn field(stdout: &str, line_prefix: &str, key: &str) -> Option<String> {
+    let line = stdout.lines().find(|line| line.starts_with(line_prefix))?;
+    let rest = line.split(&format!("{key}=")).nth(1)?;
+    Some(
+        rest.split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string(),
+    )
+}
+
+/// TASK-M47E5 acceptance: the prune verb reclaims a worktree no open dispatch
+/// owns, salvages its uncommitted work first, and reports the bytes it
+/// returned. `--dry-run` measures the same thing and changes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_reclaims_an_unclaimed_worktree_after_salvaging_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-dispatch",
+        "task-dispatch-impl",
+        &head,
+    );
+    // Uncommitted worker output — the thing TASK-2BPWM/TASK-D0GA3 exist about.
+    write(
+        &worktree.join("worker-output.txt"),
+        "unmerged worker output",
+    );
+
+    let running = boot(home.clone()).await;
+
+    // Dry run first: it must measure and refuse to touch anything.
+    let dry = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune", "--dry-run"],
+    );
+    assert!(
+        dry.contains(&format!("WOULD_RECLAIM PATH={}", worktree.display())),
+        "dry run must name the reclaimable worktree, got:\n{dry}"
+    );
+    assert!(
+        dry.contains("DRY_RUN RECLAIMABLE=1"),
+        "dry run must report the count, got:\n{dry}"
+    );
+    assert!(worktree.is_dir(), "a dry run must remove nothing");
+
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        stdout.contains(&format!("SALVAGED PATH={}", worktree.display())),
+        "a dirty worktree must be salvaged before removal, got:\n{stdout}"
+    );
+    let salvage_ref = field(&stdout, "SALVAGED ", "REF").expect("salvage ref in output");
+    assert!(
+        salvage_ref.starts_with("refs/orgasmic/salvage/"),
+        "salvage must reuse the existing ref namespace, got {salvage_ref}"
+    );
+    assert!(
+        Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", &salvage_ref])
+            .current_dir(&project_root)
+            .output()
+            .expect("git rev-parse")
+            .status
+            .success(),
+        "the salvage ref must exist in the repo: {salvage_ref}"
+    );
+    assert!(
+        stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "the worktree must be reclaimed, got:\n{stdout}"
+    );
+    let bytes: u64 = field(&stdout, "PRUNE_SUMMARY ", "BYTES")
+        .expect("summary bytes")
+        .parse()
+        .expect("bytes is a number");
+    assert!(bytes > 0, "bytes reclaimed must be measured, got {bytes}");
+    assert!(
+        stdout.contains("PRUNE_SUMMARY RECLAIMED=1"),
+        "the summary must count what it reclaimed, got:\n{stdout}"
+    );
+    assert!(!worktree.exists(), "the worktree must be gone");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-M47E5: a worktree an OPEN dispatch names is never reclaimed, whatever
+/// its run health, and the refusal says why. Ending a dispatch is
+/// `dispatch-close`'s authority, not this verb's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_a_worktree_an_open_dispatch_holds() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "prune refusal brief");
+
+    let running = boot(home.clone()).await;
+    let dispatched = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "prune refusal",
+        ],
+    );
+    assert!(dispatched.contains("dispatched: TASK-DISPATCH implementer pid="));
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
+    assert!(worktree.is_dir(), "the dispatch must create the worktree");
+
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        stdout.contains(&format!("SKIP PATH={}", worktree.display())),
+        "prune must refuse a held worktree, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("is open for TASK-DISPATCH"),
+        "the refusal must name the dispatch holding it, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PRUNE_SUMMARY RECLAIMED=0"),
+        "nothing may be reclaimed while a dispatch is open, got:\n{stdout}"
+    );
+    assert!(worktree.is_dir(), "the held worktree must survive");
+
+    // The same fact reaches the automatic surface.
+    let status = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status"],
+    );
+    assert!(
+        status.contains(&format!("HELD_WORKTREE PATH={}", worktree.display())),
+        "dispatch-status must report the held worktree, got:\n{status}"
+    );
+    assert!(
+        !status.contains("RECLAIMABLE_WORKTREE"),
+        "a held worktree must never be advertised as reclaimable, got:\n{status}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-M47E5 acceptance: a worktree whose REPO is gone is detected and
+/// removable. This case did not exist before the move — worktrees used to die
+/// with their repo — and `git worktree remove` cannot help, because there is no
+/// repository to run it from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_removes_a_worktree_whose_repo_is_gone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree =
+        add_managed_worktree(&home, &project_root, "task-abort", "task-abort-impl", &head);
+    // Destroy the admin directory the worktree's `.git` link points at.
+    std::fs::remove_dir_all(project_root.join(".git/worktrees/task-abort")).unwrap();
+    assert!(
+        worktree.join(".git").is_file(),
+        "the .git link must still be there — that is what makes it detectable"
+    );
+
+    let running = boot(home.clone()).await;
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "a repo-gone worktree must be removable, got:\n{stdout}"
+    );
+    assert!(!worktree.exists(), "the orphaned worktree must be gone");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-M47E5: DETECTION is automatic even though reclamation is not — the
+/// move puts worktrees where `git status` no longer shows them, so the
+/// inventory verb has to. And `git worktree prune` runs, so `.git/worktrees`
+/// metadata for an out-of-band removal does not accumulate.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_status_detects_reclaimable_worktrees_and_prune_clears_stale_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let stale = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-cleanup",
+        "task-cleanup-impl",
+        &head,
+    );
+
+    let running = boot(home.clone()).await;
+    let status = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status"],
+    );
+    assert!(
+        status.contains(&format!("RECLAIMABLE_WORKTREE PATH={}", stale.display())),
+        "dispatch-status must surface a worktree nothing owns, got:\n{status}"
+    );
+    assert!(
+        status.contains("WHY=no open dispatch names it"),
+        "detection must say WHY it is reclaimable, got:\n{status}"
+    );
+    assert!(
+        status.contains("RECLAIMABLE_TOTAL COUNT=1"),
+        "detection must total the bytes at stake, got:\n{status}"
+    );
+    assert!(
+        status.contains("RECLAIM_WITH=orgasmic manager worktree-prune"),
+        "detection must name the verb that reclaims, got:\n{status}"
+    );
+
+    // Now remove the directory out of band, exactly as an operator clearing
+    // `~/.orgasmic` would, leaving only stale git metadata behind.
+    std::fs::remove_dir_all(&stale).unwrap();
+    let listed = run_git(&project_root, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains("task-cleanup"),
+        "git must still be carrying the stale admin entry: {listed}"
+    );
+
+    let pruned = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    assert!(
+        pruned.contains("PRUNED_METADATA"),
+        "stale .git/worktrees metadata must be pruned, got:\n{pruned}"
+    );
+    let listed = run_git(&project_root, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !listed.contains("task-cleanup"),
+        "the stale admin entry must be gone: {listed}"
+    );
+
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
