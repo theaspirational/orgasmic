@@ -3213,11 +3213,34 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// The gate on the detection half. TASK-M47E5.3: the automatic report goes with
+/// the verb it advertises, because it shares the verb's defect —
+/// `scan_managed_worktrees` follows an ancestor symlink, so it would name a
+/// victim directory as `RECLAIMABLE_WORKTREE`, and `directory_bytes` would walk
+/// it to size the line. Detection is read-only and so the lesser risk, but a
+/// wrong RECLAIMABLE line is an invitation to run the verb.
+///
+/// A no-op rather than a message: `dispatch-status` is an inventory verb whose
+/// output is parsed, and the refusal belongs on the verb an operator ran on
+/// purpose. `worktree-prune` says why (see [`WORKTREE_PRUNE_REFUSAL`]).
+// orgasmic:TASK-M47E5.3
+fn report_managed_worktrees(
+    _home: &Home,
+    _project_root: &Path,
+    _project_id: &str,
+    _live_runs: &[RunSummary],
+) {
+}
+
 /// The automatic half of the split: every `dispatch-status` names what
 /// `worktree-prune` could reclaim. Best effort and never fatal — this is a
 /// report appended to an inventory verb, not the inventory itself.
-// orgasmic:TASK-M47E5
-fn report_managed_worktrees(
+///
+/// UNREACHABLE since TASK-M47E5.3; kept for TASK-RMA18, which owns the redesign
+/// of the scan this depends on.
+// orgasmic:TASK-M47E5,TASK-RMA18
+#[allow(dead_code)]
+fn report_managed_worktrees_ungated(
     home: &Home,
     project_root: &Path,
     project_id: &str,
@@ -3471,10 +3494,39 @@ fn worktree_prune_pause_after_guard() {
     pause_until_file_is_removed("ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE");
 }
 
+/// What an operator sees instead of a reclamation. Names both tasks, so whoever
+/// hits it reaches the reasoning in one step (TASK-M47E5.3).
+// orgasmic:TASK-M47E5.3
+const WORKTREE_PRUNE_REFUSAL: &str = "\
+`orgasmic manager worktree-prune` is gated off and reclaimed nothing.
+
+Two review rounds produced six BLOCK SHIP findings on its destructive path, all
+data-loss. TASK-M47E5.3 made the verb refuse by construction rather than ship a
+fix round under the pressure of a pending runtime reinstall. `--dry-run` refuses
+for the same reason: the scan a dry run performs is itself one of the findings —
+it follows an ancestor symlink and walks directories it has no business sizing.
+
+TASK-RMA18 owns the redesign and starts from this implementation, which is kept
+in place, unreachable. Nothing was scanned, salvaged, removed or pruned.";
+
+/// The gate. TASK-M47E5.3: the verb is unreachable, and this is the whole of
+/// how. It returns before the project root is resolved, before the daemon is
+/// reached, and before `scan_managed_worktrees` runs — so no argument, including
+/// `--dry-run`, reaches a filesystem walk or a removal.
+// orgasmic:TASK-M47E5.3
+pub fn cmd_worktree_prune(_home: &Home, _args: WorktreePruneArgs) -> Result<()> {
+    bail!("{WORKTREE_PRUNE_REFUSAL}")
+}
+
 /// Explicit, operator-run reclamation of managed worktrees. See the design note
 /// at the top of this section for why removal never happens automatically.
-// orgasmic:TASK-M47E5
-pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+///
+/// UNREACHABLE since TASK-M47E5.3; kept, not deleted, because TASK-RMA18 starts
+/// from it and from the two review reports written against it. The only caller
+/// was [`cmd_worktree_prune`], which now refuses instead.
+// orgasmic:TASK-M47E5,TASK-RMA18
+#[allow(dead_code)]
+fn worktree_prune_ungated(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager worktree-prune")?;
     let project_id = read_project_id(&project_root)?;
     let managed_root = managed_worktree_root(home, &project_id)?;
