@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         4eb3f4679a33ab9aade00a8e78550f3bb47ebd7a
+:LIVENESS:         f60af0a
 :LIVENESS_AT:      [2026-08-05 Wed]
 :UPDATED_AT:       [2026-08-05 Wed]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -117,107 +117,150 @@ safe form; every commit stays reachable from main). =git branch= is useful again
 
 ** Next likely actions
 ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START. There is no
-project default and nothing enforces resolution (=--model= > task drawer > harness
-default, and the harness default wins SILENTLY — TASK-A55J7). THIS session's
-answers, which are NOT a standing setting: implementers =tmux / claude /
-claude-opus-5 / high=, reviewers =tmux / codex / gpt-5.6-sol / high=. Pass =--model=
-explicitly and echo all four back after each dispatch.
+project default and nothing enforces resolution (=--model= > task drawer >
+harness default, and the harness default wins SILENTLY — TASK-A55J7). THIS
+session's answers, which are NOT a standing setting: implementers =tmux / claude
+/ claude-opus-5 / high=, reviewers =tmux / codex / gpt-5.6-sol / high=. Pass
+=--model= explicitly and echo all four back after each dispatch.
 
-TRANSPORT: tmux, and this is now settled rather than a coin-flip. Both properties
-read against the INSTALLED daemon: pane liveness from TASK-4CSMY is confirmed
-reporting in production, so no =stall_timeout_secs= override is needed; and rmux
-fails the survival property (TASK-4DTBZ — it killed three workers in 24ms last
-session). Four dispatches ran on tmux this session with no transport trouble.
+TRANSPORT: tmux, settled rather than a coin-flip. Both properties read against
+the INSTALLED daemon: pane liveness from TASK-4CSMY is confirmed reporting in
+production, so no =stall_timeout_secs= override is needed; and rmux fails the
+survival property (TASK-4DTBZ — it killed three workers in 24ms). Every dispatch
+across 2026-08-05 ran on tmux with no transport trouble.
 
 TRAP #1 STILL HOLDS: dispatch with =--mode acp-stdio=, NOT =--mode stdio=, until
-the runtime is rebuilt. Verified again this session against =orgasmic manager
-drivers=. =--mode tmux= is unaffected and is what every dispatch used.
+the runtime is rebuilt. =--mode tmux= is unaffected and is what every dispatch
+used.
 
-A NOTE ON CLOSING A REVIEWER, learned in anger this session. The installed runtime
-predates =--verdict=, and its =reviewer_done_stage= does not know the word
-=approve= — it maps only =clean=/=ship= to done. So on TODAY's runtime, close a
-reviewer with =--property VERDICT=ship=, not =approve=, or the task lands
-=in_progress= and you will not notice. After the reinstall, use the flag. This is
-the compat path RULING 2 preserved, being used for real.
+SERIALIZE IMPLEMENTER DISPATCHES ON THIS HOST. Each worktree gets its OWN cargo
+target dir (shared ones are unsound — trap #4), so two concurrent implementers
+mean two workspace builds plus two =run-tests.sh= runs. Test EXECUTION is what
+bursts =syspolicyd=, and this machine has hard-rebooted twice from that chain.
+One implementer at a time is a deliberate throughput sacrifice, not an oversight.
 
-AND EXPECT THE FIX-ROUND FLIP until TASK-4WKNX lands: closing a =:FIX_SUBTASK: t=
-implementer sends the task to =done=, and the reviewer dispatch the goal requires is
-then REFUSED from =done=. Flip =done= -> =in_review= with =task update --state= and
-say in =--reason= that it is policy, not a correction.
+A NOTE ON CLOSING A REVIEWER, learned in anger. The installed runtime predates
+=--verdict=, and its =reviewer_done_stage= does not know the word =approve= — it
+maps only =clean=/=ship= to done. So on TODAY's runtime, close a reviewer with
+=--property VERDICT=ship=, not =approve=, or the task lands =in_progress= and you
+will not notice. After the reinstall, use the flag. This is the compat path
+RULING 2 preserved, being used for real.
 
-** In flight
-ONE DISPATCH RUNNING: TASK-M47E5 (P1) implementer, =implementer-claude-tmux=
-(tmux / claude / claude-opus-5 / high), run
-=run-20260805T140235-4e4f74ec8c154ad48115bf43d5bbc97a=, started_tx
-=tx-20260805-orgasmic-4458=, base =103ed7e=. Report lands at
-=.orgasmic/tmp/dispatch/task-m47e5/task-m47e5-542237f0a9b0458d848ba5162e98c562-last.txt=.
-If you are a fresh manager and that file is non-empty, integrate it; if the tmux
-pane is gone and it is EMPTY, treat the run as orphaned and read =rescue-policy=
-before assuming anything completed.
+AND EXPECT THE FIX-ROUND FLIP TO STILL BE NEEDED. TASK-4WKNX MERGED (=2d9d8b8=),
+so the repo now closes a =:FIX_SUBTASK: t= implementer to =in_review= by default
+— but the INSTALLED CLI is the one that runs, and it still sends the task to
+=done= where the reviewer dispatch is refused. Keep flipping =done= -> =in_review=
+with =task update --state= and say in =--reason= that it is policy, not a
+correction, until the reinstall. This is the clearest example of why four merged
+changes being inert matters operationally.
 
-THE MANAGER RULING THAT DISPATCH CARRIES, so you do not re-open it: reclamation is
-an EXPLICIT VERB, detection is AUTOMATIC. Deleting a worktree is the sharpest tool
-in this codebase (TASK-2BPWM and TASK-D0GA3 exist because a worker's uncommitted
-work was destroyed once), so nothing gains authority to delete unattended — but a
-verb nobody runs is exactly how invisible garbage accumulates, which is why Part 2
-is a requirement of Part 1 rather than a follow-up. Separate the authority from the
-visibility.
-
-AFTER M47E5, THE OBVIOUS ORDER
-1. TASK-RQ270 stages B-E — the architecture excision. Stage B (drift comparator,
-   ~-550 LOC) is cheapest and independent. Mint =TASK-RQ270.N= per round the way
-   stage A was done. ONE LOAD-BEARING CONSTRAINT: the dangling-edge lint carve-out
-   lands in stage C and must be on main BEFORE stage D deletes =architecture.org=,
-   or done.org's 231 =:IMPLEMENTS: arch= tokens start failing the lint.
-2. TASK-4WKNX (P2) — resolve the FIX_SUBTASK/review contradiction. Small, and it
-   removes a manual backwards state transition from every fix round.
-3. TASK-STWVB (P2) — the suite's full-run signal. Design is on the task; A and B/C
-   are separable rounds.
-4. TASK-37WN7 (P3) — capture the flake's panic, then fix or register it.
-5. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
+THE ORDER FROM HERE
+1. TASK-4WKNX.1 — in flight. Integrate its report, review it, then close the
+   4WKNX chain. A BLOCK SHIP is not closed until its fix round lands and passes
+   a FRESH review; that is the goal's own Reached-When, not a preference.
+2. TASK-RQ270 stage B (P1) — architecture excision, drift comparator. Cheapest
+   and independent: delete =crates/orgasmic-cli/src/architecture_drift.rs= (457
+   LOC, arch-only end to end) plus the =Drift= verb (=main.rs:754=, =:3090-3097=,
+   =:3138=), and strip the =// arch:= back-edges. MEASURED, not estimated: 51
+   markers across the workspace, and every one is on LINE 1 of its file as a
+   header comment — so this stage cannot conflict with interior edits in any
+   concurrently-dispatched file. Stage A is DONE (TASK-RQ270.1).
+   THE LOAD-BEARING CONSTRAINT for later stages: the dangling-edge lint carve-out
+   lands in stage C and must be on main BEFORE stage D deletes
+   =architecture.org=, or done.org's 231 =:IMPLEMENTS: arch= tokens start failing
+   the lint.
+3. TASK-RMA18 (P1) — the worktree-reclamation redesign, carrying all six BLOCK
+   SHIP findings from the two prune reviews. It starts from the gated-off code.
+4. TASK-STWVB (P2) — the suite's full-run signal. Design is on the task; A and
+   B/C are separable rounds.
+5. TASK-A1KJW (P3) — the dispatch record dir is named from the BRIEF FILENAME,
+   never the task id (=dispatch_artifact_stem=, =manager.rs:~5517=). That is why
+   TASK-4WKNX.1's worktree sits at =task-4wknx.1/= while its logs sit at
+   =task-4wknx-1/=. Fixing it would also make cursor-acp's narrow own-artifacts
+   grant expressible again (TASK-M47E5.1 had to delete it).
+6. TASK-37WN7 (P3) — one acceptance item left: strengthen
+   =wait_until_serve_awaits_signals= or record why not. The flake itself is now
+   REGISTERED with a captured signature.
+7. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
    TASK-ADHWZ, TASK-NTNK0.
 
-THE RUNTIME REINSTALL IS NOW UNBLOCKED. TASK-YN5FJ.1 and its fix round have landed,
-which was the stated precondition. The recipe and its four traps are in the
-=orgasmic-runtime-reinstall= memory: a zero-worker window is mandatory, =install.sh=
-silently skips the unpack if the version dir exists, its trailing =orgasmic status=
-auto-spawns a competing daemon (=ORGASMIC_INSTALL_SKIP_STATUS=1=), and you MUST
-codesign or the binary loses its TCC grant. Verify BEHAVIOURALLY — both builds call
-themselves =0.0.15-dev.1=. Two good new-code probes now: =--mode stdio= being
-accepted, and =dispatch-close --verdict= existing.
+THE RUNTIME REINSTALL IS UNBLOCKED AND IS NOW THE HIGHEST-VALUE SINGLE MOVE, but
+it is an OPERATOR-AUTHORIZATION item, not a manager one: it swaps the live daemon
+and needs a zero-worker window. The recipe and its four traps are in the
+=orgasmic-runtime-reinstall= memory: =install.sh= silently skips the unpack if the
+version dir exists, its trailing =orgasmic status= auto-spawns a competing daemon
+(=ORGASMIC_INSTALL_SKIP_STATUS=1=), and you MUST codesign or the binary loses its
+TCC grant. Verify BEHAVIOURALLY — both builds call themselves =0.0.15-dev.1=.
+Three good new-code probes now: =--mode stdio= being accepted,
+=dispatch-close --verdict= existing, and =dispatch-close --fix-round-final=
+existing.
 
-BOARD: IN_PROGRESS = TASK-M47E5. TODO = TASK-STWVB. IN_REVIEW = empty.
-BACKLOG = 87 (86 + TASK-4WKNX + TASK-37WN7 - M47E5 - the two YN5FJ items done).
-=parse_errors= 0. Nothing pushed; main is 500+ commits ahead of origin and pushing
-is an operator decision, never a manager one.
+** In flight
+ONE DISPATCH RUNNING: TASK-4WKNX.1 (P1, fix round) implementer,
+=implementer-codex-tmux= (tmux / codex / gpt-5.6-sol / high), run
+=run-20260805T191948-75931043950a4f588c6c97b4abafd9a6=, started_tx
+=tx-20260805-orgasmic-4535=, base =f60af0a=. Report lands at
+=.orgasmic/tmp/dispatch/task-4wknx-1/task-4wknx-1-105802ed444541948082cdb68e6ed913-last.txt=.
+If that file is non-empty, integrate it; if the tmux pane is gone and it is
+EMPTY, treat the run as orphaned and read =rescue-policy= before assuming
+anything completed.
+
+WHAT IT IS FIXING, so you do not re-derive it: TASK-4WKNX merged =2d9d8b8= and
+its review returned REJECT with one BLOCK SHIP, which the manager confirmed
+against the code. =close_done_request= pushes caller =--property= entries BEFORE
+its own typed keys, and =parse_close_property= accepts any uppercase key — so
+=--property FIX_ROUND_FINAL=true= forges the audit key without the =--reason=
+the flag demands, and =--fix-round-final --property FIX_ROUND_FINAL=false=
+writes duplicate contradictory keys that =extra()= resolves FIRST-wins to the
+caller's value. The manager also found the identical hole on the PRE-EXISTING
+=NO_REVIEW_REQUIRED=. The fix is a rule about manager-owned close-tx keys, not a
+third copy of the =VERDICT= one-off.
+
+THE ONE CONSTRAINT THAT WILL BITE A FRESH MANAGER READING THAT DIFF:
+=--property VERDICT== is a SUPPORTED legacy free-text spelling that the
+default-branch gate reads (TASK-YN5FJ.1 RULING 2). "Reserve every manager-owned
+key" is therefore wrong as stated — the class needs at least two policies,
+reserved and aliased. If the fix flattens them it has either broken =VERDICT= or
+left =FIX_ROUND_FINAL= forgeable.
+
+A NOTE ON MONITORING A TMUX DISPATCH, paid for this session: =dispatch-status=
+prints =[pid-gone]= for EVERY tmux dispatch, always, because =WORKER_PID=-= —
+the manager never tracks the pane pid. It is NOT a death signal and a monitor
+keyed on it fires instantly and falsely. The real signals are =[run-gone]=, the
+tmux session disappearing, and a non-empty =last.txt=.
 
 ** Divergence / Risks
 THE RUNTIME IS BEHIND THE REPO. Installed =05e1813=; main is far ahead. Trap #1
 in the lead (the =acp-stdio= vs =stdio= mode rename) is the part that bites.
 
-THE REINSTALL IS NO LONGER BLOCKED — this REVERSES what this section said earlier
-today. It was blocked because =orgasmic manager worktree-prune= shipped a delete
-path that failed TWO reviews with six BLOCK SHIP findings, and the only thing
-keeping it harmless was that the installed runtime predated the verb. TASK-M47E5.3
-(=a1cd738=) made the verb REFUSE BY CONSTRUCTION — both forms exit 1, the scan is
-gated too, and =dispatch-status= no longer advertises reclaimable trees. Verified
-on the real binary. So the protection is now in the code rather than in this
-document, and reinstalling is safe. TASK-RMA18 owns the redesign and un-gates it.
-
-THREE MERGED CHANGES ARE INERT UNTIL THAT REINSTALL, and that is now the main
+FOUR MERGED CHANGES ARE INERT UNTIL THE REINSTALL, and that is now the main
 reason to do it: the TASK-YN5FJ review gate, the TASK-M47E5 worktree relocation,
-and the TASK-YN5FJ.1 =--verdict= flag. Observed directly — a reviewer dispatched
-after M47E5 merged still got an in-project worktree, because the CLI that creates
-worktrees is the installed one.
+the TASK-YN5FJ.1 =--verdict= flag, and the TASK-4WKNX fix-round default. Observed
+DIRECTLY rather than inferred, twice: a reviewer dispatched after M47E5 merged
+still got an in-project worktree, and TASK-4WKNX.1's worktree — dispatched AFTER
+4WKNX merged — sits at =.orgasmic/tmp/dispatch/task-4wknx.1/worktree=. The CLI
+that creates worktrees and closes dispatches is the installed one.
+
+THE REINSTALL IS NOT BLOCKED. It was, because =orgasmic manager worktree-prune=
+shipped a delete path that failed TWO reviews with six BLOCK SHIP findings, and
+the only thing keeping it harmless was that the installed runtime predated the
+verb. TASK-M47E5.3 (=a1cd738=) made the verb REFUSE BY CONSTRUCTION — both forms
+exit 1, the scan is gated too, and =dispatch-status= no longer advertises
+reclaimable trees. Verified on the real binary. The protection is now in the code
+rather than in this document. TASK-RMA18 owns the redesign and un-gates it.
 
 A DISPATCH CAN STILL KILL EVERY OTHER DISPATCH via =ORGASMIC_HOME= (lead item 2).
 Unchanged, and it is the single most expensive mistake available.
 
 RMUX DIES SILENTLY AND TAKES EVERY PANE WITH IT (TASK-4DTBZ, P1). TMUX IS THE
-BETTER DEFAULT: eight dispatches ran on tmux across 2026-08-05 with no transport
-trouble. The TASK-4CSMY pane-liveness channel is confirmed reporting in
+BETTER DEFAULT. The TASK-4CSMY pane-liveness channel is confirmed reporting in
 production, so the =--governance-json {"stall_timeout_secs":3600}= workaround
 stays retired. Read =event.type=, never the serialized line.
+
+=[pid-gone]= IS NOT A DEATH SIGNAL FOR A TMUX DISPATCH. =dispatch-status= prints
+it for every tmux run always, because =WORKER_PID=-=. A watcher keyed on it fires
+instantly and falsely. Use =[run-gone]=, the tmux session vanishing, or a
+non-empty =last.txt=.
 
 THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY (TASK-BX5SR, P1). Detection
 is =grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log=. If a write fails
@@ -226,8 +269,9 @@ with "failed to apply changes", check the writer BEFORE assuming OCC contention.
 MERGE STILL PRECEDES REVIEW IN PRACTICE, AND THE FIX IS MERGED BUT NOT LIVE. So
 expect merge -> review -> fix in =TASK-<id>.N= rounds. When you review a
 post-merge diff, SAY SO in the brief and tell the reviewer a REJECT is still
-actionable, or you will get softened findings. This session ran five such rounds
-and two of them returned REJECT.
+actionable, or you will get softened findings. 2026-08-05 ran six such rounds and
+THREE returned REJECT — including the review of a fix round, and the review of
+the very task that made fix rounds reviewable.
 
 DO NOT STASH =.orgasmic= TO GET A CLEAN TREE FOR =orgasmic verify=. The daemon
 reads those files, so during the stash window it cannot see its own project and a
@@ -245,6 +289,9 @@ REVIEW-BRIEFING LESSONS, all paid for:
   used the fd. A generic "review this diff" would not have.
 - TELL THE REVIEWER WHAT IS ALREADY ESTABLISHED so it spends effort on what is
   not. Every review this session was given a do-not-re-derive list.
+- VERIFY EVERY FINDING AGAINST THE CODE BEFORE ACTING ON IT, including the ones
+  you intend to accept. Confirming the TASK-4WKNX finding by hand is what turned
+  up the THIRD instance of the same hole, on a key the reviewer never looked at.
 
 STATE-HYGIENE SHAPES TO WATCH FOR:
 - A TASK IN =in_progress= WITH NO DISPATCH is claiming work nobody is doing.

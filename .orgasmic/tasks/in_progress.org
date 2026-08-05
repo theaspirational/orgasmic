@@ -451,3 +451,54 @@ Note the asymmetry that makes this easy to miss: `close_property_value` (:5790) 
 
 **Deferred, not folded in:** the reviewer suggests a close-time next-action line or a `dispatch-status` diagnostic for a `FIX_SUBTASK` parked `in_review` with no reviewer dispatch. That is a usability follow-up on a workflow that now works; it does not belong in a fix round for an audit hole.
 
+* IN_PROGRESS TASK-4WKNX.1 Reserve manager-owned close-tx keys from the generic --property channel
+:PROPERTIES:
+:ID: TASK-4WKNX.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-cli/
+:END:
+
+** Description
+
+Fix round for the one BLOCK SHIP on TASK-4WKNX's review, confirmed by the manager
+against the code. The full mechanism is on the parent under "Review round 1 —
+REJECT (confirmed)"; read it there rather than re-deriving it.
+
+In one line: ~close_done_request~ pushes caller ~--property~ entries before it
+pushes its own typed keys, and ~parse_close_property~ accepts any uppercase key,
+so a bypass-audit key can be forged or contradicted by the caller it is meant to
+audit.
+
+** The class, not the instance
+
+The reviewer found it on ~FIX_ROUND_FINAL~. The manager found the same hole on
+~NO_REVIEW_REQUIRED~ (manager.rs:4720), which is PRE-EXISTING — 4WKNX did not
+introduce it, it introduced a second instance of it. ~VERDICT~ is the only key of
+this class currently fenced (TASK-YN5FJ.1 RULING 3), and it is fenced by a
+hand-written one-off ~if let (Some, Some)~ pair.
+
+Three keys, two unfenced, one bespoke fence: the fix is a rule about
+manager-owned tx keys, not a third copy of the same ~if~.
+
+** Acceptance
+
+- A caller cannot forge or contradict any manager-owned close-tx key through
+  ~--property~. Covers at minimum ~FIX_ROUND_FINAL~, ~NO_REVIEW_REQUIRED~ and
+  ~VERDICT~.
+- ~VERDICT~'s existing behaviour is preserved exactly: ~--property VERDICT=~ is a
+  supported legacy free-text spelling and must keep working alone, while
+  flag-plus-property still refuses by name. Whatever rule replaces the one-off
+  must reproduce this, not flatten it.
+- The refusal happens with the other early close refusals — before run release,
+  worktree cleanup, and any tx append.
+- Tests pin property-only forgery AND typed-flag/property collision on the
+  production path, and assert the close was refused before the worktree was
+  cleaned up.
+
+** Not in scope
+
+The reviewer's usability suggestion (a close-time next-action line, or a
+~dispatch-status~ diagnostic for a ~FIX_SUBTASK~ parked ~in_review~ with no
+reviewer dispatch). That is a follow-up on a workflow that now works. File it
+separately if it earns a task.
