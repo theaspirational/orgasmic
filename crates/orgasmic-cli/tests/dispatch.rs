@@ -3230,8 +3230,11 @@ async fn dispatch_default_worktree_lives_under_the_home_worktrees_root() {
             "--dry-run",
         ],
     );
-    let expected = home
-        .root
+    // The plan prints a normalized (symlink-resolved) path; on macOS the
+    // tempdir's `/var` is a symlink to `/private/var`, so canonicalize the
+    // expectation rather than the output.
+    let expected = std::fs::canonicalize(&home.root)
+        .unwrap()
         .join("worktrees/orgasmic/task-dispatch")
         .display()
         .to_string();
@@ -3240,7 +3243,8 @@ async fn dispatch_default_worktree_lives_under_the_home_worktrees_root() {
         "dry-run should show the managed home worktree path, got:\n{stdout}"
     );
     // And nothing may still point at the old in-project location.
-    let old_default = project_root
+    let old_default = std::fs::canonicalize(&project_root)
+        .unwrap()
         .join(".orgasmic/tmp/dispatch/task-dispatch/worktree")
         .display()
         .to_string();
@@ -3249,7 +3253,8 @@ async fn dispatch_default_worktree_lives_under_the_home_worktrees_root() {
         "dry-run must not name the retired in-project worktree path, got:\n{stdout}"
     );
     // The dispatch RECORD stays in the project: only the scratch moved.
-    let brief_dir = project_root
+    let brief_dir = std::fs::canonicalize(&project_root)
+        .unwrap()
         .join(".orgasmic/tmp/dispatch/task-dispatch")
         .display()
         .to_string();
@@ -3383,7 +3388,9 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
         ],
     );
     let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
-    let worktree = stem_dir.join("worktree");
+    // TASK-M47E5: the scratch lives under the home; the stem dir keeps only the
+    // RECORD, which is what this test is about pruning.
+    let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
     assert!(worktree.is_dir());
     let tx_raw = tx_log(&project_root);
     let attempt_last = resolve_project_path(
