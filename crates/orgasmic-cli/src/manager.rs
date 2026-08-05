@@ -948,17 +948,37 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             // close a reviewer", while the gate also requires that close to
             // carry a non-empty VERDICT — so following it exactly earned the
             // same refusal again. Name the requirement and the flag.
+            //
+            // orgasmic:TASK-YN5FJ.1.1 — and it has to be PASTEABLE. The first
+            // pass printed `manager dispatch-close --task <task> …`: no
+            // executable, and a task placeholder standing in for something this
+            // refusal is holding in its hand. The rule now is that every token
+            // the refusal already knows is printed as its real value, and the
+            // message says which of the rest are placeholders — so a reader can
+            // tell "substitute this" from "type this" without guessing.
+            let remedy = format!(
+                "orgasmic manager dispatch-close {} --started-tx <reviewer-tx> --status done \
+                 --verdict <{}>",
+                tasks
+                    .iter()
+                    .map(|task| format!("--task {task}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                ReviewVerdict::value_list()
+            );
             bail!(
                 "refusing --merge-sha `{}` on the default branch: no reviewer verdict exists for \
                  implementer generation {} and task(s) {}. The gate needs a reviewer.done that \
                  reviewed this generation AND carries a VERDICT. Dispatch a reviewer for that \
-                 reported generation and close it with `manager dispatch-close --task <task> \
-                 --started-tx <reviewer-tx> --status done --verdict <{}>` — any of those verdicts \
-                 clears the gate, including reject. Or re-run with --no-review-required \
+                 reported generation and close it with `{}` — paste it as printed: its only \
+                 placeholders are <reviewer-tx>, the started_tx= that reviewer dispatch prints, \
+                 and the <{}> choice; every other token is already its real value. Any of those \
+                 verdicts clears the gate, including reject. Or re-run with --no-review-required \
                  --reason <why>",
                 merge.sha,
                 open.tx_id,
                 task_list_property(&tasks),
+                remedy,
                 ReviewVerdict::value_list()
             );
         }

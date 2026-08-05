@@ -19,7 +19,7 @@ use std::os::unix::process::ExitStatusExt;
 // orgasmic:task_K5NDR
 #[path = "common/env_isolation.rs"]
 mod env_isolation;
-use env_isolation::orgasmic_command;
+use env_isolation::{orgasmic_command, orgasmic_exe, scrub_ambient_orgasmic_env};
 
 // orgasmic:task_2GS7V
 /// Is this host's `tmux` really tmux, and does this process own the server the
@@ -524,6 +524,103 @@ fn run_orgasmic_failure(
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+// orgasmic:TASK-YN5FJ.1.1
+/// Link the binary under test into `bin_dir` under its own name, so a command
+/// the CLI *printed* can be executed the way an operator would run it: by name,
+/// resolved on `PATH`.
+///
+/// This exists so no helper silently supplies the executable. The shipped test
+/// hand-built its argv and let `run_orgasmic` prefix the binary path, which is
+/// exactly why the printed remedy could lose its `orgasmic` token with every
+/// assertion still green.
+fn link_orgasmic_onto_path(bin_dir: &Path) {
+    let exe = orgasmic_exe();
+    let link = bin_dir.join(exe.file_name().expect("orgasmic binary file name"));
+    if link.exists() {
+        std::fs::remove_file(&link).unwrap();
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&exe, &link).unwrap();
+}
+
+// orgasmic:TASK-YN5FJ.1.1
+/// The single backticked command in `message` that contains `must_contain`.
+///
+/// Refusals quote more than one thing in backticks (a sha, a flag), so the
+/// caller names what identifies the command. Two matches is an ambiguous
+/// remedy and fails here rather than picking one.
+fn backticked_command(message: &str, must_contain: &str) -> String {
+    let mut spans = message
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.contains(must_contain));
+    let command = spans.next().unwrap_or_else(|| {
+        panic!("refusal prints no backticked command containing `{must_contain}`: {message}")
+    });
+    assert!(
+        spans.next().is_none(),
+        "refusal prints more than one backticked command containing `{must_contain}`, \
+         so the remedy an operator should paste is ambiguous: {message}"
+    );
+    command.to_string()
+}
+
+// orgasmic:TASK-YN5FJ.1.1
+/// Tokenize a printed remedy into an argv, substituting ONLY the placeholders
+/// the refusal is documented to leave open.
+///
+/// The documented set is deliberately tiny: `<reviewer-tx>`, which does not
+/// exist yet at refusal time, and the verdict vocabulary, which is a choice the
+/// operator makes. Any other `<…>` token means the message printed a
+/// placeholder for something it already knew — the assertion below fails the
+/// MESSAGE, which is the point: a test that quietly patched such a token would
+/// re-hide the defect this test exists to catch.
+fn derive_remedy_argv(command: &str, reviewer_tx: &str, verdict: &str) -> Vec<String> {
+    const VERDICT_CHOICE: &str = "<approve|approve-with-follow-ups|reject>";
+    command
+        .split_whitespace()
+        .map(|token| match token {
+            "<reviewer-tx>" => reviewer_tx.to_string(),
+            VERDICT_CHOICE => verdict.to_string(),
+            other => {
+                assert!(
+                    !other.contains('<') && !other.contains('>'),
+                    "printed remedy leaves `{other}` as an undocumented placeholder; the refusal \
+                     knows this value and must print it: {command}"
+                );
+                other.to_string()
+            }
+        })
+        .collect()
+}
+
+// orgasmic:TASK-YN5FJ.1.1
+/// Run a derived argv by NAME through `path_env`, the way pasting it into a
+/// shell would.
+///
+/// The executable is `argv[0]` and nothing else: if the message stops naming
+/// one, this fails to spawn instead of quietly running the right binary anyway.
+fn run_derived_argv(
+    home: &Home,
+    running: &RunningDaemon,
+    project_root: &Path,
+    path_env: &std::ffi::OsString,
+    argv: &[String],
+) -> Output {
+    let mut command = Command::new(&argv[0]);
+    scrub_ambient_orgasmic_env(&mut command);
+    command
+        .args(&argv[1..])
+        .current_dir(project_root)
+        .env("ORGASMIC_HOME", &home.root)
+        .env("ORGASMIC_DAEMON_URL", format!("http://{}", running.addr))
+        .env("PATH", path_env);
+    command
+        .output()
+        .unwrap_or_else(|err| panic!("printed remedy {argv:?} is not runnable as printed: {err}"))
 }
 
 fn wait_for_file(path: &Path) {
@@ -1604,6 +1701,13 @@ async fn dispatch_close_rejects_unverified_merge_evidence_and_records_review_byp
 /// `VERDICT` and was refused again with the same message. A test that only
 /// asserts `--verdict` is accepted cannot see that, so this walks the whole
 /// loop: refuse, follow the PRINTED remedy, succeed.
+///
+/// TASK-YN5FJ.1.1 made "the PRINTED remedy" literal. The first pass wrote the
+/// word VERBATIM over a hand-built argv, so the message could stop being
+/// copyable — it shipped without its `orgasmic` token — with this test still
+/// green. The close below is now extracted from the refusal string this run
+/// produced, substituted only where the message says it is a placeholder, and
+/// executed by the name the message printed.
 async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &str)) {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
@@ -1616,6 +1720,10 @@ async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     write_sleeping_stub_codex(&bin_dir);
+    // TASK-YN5FJ.1.1: the reviewer close below is the command the refusal
+    // printed, run by the name the refusal printed. That name has to resolve on
+    // this test's PATH, or the printed remedy is not one a human could paste.
+    link_orgasmic_onto_path(&bin_dir);
     let path_env = path_with_stub(&bin_dir);
     let implementer_brief = tmp.path().join("codex/verdict-remedy-impl.md");
     let implementer_worktree = tmp.path().join("worktrees/verdict-remedy-impl");
@@ -1718,6 +1826,13 @@ async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &
         "--verdict on a non-reviewer close must be refused by name: {verdict_on_implementer}"
     );
 
+    // TASK-YN5FJ.1.1: the close below is DERIVED from `refusal`, not written
+    // here. Extract the command the CLI actually printed now, while the exact
+    // bytes of that refusal are still in hand — everything after this point runs
+    // what the message said, so an edit that makes the message unrunnable makes
+    // this test red.
+    let printed_remedy = backticked_command(&refusal, "dispatch-close");
+
     // Follow the printed remedy VERBATIM: dispatch a reviewer for that reported
     // generation, then close it with `--verdict <value>`.
     let reviewer_brief = tmp.path().join("codex/verdict-remedy-review.md");
@@ -1750,25 +1865,30 @@ async fn review_gate_refusal_remedy_loop(verdict: &str, expected_stage: (&str, &
         ],
     );
     let reviewer_started_tx = started_tx_from_dispatch_stdout(&reviewer_stdout);
-    run_orgasmic(
-        &home,
-        &running,
-        &project_root,
-        &path_env,
-        &[
-            "manager",
-            "dispatch-close",
-            "--task",
-            "TASK-DISPATCH",
-            "--started-tx",
-            &reviewer_started_tx,
-            "--status",
-            "done",
-            "--verdict",
-            verdict,
-            "--reviewed-diff",
-            "main..task-dispatch-test-impl",
-        ],
+
+    // Substitute the two documented placeholders and NOTHING else — anything
+    // the refusal already knew has to arrive here as a literal token, and
+    // `derive_remedy_argv` fails the message if it did not.
+    let remedy_argv = derive_remedy_argv(&printed_remedy, &reviewer_started_tx, verdict);
+    // The message names its own executable, and it must be this CLI's. Checked
+    // against the built binary rather than assumed, because the shipped defect
+    // was precisely a missing executable token that a helper supplied instead.
+    let expected_exe = orgasmic_exe()
+        .file_name()
+        .expect("orgasmic binary file name")
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(
+        remedy_argv.first().map(String::as_str),
+        Some(expected_exe.as_str()),
+        "printed remedy must begin with the executable an operator would type: {printed_remedy}"
+    );
+    let remedy_output = run_derived_argv(&home, &running, &project_root, &path_env, &remedy_argv);
+    assert!(
+        remedy_output.status.success(),
+        "the reviewer close the refusal PRINTED must run as printed: {remedy_argv:?}\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&remedy_output.stdout),
+        String::from_utf8_lossy(&remedy_output.stderr)
     );
     let tx_after_review = tx_log(&project_root);
     assert!(
