@@ -98,14 +98,16 @@ impl CursorAcpAdapter {
         self.ctx.as_ref().and_then(|ctx| ctx.worktree.clone())
     }
 
+    // orgasmic:TASK-M47E5.1
+    /// The configured project root, and nothing inferred from the worktree.
+    /// Since TASK-M47E5 the managed worktree lives at
+    /// `~/.orgasmic/worktrees/<project-id>/<task>/`, so its parent names the
+    /// managed worktree root rather than a project — a path allowlist keyed on
+    /// that would grant a surface no project owns. The daemon always sends
+    /// `project_root` in the driver config, so with the guess removed the
+    /// grants either key on the real root or refuse.
     fn project_root(&self) -> Option<PathBuf> {
-        self.cfg
-            .as_ref()
-            .and_then(|cfg| cfg.project_root.clone())
-            .or_else(|| {
-                self.worktree()
-                    .and_then(|p| p.parent().map(Path::to_path_buf))
-            })
+        self.cfg.as_ref().and_then(|cfg| cfg.project_root.clone())
     }
 }
 
@@ -996,8 +998,19 @@ impl CursorAcpAdapter {
         } else if reason.is_some() {
             return false;
         }
-        self.path_under_worktree(&summary_file)
-            || self.path_under_own_dispatch_artifacts(&summary_file)
+        // orgasmic:TASK-M47E5.1
+        // The second grant used to be `path_under_own_dispatch_artifacts`,
+        // which named this attempt's stem directory as `worktree.parent()`.
+        // TASK-M47E5 moved managed worktrees out of the project, so that
+        // parent is now the managed worktree root and the grant could never
+        // fire. Nothing this adapter holds identifies the attempt's stem
+        // either — the stem is derived from the operator-chosen brief file
+        // name (`dispatch_artifact_stem` in the CLI), and the driver is handed
+        // a task id, a run id and a worktree, none of which name it. So the
+        // narrower grant does not survive the move: the honest predicate left
+        // is the project's dispatch surface, the same one the read grant above
+        // already allows.
+        self.path_under_worktree(&summary_file) || self.path_under_dispatch_artifacts(&summary_file)
     }
 
     fn git_c_command_allowed(&self, words: &[String]) -> bool {
@@ -1033,20 +1046,6 @@ impl CursorAcpAdapter {
         self.project_root()
             .map(|root| path_is_under(path, &root.join(".orgasmic/tmp/dispatch")))
             .unwrap_or(false)
-    }
-
-    fn path_under_own_dispatch_artifacts(&self, path: &Path) -> bool {
-        let Some(worktree) = self.worktree().filter(|path| path.is_absolute()) else {
-            return false;
-        };
-        let Some(dispatch_attempt) = worktree.parent() else {
-            return false;
-        };
-        let Some(project_root) = self.project_root() else {
-            return false;
-        };
-        let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
-        path_is_under(dispatch_attempt, &dispatch_root) && path_is_under(path, dispatch_attempt)
     }
 
     fn path_is_worktree(&self, path: &Path) -> bool {
@@ -2027,6 +2026,100 @@ mod tests {
             &json!({"kind": "execute", "input": {"command": "pwd"}}),
             &SandboxAllowlist::default()
         ));
+    }
+
+    // orgasmic:TASK-M47E5.1
+    /// TASK-M47E5 moved the managed worktree to
+    /// `~/.orgasmic/worktrees/<project-id>/<task>/`, so the worktree stopped
+    /// being a route back to the project — and with it to the dispatch record,
+    /// which deliberately did NOT move. The finalize grant has to key on the
+    /// project root the daemon already hands the driver; deriving anything from
+    /// the worktree's parent now names a directory in the managed worktree
+    /// root, which is nobody's dispatch surface.
+    #[test]
+    fn finalize_accepts_a_dispatch_dir_summary_file_from_an_out_of_project_worktree() {
+        let project_root = PathBuf::from("/tmp/orgasmic-m47e5-1-project");
+        let worktrees_root =
+            PathBuf::from("/tmp/orgasmic-m47e5-1-home/.orgasmic/worktrees/orgasmic");
+        let worktree = worktrees_root.join("task-gymsp");
+        let mut adapter = CursorAcpAdapter::new();
+        let mut ctx = ctx();
+        ctx.worktree = Some(worktree.clone());
+        adapter
+            .stdio_session_init(
+                &ctx,
+                &DriverConfig::from_value(json!({ "project_root": project_root })),
+            )
+            .unwrap();
+
+        let finalize = |summary: &Path| {
+            nested_execute_permission(&format!(
+                "`orgasmic dispatch finalize --task TASK-GYMSP --summary-file {} --commit`",
+                summary.display()
+            ))
+        };
+
+        let in_dispatch_dir =
+            project_root.join(".orgasmic/tmp/dispatch/task-gymsp/task-gymsp-summary.md");
+        assert!(
+            adapter.permission_allowed(&finalize(&in_dispatch_dir), &SandboxAllowlist::default()),
+            "a summary file under the project dispatch dir must stay reachable when the worktree lives outside the project"
+        );
+
+        // The worktree remains the ordinary place to put it, and everything
+        // outside those two surfaces stays refused — including the managed
+        // worktree root, which is what the old worktree-derived grant would
+        // have started keying on after the move.
+        assert!(
+            adapter.permission_allowed(
+                &finalize(&worktree.join("summary.md")),
+                &SandboxAllowlist::default()
+            ),
+            "a summary file inside the worktree must keep working"
+        );
+        for refused in [
+            worktrees_root.join("task-other/summary.md"),
+            worktrees_root.join(".orgasmic/tmp/dispatch/task-gymsp/summary.md"),
+            project_root.join(".orgasmic/tmp/sessions/summary.md"),
+            PathBuf::from("/tmp/orgasmic-m47e5-1-elsewhere/summary.md"),
+        ] {
+            assert!(
+                !adapter.permission_allowed(&finalize(&refused), &SandboxAllowlist::default()),
+                "summary file outside the worktree and the project dispatch dir must stay refused: {}",
+                refused.display()
+            );
+        }
+    }
+
+    // orgasmic:TASK-M47E5.1
+    /// The same move invalidated the other worktree-derived guess: the project
+    /// root used to fall back to `worktree.parent()`. Without a configured
+    /// root there is now nothing to key on, and a path allowlist that cannot
+    /// name its project refuses rather than inventing one.
+    #[test]
+    fn a_dispatch_artifact_grant_refuses_when_no_project_root_is_configured() {
+        let worktrees_root =
+            PathBuf::from("/tmp/orgasmic-m47e5-1-home/.orgasmic/worktrees/orgasmic");
+        let worktree = worktrees_root.join("task-gymsp");
+        let mut adapter = CursorAcpAdapter::new();
+        let mut ctx = ctx();
+        ctx.worktree = Some(worktree.clone());
+        adapter
+            .stdio_session_init(&ctx, &DriverConfig::empty())
+            .unwrap();
+
+        assert!(
+            !adapter.read_args_allowed(&json!({
+                "path": worktrees_root.join(".orgasmic/tmp/dispatch/task-gymsp/brief.md").display().to_string()
+            })),
+            "an unconfigured project root must not be guessed from the worktree"
+        );
+        assert!(
+            adapter.read_args_allowed(
+                &json!({ "path": worktree.join("AGENTS.md").display().to_string() })
+            ),
+            "the worktree grant is independent of the project root and must keep working"
+        );
     }
 
     #[tokio::test]
