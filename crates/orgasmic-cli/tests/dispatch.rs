@@ -8040,6 +8040,7 @@ fn field(stdout: &str, line_prefix: &str, key: &str) -> Option<String> {
 /// owns, salvages its uncommitted work first, and reports the bytes it
 /// returned. `--dry-run` measures the same thing and changes nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts reclamation and salvage. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_reclaims_an_unclaimed_worktree_after_salvaging_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8134,6 +8135,7 @@ async fn worktree_prune_reclaims_an_unclaimed_worktree_after_salvaging_it() {
 /// its run health, and the refusal says why. Ending a dispatch is
 /// `dispatch-close`'s authority, not this verb's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts the SKIP/PRUNE_SUMMARY report and the HELD_WORKTREE detection line. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_refuses_a_worktree_an_open_dispatch_holds() {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
@@ -8226,6 +8228,7 @@ async fn worktree_prune_refuses_a_worktree_an_open_dispatch_holds() {
 /// with their repo — and `git worktree remove` cannot help, because there is no
 /// repository to run it from.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts a removal. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_removes_a_worktree_whose_repo_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8270,6 +8273,7 @@ async fn worktree_prune_removes_a_worktree_whose_repo_is_gone() {
 /// inventory verb has to. And `git worktree prune` runs, so `.git/worktrees`
 /// metadata for an out-of-band removal does not accumulate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts the RECLAIMABLE detection lines and the metadata prune. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn dispatch_status_detects_reclaimable_worktrees_and_prune_clears_stale_metadata() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8373,6 +8377,7 @@ fn tear_tx_property(project_root: &Path, key: &str) {
 /// `.git/worktrees` admin entries most need clearing — the relocation half's
 /// whole reason for running `git worktree prune`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts `git worktree prune` runs. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_still_clears_stale_metadata_when_the_managed_root_is_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8428,6 +8433,7 @@ async fn worktree_prune_still_clears_stale_metadata_when_the_managed_root_is_gon
 /// sides through the same link. The final `symlink_metadata` saw a real
 /// directory because it was one — it just belonged to somebody else.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts the anchoring refusal names the symlink; the gate refuses earlier, for a different reason. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_refuses_a_symlinked_managed_root_and_every_sentinel_survives() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8520,6 +8526,7 @@ async fn worktree_prune_refuses_a_symlinked_managed_root_and_every_sentinel_surv
 /// permission or transient I/O failure therefore selected `RepoGone`, and the
 /// worker's uncommitted output went with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts the classifier's KEPT reason. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_keeps_a_worktree_whose_git_link_is_unreadable_and_names_the_reason() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8604,6 +8611,7 @@ async fn worktree_prune_keeps_a_worktree_whose_git_link_is_unreadable_and_names_
 /// live run to a worktree at all. Tear `WORKTREE` out of the open dispatch entry
 /// and a worker that is still running in that directory classifies as UNCLAIMED.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: it asserts the live-run refusal the scan produces. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn worktree_prune_refuses_a_live_run_whose_open_dispatch_record_is_torn() {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
@@ -8708,6 +8716,7 @@ async fn worktree_prune_refuses_a_live_run_whose_open_dispatch_record_is_torn() 
 /// `worktree_prune_pause_after_guard` after the daemon has answered `reserved`
 /// and before any filesystem mutation, which is exactly the window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "TASK-M47E5.3 gated worktree-prune off: the gate returns before the reservation rendezvous it parks on. TASK-RMA18 owns the redesign and un-ignores this."]
 async fn a_recovery_acquired_in_the_prune_gap_is_refused_and_the_worktree_survives() {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
@@ -8861,6 +8870,185 @@ async fn a_recovery_acquired_in_the_prune_gap_is_refused_and_the_worktree_surviv
         !worktree.exists(),
         "prune held the worktree the whole time, so removal must have happened:\n{prune_all}"
     );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+// ===== TASK-M47E5.3: the prune is gated off, not fixed ====================
+//
+// Two review rounds, six BLOCK SHIP findings, all on the destructive path. The
+// verb was harmless for one reason only — the installed runtime predated it —
+// which made a sentence in a handoff the sole protection and blocked the
+// reinstall two good changes were waiting on. The tests below assert the
+// absence of reclamation on fixtures the #[ignore]d tests above still prove
+// WOULD have been reclaimed. TASK-RMA18 owns the redesign and un-ignores them.
+
+/// Every output marker the reclaiming path can print. Asserting on their
+/// absence is what makes "the gate returned first" checkable rather than
+/// inferred from an exit code — `DRY_RUN`/`WOULD_PRUNE_METADATA` come from the
+/// dry-run leg, the rest from the destructive one.
+const RECLAMATION_MARKERS: &[&str] = &[
+    "WOULD_RECLAIM",
+    "DRY_RUN",
+    "WOULD_PRUNE_METADATA",
+    "SALVAGED",
+    "RECLAIMED",
+    "PRUNED_METADATA",
+    "PRUNE_SUMMARY",
+    "SKIP PATH=",
+];
+
+/// TASK-M47E5.3 acceptance: `worktree-prune` refuses and reclaims nothing, with
+/// and without `--dry-run`, on the fixture
+/// `worktree_prune_reclaims_an_unclaimed_worktree_after_salvaging_it` proves
+/// WOULD have been reclaimed — an unclaimed managed worktree carrying
+/// uncommitted worker output. The stale `.git/worktrees` entry is the second
+/// half: `git worktree prune` used to clear it on both legs, so its survival is
+/// direct evidence the gate returned before any of that ran.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_is_gated_off_and_reclaims_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-dispatch",
+        "task-dispatch-impl",
+        &head,
+    );
+    let output_file = worktree.join("worker-output.txt");
+    write(&output_file, "unmerged worker output");
+
+    // Removed out of band, exactly as an operator clearing `~/.orgasmic` would:
+    // git keeps the admin entry, and clearing it was the one thing the verb did
+    // even with nothing to reclaim.
+    let swept = add_managed_worktree(&home, &project_root, "task-swept", "task-swept-impl", &head);
+    std::fs::remove_dir_all(&swept).unwrap();
+    assert!(
+        run_git(&project_root, &["worktree", "list", "--porcelain"]).contains("task-swept"),
+        "git must be carrying the stale admin entry, or the metadata half proves nothing"
+    );
+
+    let running = boot(home.clone()).await;
+
+    for args in [
+        ["manager", "worktree-prune", "--dry-run"].as_slice(),
+        ["manager", "worktree-prune"].as_slice(),
+    ] {
+        let output = run_orgasmic_output(&home, &running, &project_root, &path_env, args);
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.status.success(),
+            "`{args:?}` must refuse, got:\n{all}"
+        );
+        assert!(
+            all.contains("TASK-M47E5.3") && all.contains("TASK-RMA18"),
+            "the refusal must name the gate and the redesign that lifts it, got:\n{all}"
+        );
+        for marker in RECLAMATION_MARKERS {
+            assert!(
+                !all.contains(marker),
+                "`{args:?}` reached the reclaiming path ({marker}), got:\n{all}"
+            );
+        }
+        assert!(
+            worktree.is_dir() && output_file.is_file(),
+            "`{args:?}` must leave the worktree and its uncommitted output alone, got:\n{all}"
+        );
+        assert_eq!(
+            run_git(
+                &project_root,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/orgasmic/salvage"
+                ]
+            )
+            .trim(),
+            "",
+            "`{args:?}` must create no salvage refs, got:\n{all}"
+        );
+        assert!(
+            run_git(&project_root, &["worktree", "list", "--porcelain"]).contains("task-swept"),
+            "`{args:?}` must not reach `git worktree prune`, got:\n{all}"
+        );
+    }
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-M47E5.3 acceptance: the automatic detection goes with the verb. Same
+/// fixture as
+/// `dispatch_status_detects_reclaimable_worktrees_and_prune_clears_stale_metadata`,
+/// which proves this worktree WOULD have been advertised as reclaimable. The
+/// scan behind those lines is the defect, so a wrong `RECLAIMABLE` line — an
+/// invitation to run a verb that now refuses — must not be printed at all.
+/// `--cleanup-failed` is the second call site and is checked here too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_status_no_longer_advertises_reclaimable_worktrees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let stale = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-cleanup",
+        "task-cleanup-impl",
+        &head,
+    );
+
+    let running = boot(home.clone()).await;
+    for args in [
+        ["manager", "dispatch-status"].as_slice(),
+        ["manager", "dispatch-status", "--cleanup-failed"].as_slice(),
+    ] {
+        let output = run_orgasmic_output(&home, &running, &project_root, &path_env, args);
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.status.success(),
+            "gating detection must not break the inventory verb, got:\n{all}"
+        );
+        for marker in [
+            "RECLAIMABLE_WORKTREE",
+            "RECLAIMABLE_TOTAL",
+            "RECLAIM_WITH",
+            "HELD_WORKTREE",
+            "KEPT_WORKTREE",
+        ] {
+            assert!(
+                !all.contains(marker),
+                "`{args:?}` still runs the gated scan ({marker}), got:\n{all}"
+            );
+        }
+        assert!(stale.is_dir(), "detection must remove nothing, got:\n{all}");
+    }
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
