@@ -1,0 +1,38 @@
+# Pinned from the real red run of 2026-08-05 with the injection applied.
+#
+# The injection reverts `crates/orgasmic-cli/src/manager.rs` wholesale to the
+# state TASK-M47E5 merged it in (ffead86, reviewed REJECT). That is the pre-fix
+# tree exactly: `scan_managed_worktrees` calls `std::fs::read_dir` on the
+# managed root without proving it is a real directory, `remove_orphaned_worktree_dir`
+# fences a path rather than an inode, and `worktree_repo_gone` returns
+# `Option<String>` with nowhere to put "I could not tell".
+#
+# Nothing in the daemon is touched, because nothing in the daemon needed
+# changing: the fix routes prune through the cleanup reservation that
+# `Supervisor::reserve_dispatch_close` already owned.
+exit: 101
+
+# ===== FINDING 1: a symlinked managed root redirects removal outside it ====
+#
+# This is the FIRST failing assertion of its test, not a downstream one — the
+# sentinel check is the first thing the test does after the verb returns, and
+# the red run names a file it laid down OUTSIDE the managed root and then found
+# gone. The mechanism is visible in the same panic: the two `RECLAIMED` lines
+# print paths under `<home>/worktrees/orgasmic/`, while the directories those
+# paths resolved to belonged to the victim.
+contains: a symlinked managed root must never redirect removal outside it
+contains: victim/task-precious/keep-me.txt is gone
+
+# ===== FINDING 3: an I/O error fails OPEN into the unsalvaged delete ========
+#
+# Also the first failing assertion of its test. `.git` is a mode-000 regular
+# file, so `read_to_string` gets EACCES, the `else` branch falls through to
+# `(!dot_git.is_dir())` — false for a regular file — and "no .git link" selects
+# `RepoGone`, the one disposition that skips salvage and calls `remove_dir_all`.
+# The worker's uncommitted `worker-output.txt` goes with it.
+contains: an I/O error on .git must never classify as repo-gone
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# Both, and only these two. A binary that collapses wholesale is a different
+# failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 2 failed

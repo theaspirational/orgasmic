@@ -1,0 +1,22 @@
+# One line. Run from the repo root by `orgasmic verify TASK-M47E5.2`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests boot their own daemons against temp homes that must see
+# neither. No `ORGASMIC_ALLOW_MISSING_TOOLS` is needed: neither test wants a
+# multiplexer, and the orgasmic-cli suite waives no tooling on this host.
+#
+# TWO tests, and they are the two that DESTROY DATA rather than the two that
+# merely misreport it. Findings 1 and 3 are pinnable in-tree because each has a
+# victim that can be laid down before the verb runs and looked for afterwards:
+# sentinel files outside the managed root, and a worker's uncommitted output
+# inside it. Finding 2 is deliberately NOT in this replay — its regression
+# (`a_recovery_acquired_in_the_prune_gap_is_refused_and_the_worktree_survives`)
+# reddens by *timing out* on the unfixed tree, since a prune that takes no
+# daemon reservation never reaches the rendezvous to park at. A 120-second
+# deadline is a real red but a poor signature, so it is left to the suite where
+# it belongs rather than pinned here as if it were a message.
+#
+# Both filters go after `--`: `cargo test` takes exactly ONE positional
+# TESTNAME, so a second one is rejected as an unexpected argument. libtest
+# itself ORs any number of them.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch -- worktree_prune_refuses_a_symlinked_managed_root_and_every_sentinel_survives worktree_prune_keeps_a_worktree_whose_git_link_is_unreadable_and_names_the_reason
