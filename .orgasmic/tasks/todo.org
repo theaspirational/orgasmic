@@ -704,4 +704,52 @@ should not wait on the gate work.
 - Do not raise timeouts to fit a degraded host; that makes every future run
   slower and still returns a meaningless verdict.
 - Do not add registry entries for the ten unregistered 2026-08-02 failures.
+** Measured 2026-08-05 — the red is nondeterministic on unchanged code
+A controlled same-code repeat, run 2026-08-05 while gating TASK-M47E5.1.1 at
+merge =3a825cb=. This is the measurement this task's design question has been
+missing: not "does the suite flake" but "is its red a function of the code".
+
+*Two runs of =scripts/run-tests.sh -p orgasmic-daemon=, identical tree, no
+rebuild between them:*
+
+| | run 1 | run 2 |
+|---|---|---|
+| header failure count | 20 | 19 |
+| failing test names extracted | 19 | 19 |
+| passed the runner's isolation rerun | 19/19 | 19/19 |
+| common to both runs | 17 | |
+| unique to that run | 2 | 2 |
+
+Run 1 only: =index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
+=supervisor::tests::an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued=.
+Run 2 only: =api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+=supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases=.
+
+*The conclusion, stated precisely:* the failing SET is nondeterministic across
+runs of unchanged code, and 100% of failures pass in isolation. So a daemon-suite
+red currently carries NO information about whether the change under test broke
+anything. That is stronger than "the suite is flaky" — it means the gate cannot
+discriminate, which is the property a gate exists to have.
+
+*What this does and does not license.* It does NOT license ignoring daemon red.
+It licenses exactly one inference: a red whose failures all pass in isolation, on
+a change that cannot touch them, is not evidence of regression. The change being
+gated here was three substantive lines (one parameter, one JSON field, one
+expression) and none of the 19 tests reference either symbol.
+
+*Why the runner still says "This red means something".* By design: an
+unregistered failure is REAL, because the registry is the only sanctioned excuse
+and a signature-less excuse is what trains people to discount red. That is
+correct behaviour and it is what surfaced TASK-3ZR2E earlier the same day. The
+defect is not the classifier — it is that ~17 daemon tests have no owner and no
+entry, so every daemon gate reads RED and the manager has to re-derive this
+analysis by hand each time. Which is this task.
+
+*A cheap discriminator this measurement suggests*, offered as input to the design
+rather than as the design: the runner already reruns each failure in isolation.
+It therefore already knows the difference between "failed in parallel, passed
+alone" and "failed both ways". Today both land in REAL when unregistered. A
+distinct third verdict for "failed only under parallelism, unregistered" would
+separate the load population from genuine red WITHOUT weakening the registry
+rule, and would have made both of today's daemon gates readable at a glance.
 
