@@ -1,0 +1,10 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -1007,6 +1007,5 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
+     // cleanup, so a refusal from there would arrive with the worktree already
+     // removed.
+     validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
+-    validate_manager_owned_close_properties(&args)?;
+     // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
+     // only on the close that records the reviewer's own terminal tx.

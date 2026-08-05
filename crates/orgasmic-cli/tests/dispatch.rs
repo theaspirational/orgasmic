@@ -1294,6 +1294,152 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
         ],
     );
     let fix_final_started_tx = started_tx_from_dispatch_stdout(&fix_final_stdout);
+    assert!(
+        fix_final_worktree.is_dir(),
+        "the dispatched fix-round worktree must exist before close validation"
+    );
+
+    // orgasmic:TASK-4WKNX.1 — manager-owned close-tx properties cannot be
+    // forged through the generic channel. This is deliberately the first
+    // assertion in the injection proof: pre-fix the close succeeds, stamps the
+    // caller's FIX_ROUND_FINAL, and removes the worktree.
+    let forged_fix_round_final = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--started-tx",
+            &fix_final_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--property",
+            "FIX_ROUND_FINAL=true",
+            "--worktree-remove",
+        ],
+    );
+    let forged_fix_round_final_stdout =
+        String::from_utf8_lossy(&forged_fix_round_final.stdout).to_string();
+    let forged_fix_round_final_stderr =
+        String::from_utf8_lossy(&forged_fix_round_final.stderr).to_string();
+    assert!(
+        !forged_fix_round_final.status.success()
+            && forged_fix_round_final_stderr.contains("--property FIX_ROUND_FINAL=true")
+            && forged_fix_round_final_stderr.contains("--fix-round-final"),
+        "--property FIX_ROUND_FINAL=true must be refused before manager-owned audit data can be forged\nstdout={forged_fix_round_final_stdout}\nstderr={forged_fix_round_final_stderr}"
+    );
+    assert_task_stage(
+        &project_root,
+        "TASK-FIX-FINAL",
+        "IN_PROGRESS",
+        "in_progress",
+    );
+    assert!(
+        fix_final_worktree.is_dir(),
+        "the property-only refusal must happen before worktree cleanup"
+    );
+    assert!(
+        !tx_log(&project_root).split("\n\n* TX ").any(|block| {
+            block.contains(":TYPE:         implementer.done")
+                && block.contains(":TASK:         TASK-FIX-FINAL")
+        }),
+        "the property-only refusal must happen before the close tx append"
+    );
+
+    let contradicted_fix_round_final = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--started-tx",
+            &fix_final_started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--fix-round-final",
+            "--reason",
+            "final round",
+            "--property",
+            "FIX_ROUND_FINAL=false",
+            "--worktree-remove",
+        ],
+    );
+    let contradicted_fix_round_final_stderr =
+        String::from_utf8_lossy(&contradicted_fix_round_final.stderr).to_string();
+    assert!(
+        !contradicted_fix_round_final.status.success()
+            && contradicted_fix_round_final_stderr.contains("--fix-round-final")
+            && contradicted_fix_round_final_stderr
+                .contains("--property FIX_ROUND_FINAL=false"),
+        "a typed/property FIX_ROUND_FINAL collision must be refused naming both spellings: {contradicted_fix_round_final_stderr}"
+    );
+    assert_task_stage(
+        &project_root,
+        "TASK-FIX-FINAL",
+        "IN_PROGRESS",
+        "in_progress",
+    );
+    assert!(
+        fix_final_worktree.is_dir(),
+        "the FIX_ROUND_FINAL collision must be refused before worktree cleanup"
+    );
+
+    // NO_REVIEW_REQUIRED is the same boolean, flag-owned audit class. There
+    // are no historical tx rows proving a supported property spelling, so it
+    // is reserved instead of acquiring VERDICT's explicit legacy alias.
+    for (typed_args, property) in [
+        (&[][..], "NO_REVIEW_REQUIRED=true"),
+        (
+            &["--no-review-required", "--reason", "review bypass"] as &[&str],
+            "NO_REVIEW_REQUIRED=false",
+        ),
+    ] {
+        let mut argv = vec![
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-FINAL",
+            "--started-tx",
+            fix_final_started_tx.as_str(),
+            "--status",
+            "done",
+            "--merge-sha",
+            head.as_str(),
+        ];
+        argv.extend_from_slice(typed_args);
+        argv.extend_from_slice(&["--property", property, "--worktree-remove"]);
+        let refused = run_orgasmic_output(&home, &running, &project_root, &path_env, &argv);
+        let stderr = String::from_utf8_lossy(&refused.stderr).to_string();
+        assert!(
+            !refused.status.success()
+                && stderr.contains(&format!("--property {property}"))
+                && stderr.contains("--no-review-required"),
+            "reserved NO_REVIEW_REQUIRED spelling must be refused naming its typed flag: {stderr}"
+        );
+        assert_task_stage(
+            &project_root,
+            "TASK-FIX-FINAL",
+            "IN_PROGRESS",
+            "in_progress",
+        );
+        assert!(
+            fix_final_worktree.is_dir(),
+            "the NO_REVIEW_REQUIRED refusal must happen before worktree cleanup"
+        );
+    }
+
     let no_reason = run_orgasmic_output(
         &home,
         &running,
@@ -1381,6 +1527,41 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     assert_task_stage(&project_root, "TASK-ABORT", "IN_PROGRESS", "in_progress");
     let _ = abort_last;
     let abort_started_tx = started_tx_from_dispatch_stdout(&abort_dispatch_stdout);
+    let fix_round_final_on_abort = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-ABORT",
+            "--started-tx",
+            &abort_started_tx,
+            "--status",
+            "aborted",
+            "--fix-round-final",
+            "--reason",
+            "aborting is not a final fix round",
+            "--worktree-remove",
+        ],
+    );
+    let fix_round_final_on_abort_stderr =
+        String::from_utf8_lossy(&fix_round_final_on_abort.stderr).to_string();
+    assert!(
+        !fix_round_final_on_abort.status.success()
+            && fix_round_final_on_abort_stderr.contains(
+                "--fix-round-final is valid only when closing an implementer dispatch as done"
+            ),
+        "an aborted close must reach the named --fix-round-final refusal: {fix_round_final_on_abort_stderr}"
+    );
+    assert!(
+        abort_worktree.is_dir(),
+        "the aborted-close refusal must happen before worktree cleanup"
+    );
+    assert_task_stage(&project_root, "TASK-ABORT", "IN_PROGRESS", "in_progress");
+
     // orgasmic:TASK-4WKNX — the opt-out is a FIX_SUBTASK concept. On a task
     // that carries no `:FIX_SUBTASK:` it would be a silent no-op (that close
     // already lands `in_review`), so it is refused by name instead.

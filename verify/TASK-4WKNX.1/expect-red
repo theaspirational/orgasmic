@@ -1,0 +1,7 @@
+# Pinned from the real pre-fix run. The generic property succeeds, stamps the
+# manager-owned audit key, and removes the worktree; the first assertion catches
+# that production-path close before any later matrix case can run.
+exit: 101
+
+contains: --property FIX_ROUND_FINAL=true must be refused before manager-owned audit data can be forged
+contains: test dispatch_close_uses_fix_subtask_property_and_abort_backlog ... FAILED
