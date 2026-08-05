@@ -250,3 +250,31 @@ the safety is per-test rather than structural — the exact shape of the comment
 that caused the 2026-07-30 orphan incident. NEVER run
 =legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6);
 it spawns real billed provider turns.
+
+DO NOT REINSTALL THE RUNTIME UNTIL TASK-M47E5.2 LANDS. [2026-08-05]
+=orgasmic manager worktree-prune= is ON MAIN and is NOT SAFE TO RUN — three
+confirmed defects, two of them data-loss (TASK-M47E5.2, P0). It is harmless today
+for exactly one reason: the installed runtime predates the verb, so nothing can
+invoke it. THE REINSTALL IS WHAT ARMS IT.
+
+That matters because the pressure to reinstall is now real and pointing the wrong
+way: the TASK-YN5FJ review gate and the TASK-M47E5 relocation are BOTH merged and
+BOTH inert until a reinstall, so the obvious next move is exactly the one that
+turns a broken delete verb on. Land M47E5.2 first.
+
+The three, all confirmed against the code by the manager rather than taken from the
+reviewer report:
+1. =read_dir= on the managed root FOLLOWS a symlink, and the direct-child fence
+   cannot fail (=path.parent()= IS =managed_root= by construction, and
+   =normalize_path= canonicalizes both sides through the same link) — so a
+   symlinked root redirects =remove_dir_all= at arbitrary directories.
+2. =RunSummary= deserializes =run_id= and nothing else, so the CLI cannot match a
+   live run to a worktree; ownership comes from the tx ledger alone. This is the
+   race =Supervisor::reserve_dispatch_close= (TASK-1T3FZ) already closed for
+   =dispatch-close=, whose own doc says a recovery acquires IN ANOTHER PROCESS so
+   no CLI-side audit can substitute. Prune re-opened it in a parallel path.
+3. =worktree_repo_gone= treats ANY =read_to_string(.git)= error as proof the repo is
+   gone — the one disposition that skips salvage and calls =remove_dir_all=.
+
+The RELOCATION half of M47E5 is correct and reviewed; only the prune half is
+rejected.
