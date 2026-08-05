@@ -1063,8 +1063,16 @@ impl CursorAcpAdapter {
             return false;
         };
         let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
-        path_is_under(&dispatch_artifact_dir, &dispatch_root)
-            && path_is_under(path, &dispatch_artifact_dir)
+        let resolved_dispatch_root = resolve_policy_path(&dispatch_root);
+        let resolved_artifact_dir = resolve_policy_path(&dispatch_artifact_dir);
+        // orgasmic:TASK-M47E5.1.1.1
+        // The configured directory is untrusted input. It must be exactly one
+        // real stem below the dispatch root; equality would re-authorize every
+        // sibling stem because `path_is_under` deliberately accepts equality.
+        if resolved_artifact_dir.parent() != Some(resolved_dispatch_root.as_path()) {
+            return false;
+        }
+        path_is_under(path, &resolved_artifact_dir)
     }
 
     fn path_is_worktree(&self, path: &Path) -> bool {
@@ -2116,6 +2124,40 @@ mod tests {
             !adapter.permission_allowed(&finalize(&sibling_summary), &SandboxAllowlist::default()),
             "a summary file in a sibling project dispatch stem must be refused"
         );
+
+        // orgasmic:TASK-M47E5.1.1.1
+        // The read authority remains project-wide even when an untrusted
+        // artifact-dir input resolves to the dispatch root. Finalize must not
+        // inherit that broader authority through either spelling.
+        for (configured_artifact_dir, spelling) in [
+            (dispatch_root.clone(), "the dispatch root"),
+            (
+                dispatch_root.join("task-gymsp-attempt-1/.."),
+                "a traversal-equivalent dispatch root",
+            ),
+        ] {
+            let mut invalid_adapter = CursorAcpAdapter::new();
+            invalid_adapter
+                .stdio_session_init(
+                    &ctx,
+                    &DriverConfig::from_value(json!({
+                        "project_root": project_root,
+                        "dispatch_artifact_dir": configured_artifact_dir,
+                    })),
+                )
+                .unwrap();
+            assert!(
+                invalid_adapter.read_args_allowed(&json!({
+                    "path": sibling_summary.display().to_string()
+                })),
+                "sibling READ must remain allowed with {spelling} configured"
+            );
+            assert!(
+                !invalid_adapter
+                    .permission_allowed(&finalize(&sibling_summary), &SandboxAllowlist::default()),
+                "a root-equivalent artifact dir must refuse sibling FINALIZE: {spelling}"
+            );
+        }
     }
 
     // orgasmic:TASK-M47E5.1.1

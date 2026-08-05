@@ -1,0 +1,11 @@
+diff --git a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+--- a/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
++++ b/crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+@@ -1068,6 +1068,6 @@ impl CursorAcpAdapter {
+         // real stem below the dispatch root; equality would re-authorize every
+         // sibling stem because `path_is_under` deliberately accepts equality.
+-        if resolved_artifact_dir.parent() != Some(resolved_dispatch_root.as_path()) {
++        if !path_is_under(&resolved_artifact_dir, &resolved_dispatch_root) {
+             return false;
+         }
+         path_is_under(path, &resolved_artifact_dir)

@@ -1534,7 +1534,7 @@ mod tests {
     /// From an out-of-project worktree, point the probe at the project's live
     /// sessions directory explicitly:
     ///
-    /// `ORGASMIC_PROBE_TRANSCRIPTS=1 ORGASMIC_PROBE_SESSIONS="$PWD/.orgasmic/tmp/sessions" cargo test -p orgasmic-drivers production_path_probe_when_local_homes_present -- --ignored --nocapture`
+    /// `ORGASMIC_PROBE_TRANSCRIPTS=1 ORGASMIC_PROBE_SESSIONS="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.orgasmic/tmp/sessions" cargo test -p orgasmic-drivers production_path_probe_when_local_homes_present -- --ignored --nocapture`
     #[test]
     fn production_path_probe_when_local_homes_present() {
         if std::env::var("ORGASMIC_PROBE_TRANSCRIPTS").as_deref() != Ok("1") {
@@ -1547,15 +1547,15 @@ mod tests {
             panic!("ORGASMIC_PROBE_TRANSCRIPTS=1 but HOME is unset");
         };
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // orgasmic:TASK-M47E5.1
-        // The five-level candidate still serves an explicit `--worktree` in
+        // orgasmic:TASK-M47E5.1.1.1
+        // The six-level candidate still serves an explicit `--worktree` in
         // the old in-project layout accepted by `manager dispatch`; managed
         // out-of-project worktrees cannot reach the project by relative walk
         // and must use the documented `ORGASMIC_PROBE_SESSIONS` override.
         let candidates = [
             std::env::var_os("ORGASMIC_PROBE_SESSIONS").map(PathBuf::from),
             Some(manifest.join("../../.orgasmic/tmp/sessions")),
-            Some(manifest.join("../../../../../tmp/sessions")),
+            Some(manifest.join("../../../../../../tmp/sessions")),
         ];
         let Some(orgasmic_sessions) = candidates.into_iter().flatten().find(|p| p.is_dir()) else {
             panic!(

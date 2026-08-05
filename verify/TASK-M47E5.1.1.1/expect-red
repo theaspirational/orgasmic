@@ -1,0 +1,9 @@
+# Pinned from the pre-fix predicate injected below. The weakened shape check
+# accepts equality again, so the dispatch root authorizes a sibling finalize.
+exit: 101
+
+contains: a root-equivalent artifact dir must refuse sibling FINALIZE: the dispatch root
+
+# The injection targets the intended behavioral test, not compilation or an
+# unrelated case.
+contains: test result: FAILED. 0 passed; 1 failed
