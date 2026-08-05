@@ -192,89 +192,72 @@ BACKLOG = 87 (86 + TASK-4WKNX + TASK-37WN7 - M47E5 - the two YN5FJ items done).
 is an operator decision, never a manager one.
 
 ** Divergence / Risks
-THE RUNTIME IS BEHIND THE REPO AGAIN — this REVERSES the previous handoff, which
-said "THE RUNTIME IS NOW CURRENT". Installed =05e1813=, main is 36 commits
-ahead. See trap #1 in the lead: the mode rename is the part that bites.
+THE RUNTIME IS BEHIND THE REPO. Installed =05e1813=; main is far ahead. Trap #1
+in the lead (the =acp-stdio= vs =stdio= mode rename) is the part that bites.
 
-A DISPATCH CAN STILL KILL EVERY OTHER DISPATCH via =ORGASMIC_HOME= (lead item
-2). Unchanged, and it is the single most expensive mistake available.
+THE REINSTALL IS NO LONGER BLOCKED — this REVERSES what this section said earlier
+today. It was blocked because =orgasmic manager worktree-prune= shipped a delete
+path that failed TWO reviews with six BLOCK SHIP findings, and the only thing
+keeping it harmless was that the installed runtime predated the verb. TASK-M47E5.3
+(=a1cd738=) made the verb REFUSE BY CONSTRUCTION — both forms exit 1, the scan is
+gated too, and =dispatch-status= no longer advertises reclaimable trees. Verified
+on the real binary. So the protection is now in the code rather than in this
+document, and reinstalling is safe. TASK-RMA18 owns the redesign and un-gates it.
 
-RMUX DIES SILENTLY AND TAKES EVERY PANE WITH IT (TASK-4DTBZ, P1): three pid
-cycles in one session, no log since 2026-07-26, no crash report; it killed three
-workers at once. TMUX IS THE BETTER DEFAULT and is what this session used
-throughout. The tmux pane-liveness channel from TASK-4CSMY is now CONFIRMED
-REPORTING IN PRODUCTION — measured on the TASK-XCJYC run,
-=driver_event type "pane_activity"= with real byte counts — so the
-=--governance-json {"stall_timeout_secs":3600}= workaround has been RETIRED
-deliberately and later dispatches ran without it. Read =event.type=, never the
-serialized line: an earlier grep on the same file matched =driver_config= and
-produced a false positive.
+THREE MERGED CHANGES ARE INERT UNTIL THAT REINSTALL, and that is now the main
+reason to do it: the TASK-YN5FJ review gate, the TASK-M47E5 worktree relocation,
+and the TASK-YN5FJ.1 =--verdict= flag. Observed directly — a reviewer dispatched
+after M47E5 merged still got an in-project worktree, because the CLI that creates
+worktrees is the installed one.
 
-THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY (TASK-BX5SR, P1). One
-failing transaction killed the writer task; every write then returned 500 while
-=status=, =task get= and =dispatch-status= all answered normally. Detection is
-=grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log=. If a write fails
-with "failed to apply changes", check the writer BEFORE assuming OCC contention
-— that was a previous manager's first and wrong reading.
+A DISPATCH CAN STILL KILL EVERY OTHER DISPATCH via =ORGASMIC_HOME= (lead item 2).
+Unchanged, and it is the single most expensive mistake available.
 
-MERGE STILL PRECEDES REVIEW IN PRACTICE, AND THE FIX IS MERGED BUT NOT LIVE.
-=dispatch-close= refuses to close an implementer as done without =--merge-sha=,
-and until the runtime is rebuilt a reviewer still cannot dispatch against an
-open generation. So expect to merge, then review, then fix in =TASK-<id>.N=
-rounds — which is what this session did three times. When you review a
-post-merge diff, say so in the brief and tell the reviewer a REJECT is still
-actionable, or you will get softened findings.
+RMUX DIES SILENTLY AND TAKES EVERY PANE WITH IT (TASK-4DTBZ, P1). TMUX IS THE
+BETTER DEFAULT: eight dispatches ran on tmux across 2026-08-05 with no transport
+trouble. The TASK-4CSMY pane-liveness channel is confirmed reporting in
+production, so the =--governance-json {"stall_timeout_secs":3600}= workaround
+stays retired. Read =event.type=, never the serialized line.
 
-TWO REVIEW-BRIEFING LESSONS, both paid for this session.
-- DO NOT ask a reviewer to mutate source. The reviewer contract is strictly
-  read-only, so a brief asking for a negative probe ("break it and confirm the
-  guard fires") returns an unrun gap, correctly. The IMPLEMENTER runs negative
-  probes; the reviewer judges them.
-- A REJECT that the manager then fixes personally is a normal, good outcome. It
-  happened on TASK-XCJYC and cost three comment lines.
+THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY (TASK-BX5SR, P1). Detection
+is =grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log=. If a write fails
+with "failed to apply changes", check the writer BEFORE assuming OCC contention.
 
-STATE-HYGIENE SHAPES TO WATCH FOR, both found this session:
+MERGE STILL PRECEDES REVIEW IN PRACTICE, AND THE FIX IS MERGED BUT NOT LIVE. So
+expect merge -> review -> fix in =TASK-<id>.N= rounds. When you review a
+post-merge diff, SAY SO in the brief and tell the reviewer a REJECT is still
+actionable, or you will get softened findings. This session ran five such rounds
+and two of them returned REJECT.
+
+DO NOT STASH =.orgasmic= TO GET A CLEAN TREE FOR =orgasmic verify=. The daemon
+reads those files, so during the stash window it cannot see its own project and a
+concurrent write fails =404 Not Found: node TASK-XXXXX=. Commit the state first;
+=verify= only needs the tree clean, and committed state is clean.
+
+REVIEW-BRIEFING LESSONS, all paid for:
+- DO NOT ask a reviewer to mutate source. The contract is read-only, so a brief
+  asking for a negative probe returns an unrun gap, correctly. The IMPLEMENTER
+  runs negative probes; the reviewer judges them.
+- A REJECT the manager then fixes personally is a normal, good outcome.
+- NAME THE SPECIFIC CLAIM YOU WANT ATTACKED. Asking "is the handle actually the
+  reference point everywhere, or does any surviving call re-derive a path?"
+  produced the finding that classification re-resolved the pathname while removal
+  used the fd. A generic "review this diff" would not have.
+- TELL THE REVIEWER WHAT IS ALREADY ESTABLISHED so it spends effort on what is
+  not. Every review this session was given a do-not-re-derive list.
+
+STATE-HYGIENE SHAPES TO WATCH FOR:
 - A TASK IN =in_progress= WITH NO DISPATCH is claiming work nobody is doing.
-  TASK-STWVB sat that way for days. Check
-  =grep "manager.dispatch_started" .orgasmic/tx/*.org= before believing a stage.
-- A BLOCKER RECORDED ONLY IN PROSE is invisible. TASK-STWVB said "GATE IS
-  BLOCKED BY TASK-8W30B" in its body while =depends_on= was empty.
-- A LONG TASK BODY WHOSE OPENING PARAGRAPH IS DISPROVED will mislead every
-  skim-reader. This cost a worker a full round on TASK-TJKFC. The fix that works
-  is a =READ THIS FIRST — STATUS= block at the TOP plus a corrected TITLE;
-  appending the correction at the bottom does not work.
+  Check =grep "manager.dispatch_started" .orgasmic/tx/*.org= before believing a
+  stage.
+- A BLOCKER RECORDED ONLY IN PROSE is invisible; =depends_on= is what the board
+  reads.
+- A LONG TASK BODY WHOSE OPENING PARAGRAPH IS DISPROVED misleads every
+  skim-reader. Use a =READ THIS FIRST — STATUS= block at the TOP plus a corrected
+  TITLE; appending the correction at the bottom does not work.
 
 THE INTEGRATION SUITE IS OUTSIDE THE cfg(test) FENCE (TASK-3TQ0R). Every such
 test engineers a host-independent credential refusal, so none spawns today, but
-the safety is per-test rather than structural — the exact shape of the comment
-that caused the 2026-07-30 orphan incident. NEVER run
-=legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6);
-it spawns real billed provider turns.
-
-DO NOT REINSTALL THE RUNTIME UNTIL TASK-M47E5.2 LANDS. [2026-08-05]
-=orgasmic manager worktree-prune= is ON MAIN and is NOT SAFE TO RUN — three
-confirmed defects, two of them data-loss (TASK-M47E5.2, P0). It is harmless today
-for exactly one reason: the installed runtime predates the verb, so nothing can
-invoke it. THE REINSTALL IS WHAT ARMS IT.
-
-That matters because the pressure to reinstall is now real and pointing the wrong
-way: the TASK-YN5FJ review gate and the TASK-M47E5 relocation are BOTH merged and
-BOTH inert until a reinstall, so the obvious next move is exactly the one that
-turns a broken delete verb on. Land M47E5.2 first.
-
-The three, all confirmed against the code by the manager rather than taken from the
-reviewer report:
-1. =read_dir= on the managed root FOLLOWS a symlink, and the direct-child fence
-   cannot fail (=path.parent()= IS =managed_root= by construction, and
-   =normalize_path= canonicalizes both sides through the same link) — so a
-   symlinked root redirects =remove_dir_all= at arbitrary directories.
-2. =RunSummary= deserializes =run_id= and nothing else, so the CLI cannot match a
-   live run to a worktree; ownership comes from the tx ledger alone. This is the
-   race =Supervisor::reserve_dispatch_close= (TASK-1T3FZ) already closed for
-   =dispatch-close=, whose own doc says a recovery acquires IN ANOTHER PROCESS so
-   no CLI-side audit can substitute. Prune re-opened it in a parallel path.
-3. =worktree_repo_gone= treats ANY =read_to_string(.git)= error as proof the repo is
-   gone — the one disposition that skips salvage and calls =remove_dir_all=.
-
-The RELOCATION half of M47E5 is correct and reviewed; only the prune half is
-rejected.
+the safety is per-test rather than structural. NEVER run
+=legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6); it
+spawns real billed provider turns.
