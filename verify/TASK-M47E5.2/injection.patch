@@ -1,5 +1,5 @@
 diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
-index 16ef7fa..0073fa6 100644
+index 562db08..0073fa6 100644
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
 @@ -572,25 +572,9 @@ struct LiveRunsSummaryResponse {
@@ -771,25 +771,18 @@ index 16ef7fa..0073fa6 100644
  }
  
  /// Explicit, operator-run reclamation of managed worktrees. See the design note
-@@ -3472,26 +3012,16 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3472,30 +3012,16 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
      let project_root = find_live_project_root(home, "manager worktree-prune")?;
      let project_id = read_project_id(&project_root)?;
      let managed_root = managed_worktree_root(home, &project_id)?;
 -    // Anchor before anything reads or removes: a root that is not a real
 -    // directory is refused here, and every removal below resolves against this
 -    // handle rather than against the path (TASK-M47E5.2 finding 1).
--    let Some(anchored_root) = AnchoredManagedRoot::open(&managed_root)? else {
--        println!("PRUNE_SUMMARY RECLAIMED=0 BYTES=0 SIZE=0B KEPT=0 SKIPPED=0");
--        return Ok(());
-+    let live_runs = match DaemonClient::from_home_autostart(home) {
-+        Ok(client) => {
-+            let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-+            runtime
-+                .block_on(fetch_live_runs(&client))
-+                .unwrap_or_default()
-+        }
-+        Err(_) => Vec::new(),
-     };
+-    // An ABSENT root is not an error and not an early exit: it means there are
+-    // no worktrees to classify, but `git worktree prune` below still has stale
+-    // `.git/worktrees` admin entries to clear — which is precisely the state an
+-    // operator who `rm -rf`'d `~/.orgasmic/worktrees` leaves behind.
+-    let anchored_root = AnchoredManagedRoot::open(&managed_root)?;
 -    // Fail CLOSED on an unreachable daemon. Reclamation now requires the
 -    // daemon's cleanup reservation, and a daemon we cannot reach is a daemon
 -    // that cannot prove nothing is live in these directories — which used to be
@@ -802,12 +795,23 @@ index 16ef7fa..0073fa6 100644
 -    let live_runs = runtime
 -        .block_on(fetch_live_runs(&client))
 -        .context("read live runs before classifying managed worktrees")?;
--    let mut found = scan_managed_worktrees(&anchored_root, &project_root, &project_id, &live_runs)?;
+-    let mut found = match anchored_root.as_ref() {
+-        Some(root) => scan_managed_worktrees(root, &project_root, &project_id, &live_runs)?,
+-        None => Vec::new(),
++    let live_runs = match DaemonClient::from_home_autostart(home) {
++        Ok(client) => {
++            let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
++            runtime
++                .block_on(fetch_live_runs(&client))
++                .unwrap_or_default()
++        }
++        Err(_) => Vec::new(),
+     };
 +    let mut found = scan_managed_worktrees(home, &project_root, &project_id, &live_runs)?;
      if let Some(task) = args.task.as_deref() {
          let wanted = [
              worktree_stem(task, DispatchKind::Implementer),
-@@ -3544,18 +3074,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3548,18 +3074,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
  
      // One lock for the whole reclaim, shared with `dispatch-close`'s worktree
      // removal. Held across the loop, so nothing below may take it again.
@@ -827,7 +831,7 @@ index 16ef7fa..0073fa6 100644
      let now_open = scan_open_dispatches(&project_root)?;
  
      let mut reclaimed = 0usize;
-@@ -3577,36 +3099,8 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+@@ -3581,46 +3099,8 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
              );
              continue;
          }
@@ -859,13 +863,23 @@ index 16ef7fa..0073fa6 100644
 -        };
 -        worktree_prune_pause_after_guard();
          let bytes = worktree.bytes.unwrap_or(0);
--        let outcome = reclaim_managed_worktree(&project_root, &anchored_root, worktree);
+-        let outcome = match anchored_root.as_ref() {
+-            Some(root) => reclaim_managed_worktree(&project_root, root, worktree),
+-            // Unreachable by construction — nothing is reclaimable when there
+-            // was no root to enumerate — and stated rather than unwrapped,
+-            // because the alternative is a panic inside a destructive verb.
+-            None => WorktreeRemovalOutcome {
+-                removed: false,
+-                salvage: None,
+-                error: Some("the managed worktree root was not anchored".to_string()),
+-            },
+-        };
 -        finish_worktree_guard(&runtime, &client, &project_id, &task_property, &mut guard);
 +        let outcome = reclaim_managed_worktree(&project_root, &managed_root, worktree);
          if let Some(salvage) = &outcome.salvage {
              println!(
                  "SALVAGED PATH={} SHA={} REF={} FILES={}",
-@@ -3901,163 +3395,13 @@ struct CloseGuardFinishResponse {
+@@ -3915,163 +3395,13 @@ struct CloseGuardFinishResponse {
  }
  
  fn close_guard_path(project_id: &str, open: &DispatchRecord, suffix: &str) -> String {
@@ -1030,7 +1044,7 @@ index 16ef7fa..0073fa6 100644
  /// Take the daemon-owned worktree reservation a destructive `dispatch-close`
  /// must hold across its liveness decision and its removal (TASK-1T3FZ), and
  /// turn a refusal into the operator-facing error.
-@@ -4272,11 +3616,7 @@ fn finish_close_guard(
+@@ -4286,11 +3616,7 @@ fn finish_close_guard(
  /// one where it is not talking to the daemon at all. No-op unless the env var
  /// names a file.
  fn dispatch_close_pause_after_guard() {
@@ -1043,7 +1057,7 @@ index 16ef7fa..0073fa6 100644
          return;
      };
      if raw.is_empty() {
-@@ -7149,145 +6489,6 @@ mod tests {
+@@ -7163,145 +6489,6 @@ mod tests {
          );
      }
  
