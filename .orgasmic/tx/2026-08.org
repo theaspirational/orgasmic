@@ -8697,3 +8697,30 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-05 Wed 19:26:15 task.created TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4543
+:TIME:         [2026-08-05 Wed 19:26:15]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       stage B of dec_HBK6A; cheapest and independent, and the manager's re-measure corrected the marker inventory twice
+:END:
+
+* TX 2026-08-05 Wed 19:26:22 task.property_updated TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4544
+:TIME:         [2026-08-05 Wed 19:26:22]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       stage B touches source markers and the CLI only; no shipped/, no UI, no .orgasmic state
+:WRITE_SCOPE:  crates/**,scripts/**
+:END:
