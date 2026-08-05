@@ -7429,3 +7429,129 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       found by manager probe during TASK-M47E5 integration; pre-existing, but the worktree move makes the mismatch visible and consequential
 :END:
+
+* TX 2026-08-05 Wed 14:49:05 manager.dispatch_started TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4471
+:TIME:         [2026-08-05 Wed 14:49:05]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5-review/worktree
+:BRANCH:       task-m47e5-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-review/task-m47e5-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 14:49:05]
+:LIVENESS:     8c13f0934ba8a01c6fea292b93bfcaf0ba865146
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: reviewing the only remove_dir_all in the dispatch path; codex family so the reviewer does not share the implementer's priors
+:END:
+
+* TX 2026-08-05 Wed 14:49:05 run.created TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4472
+:TIME:         [2026-08-05 Wed 14:49:05]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-M47E5-reviewer-20260805T144905.jsonl
+:REASON:       reviewing the only remove_dir_all in the dispatch path; codex family so the reviewer does not share the implementer's priors
+:RUN_ID:       run-20260805T144905-cc852d34e0a14a9b886d900e37b0ffdb
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-m47e5-review/task-m47e5-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-m47e5-review/task-m47e5-review-7c6ad6851d794c2d8ae03a64e5ca2772-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-m47e5-review/task-m47e5-review-7c6ad6851d794c2d8ae03a64e5ca2772-stdout.log
+:DISPATCH_ATTEMPT: 7c6ad6851d794c2d8ae03a64e5ca2772
+:DISPATCH_TX:  tx-20260805-orgasmic-4471
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 15:03:09 reviewer.reported TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4473
+:TIME:         [2026-08-05 Wed 15:03:09]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:RUN_ID:       run-20260805T144905-cc852d34e0a14a9b886d900e37b0ffdb
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-m47e5-review/worktree
+:END:
+
+* TX 2026-08-05 Wed 15:04:37 reviewer.done TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4474
+:TIME:         [2026-08-05 Wed 15:04:37]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:REASON:       REJECT, 3 findings (2 P0), all three confirmed against the code by the manager: symlinked managed root redirects remove_dir_all, prune bypasses the TASK-1T3FZ cleanup reservation, and repo-gone fails open on I/O errors into the unsalvaged delete path
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 103ed7e..ffead86
+:VERDICT:      has-issues
+:CLOSED_TX:    tx-20260805-orgasmic-4471
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-05 Wed 15:04:38 task.state_transitioned TASK-M47E5
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4475
+:TIME:         [2026-08-05 Wed 15:04:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-M47E5 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-05 Wed 15:05:14 task.created TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4476
+:TIME:         [2026-08-05 Wed 15:05:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       REJECT from reviewer-codex-tmux on merged ffead86; all three findings independently confirmed against the code by the manager
+:END:
+
+* TX 2026-08-05 Wed 15:05:14 task.property_updated TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4477
+:TIME:         [2026-08-05 Wed 15:05:14]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-M47E5.2
+:FIX_SUBTASK:  t
+:END:
