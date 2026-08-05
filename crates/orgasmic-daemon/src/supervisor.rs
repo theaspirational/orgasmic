@@ -3982,6 +3982,17 @@ impl Supervisor {
     ///
     /// A blocked verdict reserves nothing: the caller is not cleaning up, so
     /// it must not fence anyone out either.
+    ///
+    /// SECOND CALLER, added by TASK-M47E5.2: `orgasmic manager worktree-prune`
+    /// takes this same reservation before salvaging or removing each managed
+    /// worktree it reclaims, and holds it across the whole mutation. Prune had
+    /// reproduced precisely the defect described above — it decided ownership
+    /// from the tx ledger in the CLI and removed in the CLI — and the answer was
+    /// to route it here rather than to give it a scheme of its own, because
+    /// there can only be one authority for "is anyone live in this worktree".
+    /// A prune request differs from a close's in exactly two fields, and both
+    /// say prune is entitled to nothing: `releasing_run_id` is `None` and
+    /// `owned_run_ids` is empty, so every live occupant blocks it.
     pub async fn reserve_dispatch_close(
         &self,
         params: &DispatchCloseGuardParams,
