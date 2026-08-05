@@ -6520,3 +6520,46 @@
 :REASON:       edited task node TASK-3X5AQ
 :NODE_ID:      TASK-3X5AQ
 :END:
+
+* TX 2026-08-05 Wed 10:00:08 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4416
+:TIME:         [2026-08-05 Wed 10:00:08]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-08-05 Wed 10:00:13 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4417
+:TIME:         [2026-08-05 Wed 10:00:13]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-08-05 Wed 10:00:14 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4418
+:TIME:         [2026-08-05 Wed 10:00:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       never dispatched and not blocked (TASK-8W30B is done); in_progress was claiming work that no worker was doing
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
