@@ -667,8 +667,12 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     // accidental reuse of another kind's default path for the same task.
     for other_kind in [DispatchKind::Implementer, DispatchKind::Reviewer] {
         if other_kind != plan.kind {
-            let other_default =
-                default_worktree(&plan.project_root, first_task(&plan.tasks), other_kind);
+            let other_default = default_worktree(
+                home,
+                &plan.project_id,
+                first_task(&plan.tasks),
+                other_kind,
+            )?;
             if normalize_path(&plan.worktree_path) == normalize_path(&other_default) {
                 bail!(
                     "{} worktree must not reuse {} default path: {}",
@@ -2563,7 +2567,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let from_sha = resolve_commit(&project_root, from_ref)?;
     let worktree_path = normalize_path(&match args.worktree {
         Some(path) => absolutize(&path)?,
-        None => default_worktree(&project_root, first_task(&tasks), args.kind),
+        None => default_worktree(home, &project_id, first_task(&tasks), args.kind)?,
     });
     let branch = args
         .branch
@@ -2576,7 +2580,6 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
                 .with_context(|| format!("parse --governance-json: {json}"))?,
         ),
     };
-    let _ = home;
     Ok(DispatchPlan {
         project_root,
         project_id,
@@ -4791,15 +4794,61 @@ fn task_slug(task: &str) -> String {
     )
 }
 
-fn default_worktree(project_root: &Path, task: &str, kind: DispatchKind) -> PathBuf {
+/// Per-kind directory name of a managed worktree. Each dispatch kind owns a
+/// distinct one so `cmd_dispatch`'s cross-kind reuse guard has something to
+/// compare.
+fn worktree_stem(task: &str, kind: DispatchKind) -> String {
     let slug = task_slug(task);
-    let stem = match kind {
+    match kind {
         DispatchKind::Implementer => slug,
         DispatchKind::Reviewer => format!("{slug}-review"),
-    };
-    project_dispatch_dir(project_root)
-        .join(stem)
-        .join("worktree")
+    }
+}
+
+/// Root of this project's MANAGED worktrees: `<home>/worktrees/<project-id>/`.
+///
+/// Deliberately OUTSIDE the project. macOS pins a TCC grant for a linker- or
+/// ad-hoc-signed binary to that binary's CDHASH, so a worker that builds and
+/// then runs a binary inside a guarded project (`~/Documents`, `~/Desktop`,
+/// `~/Downloads`, iCloud Drive) earns a grant that dies at its very next
+/// rebuild. TASK-3X5AQ measured both halves — five dead grants for five dead
+/// worktrees, and two cdhashes for two builds at one stable path — so no path
+/// scheme can make a grant survive. The durable answer is to stop needing one:
+/// `~/.orgasmic` is unguarded.
+///
+/// Keyed on project ID rather than display name: the id is what the CLI and
+/// daemon already address projects by, and names collide and change.
+///
+/// Universal, not macOS-gated. Linux has no TCC, but the same move keeps
+/// multi-GB build trees out of the repo and leaves `git status` clean, and one
+/// code path beats a platform branch.
+// orgasmic:TASK-M47E5
+fn managed_worktree_root(home: &Home, project_id: &str) -> Result<PathBuf> {
+    let id = project_id.trim();
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains('\0')
+    {
+        bail!("project id {project_id:?} cannot name a managed worktree directory");
+    }
+    Ok(home.root.join("worktrees").join(id))
+}
+
+/// Managed default worktree path: `<home>/worktrees/<project-id>/<task-slug>`.
+/// Only the SCRATCH moves — the dispatch record (brief, `last.txt`, stdout log)
+/// stays under `<project>/.orgasmic/tmp/dispatch/<stem>/`, because it is small,
+/// durable, and written by the already-granted daemon.
+// orgasmic:TASK-M47E5
+fn default_worktree(
+    home: &Home,
+    project_id: &str,
+    task: &str,
+    kind: DispatchKind,
+) -> Result<PathBuf> {
+    Ok(managed_worktree_root(home, project_id)?.join(worktree_stem(task, kind)))
 }
 
 fn default_branch(task: &str, kind: DispatchKind) -> String {
@@ -5731,15 +5780,18 @@ mod tests {
 
     #[test]
     fn derives_slug_defaults_for_task_paths() {
-        let project_root = PathBuf::from("/repo/main");
+        let home = Home::at("/home/.orgasmic");
         assert_eq!(task_slug("TASK-047.5.1"), "task-047.5.1");
+        // TASK-M47E5: the managed default lives under the HOME, keyed on the
+        // project id — never under the project, which may sit in a
+        // TCC-guarded directory.
         assert_eq!(
-            default_worktree(&project_root, "TASK-047.5.1", DispatchKind::Implementer),
-            PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-047.5.1/worktree")
+            default_worktree(&home, "orgasmic", "TASK-047.5.1", DispatchKind::Implementer).unwrap(),
+            PathBuf::from("/home/.orgasmic/worktrees/orgasmic/task-047.5.1")
         );
         assert_eq!(
-            default_worktree(&project_root, "TASK-047.5.1", DispatchKind::Reviewer),
-            PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-047.5.1-review/worktree")
+            default_worktree(&home, "orgasmic", "TASK-047.5.1", DispatchKind::Reviewer).unwrap(),
+            PathBuf::from("/home/.orgasmic/worktrees/orgasmic/task-047.5.1-review")
         );
         assert_eq!(
             default_branch("TASK-047.5.1", DispatchKind::Implementer),
@@ -5750,12 +5802,35 @@ mod tests {
             "task-047.5.1-review"
         );
         assert_ne!(
-            default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer),
-            default_worktree(&project_root, "TASK-086", DispatchKind::Implementer)
+            default_worktree(&home, "orgasmic", "TASK-086", DispatchKind::Reviewer).unwrap(),
+            default_worktree(&home, "orgasmic", "TASK-086", DispatchKind::Implementer).unwrap()
+        );
+        // Two projects never share a managed worktree path, even for one task.
+        assert_ne!(
+            default_worktree(&home, "orgasmic", "TASK-086", DispatchKind::Implementer).unwrap(),
+            default_worktree(&home, "other", "TASK-086", DispatchKind::Implementer).unwrap()
         );
         assert_ne!(
             default_branch("TASK-086", DispatchKind::Reviewer),
             default_branch("TASK-086", DispatchKind::Implementer)
+        );
+    }
+
+    /// A project id is a path segment in the managed root, so anything that
+    /// could escape it is refused rather than joined.
+    // orgasmic:TASK-M47E5
+    #[test]
+    fn managed_worktree_root_refuses_a_project_id_that_could_escape_it() {
+        let home = Home::at("/home/.orgasmic");
+        for id in ["..", ".", "", "  ", "a/b", "a\\b"] {
+            assert!(
+                managed_worktree_root(&home, id).is_err(),
+                "project id {id:?} should be refused"
+            );
+        }
+        assert_eq!(
+            managed_worktree_root(&home, "orgasmic").unwrap(),
+            PathBuf::from("/home/.orgasmic/worktrees/orgasmic")
         );
     }
 
