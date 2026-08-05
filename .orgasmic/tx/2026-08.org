@@ -7713,3 +7713,18 @@
 :REASON:       edited task node TASK-37WN7
 :NODE_ID:      TASK-37WN7
 :END:
+
+* TX 2026-08-05 Wed 17:51:34 task.state_transitioned TASK-M47E5.2
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4487
+:TIME:         [2026-08-05 Wed 17:51:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M47E5.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       goal requires a BLOCK SHIP fix round to pass a fresh review; FIX_SUBTASK closed it to done, which reviewer dispatch refuses — policy, not a correction (TASK-4WKNX)
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
