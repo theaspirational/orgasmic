@@ -195,6 +195,21 @@ filed = "2026-07-28"
 #
 # The signature pins that one assertion. A failure of this test on the deadline
 # branch, or on the exit-code branch, is NOT this flake and must read as REAL.
+#
+# MECHANISM, traced 2026-08-05 at f60af0a — read this before deciding the entry
+# has earned its place. `serve` prints "press Ctrl+C to stop" at main.rs:2299 and
+# THEN calls `wait_for_shutdown_signal()` at :2300, which installs the SIGTERM
+# handler at :2320. `wait_until_serve_awaits_signals` waits for that printed
+# line. So the mitigation observes a point STRICTLY BEFORE registration — the
+# wrong side of the boundary. It cannot close this window however it is
+# strengthened, because at the moment the only observable signal is emitted, the
+# thing it would need to observe has not happened.
+#
+# That is why this entry is the shortest-lived kind of excuse: the fix is to
+# install the handler before announcing readiness, which is cheap and obvious
+# once the ordering is seen. TASK-37WN7 owns it and its acceptance now REQUIRES
+# deleting this entry in the same change. If you are reading this comment long
+# after `filed`, the entry has outlived its justification — that is a finding.
 [[flake]]
 test = "sigterm_exits_through_graceful_shutdown_rather_than_default_disposition"
 owner = "TASK-37WN7"

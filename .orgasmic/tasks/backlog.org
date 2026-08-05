@@ -3091,7 +3091,7 @@ E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
   flag in =shipped/= against the real binary, so it is what catches a doctrine
   rewrite that names a verb the excision just deleted.
 
-* BACKLOG TASK-37WN7 the TASK-Q07Y5 signal-wait mitigation does not fully close the SIGTERM race under load, and the flake is unregistered    :test:cli:
+* BACKLOG TASK-37WN7 serve announces readiness before it installs the SIGTERM handler, so the announcement is not a precondition for signal delivery    :test:cli:
 :PROPERTIES:
 :ID: TASK-37WN7
 :PRIORITY: P3
@@ -3169,6 +3169,70 @@ with that signature and this task as owner.
   genuinely closed under load, or a signature-bearing =[[flake]]= entry is added
   with this task as owner and a rationale for why the race is not worth closing.
 - =scripts/run-tests.sh --check= stays green (owner must be an open task).
+** Mechanism found — the mitigation watches the wrong side of the boundary
+**The mechanism is now known, and it retires the "either/or" this task was filed
+with.** Manager traced it 2026-08-05 against =f60af0a=. Do not re-derive it.
+
+=serve= (=crates/orgasmic-cli/src/main.rs=) does this, in this order:
+
+: :2299   let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
+: :2300   wait_for_shutdown_signal().await;
+: :2320       match signal(SignalKind::terminate()) {   // <- handler installed HERE
+
+And =wait_until_serve_awaits_signals= (=daemon_lifecycle.rs:29=) waits for
+exactly that =press Ctrl+C to stop= line on stdout.
+
+So the helper proves the process reached a point *strictly before* registration.
+It observes the WRONG SIDE OF THE BOUNDARY. This is not a mitigation that fails
+under load — it is a mitigation that is STRUCTURALLY INCAPABLE of closing the
+window it was built for, and no amount of strengthening the helper can fix it,
+because the thing it would need to observe has not happened yet when the only
+observable signal is emitted.
+
+That also explains the measurement better than the load hypothesis did: the race
+reproduces at roughly 7% with NO load at all (1 failure in the first 14 isolated
+runs, then 12/12 green). Load was never the variable. The window is simply always
+there, and 7% is how often a SIGTERM sent immediately after the print lands
+inside it.
+
+=== This changes the acceptance
+
+The task as filed offered a legitimate terminal outcome: "register the flake with
+a rationale for why the race is not worth closing". *That branch is now
+withdrawn.* Its premise was that closing the race might be expensive or subtle.
+It is neither — the fix is to install the SIGTERM handler BEFORE announcing
+readiness, so that the announcement means what every caller already assumes it
+means.
+
+=== Is it a real defect or only a test artifact? Real, but narrow.
+
+In ordinary operation a SIGTERM arrives long after startup and cannot land in a
+microsecond window. The exposure is the restart path: =launchctl kickstart -k=
+sends SIGTERM, and a KeepAlive-thrashing daemon can be signalled promptly after
+boot (see the =orgasmic-local-update-launchd= history). When it does land there,
+the consequence is the one TASK-WGXKD.1 built the graceful shutdown to prevent:
+no release-finalization drain, no writer shutdown.
+
+So: worth fixing, not worth panicking about. P3 is the right priority.
+
+=== Corrected acceptance
+
+- =serve= installs its SIGTERM handler BEFORE it prints =press Ctrl+C to stop=,
+  so the readiness announcement is a true precondition for signal delivery.
+- SIGINT gets the same treatment or an explicit note saying why not —
+  =tokio::signal::ctrl_c()= has its own registration point with the same shape,
+  and leaving one of the two half-fixed is how this returns.
+- The existing test passes without =wait_until_serve_awaits_signals= needing to
+  become cleverer; if the helper survives, it is because it is still a useful
+  readiness gate, not because it is load-bearing for this race.
+- The =verify/flake-registry.toml= entry owned by this task is REMOVED in the
+  same change — the excuse expires with the defect. =scripts/run-tests.sh --check=
+  stays green.
+- An injection proof is appropriate and the defect is pinnable: pre-fix, the
+  reordering is absent and the pinned red is the =serve died on SIGTERM's default
+  disposition= assertion. Note the difficulty honestly — at ~7% a naive replay is
+  not deterministic, so the proof needs to force the window (a test hook that
+  delays registration) rather than hope for it.
 
 * BACKLOG TASK-A1KJW the dispatch record directory is named from the brief filename, not the task, so it can collide and now disagrees with the worktree    :cli:
 :PROPERTIES:
