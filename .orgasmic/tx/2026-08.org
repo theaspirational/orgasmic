@@ -7081,3 +7081,82 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-05 Wed 13:48:15 task.state_transitioned TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4450
+:TIME:         [2026-08-05 Wed 13:48:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       goal requires a BLOCK SHIP fix round to pass a fresh review; FIX_SUBTASK semantics closed it straight to done, which the reviewer dispatch correctly refuses
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-05 Wed 13:48:21 manager.dispatch_started TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4451
+:TIME:         [2026-08-05 Wed 13:48:21]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-yn5fj.1.1-review/worktree
+:BRANCH:       task-yn5fj.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-yn5fj-1-1-review/task-yn5fj-1-1-review-brief.md
+:STARTED_AT:   [2026-08-05 Wed 13:48:21]
+:LIVENESS:     05ef86604f6aaab547bcf2c8d9f1ff709ec07270
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: goal requires a BLOCK SHIP fix round to pass a fresh review; codex family so the reviewer does not share the implementer's priors
+:END:
+
+* TX 2026-08-05 Wed 13:48:21 run.created TASK-YN5FJ.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4452
+:TIME:         [2026-08-05 Wed 13:48:21]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YN5FJ.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-YN5FJ.1.1-reviewer-20260805T134821.jsonl
+:REASON:       goal requires a BLOCK SHIP fix round to pass a fresh review; codex family so the reviewer does not share the implementer's priors
+:RUN_ID:       run-20260805T134821-f10fa3a0c11f427d8754a9491dc38861
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-yn5fj.1.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-yn5fj-1-1-review/task-yn5fj-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-yn5fj-1-1-review/task-yn5fj-1-1-review-4808c49d54ea409a8de9e0c8dbfdab7f-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-yn5fj-1-1-review/task-yn5fj-1-1-review-4808c49d54ea409a8de9e0c8dbfdab7f-stdout.log
+:DISPATCH_ATTEMPT: 4808c49d54ea409a8de9e0c8dbfdab7f
+:DISPATCH_TX:  tx-20260805-orgasmic-4451
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-05 Wed 13:49:21 task.created TASK-4WKNX
+:PROPERTIES:
+:TX_ID:        tx-20260805-orgasmic-4453
+:TIME:         [2026-08-05 Wed 13:49:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4WKNX
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       hit live while closing TASK-YN5FJ.1.1; the board could not express 'fix round awaiting review'
+:END:
