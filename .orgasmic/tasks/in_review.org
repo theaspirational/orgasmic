@@ -59,3 +59,81 @@ A SECOND WORKTREE-DERIVED INFERENCE WAS FOUND THAT THE BRIEF DID NOT NAME — wh
 
 Gates, re-run by the manager on the MERGED tree: =scripts/run-tests.sh -p orgasmic-drivers= GREEN 0 failures; =cargo clippy --workspace --all-targets -- -D warnings= exit 0; =cargo fmt --all --check= exit 0; =orgasmic verify TASK-M47E5.1= PASS.
 
+* IN_REVIEW TASK-4WKNX FIX_SUBTASK closes straight to done, so a fix round that the goal requires to be reviewed cannot be dispatched a reviewer without a manual stage flip :cli:manager:
+:PROPERTIES:
+:ID: TASK-4WKNX
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**
+:END:
+
+** Description
+Found by running into it, 2026-08-05, closing TASK-YN5FJ.1.1.
+
+=close_lifecycle_transitions= sends an implementer close to =Done= when the task
+carries =:FIX_SUBTASK: t=, and to =InReview= otherwise. That encodes one-round
+fix semantics, which the manager-dispatch convention states deliberately.
+
+The ACTIVE GOAL says something else, and it is not reconcilable by reading
+harder: "Fix subtasks minted from reviewer findings count as tasks: a BLOCK SHIP
+is not closed until its fix round lands and passes a fresh review."
+
+So for a fix round minted from a BLOCK SHIP, the two rules point opposite ways.
+What happens in practice: =dispatch-close= flips the task to =done=, and the
+reviewer dispatch then refuses with
+
+: task TASK-YN5FJ.1.1 is in lifecycle stage done; reviewer dispatch is allowed only from IN_REVIEW
+
+The refusal is CORRECT — a done task should not accept a reviewer. The defect is
+upstream: the close had no way to say "this fix round still owes a review", so the
+manager has to flip =done= -> =in_review= by hand afterwards to get the review the
+goal demands. A state the board cannot express is a state managers will fake.
+
+** Why this matters beyond one flip
+The manual flip records a =task.state_transitioned= that reads like a correction,
+not like policy. Anyone auditing later sees a task moved backwards out of done
+with no way to tell whether that was process or panic. And a manager who does NOT
+know the goal clause will simply not review the fix round at all — the tooling
+actively steers them away from it.
+
+** Fix directions, not yet decided
+1. Let the close say it: a flag on =dispatch-close= (or a property on the task)
+   that means "fix round, still owes review", so the close lands =in_review=
+   without the manual flip.
+2. Or derive it: a fix subtask minted from a reviewer finding labelled BLOCK SHIP
+   goes to =in_review=; one minted from a non-blocking finding goes to =done=.
+   That matches the goal clause exactly and needs no new operator input, but it
+   requires the finding severity to be recorded somewhere the close can read —
+   today it is prose in the reviewer report.
+3. Or change the convention and the goal to agree on one rule. Cheapest, and it
+   is a real option: decide that one-round fix semantics win and the goal clause
+   is wrong.
+
+Pick deliberately; do not implement all three.
+
+** Acceptance
+- A fix round minted from a BLOCK SHIP reaches its reviewer without a manual
+  backwards stage transition.
+- Whatever rule is chosen is stated in ONE place that both the convention and the
+  close read from, so the next manager cannot find two answers.
+- Existing one-round fix behaviour for non-blocking fix subtasks is preserved or
+  its removal is explicit.
+** Evidence
+Landed =2d9d8b8= (merge) on main. Implementer: =implementer-claude-tmux= (tmux / claude / claude-opus-5 / high), run =run-20260805T184048-efc1a81d6ebb47439ce722ca7b4edbc2=, started_tx =tx-20260805-orgasmic-4519=.
+
+THE MANAGER RULED THE POLICY, THE IMPLEMENTER CHOSE THE MECHANISM, and the split held. A =FIX_SUBTASK= implementer close now lands =in_review= like any other; the opt-out is =--fix-round-final=, which requires =--reason= and stamps =FIX_ROUND_FINAL=true= on the close tx.
+
+THE RULING WAS MADE ON THIS SESSION OWN EVIDENCE, not taste. Five fix rounds ran 2026-08-05. One of them — TASK-M47E5.2, the fix round for three data-loss findings — was itself REJECTED with three MORE BLOCK SHIP findings, two P0. Under the old default it would have closed straight to =done= and six confirmed defects would be sitting on main unreviewed. The only thing that caught it was the manager flipping =done= -> =in_review= by hand, three separate times in one day, which nobody who had not read the goal would know to do. The asymmetry decides it: the old default fails as "a fix for a data-loss finding lands unreviewed"; the new one fails as "a trivial fix waits for a cheap review".
+
+THREE IMPLEMENTER DECISIONS, all defensible and all stated:
+- A FLAG, NOT A TASK PROPERTY. A property would describe the task forever, when what is recorded is a judgement about ONE round outcome, made at close time by the manager who read the diff.
+- NAMED =--fix-round-final=, NOT another =--no-*=. The brief warned the two bypasses must not read as one concept; a near-homonym of =--no-review-required= would have invited exactly that. The flag names the state of the round rather than negating the word "review".
+- REASON REQUIRED. Stronger here than for =--no-review-required=: this bypass is INVISIBLE IN THE OUTCOME — a task at =done= looks identical whether it was reviewed or declared not to need it — so the ledger has to carry the difference.
+
+THE RULE NOW LIVES IN ONE PLACE: =implementer_done_stage(fix_subtask, fix_round_final)=, a four-row table with a unit test enumerating all four rows. =close_lifecycle_transitions= encodes nothing itself. Both shipped docs describe it by NAMING the flag, and =cli_parity= resolves shipped invocations against the real binary, so prose that lags the code is a gate failure.
+
+A SECOND SHIPPED FILE WAS EDITED OUTSIDE THE DECLARED WRITE SCOPE, DECLARED RATHER THAN BURIED, and the manager accepts it: =shipped/schema/state-machine.org= still restated the old mapping ("transitions IN_PROGRESS -> DONE"). Leaving it would have preserved exactly the two-answers state this task acceptance forbids, so fixing it was the task, not scope creep.
+
+Integration gates, re-run by the manager on the MERGED tree: =scripts/run-tests.sh -p orgasmic-cli= GREEN 0 failures; =cli_parity= 3 passed; =cargo clippy --workspace --all-targets -- -D warnings= exit 0; =cargo fmt --all --check= exit 0; =orgasmic verify TASK-4WKNX= PASS.
+
+THE INJECTION PROOF PINS THE END-TO-END SYMPTOM, NOT THE STAGE. The test reads the stage into a variable and lets the REVIEWER DISPATCH be the first assertion allowed to fail, so the pinned red is =task TASK-FIX-DECL is in lifecycle stage done; reviewer dispatch is allowed only from IN_REVIEW= — the thing an operator actually hits. Verified by the manager: exactly ONE panic in the red log, and it is that one. A proof pinned on the stage assertion would have passed while the workflow stayed broken.
+
