@@ -3371,3 +3371,25 @@ ROUND 2 (tx =tx-20260805-orgasmic-4495=), against the fixes for those:
 - "Kept" means untouched, or the report says precisely what it touched.
 - No test-only hook is reachable in a release build.
 - Only then is the TASK-M47E5.3 gate removed.
+** Inherited from the M47E5.3 gate review
+The gate review returned APPROVE with no findings. Three things it left for this task.
+
+1. UN-IGNORE ALL NINE retained behaviour tests as part of this redesign, and re-run
+   the destructive-path review BEFORE reconnecting either =*_ungated= function.
+   They are listed on TASK-M47E5.3.
+
+2. THE GATE OWN STRUCTURAL GUARANTEE WAS NEVER PINNED BY A FIXTURE. The gate tests
+   boot a daemon and seed a valid project, so "refuses before project-root
+   resolution and before daemon contact" is proved by the one-line body rather than
+   by a test that would fail if the gate slipped later in the function. An
+   empty-tempdir / no-daemon refusal case would make that executable evidence. Only
+   worth adding if a gated state persists for any length of time.
+
+3. A REVIEWER DESIGN OPINION WORTH WEIGHING, recorded because it is a real argument
+   and not a defect: it would have REVERTED the unsafe implementation from compiled
+   source rather than gating it, keeping the nine tests and pointing this task at
+   the prior commits and review reports — on the grounds that git is already a
+   durable archive, and dead code that once deleted the wrong things is a loaded gun
+   that =#[allow(dead_code)]= keeps quiet. The manager ruled to RETAIN it so this
+   task starts from working code. IF THIS REDESIGN STALLS OR IS DEFERRED, revisit
+   that ruling rather than leaving the implementation sitting there indefinitely.
