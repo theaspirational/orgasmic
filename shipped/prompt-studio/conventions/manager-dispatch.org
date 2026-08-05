@@ -278,7 +278,7 @@ check the rest of the invocation too.
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
-   The CLI atomically: creates the per-task git worktree at =/tmp/orgasmic-worktrees/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=); writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking codex's own JSON-RPC 2.0 app-server protocol over stdio to the daemon. That is not ACP: orgasmic's =stdio= mode names the wire only, and the harness decides the protocol (TASK-XCJYC; see the glossary term =term_YX8AG= transport mode). Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
+   The CLI atomically: creates the per-task git worktree at =~/.orgasmic/worktrees/<project-id>/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=). The worktree lives OUTSIDE the project deliberately (TASK-M47E5): macOS pins a TCC grant for a freshly built, ad-hoc-signed binary to that binary's cdhash, so a worker building inside a =~/Documents=-hosted project re-prompts the operator on every rebuild, and =~/.orgasmic= is unguarded. Only the SCRATCH moved — the dispatch RECORD (brief, =last.txt=, stdout log) still lands under =<project_root>/.orgasmic/tmp/dispatch/<task-stem>/=, so every path in this convention stays valid; writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking codex's own JSON-RPC 2.0 app-server protocol over stdio to the daemon. That is not ACP: orgasmic's =stdio= mode names the wire only, and the harness decides the protocol (TASK-XCJYC; see the glossary term =term_YX8AG= transport mode). Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
 3. *Wait.* Prefer the harness completion notification. If a shell watcher is
    needed, install exactly one watcher for the dispatch and declare a finite
    observation deadline before starting it. The watcher may observe the
@@ -379,6 +379,31 @@ remain valid as references.
   worktree.
 - Code-level pitfalls live in =.orgasmic/gotchas.org=; read them before
   dispatching code work and point codex briefs there.
+
+** Reclaiming managed worktrees
+Managed worktrees live under =~/.orgasmic/worktrees/<project-id>/=, where
+=git status= and =git worktree list= in the project no longer put them under
+your nose. So the leak is reported for you and reclaimed only when you say so
+(TASK-M47E5):
+
+- *Detection is automatic.* Every =orgasmic manager dispatch-status= ends with
+  a =RECLAIMABLE_WORKTREE= line per reclaimable tree — path, bytes, and WHY —
+  plus a =RECLAIMABLE_TOTAL=, and a =HELD_WORKTREE= line for each one it will
+  not touch.
+- *Reclamation is an explicit verb.* =orgasmic manager worktree-prune=
+  ( =--dry-run= to measure only, =--task TASK-NNN= to narrow). It salvages a
+  dirty tree to =refs/orgasmic/salvage/<sha>= first and then removes WITHOUT
+  =--force=, exactly as =dispatch-close= does, and it runs =git worktree prune=
+  so stale =.git/worktrees= metadata does not accumulate.
+- *It never ends a dispatch.* A worktree an OPEN dispatch names is skipped
+  whatever its run health, and an abandoned one is reported with the verb that
+  releases it — =dispatch-close=, or =dispatch-status --cleanup-failed= for the
+  orphan close. Nothing deletes a worktree on a timer or at daemon boot; a
+  worker's uncommitted output is the most easily destroyed thing in the loop
+  (TASK-2BPWM, TASK-D0GA3) and no unattended process gets that authority.
+- A worktree whose REPO is gone is detected and removed directly, since
+  =git worktree remove= has no repository to run from — and it says plainly
+  that such a tree could not be salvaged.
 
 ** Exit checklist
 - Confirm `tasks/handoff.org` `:LIVENESS:` matches HEAD.
