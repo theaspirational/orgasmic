@@ -1,0 +1,7 @@
+# Pinned from the production close path. The injection restores caller-first
+# extras, so close_matching_dispatch consumes the forged CLOSED_TX, leaves the
+# intended generation open, and dispatch-status exposes that end-to-end result.
+exit: 101
+
+contains: a forged CLOSED_TX must not change which dispatch the close consumer terminates
+contains: test dispatch_close_uses_fix_subtask_property_and_abort_backlog ... FAILED
