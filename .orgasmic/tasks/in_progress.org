@@ -76,3 +76,60 @@ Ordering requirement met: this landed BEFORE any runtime reinstall, so the first
 
 One failure was seen and classified, not swallowed: =sigterm_exits_through_graceful_shutdown_rather_than_default_disposition= (daemon_lifecycle.rs:319) failed on the worker first run, passed in isolation, passed as a whole binary, and passed on a second full run — and on the manager own gate run it did not fail at all. It races a window its own =orgasmic:TASK-Q07Y5= comment says is "invisible on an idle machine"; this change touches dispatch-close argument handling only and cannot reach =orgasmic serve=. It is NOT in =verify/flake-registry.toml= and remains unowned.
 
+* IN_PROGRESS TASK-YN5FJ.1.1 fix-round: the refusal's remedy template omits the executable, and the acceptance test hand-builds the argv instead of deriving it from the message :cli:manager:
+:PROPERTIES:
+:ID: TASK-YN5FJ.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Reviewer REJECT on TASK-YN5FJ.1 (merged =bb2fb24=), from =reviewer-codex-tmux=
+(codex / gpt-5.6-sol / high), tx =tx-20260805-orgasmic-4438=. BLOCK SHIP, one
+finding, both halves verified by the manager against the code rather than taken
+on the reviewer word.
+
+This is the SAME defect class the parent task existed to fix, one level down: a
+remedy that cannot be followed as printed.
+
+*Half one — the template is not executable.* =crates/orgasmic-cli/src/manager.rs:955=
+prints the remedy as =`manager dispatch-close --task <task> --started-tx
+<reviewer-tx> --status done --verdict <...>`=. There is no =orgasmic= in it.
+Pasting that into a shell does not invoke this CLI.
+
+*Half two — the test cannot catch that, and says otherwise.* =crates/orgasmic-cli/tests/dispatch.rs:1721=
+carries the comment "Follow the printed remedy VERBATIM" and then builds a
+separate argv array at =:1758=, with =run_orgasmic= supplying the binary
+independently (=:425-432=, =:484-494=). So the loop test passes while the printed
+message is uncopyable, and nothing detects future drift between the message and
+the hand-built command. A comment claiming verbatim adherence over code that does
+not is worse than no claim.
+
+The parent acceptance criterion — "following the refusal stated remedy actually
+clears the refusal" — is therefore NOT met, which is why this is a fix round and
+not a polish note.
+
+** Fix
+1. Print a complete executable template beginning with =orgasmic manager
+   dispatch-close=, with the task id(s) already substituted (the refusal knows
+   them). =<reviewer-tx>= must stay a placeholder — the reviewer has not been
+   dispatched yet at refusal time — so document precisely which tokens are
+   placeholders and keep that set as small as the information allows.
+2. Rewrite the acceptance test to EXTRACT the backticked command from the actual
+   refusal string, substitute only the documented placeholders, tokenize, and
+   execute the derived argv. Delete the hand-built close. Keep the existing
+   semantic assertions so the extracted remedy must both persist =VERDICT= and
+   clear the original refusal.
+3. Do not weaken the claim to match the code — the test should earn the word
+   verbatim, not drop it.
+
+** Ordering
+Same ordering constraint the parent carried: land BEFORE any runtime reinstall.
+
+** Acceptance
+- The refusal prints a command a human can paste, executable name included.
+- The acceptance test derives the command it runs FROM the refusal text; a
+  deliberate edit to the message that breaks the command fails the test.
+- Existing coverage stays green, including the =--property VERDICT== compat
+  tests and both existing injection proofs, which must still replay.

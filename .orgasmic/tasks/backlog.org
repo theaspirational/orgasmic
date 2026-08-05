@@ -3203,60 +3203,56 @@ because there is no git to run it from. Detect and handle this explicitly.
   =cli_parity= resolves shipped invocations against the real binary and is the
   gate that catches a doctrine edit that lags the code.
 
-* BACKLOG TASK-YN5FJ.1.1 fix-round: the refusal's remedy template omits the executable, and the acceptance test hand-builds the argv instead of deriving it from the message    :cli:manager:
+* BACKLOG TASK-37WN7 the TASK-Q07Y5 signal-wait mitigation does not fully close the SIGTERM race under load, and the flake is unregistered    :test:cli:
 :PROPERTIES:
-:ID: TASK-YN5FJ.1.1
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-cli/**
-:FIX_SUBTASK: t
+:ID: TASK-37WN7
+:PRIORITY: P3
+:WRITE_SCOPE: crates/orgasmic-cli/**,verify/flake-registry.toml
 :END:
 
 ** Description
-Reviewer REJECT on TASK-YN5FJ.1 (merged =bb2fb24=), from =reviewer-codex-tmux=
-(codex / gpt-5.6-sol / high), tx =tx-20260805-orgasmic-4438=. BLOCK SHIP, one
-finding, both halves verified by the manager against the code rather than taken
-on the reviewer word.
+=sigterm_exits_through_graceful_shutdown_rather_than_default_disposition=
+(=crates/orgasmic-cli/tests/daemon_lifecycle.rs:319=) failed once under
+parallel load during TASK-YN5FJ.1 and passed everywhere else.
 
-This is the SAME defect class the parent task existed to fix, one level down: a
-remedy that cannot be followed as printed.
+WHAT MAKES IT WORTH A TASK RATHER THAN A SHRUG: the test ALREADY carries a
+mitigation for exactly this race. =wait_until_serve_awaits_signals= was added by
+TASK-Q07Y5 precisely because =serve= registers its SIGTERM handler AFTER
+=Daemon::run= returns, so a SIGTERM sent on the strength of a successful connect
+can land on the default disposition. Its own comment says the window is
+"invisible on an idle machine" but not "under a loaded test binary".
 
-*Half one — the template is not executable.* =crates/orgasmic-cli/src/manager.rs:955=
-prints the remedy as =`manager dispatch-close --task <task> --started-tx
-<reviewer-tx> --status done --verdict <...>`=. There is no =orgasmic= in it.
-Pasting that into a shell does not invoke this CLI.
+So this is not an unmitigated race — it is a mitigation that does not hold. Either
+=wait_until_serve_awaits_signals= does not actually prove the handler is
+installed, or there is a second window it does not cover. That distinction is the
+task.
 
-*Half two — the test cannot catch that, and says otherwise.* =crates/orgasmic-cli/tests/dispatch.rs:1721=
-carries the comment "Follow the printed remedy VERBATIM" and then builds a
-separate argv array at =:1758=, with =run_orgasmic= supplying the binary
-independently (=:425-432=, =:484-494=). So the loop test passes while the printed
-message is uncopyable, and nothing detects future drift between the message and
-the hand-built command. A comment claiming verbatim adherence over code that does
-not is worse than no claim.
+** Evidence
+Measured 2026-08-05 during TASK-YN5FJ.1, on =bb2fb24=:
+- implementer full =scripts/run-tests.sh -p orgasmic-cli=: 1 failure, this test;
+- same test rerun in isolation by the wrapper: PASS;
+- whole =daemon_lifecycle= binary alone: 6 passed / 0 failed;
+- second full =run-tests.sh -p orgasmic-cli=: GREEN;
+- manager own gate run on the merged tree: GREEN, this test did not fail.
 
-The parent acceptance criterion — "following the refusal stated remedy actually
-clears the refusal" — is therefore NOT met, which is why this is a fix round and
-not a polish note.
+The change under test touched =dispatch-close= argument handling only and cannot
+reach =orgasmic serve=, so it is not a regression from that work.
 
-** Fix
-1. Print a complete executable template beginning with =orgasmic manager
-   dispatch-close=, with the task id(s) already substituted (the refusal knows
-   them). =<reviewer-tx>= must stay a placeholder — the reviewer has not been
-   dispatched yet at refusal time — so document precisely which tokens are
-   placeholders and keep that set as small as the information allows.
-2. Rewrite the acceptance test to EXTRACT the backticked command from the actual
-   refusal string, substitute only the documented placeholders, tokenize, and
-   execute the derived argv. Delete the hand-built close. Keep the existing
-   semantic assertions so the extracted remedy must both persist =VERDICT= and
-   clear the original refusal.
-3. Do not weaken the claim to match the code — the test should earn the word
-   verbatim, not drop it.
+** Why it is NOT in verify/flake-registry.toml yet
+Deliberate, and this is the part to not undo casually. No panic signature was
+captured — the failure was observed through the wrapper verdict, not a saved log.
+A registry entry with no =signature= makes EVERY future failure of that test name
+read as this known flake, which is precisely the "trains everyone to discount
+failures" failure the registry exists to prevent. Registering it blind would buy
+a quieter suite at the cost of the signal.
 
-** Ordering
-Same ordering constraint the parent carried: land BEFORE any runtime reinstall.
+So: capture the panic first (which assertion — the =status.signal()= one, or the
+30s =try_wait= deadline), THEN either fix the mitigation or register the entry
+with that signature and this task as owner.
 
 ** Acceptance
-- The refusal prints a command a human can paste, executable name included.
-- The acceptance test derives the command it runs FROM the refusal text; a
-  deliberate edit to the message that breaks the command fails the test.
-- Existing coverage stays green, including the =--property VERDICT== compat
-  tests and both existing injection proofs, which must still replay.
+- The failing assertion is identified from a captured red, not inferred.
+- Either =wait_until_serve_awaits_signals= is strengthened so the window is
+  genuinely closed under load, or a signature-bearing =[[flake]]= entry is added
+  with this task as owner and a rationale for why the race is not worth closing.
+- =scripts/run-tests.sh --check= stays green (owner must be an open task).
