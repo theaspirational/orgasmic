@@ -247,6 +247,16 @@ pub struct DispatchCloseArgs {
     /// --reason and records NO_REVIEW_REQUIRED=true on the close tx.
     #[arg(long = "no-review-required")]
     pub no_review_required: bool,
+    /// Close a `:FIX_SUBTASK:` fix round straight to `done`, opting out of the
+    /// review round it otherwise gets. Requires --reason and records
+    /// FIX_ROUND_FINAL=true on the close tx.
+    ///
+    /// This is NOT `--no-review-required`, and the two are deliberately not
+    /// one flag (TASK-4WKNX). That one waives the default-branch MERGE gate —
+    /// "does a reviewer verdict exist for this merge". This one waives the fix
+    /// round's own REVIEW ROUND — "does this fix get reviewed at all".
+    #[arg(long = "fix-round-final")]
+    pub fix_round_final: bool,
     /// Remove the worker's git worktree as part of the close. DEFAULTS TO
     /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
     /// removal salvages uncommitted worker output to
@@ -945,6 +955,11 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     {
         bail!("--no-review-required requires --reason so the bypass is auditable");
     }
+    // orgasmic:TASK-4WKNX — fenced HERE, next to the other early refusals,
+    // rather than in `close_lifecycle_transitions`: that runs after worktree
+    // cleanup, so a refusal from there would arrive with the worktree already
+    // removed.
+    validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
     // orgasmic:TASK-YN5FJ.1 — RULING 3: both spellings write the same VERDICT
     // property, and `close_property_value` is last-wins, so silently letting
     // one win is the kind of thing nobody finds until it matters. Refuse, and
@@ -4704,6 +4719,12 @@ fn close_done_request(
     if args.no_review_required {
         extra.push(("NO_REVIEW_REQUIRED".to_string(), "true".to_string()));
     }
+    // orgasmic:TASK-4WKNX — the opt-out is stamped, not just obeyed: the
+    // difference between "this fix round was reviewed" and "this fix round was
+    // declared not to need one" has to be readable off the ledger later.
+    if args.fix_round_final {
+        extra.push(("FIX_ROUND_FINAL".to_string(), "true".to_string()));
+    }
     extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
     push_lifecycle_extra(&mut extra, transition);
     push_cleanup_extra(&mut extra, cleanup);
@@ -5648,13 +5669,7 @@ fn close_lifecycle_transitions(
                 other => bail!("cannot close dispatch kind `{other}` as aborted"),
             },
             DispatchCloseStatus::Done => match open.kind.as_str() {
-                "implementer" => {
-                    if info.fix_subtask {
-                        LifecycleStage::Done
-                    } else {
-                        LifecycleStage::InReview
-                    }
-                }
+                "implementer" => implementer_done_stage(info.fix_subtask, args.fix_round_final),
                 "reviewer" => reviewer_done_stage(args),
                 "architector" => LifecycleStage::Done,
                 other => bail!("cannot close dispatch kind `{other}` as done"),
@@ -5667,6 +5682,81 @@ fn close_lifecycle_transitions(
         });
     }
     Ok(transitions)
+}
+
+/// THE rule for where an implementer's `--status done` close lands. Every
+/// answer to "does a fix round get its own review" comes from this function;
+/// `shipped/prompt-studio/conventions/manager-dispatch.org` and
+/// `shipped/schema/state-machine.org` describe it by naming
+/// `--fix-round-final`, and `cli_parity` fails if that flag stops existing —
+/// so the prose cannot drift into being a second, disagreeing answer.
+///
+/// orgasmic:TASK-4WKNX — the default used to be inverted: `:FIX_SUBTASK: t`
+/// closed straight to `done`, while a reviewer dispatch is refused FROM `done`.
+/// So a fix round minted from a BLOCK SHIP finding could only be reviewed if
+/// the manager knew to flip `done` -> `in_review` by hand, and the goal clause
+/// that requires that review was unenforceable by anything the board could
+/// express. On 2026-08-05 one such round (TASK-M47E5.2, three data-loss
+/// findings) was itself REJECTED with three more BLOCK SHIP findings, two P0 —
+/// under the old default those would have landed unreviewed. The two failure
+/// modes are not symmetric: a trivial fix waiting for a cheap review is
+/// recoverable, an unreviewed fix for a data-loss finding is what the goal
+/// exists to prevent. Hence review by default, `--fix-round-final` to opt out.
+fn implementer_done_stage(fix_subtask: bool, fix_round_final: bool) -> LifecycleStage {
+    if fix_subtask && fix_round_final {
+        LifecycleStage::Done
+    } else {
+        LifecycleStage::InReview
+    }
+}
+
+/// Refuse a `--fix-round-final` that cannot mean what it says.
+///
+/// orgasmic:TASK-4WKNX — `--reason` is required on the same argument that makes
+/// `--no-review-required` require one: this is a bypass of a safety default,
+/// and a bypass nobody has to justify is a bypass nobody can audit afterwards.
+/// The non-fix-subtask refusal exists because there the flag would be a silent
+/// no-op — that close already lands `in_review` — and a flag that quietly does
+/// nothing is how an operator comes to believe it did something.
+fn validate_fix_round_final(
+    project_root: &Path,
+    tasks: &[String],
+    args: &DispatchCloseArgs,
+    tx_type: &str,
+) -> Result<()> {
+    if !args.fix_round_final {
+        return Ok(());
+    }
+    if !(args.status == DispatchCloseStatus::Done && tx_type == "implementer.done") {
+        bail!(
+            "--fix-round-final is valid only when closing an implementer dispatch as done: it \
+             opts a fix round out of its own REVIEW ROUND. (The default-branch merge gate is a \
+             different thing with a different flag: --no-review-required.)"
+        );
+    }
+    if args
+        .reason
+        .as_ref()
+        .map(|reason| sanitize_tx_value(reason))
+        .filter(|reason| !reason.is_empty())
+        .is_none()
+    {
+        bail!("--fix-round-final requires --reason so the skipped review is auditable");
+    }
+    let mut not_fix_rounds = Vec::new();
+    for task in tasks {
+        if !read_task_lifecycle(project_root, task)?.fix_subtask {
+            not_fix_rounds.push(task.clone());
+        }
+    }
+    if !not_fix_rounds.is_empty() {
+        bail!(
+            "--fix-round-final is valid only for a task carrying :FIX_SUBTASK:; {} does not, and \
+             its close already lands in_review",
+            not_fix_rounds.join(" ")
+        );
+    }
+    Ok(())
 }
 
 fn reviewer_done_stage(args: &DispatchCloseArgs) -> LifecycleStage {
@@ -7619,6 +7709,7 @@ mod tests {
             wall: None,
             reason: None,
             no_review_required: false,
+            fix_round_final: false,
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
@@ -7633,6 +7724,29 @@ mod tests {
                 to: LifecycleStage::Done,
             }]
         );
+    }
+
+    /// orgasmic:TASK-4WKNX — the whole rule table in one place, so the answer
+    /// to "does a fix round get its own review" is readable without
+    /// reconstructing it from a dispatch integration test.
+    #[test]
+    fn implementer_done_stage_reviews_fix_rounds_unless_declared_final() {
+        // Not a fix round: unchanged, `in_review`, with or without the flag.
+        assert_eq!(
+            implementer_done_stage(false, false),
+            LifecycleStage::InReview
+        );
+        assert_eq!(
+            implementer_done_stage(false, true),
+            LifecycleStage::InReview
+        );
+        // A fix round is reviewed by default…
+        assert_eq!(
+            implementer_done_stage(true, false),
+            LifecycleStage::InReview
+        );
+        // …and only the explicit opt-out closes it straight to done.
+        assert_eq!(implementer_done_stage(true, true), LifecycleStage::Done);
     }
 
     /// TASK-EP3H1: the reconciler's whole safety argument is "the close tx is
