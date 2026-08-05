@@ -1543,10 +1543,17 @@ mod tests {
             panic!("ORGASMIC_PROBE_TRANSCRIPTS=1 but HOME is unset");
         };
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        // orgasmic:TASK-M47E5.1
+        // Only the checkout this crate is compiled from, plus the operator's
+        // override. A third candidate used to walk five levels up to reach
+        // `<project>/.orgasmic/tmp/sessions` from a dispatch worktree; since
+        // TASK-M47E5 the managed worktree lives under
+        // `~/.orgasmic/worktrees/<project-id>/<task>/`, from which no relative
+        // walk reaches the project at all — that is what
+        // `ORGASMIC_PROBE_SESSIONS` is for.
         let candidates = [
             std::env::var_os("ORGASMIC_PROBE_SESSIONS").map(PathBuf::from),
             Some(manifest.join("../../.orgasmic/tmp/sessions")),
-            Some(manifest.join("../../../../../tmp/sessions")),
         ];
         let Some(orgasmic_sessions) = candidates.into_iter().flatten().find(|p| p.is_dir()) else {
             panic!(
