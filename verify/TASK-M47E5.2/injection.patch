@@ -1,0 +1,1191 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 16ef7fa..0073fa6 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -572,25 +572,9 @@ struct LiveRunsSummaryResponse {
+     live: Vec<RunSummary>,
+ }
+ 
+-/// One live run, as the daemon reports it.
+-///
+-/// This used to deserialize `run_id` AND NOTHING ELSE, which is why the CLI
+-/// could not match a live run to a worktree at all and `worktree-prune` had to
+-/// take the tx ledger's word for who owned a directory (TASK-M47E5.2 finding 2).
+-/// The daemon's own `RunSummary` has carried `worktree`, `project_id` and
+-/// `task_id` all along; only this mirror was blind. Every field is `default`ed
+-/// so an older daemon that omits one degrades to "unknown" rather than to a
+-/// decode failure — and "unknown" refuses to reclaim, which is the safe way to
+-/// be wrong.
+ #[derive(Debug, Deserialize)]
+ struct RunSummary {
+     run_id: String,
+-    #[serde(default)]
+-    task_id: Option<String>,
+-    #[serde(default)]
+-    project_id: Option<String>,
+-    #[serde(default)]
+-    worktree: Option<PathBuf>,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -2579,310 +2563,11 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()>
+ // surface, not a parallel one — and names what is reclaimable, why, and how
+ // many bytes it would return.
+ 
+-// ===== TASK-M47E5.2 finding 1: anchor the root, do not check it ===========
+-//
+-// The defect was not a missing symlink check. It was that every guard on the
+-// remove path was expressed against a PATH, and a path's ancestors are resolved
+-// afresh by every syscall that uses it. `read_dir` on the managed root FOLLOWED
+-// a symlink, so the children enumerated were real directories belonging to the
+-// victim; the direct-child fence compared `<root>/<child>`'s parent to `<root>`
+-// and so could not fail; and `normalize_path` canonicalized both sides through
+-// the same link. A fence that cannot fail is not a fence.
+-//
+-// So this does not add a check — it changes the reference point. The root is
+-// opened ONCE with `O_NOFOLLOW | O_DIRECTORY`, which refuses a symlinked root
+-// outright, and that DIRECTORY HANDLE is what every subsequent enumeration and
+-// every destructive syscall resolves against. `openat`/`unlinkat` name entries
+-// relative to the inode the handle holds, so renaming, replacing or relinking
+-// the root path afterwards cannot redirect a single removal: the handle still
+-// names the directory that was classified. That is precisely the property a
+-// check-then-act form cannot have, which is why finding 1 is not answered with
+-// one more `if` at the top of the scan.
+-#[cfg(unix)]
+-mod anchored_dir {
+-    use anyhow::{bail, Context, Result};
+-    use std::ffi::{CString, OsStr, OsString};
+-    use std::fs::File;
+-    use std::os::fd::{AsRawFd, FromRawFd};
+-    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+-    use std::path::Path;
+-
+-    /// Deepest nesting this will descend into before refusing. Build trees nest,
+-    /// but not like this; anything deeper is likelier to be an attempt to
+-    /// exhaust the fd table than a worktree, and refusing keeps the directory.
+-    const MAX_DEPTH: u32 = 256;
+-
+-    /// Open a directory without following a symlink at the final component.
+-    /// A symlink yields `ELOOP` (or `EMLINK` on some BSDs) and a non-directory
+-    /// yields `ENOTDIR`, so this is the refusal as well as the open.
+-    pub(super) fn open_dir_nofollow(path: &Path) -> std::io::Result<File> {
+-        use std::os::unix::fs::OpenOptionsExt;
+-        std::fs::OpenOptions::new()
+-            .read(true)
+-            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+-            .open(path)
+-    }
+-
+-    fn c_name(name: &OsStr) -> Result<CString> {
+-        CString::new(name.as_bytes())
+-            .with_context(|| format!("directory name {name:?} contains an interior NUL"))
+-    }
+-
+-    /// `Ok(None)` when `name` is not a directory, or is a symlink — the caller
+-    /// unlinks those rather than descending into them.
+-    fn open_child_dir(dir: &File, name: &OsStr) -> Result<Option<File>> {
+-        let cname = c_name(name)?;
+-        let fd = unsafe {
+-            libc::openat(
+-                dir.as_raw_fd(),
+-                cname.as_ptr(),
+-                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC,
+-            )
+-        };
+-        if fd >= 0 {
+-            return Ok(Some(unsafe { File::from_raw_fd(fd) }));
+-        }
+-        let err = std::io::Error::last_os_error();
+-        match err.raw_os_error() {
+-            // Not a directory, or a symlink refused by O_NOFOLLOW.
+-            Some(libc::ENOTDIR) | Some(libc::ELOOP) | Some(libc::EMLINK) => Ok(None),
+-            // Vanished between the listing and here; nothing left to descend.
+-            Some(libc::ENOENT) => Ok(None),
+-            _ => Err(err).with_context(|| format!("openat {name:?}")),
+-        }
+-    }
+-
+-    /// Entry names inside `dir`, read through the handle rather than through a
+-    /// path, so nothing about the path's ancestors can steer the listing.
+-    ///
+-    /// A `readdir` that fails mid-stream is indistinguishable from end-of-stream
+-    /// without clearing errno, and the effect of confusing them is a SHORT list:
+-    /// entries are left behind, the enclosing `rmdir` then fails `ENOTEMPTY`,
+-    /// and the directory is reported kept. Truncation fails safe, which is why
+-    /// this does not reach for a platform-specific errno reset.
+-    pub(super) fn entry_names(dir: &File) -> Result<Vec<OsString>> {
+-        // `fdopendir` takes ownership of the fd it is handed, so give it a dup
+-        // and leave the caller's handle intact for the removals that follow.
+-        let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+-        if fd < 0 {
+-            return Err(std::io::Error::last_os_error()).context("dup a directory handle");
+-        }
+-        let stream = unsafe { libc::fdopendir(fd) };
+-        if stream.is_null() {
+-            let err = std::io::Error::last_os_error();
+-            unsafe { libc::close(fd) };
+-            return Err(err).context("fdopendir a directory handle");
+-        }
+-        let mut names = Vec::new();
+-        loop {
+-            let entry = unsafe { libc::readdir(stream) };
+-            if entry.is_null() {
+-                break;
+-            }
+-            // `readdir` returns a pointer the next call invalidates, so copy now.
+-            let raw = unsafe { (*entry).d_name };
+-            let bytes: Vec<u8> = raw
+-                .iter()
+-                .take_while(|byte| **byte != 0)
+-                .map(|byte| *byte as u8)
+-                .collect();
+-            if bytes == b"." || bytes == b".." {
+-                continue;
+-            }
+-            names.push(OsString::from_vec(bytes));
+-        }
+-        unsafe { libc::closedir(stream) };
+-        names.sort();
+-        Ok(names)
+-    }
+-
+-    fn unlink_at(dir: &File, name: &OsStr, flags: libc::c_int) -> Result<()> {
+-        let cname = c_name(name)?;
+-        let rc = unsafe { libc::unlinkat(dir.as_raw_fd(), cname.as_ptr(), flags) };
+-        if rc == 0 {
+-            return Ok(());
+-        }
+-        let err = std::io::Error::last_os_error();
+-        if err.kind() == std::io::ErrorKind::NotFound {
+-            // Somebody else removed it; the post-condition holds either way.
+-            return Ok(());
+-        }
+-        Err(err).with_context(|| format!("unlinkat {name:?}"))
+-    }
+-
+-    fn remove_contents(dir: &File, depth: u32) -> Result<()> {
+-        if depth > MAX_DEPTH {
+-            bail!("refusing to descend deeper than {MAX_DEPTH} directory levels");
+-        }
+-        for name in entry_names(dir)? {
+-            match open_child_dir(dir, &name)? {
+-                Some(child) => {
+-                    remove_contents(&child, depth + 1)?;
+-                    drop(child);
+-                    unlink_at(dir, &name, libc::AT_REMOVEDIR)?;
+-                }
+-                None => unlink_at(dir, &name, 0)?,
+-            }
+-        }
+-        Ok(())
+-    }
+-
+-    /// Recursively remove the directory `name` inside `dir`, resolving every
+-    /// component against a directory handle rather than a path. Nothing outside
+-    /// the inode `dir` names can be reached from here, whatever happens to the
+-    /// path that inode was opened through.
+-    pub(super) fn remove_dir_all_at(dir: &File, name: &OsStr) -> Result<()> {
+-        let Some(child) = open_child_dir(dir, name)? else {
+-            bail!("refusing to remove {name:?}: it is not a directory, or it is a symlink");
+-        };
+-        remove_contents(&child, 1)?;
+-        drop(child);
+-        unlink_at(dir, name, libc::AT_REMOVEDIR)
+-    }
+-
+-    /// Does `path` still name the very inode `dir` holds open?
+-    ///
+-    /// This is the ONE place a path is compared to the anchor, and it exists for
+-    /// the operations that must go through a path because they are `git`
+-    /// subprocesses. It narrows the window rather than closing it; what closes
+-    /// it is that `git worktree remove` independently refuses a path that is not
+-    /// a registered worktree of the repository it is run from.
+-    pub(super) fn path_is_anchor(dir: &File, path: &Path) -> bool {
+-        use std::os::unix::fs::MetadataExt;
+-        let (Ok(anchor), Ok(meta)) = (dir.metadata(), std::fs::symlink_metadata(path)) else {
+-            return false;
+-        };
+-        meta.is_dir() && anchor.dev() == meta.dev() && anchor.ino() == meta.ino()
+-    }
+-}
+-
+-/// This project's managed worktree root, proven to be a real directory and HELD
+-/// OPEN for the life of the operation. See the design note above
+-/// [`anchored_dir`] for why the handle rather than the path is the anchor.
+-// orgasmic:TASK-M47E5.2
+-#[derive(Debug)]
+-struct AnchoredManagedRoot {
+-    path: PathBuf,
+-    #[cfg(unix)]
+-    dir: std::fs::File,
+-}
+-
+-impl AnchoredManagedRoot {
+-    /// `Ok(None)` when the root does not exist: there is nothing to scan and
+-    /// nothing to refuse.
+-    #[cfg(unix)]
+-    fn open(path: &Path) -> Result<Option<Self>> {
+-        match anchored_dir::open_dir_nofollow(path) {
+-            Ok(dir) => Ok(Some(Self {
+-                path: path.to_path_buf(),
+-                dir,
+-            })),
+-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+-            Err(err) => {
+-                // Name the shape rather than the errno: `ELOOP` on a directory
+-                // open reads like a link loop, and the operator needs to hear
+-                // that their managed worktree root is a symlink.
+-                let shape = match std::fs::symlink_metadata(path) {
+-                    Ok(meta) if meta.file_type().is_symlink() => {
+-                        "it is a symlink, and a prune that followed it would remove directories \
+-                         outside the root"
+-                            .to_string()
+-                    }
+-                    Ok(meta) if !meta.is_dir() => "it is not a directory".to_string(),
+-                    _ => format!("it could not be opened as a real directory: {err}"),
+-                };
+-                bail!(
+-                    "refusing to scan or prune the managed worktree root {}: {shape}",
+-                    path.display()
+-                )
+-            }
+-        }
+-    }
+-
+-    #[cfg(not(unix))]
+-    fn open(path: &Path) -> Result<Option<Self>> {
+-        if !path.exists() {
+-            return Ok(None);
+-        }
+-        bail!(
+-            "refusing to scan or prune the managed worktree root {}: reclaiming a worktree needs \
+-             directory-handle removal, which is implemented for unix only",
+-            path.display()
+-        )
+-    }
+-
+-    fn path(&self) -> &Path {
+-        &self.path
+-    }
+-
+-    /// Entry names directly under the anchored root, read through the handle.
+-    #[cfg(unix)]
+-    fn child_names(&self) -> Result<Vec<std::ffi::OsString>> {
+-        anchored_dir::entry_names(&self.dir)
+-    }
+-
+-    #[cfg(not(unix))]
+-    fn child_names(&self) -> Result<Vec<std::ffi::OsString>> {
+-        Ok(Vec::new())
+-    }
+-
+-    /// Refuse unless `path` still names the anchored inode's `name` entry. Used
+-    /// only before handing a path to `git`, which cannot take a directory
+-    /// handle.
+-    #[cfg(unix)]
+-    fn assert_child_path(&self, name: &std::ffi::OsStr, path: &Path) -> Result<()> {
+-        if !anchored_dir::path_is_anchor(&self.dir, &self.path) {
+-            bail!(
+-                "refusing to touch {}: the managed worktree root {} no longer names the directory \
+-                 this prune anchored",
+-                path.display(),
+-                self.path.display()
+-            );
+-        }
+-        if path != self.path.join(name) {
+-            bail!(
+-                "refusing to touch {}: it is not the {name:?} entry of {}",
+-                path.display(),
+-                self.path.display()
+-            );
+-        }
+-        let meta =
+-            std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
+-        if !meta.is_dir() || meta.file_type().is_symlink() {
+-            bail!(
+-                "refusing to touch {}: it is not a real directory",
+-                path.display()
+-            );
+-        }
+-        Ok(())
+-    }
+-
+-    #[cfg(not(unix))]
+-    fn assert_child_path(&self, _name: &std::ffi::OsStr, path: &Path) -> Result<()> {
+-        bail!("refusing to touch {}: unsupported platform", path.display())
+-    }
+-
+-    /// Recursively remove a direct child, entirely through the anchored handle.
+-    #[cfg(unix)]
+-    fn remove_child(&self, name: &std::ffi::OsStr) -> Result<()> {
+-        anchored_dir::remove_dir_all_at(&self.dir, name)
+-    }
+-
+-    #[cfg(not(unix))]
+-    fn remove_child(&self, name: &std::ffi::OsStr) -> Result<()> {
+-        bail!("refusing to remove {name:?}: unsupported platform")
+-    }
+-}
+-
+ /// A directory found directly under the managed worktree root, and what may be
+ /// done with it.
+ #[derive(Clone, Debug)]
+ struct ManagedWorktree {
+     path: PathBuf,
+-    /// The entry name inside the anchored root. Removal is by NAME relative to
+-    /// the root handle; the path exists to be reported and to be handed to
+-    /// `git`, never to be resolved for a removal.
+-    name: std::ffi::OsString,
+     disposition: WorktreeDisposition,
+     /// Recursive size, measured only for reclaimable entries. Sizing a held
+     /// worktree would put a multi-GB directory walk on the hot path of a status
+@@ -2906,20 +2591,11 @@ enum WorktreeDisposition {
+     /// which is also the only surface that knows the recorded branch a salvage
+     /// commit must be parented on.
+     Held { detail: String },
+-    /// The repository could not be classified — an I/O failure that is not
+-    /// absence. NEVER reclaimed (TASK-M47E5.2 finding 3): an unreadable `.git`
+-    /// used to fall through to `RepoGone`, the one disposition that skips
+-    /// salvage and calls `remove_dir_all`, so a permission error destroyed a
+-    /// worker's uncommitted output with no salvage attempted.
+-    Undetermined { detail: String },
+ }
+ 
+ impl ManagedWorktree {
+     fn reclaimable(&self) -> bool {
+-        matches!(
+-            self.disposition,
+-            WorktreeDisposition::Unclaimed | WorktreeDisposition::RepoGone { .. }
+-        )
++        !matches!(self.disposition, WorktreeDisposition::Held { .. })
+     }
+ 
+     fn why(&self) -> String {
+@@ -2929,53 +2605,54 @@ impl ManagedWorktree {
+                 format!("repo gone ({detail}); removable but NOT salvageable")
+             }
+             WorktreeDisposition::Held { detail } => detail.clone(),
+-            WorktreeDisposition::Undetermined { detail } => {
+-                format!("repository state undetermined ({detail}); kept until it can be proven")
+-            }
+         }
+     }
+ 
+     fn name(&self) -> String {
+-        self.name.to_string_lossy().to_string()
++        self.path
++            .file_name()
++            .and_then(|name| name.to_str())
++            .unwrap_or("worktree")
++            .to_string()
+     }
+ }
+ 
+-/// Classify every directory under the ANCHORED managed worktree root.
++/// Classify every directory under `<home>/worktrees/<project-id>/`.
+ ///
+-/// Three independent owners can hold an entry, and each is read from the
+-/// authority that actually knows: the process's own cwd, the daemon's live-run
+-/// map, and the tx ledger. The ledger used to be the sole ownership decision
+-/// with live-run data only decorating a record it already held — which is how a
+-/// live worker whose `WORKTREE` never reached the ledger classified as
+-/// UNCLAIMED (TASK-M47E5.2 finding 2). It is now one of three, and the
+-/// enforcement that matters is downstream of all of them: the daemon's own
+-/// cleanup reservation, taken per worktree in [`cmd_worktree_prune`].
+-// orgasmic:TASK-M47E5,TASK-M47E5.2
++/// `live_runs` may be empty — it only sharpens the wording of a held entry's
++/// reason. Whether an entry is held at all is decided by the tx ledger, so a
++/// daemon that cannot be reached can never turn a live worktree into a
++/// reclaimable one.
++// orgasmic:TASK-M47E5
+ fn scan_managed_worktrees(
+-    root: &AnchoredManagedRoot,
++    home: &Home,
+     project_root: &Path,
+     project_id: &str,
+     live_runs: &[RunSummary],
+ ) -> Result<Vec<ManagedWorktree>> {
++    let root = managed_worktree_root(home, project_id)?;
++    let entries = match std::fs::read_dir(&root) {
++        Ok(entries) => entries,
++        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
++        Err(err) => bail!("read managed worktree root {}: {err}", root.display()),
++    };
+     let open = scan_open_dispatches(project_root)?;
+     let cwd = std::env::current_dir().ok().map(|cwd| normalize_path(&cwd));
+ 
+-    let mut children: Vec<(std::ffi::OsString, PathBuf)> = Vec::new();
+-    for name in root.child_names()? {
+-        let path = root.path().join(&name);
++    let mut paths: Vec<PathBuf> = Vec::new();
++    for entry in entries.flatten() {
++        let path = entry.path();
+         // symlink_metadata, so a symlink planted in the root is never followed
+         // and never reported as a directory this verb may remove.
+         match std::fs::symlink_metadata(&path) {
+-            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {
+-                children.push((name, path))
+-            }
++            Ok(meta) if meta.is_dir() => paths.push(path),
+             _ => continue,
+         }
+     }
+-    children.sort();
++    paths.sort();
+ 
+-    let mut found = Vec::with_capacity(children.len());
+-    for (name, path) in children {
++    let mut found = Vec::with_capacity(paths.len());
++    for path in paths {
+         let normalized = normalize_path(&path);
+         let disposition = if cwd
+             .as_ref()
+@@ -2995,23 +2672,16 @@ fn scan_managed_worktrees(
+             WorktreeDisposition::Held {
+                 detail: held_by_dispatch_detail(record, live_runs),
+             }
+-        } else if let Some(run) = live_run_in_worktree(live_runs, project_id, &normalized) {
+-            WorktreeDisposition::Held {
+-                detail: live_run_holds_detail(run),
+-            }
++        } else if let Some(detail) = worktree_repo_gone(&path) {
++            WorktreeDisposition::RepoGone { detail }
+         } else {
+-            match worktree_repo_state(&path) {
+-                WorktreeRepoState::Present => WorktreeDisposition::Unclaimed,
+-                WorktreeRepoState::Gone(detail) => WorktreeDisposition::RepoGone { detail },
+-                WorktreeRepoState::Undetermined(detail) => {
+-                    WorktreeDisposition::Undetermined { detail }
+-                }
+-            }
++            WorktreeDisposition::Unclaimed
+         };
+-        let bytes = disposition_is_reclaimable(&disposition).then(|| directory_bytes(&path));
++        let bytes = matches!(disposition, WorktreeDisposition::Held { .. })
++            .then_some(None)
++            .unwrap_or_else(|| Some(directory_bytes(&path)));
+         found.push(ManagedWorktree {
+             path,
+-            name,
+             disposition,
+             bytes,
+         });
+@@ -3019,47 +2689,6 @@ fn scan_managed_worktrees(
+     Ok(found)
+ }
+ 
+-fn disposition_is_reclaimable(disposition: &WorktreeDisposition) -> bool {
+-    matches!(
+-        disposition,
+-        WorktreeDisposition::Unclaimed | WorktreeDisposition::RepoGone { .. }
+-    )
+-}
+-
+-/// The live run occupying `normalized`, matched by CANONICAL WORKTREE and
+-/// project — the only identity that survives a ledger that lost the worktree
+-/// (TASK-M47E5.2 finding 2).
+-///
+-/// A run that reports no project id still matches: refusing to reclaim
+-/// something a live run might own is the safe direction, and the daemon's own
+-/// reservation is what enforces this anyway.
+-// orgasmic:TASK-M47E5.2
+-fn live_run_in_worktree<'a>(
+-    live_runs: &'a [RunSummary],
+-    project_id: &str,
+-    normalized: &Path,
+-) -> Option<&'a RunSummary> {
+-    live_runs.iter().find(|run| {
+-        run.project_id.as_deref().is_none_or(|id| id == project_id)
+-            && run
+-                .worktree
+-                .as_deref()
+-                .is_some_and(|worktree| normalize_path(worktree) == normalized)
+-    })
+-}
+-
+-fn live_run_holds_detail(run: &RunSummary) -> String {
+-    format!(
+-        "live run {} occupies it{} [run-live] — the daemon names this worktree even though no \
+-         open dispatch record does; let the run finalize, or close it, then prune",
+-        run.run_id,
+-        run.task_id
+-            .as_deref()
+-            .map(|task| format!(" for {task}"))
+-            .unwrap_or_default()
+-    )
+-}
+-
+ /// Say WHY an open dispatch holds a worktree, and — when its run is already
+ /// gone — which verb releases it. An abandoned dispatch is still a dispatch:
+ /// prune refuses it and points at the close, rather than growing a second way
+@@ -3092,78 +2721,26 @@ fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) ->
+     }
+ }
+ 
+-/// What can be PROVEN about a managed worktree's repository, kept separate from
+-/// what may be done about it (TASK-M47E5.2 finding 3).
+-///
+-/// The old shape returned `Option<String>` and so had nowhere to put "I could
+-/// not tell": every `read_to_string` failure fell through to `(!dot_git.is_dir())`,
+-/// which is false for an unreadable regular file, yielding "no .git link". A
+-/// permission error, an ACL, or a transient I/O failure therefore selected the
+-/// one disposition that skips salvage and calls `remove_dir_all`. Absence is now
+-/// the only thing that can be concluded from absence.
+-#[derive(Clone, Debug)]
+-enum WorktreeRepoState {
+-    /// A `.git` link or admin directory is there and its target resolves.
+-    Present,
+-    /// PROVEN absent: `.git` itself, or the admin directory it names, answered
+-    /// `NotFound`. The only state that authorises the unsalvaged removal.
+-    Gone(String),
+-    /// Something failed that is not absence. Evidence of nothing.
+-    Undetermined(String),
+-}
+-
+-// orgasmic:TASK-M47E5,TASK-M47E5.2
+-fn worktree_repo_state(path: &Path) -> WorktreeRepoState {
++/// `Some(detail)` when this directory has no reachable repository, so
++/// `git worktree remove` cannot help and direct removal is the only route.
++// orgasmic:TASK-M47E5
++fn worktree_repo_gone(path: &Path) -> Option<String> {
+     let dot_git = path.join(".git");
+     // A linked worktree's `.git` is a FILE holding `gitdir: <admin dir>`.
+-    let contents = match std::fs::read_to_string(&dot_git) {
+-        Ok(contents) => contents,
+-        Err(err) => return dot_git_unreadable(&dot_git, &err),
++    let Ok(contents) = std::fs::read_to_string(&dot_git) else {
++        return (!dot_git.is_dir()).then(|| "no .git link".to_string());
+     };
+-    let Some(gitdir) = contents
++    let gitdir = contents
+         .lines()
+-        .find_map(|line| line.strip_prefix("gitdir:"))
+-        .map(|gitdir| gitdir.trim().to_string())
+-    else {
+-        // A `.git` that reads but does not parse is not an absent repository.
+-        return WorktreeRepoState::Present;
+-    };
++        .find_map(|line| line.strip_prefix("gitdir:"))?
++        .trim()
++        .to_string();
+     let resolved = if Path::new(&gitdir).is_absolute() {
+         PathBuf::from(&gitdir)
+     } else {
+         path.join(&gitdir)
+     };
+-    match std::fs::symlink_metadata(&resolved) {
+-        Ok(_) => WorktreeRepoState::Present,
+-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+-            WorktreeRepoState::Gone(format!("gitdir {gitdir} no longer exists"))
+-        }
+-        Err(err) => WorktreeRepoState::Undetermined(format!("gitdir {gitdir} did not stat: {err}")),
+-    }
+-}
+-
+-/// Classify a `.git` that would not read. Only `NotFound` on the entry itself
+-/// may conclude the repository is gone.
+-fn dot_git_unreadable(dot_git: &Path, err: &std::io::Error) -> WorktreeRepoState {
+-    match std::fs::symlink_metadata(dot_git) {
+-        // The ordinary non-linked case: `.git` IS the admin directory, and the
+-        // read failed only because directories do not read as strings.
+-        Ok(meta) if meta.is_dir() => WorktreeRepoState::Present,
+-        Ok(meta) if meta.file_type().is_symlink() => WorktreeRepoState::Undetermined(format!(
+-            "{} is a symlink whose target did not read: {err}",
+-            dot_git.display()
+-        )),
+-        Ok(_) => {
+-            WorktreeRepoState::Undetermined(format!("{} did not read: {err}", dot_git.display()))
+-        }
+-        Err(stat_err) if stat_err.kind() == std::io::ErrorKind::NotFound => {
+-            WorktreeRepoState::Gone("no .git link".to_string())
+-        }
+-        Err(stat_err) => WorktreeRepoState::Undetermined(format!(
+-            "{} did not stat: {stat_err}",
+-            dot_git.display()
+-        )),
+-    }
++    (!resolved.exists()).then(|| format!("gitdir {gitdir} no longer exists"))
+ }
+ 
+ /// Recursive apparent size in bytes. Symlinks are counted at their own size and
+@@ -3217,17 +2794,7 @@ fn report_managed_worktrees(
+     project_id: &str,
+     live_runs: &[RunSummary],
+ ) {
+-    let root = match managed_worktree_root(home, project_id)
+-        .and_then(|root| AnchoredManagedRoot::open(&root))
+-    {
+-        Ok(Some(root)) => root,
+-        Ok(None) => return,
+-        Err(err) => {
+-            eprintln!("warning: could not scan managed worktrees: {err}");
+-            return;
+-        }
+-    };
+-    let found = match scan_managed_worktrees(&root, project_root, project_id, live_runs) {
++    let found = match scan_managed_worktrees(home, project_root, project_id, live_runs) {
+         Ok(found) => found,
+         Err(err) => {
+             eprintln!("warning: could not scan managed worktrees: {err}");
+@@ -3251,14 +2818,8 @@ fn report_managed_worktrees(
+                 worktree.why()
+             );
+         } else {
+-            // Two different reasons not to reclaim, reported apart: somebody
+-            // owns it, versus nobody could tell (TASK-M47E5.2 finding 3).
+-            let line = match worktree.disposition {
+-                WorktreeDisposition::Undetermined { .. } => "KEPT_WORKTREE",
+-                _ => "HELD_WORKTREE",
+-            };
+             println!(
+-                "{line} PATH={} WHY={}",
++                "HELD_WORKTREE PATH={} WHY={}",
+                 worktree.path.display(),
+                 worktree.why()
+             );
+@@ -3314,60 +2875,27 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
+ 
+ /// Reclaim one worktree. Salvage first, then a NON-FORCED removal, so a tree
+ /// git still considers dirty survives and is reported instead of destroyed.
+-///
+-/// Called only while this process holds the daemon's cleanup reservation for
+-/// this worktree, so the repository re-check below is the last thing between a
+-/// classification taken earlier and an irreversible removal.
+-// orgasmic:TASK-M47E5,TASK-M47E5.2
++// orgasmic:TASK-M47E5
+ fn reclaim_managed_worktree(
+     project_root: &Path,
+-    root: &AnchoredManagedRoot,
++    managed_root: &Path,
+     worktree: &ManagedWorktree,
+ ) -> WorktreeRemovalOutcome {
+-    let kept = |error: String| WorktreeRemovalOutcome {
+-        removed: false,
+-        salvage: None,
+-        error: Some(error),
+-    };
+-
+     if let WorktreeDisposition::RepoGone { .. } = worktree.disposition {
+-        // TASK-M47E5.2 finding 3: classification happened before the multi-GB
+-        // size walk and before the reservation, and this is the ONE path that
+-        // deletes without salvaging. Ask the repository again, under the guard,
+-        // immediately before the removal — an unreadable-then-restored gitdir
+-        // must not lose a worker's work to a stale verdict.
+-        match worktree_repo_state(&worktree.path) {
+-            WorktreeRepoState::Gone(_) => {}
+-            WorktreeRepoState::Present => {
+-                return kept(
+-                    "the repository became reachable again between classification and removal, \
+-                     so this is no longer an unsalvageable orphan; kept"
+-                        .to_string(),
+-                );
+-            }
+-            WorktreeRepoState::Undetermined(detail) => {
+-                return kept(format!(
+-                    "repository state undetermined under the guard ({detail}); kept rather than \
+-                     removed without salvage"
+-                ));
+-            }
+-        }
+-        return match root.remove_child(&worktree.name) {
++        return match remove_orphaned_worktree_dir(managed_root, &worktree.path) {
+             Ok(()) => WorktreeRemovalOutcome {
+                 removed: true,
+                 salvage: None,
+                 error: None,
+             },
+-            Err(err) => kept(err.to_string()),
++            Err(err) => WorktreeRemovalOutcome {
++                removed: false,
++                salvage: None,
++                error: Some(err.to_string()),
++            },
+         };
+     }
+ 
+-    // `git` takes a path, not a directory handle, so this is where the anchor
+-    // has to be re-asserted rather than relied on.
+-    if let Err(err) = root.assert_child_path(&worktree.name, &worktree.path) {
+-        return kept(err.to_string());
+-    }
+-
+     let mut salvage = match worktree_has_uncommitted_changes(&worktree.path) {
+         Ok(false) => None,
+         Ok(true) => match worktree_head_oid(&worktree.path) {
+@@ -3443,26 +2971,38 @@ fn reclaim_managed_worktree(
+     }
+ }
+ 
+-// TASK-M47E5.2 finding 1: `remove_orphaned_worktree_dir` used to live here, and
+-// is deliberately gone rather than repaired. Every guard it had was a statement
+-// about a PATH — no `..` component, `path.parent() == managed_root`, and a
+-// final `symlink_metadata` — and all three passed for a victim directory
+-// reached through a symlinked root. `path` was built as `<managed_root>/<child>`,
+-// so the parent comparison was trivially true; `normalize_path` canonicalized
+-// both sides through the same link, so it passed under either reading; and the
+-// final stat saw a real directory because it was one.
+-//
+-// The replacement is `AnchoredManagedRoot::remove_child`, which does not take a
+-// path at all. See the design note above `anchored_dir`.
+-
+-/// Test-only rendezvous occupying the window between the daemon's reservation
+-/// and the destructive work it protects — the interleaving in which a
+-/// `POST /runs/:origin/recover` acquires in ANOTHER PROCESS. Mirrors
+-/// [`dispatch_close_pause_after_guard`], and no-op unless the env var names a
+-/// file.
+-// orgasmic:TASK-M47E5.2
+-fn worktree_prune_pause_after_guard() {
+-    pause_until_file_is_removed("ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE");
++/// Direct removal for the repo-gone case, which has no git to remove it. Every
++/// guard here exists because this is the one `remove_dir_all` in the dispatch
++/// path: the target must still be a real directory (never a symlink), must
++/// contain no `..`, and must be a DIRECT child of this project's managed root.
++// orgasmic:TASK-M47E5
++fn remove_orphaned_worktree_dir(managed_root: &Path, path: &Path) -> Result<()> {
++    if path
++        .components()
++        .any(|component| matches!(component, std::path::Component::ParentDir))
++    {
++        bail!(
++            "refusing to remove a path containing ..: {}",
++            path.display()
++        );
++    }
++    if normalize_path(path.parent().unwrap_or(Path::new("/"))) != normalize_path(managed_root) {
++        bail!(
++            "refusing to remove {}: not a direct child of {}",
++            path.display(),
++            managed_root.display()
++        );
++    }
++    // Re-check immediately before the removal, not just at classification time.
++    let meta =
++        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
++    if meta.file_type().is_symlink() {
++        bail!("refusing to remove a symlink: {}", path.display());
++    }
++    if !meta.is_dir() {
++        bail!("refusing to remove a non-directory: {}", path.display());
++    }
++    std::fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))
+ }
+ 
+ /// Explicit, operator-run reclamation of managed worktrees. See the design note
+@@ -3472,26 +3012,16 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+     let project_root = find_live_project_root(home, "manager worktree-prune")?;
+     let project_id = read_project_id(&project_root)?;
+     let managed_root = managed_worktree_root(home, &project_id)?;
+-    // Anchor before anything reads or removes: a root that is not a real
+-    // directory is refused here, and every removal below resolves against this
+-    // handle rather than against the path (TASK-M47E5.2 finding 1).
+-    let Some(anchored_root) = AnchoredManagedRoot::open(&managed_root)? else {
+-        println!("PRUNE_SUMMARY RECLAIMED=0 BYTES=0 SIZE=0B KEPT=0 SKIPPED=0");
+-        return Ok(());
++    let live_runs = match DaemonClient::from_home_autostart(home) {
++        Ok(client) => {
++            let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
++            runtime
++                .block_on(fetch_live_runs(&client))
++                .unwrap_or_default()
++        }
++        Err(_) => Vec::new(),
+     };
+-    // Fail CLOSED on an unreachable daemon. Reclamation now requires the
+-    // daemon's cleanup reservation, and a daemon we cannot reach is a daemon
+-    // that cannot prove nothing is live in these directories — which used to be
+-    // silently treated as "nothing is live" (TASK-M47E5.2 finding 2).
+-    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+-    let client = DaemonClient::from_home_autostart(home).context(
+-        "worktree-prune needs the daemon to reserve each worktree before reclaiming it, and \
+-         cannot prove a worktree is unoccupied without it",
+-    )?;
+-    let live_runs = runtime
+-        .block_on(fetch_live_runs(&client))
+-        .context("read live runs before classifying managed worktrees")?;
+-    let mut found = scan_managed_worktrees(&anchored_root, &project_root, &project_id, &live_runs)?;
++    let mut found = scan_managed_worktrees(home, &project_root, &project_id, &live_runs)?;
+     if let Some(task) = args.task.as_deref() {
+         let wanted = [
+             worktree_stem(task, DispatchKind::Implementer),
+@@ -3544,18 +3074,10 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+ 
+     // One lock for the whole reclaim, shared with `dispatch-close`'s worktree
+     // removal. Held across the loop, so nothing below may take it again.
+-    //
+-    // Note the lock ORDER against a concurrent close, which takes its daemon
+-    // reservation first and this file lock second. That inversion cannot
+-    // deadlock because the daemon reservation never waits: an already-held
+-    // worktree comes back `reservation_held` immediately, this loop skips it,
+-    // and the file lock is released at the end of the verb.
+     let _cleanup_lock = acquire_dispatch_cleanup_lock(&project_root)?;
+     // Re-read the ledger under the lock: a dispatch may have opened between the
+     // classification above and this point, and a live worker's tree must never
+-    // be reclaimed on the strength of a stale read. This is a cheap early exit,
+-    // not the authority — the ledger is exactly what finding 2 showed cannot be
+-    // trusted alone, and the reservation below is what actually decides.
++    // be reclaimed on the strength of a stale read.
+     let now_open = scan_open_dispatches(&project_root)?;
+ 
+     let mut reclaimed = 0usize;
+@@ -3577,36 +3099,8 @@ pub fn cmd_worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+             );
+             continue;
+         }
+-        // The authority. Held from here across salvage and removal, released
+-        // after — so no acquire in another process can enter this worktree in
+-        // the gap, and none can already be in it undetected.
+-        let task_property = worktree_reservation_task_id(&worktree.name());
+-        let mut guard = match reserve_worktree_for_prune(
+-            &runtime,
+-            &client,
+-            &project_id,
+-            &task_property,
+-            &worktree.path,
+-        ) {
+-            Ok(WorktreeReservation::Held(guard)) => guard,
+-            Ok(WorktreeReservation::Refused(reason)) => {
+-                skipped += 1;
+-                println!("SKIP PATH={} WHY={reason}", worktree.path.display());
+-                continue;
+-            }
+-            Err(err) => {
+-                skipped += 1;
+-                println!(
+-                    "SKIP PATH={} WHY=could not reserve it for reclamation: {err}",
+-                    worktree.path.display()
+-                );
+-                continue;
+-            }
+-        };
+-        worktree_prune_pause_after_guard();
+         let bytes = worktree.bytes.unwrap_or(0);
+-        let outcome = reclaim_managed_worktree(&project_root, &anchored_root, worktree);
+-        finish_worktree_guard(&runtime, &client, &project_id, &task_property, &mut guard);
++        let outcome = reclaim_managed_worktree(&project_root, &managed_root, worktree);
+         if let Some(salvage) = &outcome.salvage {
+             println!(
+                 "SALVAGED PATH={} SHA={} REF={} FILES={}",
+@@ -3901,163 +3395,13 @@ struct CloseGuardFinishResponse {
+ }
+ 
+ fn close_guard_path(project_id: &str, open: &DispatchRecord, suffix: &str) -> String {
+-    close_guard_path_for(project_id, &task_list_property(&open.tasks), suffix)
+-}
+-
+-fn close_guard_path_for(project_id: &str, task_property: &str, suffix: &str) -> String {
+     format!(
+         "/projects/{}/tasks/{}/dispatch/close-guard{suffix}",
+         path_segment(project_id),
+-        path_segment(task_property),
++        path_segment(&task_list_property(&open.tasks)),
+     )
+ }
+ 
+-/// What the daemon said when `worktree-prune` asked to reserve a worktree.
+-enum WorktreeReservation {
+-    Held(HeldCloseGuard),
+-    /// Refused, with the reason to print beside the worktree that was kept.
+-    Refused(String),
+-}
+-
+-/// Take the SAME daemon-owned worktree reservation a destructive
+-/// `dispatch-close` takes, for a `worktree-prune` reclaim (TASK-M47E5.2
+-/// finding 2).
+-///
+-/// This is deliberately not a second scheme. `Supervisor::reserve_dispatch_close`
+-/// already installs a fence and decides liveness under the one lock the acquire
+-/// path also takes, in that order, which is what makes the verdict monotone: from
+-/// the instant it is installed, `admit_live_run` refuses every new run for this
+-/// worktree, so the set of occupants can only shrink. Prune reproduced exactly
+-/// the defect TASK-1T3FZ was filed to close — a liveness decision made in the
+-/// CLI, acted on in the CLI, with a `POST /runs/:origin/recover` acquiring in
+-/// ANOTHER PROCESS in between — so it routes through the same authority rather
+-/// than growing its own.
+-///
+-/// The request differs from a close's in exactly two ways, and both say
+-/// "prune is entitled to nothing": `releasing_run_id` is `None` and
+-/// `owned_run_ids` is empty, so EVERY live run occupying the worktree blocks.
+-/// A close excludes its own generation because tearing that down is what a close
+-/// is for; prune has no generation of its own to tear down.
+-// orgasmic:TASK-M47E5.2
+-fn reserve_worktree_for_prune(
+-    runtime: &tokio::runtime::Runtime,
+-    client: &DaemonClient,
+-    project_id: &str,
+-    task_property: &str,
+-    worktree: &Path,
+-) -> Result<WorktreeReservation> {
+-    let request = CloseGuardRequest {
+-        worktree_path: worktree,
+-        branch: None,
+-        dispatch_attempt_token: None,
+-        last_path: None,
+-        stdout_path: None,
+-        owner_pid: std::process::id(),
+-        releasing_run_id: None,
+-        owned_run_ids: Vec::new(),
+-    };
+-    let response: CloseGuardResponse = runtime
+-        .block_on(client.post_json(
+-            &close_guard_path_for(project_id, task_property, ""),
+-            &request,
+-        ))
+-        .map_err(|error| {
+-            if error.to_string().contains("daemon returned 404") {
+-                return error.context(
+-                    "this daemon cannot reserve a worktree for reclamation (no close-guard \
+-                     route); restart it onto the current runtime (`orgasmic daemon restart`) \
+-                     and re-run",
+-                );
+-            }
+-            error
+-        })?;
+-    Ok(match response.status.as_str() {
+-        "reserved" => {
+-            let guard_id = response.guard_id.ok_or_else(|| {
+-                anyhow::anyhow!("daemon reserved the worktree but returned no guard id")
+-            })?;
+-            WorktreeReservation::Held(spawn_close_guard_heartbeat(
+-                client,
+-                &close_guard_path_for(project_id, task_property, "/renew"),
+-                guard_id,
+-                response.renew_within_secs,
+-            ))
+-        }
+-        "blocked" => WorktreeReservation::Refused(format!(
+-            "run {} is still live in it{} — liveness is decided in the daemon under the same \
+-             lock that admits a recovery, so this is not a stale snapshot",
+-            response.blocking_run_id.as_deref().unwrap_or("?"),
+-            response
+-                .blocking_worktree
+-                .as_deref()
+-                .map(|path| format!(" ({})", path.display()))
+-                .unwrap_or_default()
+-        )),
+-        "reservation_held" => WorktreeReservation::Refused(
+-            "another cleanup already holds this worktree; let it finish, then prune".to_string(),
+-        ),
+-        "boot_reattach_pending" => WorktreeReservation::Refused(
+-            "the daemon is still rehydrating runs that outlived its predecessor, so it cannot \
+-             yet say whether a live worker occupies this worktree; re-run in a moment"
+-                .to_string(),
+-        ),
+-        other => WorktreeReservation::Refused(format!(
+-            "unexpected reservation status from daemon: {other}"
+-        )),
+-    })
+-}
+-
+-/// Hand a prune reservation back. Best effort, exactly as
+-/// [`finish_close_guard`] is: a holder that never gets here is reclaimed once
+-/// its pid is gone or its holder lease expires.
+-fn finish_worktree_guard(
+-    runtime: &tokio::runtime::Runtime,
+-    client: &DaemonClient,
+-    project_id: &str,
+-    task_property: &str,
+-    guard: &mut HeldCloseGuard,
+-) {
+-    guard.stop_heartbeat();
+-    if guard.was_lost() {
+-        eprintln!(
+-            "warning: this reclaim lost its worktree reservation before removal finished; the \
+-             worktree was no longer fenced while it was being removed"
+-        );
+-    }
+-    let result = runtime.block_on(client.post_json::<_, CloseGuardFinishResponse>(
+-        &close_guard_path_for(project_id, task_property, "/finish"),
+-        &CloseGuardFinishRequest {
+-            guard_id: guard.id(),
+-        },
+-    ));
+-    if let Err(err) = result {
+-        eprintln!(
+-            "warning: worktree-prune could not release its worktree reservation ({err}); the \
+-             daemon releases it when this process exits or its holder lease expires"
+-        );
+-    }
+-}
+-
+-/// The task a managed worktree's directory name encodes, for the reservation
+-/// key. `worktree_stem` writes `<task-slug>` and `<task-slug>-review`.
+-///
+-/// A name that does not match falls back to itself, and that is not a guess
+-/// dressed up as an answer. Both things the reservation actually enforces are
+-/// keyed on the CANONICAL WORKTREE, not on this string:
+-/// `reserve_dispatch_close` refuses any reservation already held for the same
+-/// `worktree_key`, and `blocking_run_for_close` blocks on any run occupying it.
+-/// The task id sharpens exactly one extra check — a lease held by an acquire
+-/// that has not installed its `RunRecord` yet — which is per-task, so a name
+-/// matching no task adds nothing rather than weakening anything.
+-// orgasmic:TASK-M47E5.2
+-fn worktree_reservation_task_id(name: &str) -> String {
+-    let stem = name.strip_suffix("-review").unwrap_or(name);
+-    match stem.strip_prefix("task-") {
+-        Some(rest) if !rest.is_empty() => format!("TASK-{}", rest.to_ascii_uppercase()),
+-        _ => name.to_string(),
+-    }
+-}
+-
+ /// Take the daemon-owned worktree reservation a destructive `dispatch-close`
+ /// must hold across its liveness decision and its removal (TASK-1T3FZ), and
+ /// turn a refusal into the operator-facing error.
+@@ -4272,11 +3616,7 @@ fn finish_close_guard(
+ /// one where it is not talking to the daemon at all. No-op unless the env var
+ /// names a file.
+ fn dispatch_close_pause_after_guard() {
+-    pause_until_file_is_removed("ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE");
+-}
+-
+-fn pause_until_file_is_removed(env_var: &str) {
+-    let Ok(raw) = std::env::var(env_var) else {
++    let Ok(raw) = std::env::var("ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE") else {
+         return;
+     };
+     if raw.is_empty() {
+@@ -7149,145 +6489,6 @@ mod tests {
+         );
+     }
+ 
+-    /// TASK-M47E5.2 finding 1, the half an integration test cannot drive: a
+-    /// root RENAMED between the anchor and the removal.
+-    ///
+-    /// This is the difference between anchoring and checking. A check-then-act
+-    /// form validates the root at time T and removes at time T+n through the
+-    /// same path; swap the path in between and the removal lands in the victim.
+-    /// The anchor holds the directory INODE open, so `unlinkat` never consults
+-    /// the path again.
+-    // orgasmic:TASK-M47E5.2
+-    #[cfg(unix)]
+-    #[test]
+-    fn an_anchored_root_renamed_under_the_prune_still_removes_only_from_the_real_root() {
+-        let tmp = tempfile::tempdir().unwrap();
+-        let real = tmp.path().join("real");
+-        let victim = tmp.path().join("victim");
+-        std::fs::create_dir_all(real.join("task-a/nested")).unwrap();
+-        std::fs::write(real.join("task-a/nested/doomed.txt"), "doomed").unwrap();
+-        std::fs::create_dir_all(victim.join("task-a/nested")).unwrap();
+-        std::fs::write(victim.join("task-a/nested/sentinel.txt"), "sentinel").unwrap();
+-
+-        let anchor = AnchoredManagedRoot::open(&real).unwrap().expect("anchored");
+-        assert_eq!(
+-            anchor.child_names().unwrap(),
+-            vec![std::ffi::OsString::from("task-a")]
+-        );
+-
+-        // The adversarial move: the path the anchor was opened through now
+-        // names the victim instead.
+-        std::fs::rename(&real, tmp.path().join("moved-aside")).unwrap();
+-        std::fs::rename(&victim, &real).unwrap();
+-
+-        anchor
+-            .remove_child(std::ffi::OsStr::new("task-a"))
+-            .expect("removal must still succeed against the anchored inode");
+-        assert!(
+-            real.join("task-a/nested/sentinel.txt").is_file(),
+-            "the directory now at the root path must be untouched"
+-        );
+-        assert!(
+-            !tmp.path().join("moved-aside/task-a").exists(),
+-            "the entry that was removed must be the one under the anchored inode"
+-        );
+-    }
+-
+-    /// A symlinked root is refused at the anchor, and the refusal names both the
+-    /// root and the shape, because "ELOOP" tells an operator nothing.
+-    // orgasmic:TASK-M47E5.2
+-    #[cfg(unix)]
+-    #[test]
+-    fn a_symlinked_managed_root_is_refused_by_name() {
+-        let tmp = tempfile::tempdir().unwrap();
+-        let victim = tmp.path().join("victim");
+-        std::fs::create_dir_all(&victim).unwrap();
+-        let root = tmp.path().join("worktrees/orgasmic");
+-        std::fs::create_dir_all(root.parent().unwrap()).unwrap();
+-        std::os::unix::fs::symlink(&victim, &root).unwrap();
+-
+-        let err = AnchoredManagedRoot::open(&root)
+-            .expect_err("a symlinked root must be refused")
+-            .to_string();
+-        assert!(err.contains("managed worktree root"), "{err}");
+-        assert!(err.contains("symlink"), "{err}");
+-
+-        // A root that simply does not exist is not an error — there is nothing
+-        // to scan and nothing to refuse.
+-        assert!(AnchoredManagedRoot::open(&tmp.path().join("absent"))
+-            .unwrap()
+-            .is_none());
+-    }
+-
+-    /// TASK-M47E5.2 finding 3: only ABSENCE may conclude the repository is gone.
+-    // orgasmic:TASK-M47E5.2
+-    #[cfg(unix)]
+-    #[test]
+-    fn only_a_not_found_git_link_classifies_as_repo_gone() {
+-        use std::os::unix::fs::PermissionsExt;
+-
+-        let tmp = tempfile::tempdir().unwrap();
+-        let worktree = tmp.path().join("wt");
+-        std::fs::create_dir_all(&worktree).unwrap();
+-
+-        // No `.git` at all: proven absent.
+-        assert!(matches!(
+-            worktree_repo_state(&worktree),
+-            WorktreeRepoState::Gone(_)
+-        ));
+-
+-        // A `.git` naming an admin directory that is gone: also proven absent.
+-        std::fs::write(worktree.join(".git"), "gitdir: ../nowhere\n").unwrap();
+-        assert!(matches!(
+-            worktree_repo_state(&worktree),
+-            WorktreeRepoState::Gone(_)
+-        ));
+-
+-        // The same link, now resolving.
+-        std::fs::create_dir_all(tmp.path().join("nowhere")).unwrap();
+-        assert!(matches!(
+-            worktree_repo_state(&worktree),
+-            WorktreeRepoState::Present
+-        ));
+-
+-        // Unreadable for a reason that is NOT absence: undetermined, and the
+-        // reason travels with it. This is the case that used to select
+-        // `RepoGone` — the one disposition that deletes without salvaging.
+-        let dot_git = worktree.join(".git");
+-        std::fs::set_permissions(&dot_git, std::fs::Permissions::from_mode(0o000)).unwrap();
+-        if std::fs::read_to_string(&dot_git).is_ok() {
+-            // Running as root; the case is unreachable here rather than absent.
+-            return;
+-        }
+-        match worktree_repo_state(&worktree) {
+-            WorktreeRepoState::Undetermined(detail) => {
+-                assert!(detail.contains(".git"), "{detail}");
+-                assert!(
+-                    detail.to_lowercase().contains("permission denied"),
+-                    "{detail}"
+-                );
+-            }
+-            other => panic!("an unreadable .git must never classify as repo-gone: {other:?}"),
+-        }
+-        std::fs::set_permissions(&dot_git, std::fs::Permissions::from_mode(0o644)).unwrap();
+-    }
+-
+-    /// The reservation key a managed worktree name yields.
+-    // orgasmic:TASK-M47E5.2
+-    #[test]
+-    fn a_managed_worktree_name_yields_the_task_it_encodes() {
+-        assert_eq!(worktree_reservation_task_id("task-m47e5"), "TASK-M47E5");
+-        assert_eq!(
+-            worktree_reservation_task_id("task-m47e5-review"),
+-            "TASK-M47E5"
+-        );
+-        // A name outside the scheme still produces a stable, non-empty segment:
+-        // mutual exclusion and the liveness scan are keyed on the worktree, not
+-        // on this.
+-        assert_eq!(worktree_reservation_task_id("stray"), "stray");
+-        assert_eq!(worktree_reservation_task_id("task-"), "task-");
+-    }
+-
+     /// orgasmic:TASK-JK66P — a stall tombstone now names the evidence that was
+     /// absent and for how long, so an operator can tell a wedged harness from a
+     /// worker shot mid-build. Classification keys on the leading token, and a
