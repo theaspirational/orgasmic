@@ -1228,6 +1228,38 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
         sprint_after_fix_decl_close.contains("* IN_REVIEW TASK-FIX-DECL"),
         "a FIX_SUBTASK close must land in_review by default\n{sprint_after_fix_decl_close}"
     );
+    // orgasmic:TASK-4WKNX — and the opt-out belongs to the implementer close
+    // that decides the fix round's stage, not to the reviewer's own close.
+    let fix_decl_review_started_tx = started_tx_from_dispatch_stdout(&fix_decl_review_stdout);
+    let on_reviewer = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-FIX-DECL",
+            "--started-tx",
+            &fix_decl_review_started_tx,
+            "--status",
+            "done",
+            "--verdict",
+            "approve",
+            "--fix-round-final",
+            "--reason",
+            "wrong close for this flag",
+        ],
+    );
+    let on_reviewer_stderr = String::from_utf8_lossy(&on_reviewer.stderr).to_string();
+    assert!(
+        !on_reviewer.status.success()
+            && on_reviewer_stderr.contains(
+                "--fix-round-final is valid only when closing an implementer dispatch as done"
+            ),
+        "unexpected --fix-round-final response on a reviewer close: {on_reviewer_stderr}"
+    );
 
     // orgasmic:TASK-4WKNX — and the opt-out closes straight to done, but only
     // with a `--reason`, on the same argument that makes `--no-review-required`
