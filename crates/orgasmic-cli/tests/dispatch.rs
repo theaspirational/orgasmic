@@ -8344,3 +8344,104 @@ async fn dispatch_status_detects_reclaimable_worktrees_and_prune_clears_stale_me
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// TASK-M47E5 hazard: worktrees created under the RETIRED in-project scheme are
+/// still on disk when this lands, so closing one must keep working end to end —
+/// salvage, non-forced removal, artifact prune. `--worktree` reproduces that
+/// layout exactly, which is also the acceptance that the override still wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_close_still_salvages_and_removes_an_old_path_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "old path close brief");
+
+    let old_path_worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            old_path_worktree.to_str().unwrap(),
+            "--reason",
+            "old path close",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    assert!(
+        old_path_worktree.is_dir(),
+        "--worktree must still override the managed default"
+    );
+    assert!(
+        !home.root.join("worktrees/orgasmic/task-dispatch").exists(),
+        "an explicit --worktree must not also create the managed default"
+    );
+    // Uncommitted worker output: the close must rescue it, not destroy it.
+    write(
+        &old_path_worktree.join("worker-output.txt"),
+        "unmerged worker output",
+    );
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--reason",
+            "old path close",
+        ],
+    );
+    assert!(
+        close_stdout.contains("cleanup: worktree salvaged sha="),
+        "an old-path worktree must still be salvaged on close, got:\n{close_stdout}"
+    );
+    assert!(
+        close_stdout.contains("worktree removed"),
+        "an old-path worktree must still be removed on close, got:\n{close_stdout}"
+    );
+    assert!(!old_path_worktree.exists(), "the old-path worktree is gone");
+    assert!(brief.is_file(), "the dispatch record survives the close");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
