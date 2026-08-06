@@ -2,8 +2,6 @@ import { get, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
 import type {
   ActivityEntry,
-  ArchitectureSummary,
-  ArchitectureNodesResponse,
   ArtifactCommentRequest,
   ArtifactCommentResolveResponse,
   ArtifactDetail,
@@ -274,14 +272,6 @@ export function createDecision(body: {
   });
 }
 
-export function fetchArchitecture(project?: string | null): Promise<ArchitectureSummary[]> {
-  return get<ArchitectureSummary[]>(`/architecture${q(project)}`);
-}
-
-export function fetchArchitectureNodes(project?: string | null): Promise<ArchitectureNodesResponse> {
-  return get<ArchitectureNodesResponse>(`/architecture/nodes${q(project)}`);
-}
-
 export function fetchGlossary(project?: string | null): Promise<GlossarySummary[]> {
   return get<GlossarySummary[]>(`/glossary${q(project)}`);
 }
@@ -367,7 +357,7 @@ export function postRunRecover(
   });
 }
 
-export function postStage(stage: 'grill' | 'architect' | 'plan', project?: string | null): Promise<unknown> {
+export function postStage(stage: 'grill' | 'plan', project?: string | null): Promise<unknown> {
   return post(`/${stage}`, {
     project,
     request_id: requestId(stage),

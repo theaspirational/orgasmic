@@ -6,7 +6,6 @@ export function initialView(): ViewName {
   if (
     raw === 'board' ||
     raw === 'decisions' ||
-    raw === 'architecture' ||
     raw === 'glossary' ||
     raw === 'activity' ||
     raw === 'project' ||
@@ -41,7 +40,6 @@ export function initialTask(): string | null {
 export const NAV: { id: ViewName; label: string }[] = [
   { id: 'board', label: 'Board' },
   { id: 'decisions', label: 'Decisions' },
-  { id: 'architecture', label: 'Architecture' },
   { id: 'glossary', label: 'Glossary' },
   { id: 'artifacts', label: 'Artifacts' },
   { id: 'activity', label: 'Activity' },

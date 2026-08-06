@@ -206,50 +206,6 @@ export type DecisionSummary = {
   superseded?: boolean;
 };
 
-export type ArchitectureSummary = {
-  id: string;
-  label: string;
-  motivated_by: string[];
-  glossary_refs: string[];
-  interface: string[];
-  constraints: string[];
-  depends_on: string[];
-  source_paths?: string[];
-  tests?: string[];
-  parent_id?: string | null;
-  description?: string | null;
-  source_file: string;
-};
-
-export type ArchitectureArtifactSummary = {
-  id: string;
-  kind: string;
-  scheme: string;
-  name: string;
-};
-
-export type ArchitectureGraphNode = {
-  id: string;
-  kind: string;
-  label?: string | null;
-  parent_id?: string | null;
-  source_paths?: string[];
-  tests?: string[];
-  scheme?: string | null;
-  name?: string | null;
-};
-
-export type ArchitectureEdgeSummary = {
-  kind: string;
-  from: string;
-  to: string;
-};
-
-export type ArchitectureNodesResponse = {
-  nodes: ArchitectureGraphNode[];
-  edges: ArchitectureEdgeSummary[];
-};
-
 export type GlossarySummary = {
   id: string;
   canonical?: string | null;
@@ -269,7 +225,6 @@ export type GraphNodeSummary = {
 
 export type GraphIndex = {
   decisions: DecisionSummary[];
-  architecture: ArchitectureSummary[];
   glossary: GlossarySummary[];
   nodes: GraphNodeSummary[];
 };
@@ -705,7 +660,6 @@ export type DaemonEvent = {
 export type ViewName =
   | 'board'
   | 'decisions'
-  | 'architecture'
   | 'glossary'
   | 'activity'
   | 'project'

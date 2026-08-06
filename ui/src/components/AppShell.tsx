@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   BookOpen,
-  Boxes,
   ChevronDown,
   ChevronRight,
   Cpu,
@@ -74,7 +73,6 @@ import { ProjectTabs } from './ProjectTabs';
 
 type ProjectPage =
   | 'decisions'
-  | 'architecture'
   | 'tasks'
   | 'glossary'
   | 'artifacts'
@@ -92,7 +90,6 @@ type NavItem = {
   icon: LucideIcon;
   to:
     | '/projects/$projectId/decisions'
-    | '/projects/$projectId/architecture'
     | '/projects/$projectId/tasks'
     | '/projects/$projectId/glossary'
     | '/projects/$projectId/artifacts'
@@ -108,7 +105,6 @@ type NavItem = {
 const PRIMARY: NavItem[] = [
   { page: 'project', label: 'Project', icon: FolderTree, to: '/projects/$projectId/project' },
   { page: 'decisions', label: 'Decisions', icon: GitCommitHorizontal, to: '/projects/$projectId/decisions' },
-  { page: 'architecture', label: 'Architecture', icon: Boxes, to: '/projects/$projectId/architecture' },
   { page: 'tasks', label: 'Tasks', icon: ListChecks, to: '/projects/$projectId/tasks' },
   { page: 'glossary', label: 'Glossary', icon: BookOpen, to: '/projects/$projectId/glossary' },
 ];
@@ -146,7 +142,6 @@ function pathForView(view: ViewName, projectId: string | null) {
   return {
     to: `/projects/$projectId/${view}` as
       | '/projects/$projectId/decisions'
-      | '/projects/$projectId/architecture'
       | '/projects/$projectId/glossary'
       | '/projects/$projectId/artifacts'
       | '/projects/$projectId/runs'

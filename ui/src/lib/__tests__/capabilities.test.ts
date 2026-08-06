@@ -97,8 +97,8 @@ describe('meVisibleProjects', () => {
 });
 
 describe('navPageVisible (AppShell nav gating)', () => {
-  // The eight nav destinations AppShell filters (PRIMARY + MORE).
-  const navPages = ['project', 'decisions', 'architecture', 'tasks', 'glossary', 'artifacts', 'prompts', 'activity'];
+  // The seven nav destinations AppShell filters (PRIMARY + MORE).
+  const navPages = ['project', 'decisions', 'tasks', 'glossary', 'artifacts', 'prompts', 'activity'];
 
   function visibleFor(me: Me) {
     return navPages.filter((page) => navPageVisible(me, 'orgasmic', page));
@@ -118,7 +118,7 @@ describe('navPageVisible (AppShell nav gating)', () => {
 
   it('a full read-only member sees read pages but never admin-only Activity/Prompts', () => {
     expect(visibleFor(viewer).sort()).toEqual(
-      ['architecture', 'artifacts', 'decisions', 'glossary', 'project', 'tasks'].sort(),
+      ['artifacts', 'decisions', 'glossary', 'project', 'tasks'].sort(),
     );
   });
 

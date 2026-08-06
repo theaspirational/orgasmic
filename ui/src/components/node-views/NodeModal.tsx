@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, Check, Copy, ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,32 +15,30 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-import { architectureDescriptorFor, DESCRIPTORS } from '@/components/orgdoc/descriptor';
+import { DESCRIPTORS } from '@/components/orgdoc/descriptor';
 import { NodeDocEditor, type NodeDirectory } from '@/components/orgdoc/NodeDocEditor';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
-import { fetchArchitecture, fetchDecisions, fetchGlossary } from '@/lib/api';
+import { fetchDecisions, fetchGlossary } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, withDrawerStack, type AppSearch } from '@/lib/searchState';
-import type { ArchitectureSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
+import type { DecisionSummary, GlossarySummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
 import { CopyIdBadge } from '../CopyIdBadge';
 import { GenerateArtifactDialog } from '../GenerateArtifactDialog';
 import { inferNodeKind, shortPath, type NodeKind } from './orgNodes';
 
-// Summaries for every layer, so the modal can resolve cross-kind chip labels,
+// Summaries for every editable node kind, so the modal can resolve cross-kind chip labels,
 // autocomplete, and breadcrumb titles while the per-node editor fetches its own
 // structured document. No client-side `.org` parsing happens here anymore.
 type DetailData = {
   decisions: DecisionSummary[];
-  architecture: ArchitectureSummary[];
   glossary: GlossarySummary[];
 };
 
 type DetailSeed = Partial<{
   decisions: DecisionSummary[] | null;
-  architecture: ArchitectureSummary[] | null;
   glossary: GlossarySummary[] | null;
 }>;
 
@@ -60,13 +58,6 @@ function activeSeedVersion(seed: DetailSeed, activeKind: NodeKind, activeId: str
         ].join(':')
       : 'missing';
   }
-  if (activeKind === 'architecture') {
-    if (!seed.architecture) return 'fetch';
-    const architecture = seed.architecture.find((item) => item.id === activeId);
-    return architecture
-      ? [architecture.id, architecture.parent_id ?? '', architecture.label, architecture.description ?? ''].join(':')
-      : 'missing';
-  }
   if (!seed.glossary) return 'fetch';
   const glossary = seed.glossary.find((item) => item.id === activeId);
   return glossary ? [glossary.id, glossary.canonical ?? ''].join(':') : 'missing';
@@ -75,14 +66,12 @@ function activeSeedVersion(seed: DetailSeed, activeKind: NodeKind, activeId: str
 function seedHasActiveNode(seed: DetailSeed, activeKind: NodeKind, activeId: string | null): boolean {
   if (!activeId) return true;
   if (activeKind === 'decision') return Boolean(seed.decisions?.some((item) => item.id === activeId));
-  if (activeKind === 'architecture') return Boolean(seed.architecture?.some((item) => item.id === activeId));
   return Boolean(seed.glossary?.some((item) => item.id === activeId));
 }
 
 function detailHasActiveNode(data: DetailData | null, activeKind: NodeKind, activeId: string | null): boolean {
   if (!data || !activeId) return false;
   if (activeKind === 'decision') return data.decisions.some((item) => item.id === activeId);
-  if (activeKind === 'architecture') return data.architecture.some((item) => item.id === activeId);
   return data.glossary.some((item) => item.id === activeId);
 }
 
@@ -93,23 +82,19 @@ async function loadDetailData(
   activeId: string | null,
 ): Promise<DetailData> {
   const activeSeedIsFreshEnough = seedHasActiveNode(seed, activeKind, activeId);
-  const [decisions, architecture, glossary] = await Promise.all([
+  const [decisions, glossary] = await Promise.all([
     seed.decisions && (activeKind !== 'decision' || activeSeedIsFreshEnough)
       ? Promise.resolve(seed.decisions)
       : fetchDecisions(projectId),
-    seed.architecture && (activeKind !== 'architecture' || activeSeedIsFreshEnough)
-      ? Promise.resolve(seed.architecture)
-      : fetchArchitecture(projectId),
     seed.glossary && (activeKind !== 'glossary' || activeSeedIsFreshEnough)
       ? Promise.resolve(seed.glossary)
       : fetchGlossary(projectId),
   ]);
-  return { decisions, architecture, glossary };
+  return { decisions, glossary };
 }
 
 function nodeTitle(kind: NodeKind, id: string, data: DetailData): string {
   if (kind === 'decision') return data.decisions.find((d) => d.id === id)?.title || id;
-  if (kind === 'architecture') return data.architecture.find((a) => a.id === id)?.label || id;
   return data.glossary.find((t) => t.id === id)?.canonical || id;
 }
 
@@ -130,17 +115,14 @@ function decisionParentTrail(id: string, decisions: DecisionSummary[]): Decision
 
 function buildDirectory(data: DetailData | null): NodeDirectory {
   const decisions = data?.decisions ?? [];
-  const architecture = data?.architecture ?? [];
   const glossary = data?.glossary ?? [];
   return {
     labelFor: (id) => {
       if (id.startsWith('dec_')) return decisions.find((d) => d.id === id)?.title ?? id;
-      if (id.startsWith('arch_')) return architecture.find((a) => a.id === id)?.label ?? id;
       return glossary.find((t) => t.id === id)?.canonical ?? id;
     },
     suggestionsFor: (source) => {
       if (source === 'decision') return decisions.map((d) => ({ value: d.id, label: d.title }));
-      if (source === 'architecture') return architecture.map((a) => ({ value: a.id, label: a.label }));
       return glossary.map((t) => ({ value: t.id, label: t.canonical ?? t.id }));
     },
   };
@@ -386,11 +368,7 @@ function NodeModalContent({
             <NodeDocEditor
               projectId={projectId}
               nodeId={activeId}
-              descriptor={
-                activeKind === 'architecture'
-                  ? architectureDescriptorFor(activeId)
-                  : DESCRIPTORS[activeKind]
-              }
+              descriptor={DESCRIPTORS[activeKind]}
               directory={directory}
               onOpenNode={onOpenNode}
               mode={mode}
@@ -419,7 +397,6 @@ function Aside({
   const [generateOpen, setGenerateOpen] = useState(false);
   const { can } = useMe();
   const canGenerate = can(projectId, 'artifacts.generate');
-  const archNode = kind === 'architecture' ? data.architecture.find((item) => item.id === id) : undefined;
   const decision = kind === 'decision' ? data.decisions.find((item) => item.id === id) : undefined;
   const decisionChildren = decision
     ? (decision.children ?? [])
@@ -428,10 +405,7 @@ function Aside({
     : [];
   const source = kind === 'decision'
     ? data.decisions.find((item) => item.id === id)?.source_file
-    : kind === 'architecture'
-      ? archNode?.source_file
-      : data.glossary.find((item) => item.id === id)?.source_file;
-  const tests = archNode?.tests ?? [];
+    : data.glossary.find((item) => item.id === id)?.source_file;
   const nodeLabel = nodeTitle(kind, id, data);
   return (
     <aside className="flex min-w-0 flex-col gap-3 rounded-md border bg-muted/20 p-3">
@@ -497,45 +471,6 @@ function Aside({
           <Badge variant="outline">{kind}</Badge>
         </dd>
       </div>
-      {tests.length > 0 ? <NodeTests tests={tests} /> : null}
     </aside>
-  );
-}
-
-// Per-node test commands (:TESTS:) — the scoped suite an agent should run when
-// touching this node's source paths, instead of the whole workspace.
-function NodeTests({ tests }: { tests: string[] }) {
-  const [copied, setCopied] = useState<number | null>(null);
-  const copy = useCallback((cmd: string, index: number) => {
-    void navigator.clipboard?.writeText(cmd).then(() => {
-      setCopied(index);
-      window.setTimeout(() => setCopied((current) => (current === index ? null : current)), 1200);
-    });
-  }, []);
-  return (
-    <>
-      <Separator />
-      <div>
-        <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Tests</dt>
-        <dd className="mt-1 flex flex-col gap-1">
-          {tests.map((cmd, index) => (
-            <button
-              key={cmd}
-              type="button"
-              onClick={() => copy(cmd, index)}
-              title="Copy command"
-              className="group flex items-center justify-between gap-1 rounded border bg-background px-1.5 py-1 text-left font-mono text-[11px] leading-tight hover:border-foreground/30"
-            >
-              <span className="min-w-0 truncate">{cmd}</span>
-              {copied === index ? (
-                <Check className="size-3 shrink-0 text-muted-foreground" />
-              ) : (
-                <Copy className="size-3 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" />
-              )}
-            </button>
-          ))}
-        </dd>
-      </div>
-    </>
   );
 }

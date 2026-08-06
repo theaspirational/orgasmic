@@ -29,7 +29,6 @@ export function meVisibleProjects(me: Me | null): MeProject[] | null {
 export const NAV_CAPABILITY: Partial<Record<string, MemberCapability>> = {
   project: 'project.read',
   decisions: 'graph.read',
-  architecture: 'graph.read',
   glossary: 'graph.read',
   tasks: 'tasks.read',
   artifacts: 'artifacts.read',

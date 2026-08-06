@@ -18,20 +18,18 @@ function linkedTokens(text: string): string[] {
 }
 
 describe('decorateText entity links', () => {
-  it('linkifies minted entity IDs and task/architecture suffixes', () => {
+  it('linkifies minted task and decision IDs', () => {
     expect(linkedTokens('See TASK-ZD72S, TASK-YRK1V.1, dec_8KX2M, and arch_8KX2M.')).toEqual([
       'TASK-ZD72S',
       'TASK-YRK1V.1',
       'dec_8KX2M',
-      'arch_8KX2M',
     ]);
   });
 
-  it('keeps linkifying legacy and existing minted-looking entity IDs', () => {
+  it('leaves legacy architecture IDs as plain text', () => {
     expect(linkedTokens('Regression: TASK-CJWT3, dec_X72P5, arch_C87Z9.3.')).toEqual([
       'TASK-CJWT3',
       'dec_X72P5',
-      'arch_C87Z9.3',
     ]);
   });
 

@@ -16,8 +16,7 @@ export type OrgNodeDoc = {
   title: string;
   todo?: string | null;
   tags: string[];
-  /** The heading's own free prose (leaf architecture nodes keep their
-   *  description here rather than in a named `**` section). */
+  /** The heading's own free prose rather than a named `**` section. */
   body: string;
   properties: NodeProperty[];
   sections: NodeSection[];

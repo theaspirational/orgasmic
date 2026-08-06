@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
-import { fetchArchitecture, fetchArtifacts, fetchDecisions, fetchGlossary } from '@/lib/api';
-import type { ArchitectureSummary, ArtifactSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
+import { fetchArtifacts, fetchDecisions, fetchGlossary } from '@/lib/api';
+import type { ArtifactSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { inferNodeKind } from '@/components/node-views/orgNodes';
 
@@ -32,14 +32,12 @@ function ArtifactStateBadge({ state }: { state: string }) {
 
 type SubjectDirectory = {
   decisions: DecisionSummary[];
-  architecture: ArchitectureSummary[];
   glossary: GlossarySummary[];
 };
 
 function subjectLabel(id: string, dir: SubjectDirectory): string {
   const kind = inferNodeKind(id);
   if (kind === 'decision') return dir.decisions.find((d) => d.id === id)?.title ?? id;
-  if (kind === 'architecture') return dir.architecture.find((a) => a.id === id)?.label ?? id;
   return dir.glossary.find((g) => g.id === id)?.canonical ?? id;
 }
 
@@ -66,11 +64,6 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
     () => fetchDecisions(projectId),
     { enabled: canReadGraph },
   );
-  const architecture = useResource(
-    `artifacts-subjects-architecture:${projectId}:${refresh}`,
-    () => fetchArchitecture(projectId),
-    { enabled: canReadGraph },
-  );
   const glossary = useResource(
     `artifacts-subjects-glossary:${projectId}:${refresh}`,
     () => fetchGlossary(projectId),
@@ -80,10 +73,9 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
   const dir = useMemo<SubjectDirectory>(
     () => ({
       decisions: decisions.data ?? [],
-      architecture: architecture.data ?? [],
       glossary: glossary.data ?? [],
     }),
-    [architecture.data, decisions.data, glossary.data],
+    [decisions.data, glossary.data],
   );
 
   function openArtifact(id: string) {

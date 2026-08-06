@@ -14,7 +14,6 @@ const STORAGE_KEY = 'orgasmic.openTabs';
 /** Project-scoped views a tab can point at (mirrors the router's project routes). */
 export type TabView =
   | 'decisions'
-  | 'architecture'
   | 'tasks'
   | 'glossary'
   | 'project'
@@ -30,7 +29,6 @@ export const DEFAULT_TAB_VIEW: TabView = 'tasks';
 
 const VIEW_SET = new Set<TabView>([
   'decisions',
-  'architecture',
   'tasks',
   'glossary',
   'project',
