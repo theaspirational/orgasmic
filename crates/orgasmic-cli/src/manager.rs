@@ -1117,7 +1117,10 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     // acted on here has a window no amount of in-process care can close: only
     // the supervisor lock, which the acquire path also takes, can install a
     // fence and read liveness as one step. The verdict comes back with it.
-    let mut close_guard = if remove_worktree {
+    //
+    // TASK-QGWK7.1 F-3: `--no-worktree-remove` promote also unlinks tmp
+    // artifacts, so it takes the same guard whenever promotable paths exist.
+    let mut close_guard = if close_needs_artifact_fence(remove_worktree, &open) {
         let guard = runtime
             .block_on(reserve_close_guard(&client, &project_id, &open))
             .context("liveness check before dispatch-close cleanup")?;
@@ -1908,8 +1911,12 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         durable_report_path_for_finalize(home, project_id.as_deref(), &run.run_id)
     {
         extra.push(("REPORT_PATH".to_string(), report_path));
-    } else if let Some(last) = run.last_path.as_ref() {
-        extra.push(("REPORT_PATH".to_string(), last.display().to_string()));
+    } else if let Some(rel) =
+        project_relative_report_path_fallback(home, project_id.as_deref(), run.last_path.as_deref())
+    {
+        // TASK-QGWK7.1 F-6: never write an absolute /Users/... path into a
+        // committed tx. Prefer no REPORT_PATH over a machine-specific one.
+        extra.push(("REPORT_PATH".to_string(), rel));
     }
 
     // Order matters (reviewer #2): the worker's terminal tx lands only after
@@ -2157,7 +2164,8 @@ fn resolve_finalize_project_id(git_root: &Path) -> Option<String> {
 /// Looks up the live project's tx log for this run's `DISPATCH_TX` (the
 /// generation / `started_tx`), then returns the tracked path close will
 /// promote `last.txt` into. Returns `None` when the live project or the
-/// pairing cannot be resolved — finalize then falls back to the tmp last_path.
+/// pairing cannot be resolved — finalize then falls back to a project-relative
+/// tmp last_path when one can be derived.
 fn durable_report_path_for_finalize(
     home: &Home,
     project_id: Option<&str>,
@@ -2175,6 +2183,29 @@ fn durable_report_path_for_finalize(
         .find(|record| record.run_ids.iter().any(|id| id == run_id))
         .map(|record| record.tx_id)?;
     orgasmic_core::dispatch_record_report_rel(&started_tx).ok()
+}
+
+/// Project-relative fallback for finalize `:REPORT_PATH:` (TASK-QGWK7.1 F-6).
+/// Absolute paths are stripped against the project root; if that fails, returns
+/// `None` rather than committing a machine-specific path.
+fn project_relative_report_path_fallback(
+    home: &Home,
+    project_id: Option<&str>,
+    last_path: Option<&Path>,
+) -> Option<String> {
+    let last = last_path?;
+    if last.is_relative() {
+        return Some(last.display().to_string());
+    }
+    let project_id = project_id?;
+    let board = projects::read_board(home).ok()?;
+    let project_root = board
+        .into_iter()
+        .find(|entry| entry.id == project_id)
+        .map(|entry| entry.path)?;
+    last.strip_prefix(&project_root)
+        .ok()
+        .map(|rel| rel.display().to_string())
 }
 
 fn finalize_commit_message(task: &str, status: FinalizeStatus, summary: &str) -> String {
@@ -4249,6 +4280,12 @@ fn worktree_reservation_task_id(name: &str) -> String {
 /// `Ok(None)` means there is no worktree to reserve — the record has no
 /// `WORKTREE` property, so cleanup will report `worktree_missing` and destroy
 /// nothing.
+/// Whether this close mutates dispatch artifacts and therefore needs the
+/// daemon-owned close guard (TASK-1T3FZ, TASK-QGWK7.1 F-3).
+fn close_needs_artifact_fence(remove_worktree: bool, open: &DispatchRecord) -> bool {
+    remove_worktree || (open.last_path.is_some() && open.stdout_path.is_some())
+}
+
 async fn reserve_close_guard(
     client: &DaemonClient,
     project_id: &str,
@@ -4279,7 +4316,8 @@ async fn reserve_close_guard(
                 return error.context(
                     "this daemon cannot reserve the worktree for a destructive close (no \
                      close-guard route); restart it onto the current runtime (`orgasmic daemon \
-                     restart`) and re-run, or close without --worktree-remove",
+                     restart`) and re-run. Closing without --worktree-remove still promotes \
+                     and unlinks tmp artifacts, so it needs the same fence",
                 );
             }
             error
@@ -4310,8 +4348,9 @@ async fn reserve_close_guard(
                  in the daemon under the same lock that admits a recovery, so this is not a \
                  stale snapshot — a replacement whose origin→replacement association never \
                  reached the ledger occupies this worktree under an id the record does not \
-                 name. Inspect the live run (`orgasmic run show {}`) and let it finalize, or \
-                 re-run this close without --worktree-remove.",
+                 name. Inspect the live run (`orgasmic run show {}`) and let it finish; do \
+                 not close while it occupies the worktree — even without --worktree-remove, \
+                 close promotes and unlinks the tmp report.",
                 open.tx_id,
                 blocking,
                 response
@@ -5166,22 +5205,21 @@ fn remove_worktree_required_with_hook(
     // the dispatch generation, rather than deleting it with the tmp artifacts.
     // Failed-dispatch rollback passes `started_tx: None` and still deletes.
     let (report_path, error) = match started_tx {
-        Some(started_tx) => {
-            match orgasmic_core::promote_validated_dispatch_attempt(
-                &artifacts,
-                project_root,
-                started_tx,
-            ) {
-                Ok(path) => (Some(path), None),
-                Err(err) => (
-                    None,
-                    Some(format!(
-                        "promote dispatch report for {}: {err}",
-                        path.display()
-                    )),
-                ),
-            }
-        }
+        Some(started_tx) => match promote_and_stage_dispatch_record(
+            &artifacts,
+            project_root,
+            started_tx,
+            path,
+        ) {
+            Ok(outcome) => (outcome.report_path, outcome.error),
+            Err(err) => (
+                None,
+                Some(format!(
+                    "promote dispatch report for {}: {err}",
+                    path.display()
+                )),
+            ),
+        },
         None => (
             None,
             orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
@@ -5401,16 +5439,23 @@ fn cleanup_dispatch(
                 errors.push("worktree: open dispatch has no WORKTREE property".to_string());
             }
         }
-    } else if let (Some(last), Some(stdout), Some(worktree)) = (
-        last_path.as_deref(),
-        stdout_path.as_deref(),
-        open.worktree.as_deref(),
-    ) {
-        // orgasmic:TASK-QGWK7 — even with `--no-worktree-remove`, promote the
-        // report out of gitignored tmp so a later close-no-op cannot lose it.
-        match promote_dispatch_artifacts_in_place(project_root, worktree, last, stdout, &open.tx_id)
-        {
-            Ok(path) => report_path = Some(path),
+    } else if let (Some(last), Some(stdout)) = (last_path.as_deref(), stdout_path.as_deref()) {
+        // orgasmic:TASK-QGWK7 / TASK-QGWK7.1 — even with `--no-worktree-remove`,
+        // promote the report out of gitignored tmp. The worktree may already
+        // be reclaimed (F-4); promotion still succeeds from the tmp artifacts.
+        match promote_dispatch_artifacts_in_place(
+            project_root,
+            open.worktree.as_deref(),
+            last,
+            stdout,
+            &open.tx_id,
+        ) {
+            Ok(outcome) => {
+                report_path = outcome.report_path;
+                if let Some(err) = outcome.error {
+                    errors.push(format!("report: {err}"));
+                }
+            }
             Err(err) => errors.push(format!("report: {err}")),
         }
     }
@@ -5459,23 +5504,84 @@ fn cleanup_dispatch(
 }
 
 /// Promote tmp dispatch artifacts without removing the worktree.
+///
+/// Takes the same cleanup lock as worktree-removing cleanup (TASK-QGWK7.1 F-3):
+/// promote unlinks the tmp inodes and must not race a recovery writer.
+// orgasmic:TASK-QGWK7.1
 fn promote_dispatch_artifacts_in_place(
     project_root: &Path,
-    worktree: &Path,
+    worktree: Option<&Path>,
     last_path: &Path,
     stdout_path: &Path,
     started_tx: &str,
-) -> Result<String, String> {
+) -> Result<orgasmic_core::PromoteOutcome, String> {
+    let _cleanup_lock =
+        acquire_dispatch_cleanup_lock(project_root).map_err(|err| err.to_string())?;
     if !last_path.exists() {
         return Err(format!("last_path missing: {}", last_path.display()));
     }
-    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
-        project_root,
-        worktree,
-        Some(last_path),
-        Some(stdout_path),
-    )?;
-    orgasmic_core::promote_validated_dispatch_attempt(&artifacts, project_root, started_tx)
+    let artifacts = match worktree {
+        Some(worktree) if worktree.exists() => orgasmic_core::validate_dispatch_cleanup_targets(
+            project_root,
+            worktree,
+            Some(last_path),
+            Some(stdout_path),
+        )?,
+        _ => orgasmic_core::validate_dispatch_promote_targets(
+            project_root,
+            Some(last_path),
+            Some(stdout_path),
+        )?,
+    };
+    promote_and_stage_dispatch_record(&artifacts, project_root, started_tx, last_path)
+}
+
+/// Promote validated artifacts, then `git add` the destination directory so
+/// durability does not depend on which `git add` form a manager happens to use
+/// (TASK-QGWK7.1 F-1). Staging failure is reported through `CLEANUP_ERROR` and
+/// never fails the close.
+fn promote_and_stage_dispatch_record(
+    artifacts: &orgasmic_core::DispatchAttemptArtifacts,
+    project_root: &Path,
+    started_tx: &str,
+    label_path: &Path,
+) -> Result<orgasmic_core::PromoteOutcome, String> {
+    let mut outcome =
+        orgasmic_core::promote_validated_dispatch_attempt(artifacts, project_root, started_tx)?;
+    if outcome.report_path.is_some() {
+        if let Err(err) = stage_promoted_dispatch_record(project_root, started_tx) {
+            let stage_err = format!(
+                "stage promoted dispatch record for {}: {err}",
+                label_path.display()
+            );
+            outcome.error = Some(match outcome.error.take() {
+                Some(prior) => format!("{prior}; {stage_err}"),
+                None => stage_err,
+            });
+        }
+    }
+    Ok(outcome)
+}
+
+/// Stage `.orgasmic/dispatch-records/<started_tx>/` into the git index.
+/// Staging only — when to commit stays with the manager.
+// orgasmic:TASK-QGWK7.1
+fn stage_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+    let output = Command::new("git")
+        .args(["add", "--"])
+        .arg(&dest_dir)
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "git add failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    Ok(())
 }
 
 fn push_cleanup_extra(extra: &mut Vec<(String, String)>, cleanup: &CleanupOutcome) {
@@ -9026,6 +9132,159 @@ mod tests {
         assert!(resolve_branch_oid(&fixture.root, &fixture.branch)
             .unwrap()
             .is_none());
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn dispatch_close_stages_promoted_record_in_git_index() {
+        let fixture = dispatch_cleanup_fixture("task-stage");
+        std::fs::write(&fixture.last, "staged report\n").unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-STAGE");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
+        let report_path = cleanup
+            .report_path
+            .as_deref()
+            .expect("close must name a promoted REPORT_PATH");
+        let dest_dir = fixture
+            .root
+            .join(report_path)
+            .parent()
+            .expect("report path has parent")
+            .to_path_buf();
+        let output = Command::new("git")
+            .args(["ls-files", "--stage", "--"])
+            .arg(&dest_dir)
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let listed = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            listed.contains("last.txt"),
+            "promoted record must be in the git index after close so durability does not depend on which git add form a manager uses; git ls-files --stage:\n{listed}"
+        );
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn no_worktree_remove_with_artifacts_needs_close_guard() {
+        let fixture = dispatch_cleanup_fixture("task-fence");
+        let open = dispatch_cleanup_record(&fixture, "TASK-FENCE");
+        assert!(
+            close_needs_artifact_fence(false, &open),
+            "--no-worktree-remove with LAST_PATH/STDOUT_PATH must take the close guard"
+        );
+        assert!(close_needs_artifact_fence(true, &open));
+        let mut bare = open.clone();
+        bare.last_path = None;
+        bare.stdout_path = None;
+        assert!(
+            !close_needs_artifact_fence(false, &bare),
+            "a no-op close with nothing to promote must not take the guard"
+        );
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn no_worktree_remove_promote_takes_cleanup_lock() {
+        let fixture = dispatch_cleanup_fixture("task-lock");
+        let open = dispatch_cleanup_record(&fixture, "TASK-LOCK");
+        let held = acquire_dispatch_cleanup_lock(&fixture.root).unwrap();
+        let root = fixture.root.clone();
+        let worktree = open.worktree.clone();
+        let last = fixture.last.clone();
+        let stdout = fixture.stdout.clone();
+        let tx_id = open.tx_id.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let join = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = promote_dispatch_artifacts_in_place(
+                &root,
+                worktree.as_deref(),
+                &last,
+                &stdout,
+                &tx_id,
+            );
+            done_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        // While we hold the lock, the promote must not finish.
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(150))
+                .is_err(),
+            "promote_dispatch_artifacts_in_place must take the cleanup lock"
+        );
+        drop(held);
+        let outcome = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("promote should finish after lock release")
+            .expect("promote ok");
+        assert!(outcome.report_path.is_some());
+        join.join().unwrap();
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn no_worktree_remove_promote_against_missing_worktree_is_ok() {
+        let fixture = dispatch_cleanup_fixture("task-missing-wt");
+        std::fs::write(&fixture.last, "rescued report\n").unwrap();
+        // Reclaim the worktree the way prune would, leaving tmp artifacts.
+        assert!(Command::new("git")
+            .args(["worktree", "remove"])
+            .arg(&fixture.worktree)
+            .current_dir(&fixture.root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(!fixture.worktree.exists());
+        let open = dispatch_cleanup_record(&fixture, "TASK-MISSING-WT");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+        assert_eq!(
+            cleanup.status,
+            CleanupStatus::Ok,
+            "promote against an already-reclaimed worktree must report ok, not partial: {:?}",
+            cleanup.error
+        );
+        let report_path = cleanup
+            .report_path
+            .as_deref()
+            .expect("close must name a promoted REPORT_PATH");
+        assert!(fixture.root.join(report_path).exists());
+        assert!(!fixture.last.exists());
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn finalize_report_path_fallback_is_project_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        std::fs::create_dir_all(project_root.join(".orgasmic")).unwrap();
+        std::fs::write(
+            home.board(),
+            format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT demo\n:PROPERTIES:\n:ID:               demo\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                project_root.display()
+            ),
+        )
+        .unwrap();
+        let abs = project_root.join(".orgasmic/tmp/dispatch/task-x/task-x-last.txt");
+        let rel = project_relative_report_path_fallback(&home, Some("demo"), Some(&abs))
+            .expect("absolute path under project root must relativize");
+        assert_eq!(rel, ".orgasmic/tmp/dispatch/task-x/task-x-last.txt");
+        assert!(!rel.starts_with('/'));
+        let outside = tmp.path().join("elsewhere/last.txt");
+        assert_eq!(
+            project_relative_report_path_fallback(&home, Some("demo"), Some(&outside)),
+            None,
+            "paths outside the project must not become REPORT_PATH"
+        );
     }
 
     #[test]

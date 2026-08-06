@@ -1,0 +1,5 @@
+# One line. Run from the repo root by `orgasmic verify TASK-QGWK7.1`.
+#
+# Pins F-1: after close, the promoted dispatch-record directory is in the git
+# index. Under the injection, staging is skipped and the first assertion fails.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic -- --exact manager::tests::dispatch_close_stages_promoted_record_in_git_index

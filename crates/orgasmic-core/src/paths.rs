@@ -124,6 +124,24 @@ fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
     Ok(trimmed)
 }
 
+/// Max bytes of harness `stdout.log` promoted into permanent git history
+/// (TASK-QGWK7.1). The original byte count is recorded beside the promoted
+/// tail so truncation is visible.
+pub const STDOUT_PROMOTE_TAIL_BYTES: u64 = 64 * 1024;
+
+/// Outcome of promoting a validated attempt's artifacts (TASK-QGWK7.1).
+///
+/// `report_path` is set whenever `last.txt` landed at the canonical location,
+/// even if `stdout.log` promotion failed afterward — a half-succeeded promote
+/// must still name what it kept. `error` carries non-fatal promote problems
+/// for the close tx's `CLEANUP_ERROR` channel; it never means the report was
+/// destroyed (unlink runs only after every intended copy succeeds).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromoteOutcome {
+    pub report_path: Option<String>,
+    pub error: Option<String>,
+}
+
 /// Validated dispatch attempt artifact pair for cleanup. Stores the opened
 /// stem directory handle, no-follow artifact file handles, and relative names
 /// so unlink targets the validated inode, not a replaced same-name entry
@@ -131,7 +149,9 @@ fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
 pub struct DispatchAttemptArtifacts {
     pub stem: String,
     pub attempt_id: Option<String>,
-    worktree_handle: std::fs::File,
+    /// Present when the worktree was validated. Promote-only paths (worktree
+    /// already reclaimed) leave this `None` — identity checks require `Some`.
+    worktree_handle: Option<std::fs::File>,
     stem_dir_handle: std::fs::File,
     last_name: String,
     stdout_name: String,
@@ -154,6 +174,37 @@ pub fn validate_dispatch_cleanup_targets(
     let stdout =
         stdout_path.ok_or_else(|| "stdout_path required for dispatch cleanup".to_string())?;
     let worktree_handle = validate_dispatch_worktree(worktree_path)?;
+    let (stem_dir, stem) = validate_dispatch_stem_dir(project_root, last)?;
+    validate_dispatch_artifact_pair(
+        &stem_dir,
+        &stem,
+        last,
+        stdout,
+        Some(worktree_handle),
+    )
+}
+
+/// Validate the artifact pair for promotion when the worktree may already be
+/// gone (TASK-QGWK7.1 F-4). Same stem/artifact fences as cleanup validation;
+/// skips the worktree existence check so a close after reclaim can still
+/// promote.
+// orgasmic:TASK-QGWK7.1
+pub fn validate_dispatch_promote_targets(
+    project_root: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> Result<DispatchAttemptArtifacts, String> {
+    let last = last_path.ok_or_else(|| "last_path required for dispatch promote".to_string())?;
+    let stdout =
+        stdout_path.ok_or_else(|| "stdout_path required for dispatch promote".to_string())?;
+    let (stem_dir, stem) = validate_dispatch_stem_dir(project_root, last)?;
+    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, None)
+}
+
+fn validate_dispatch_stem_dir(
+    project_root: &Path,
+    last: &Path,
+) -> Result<(PathBuf, String), String> {
     let stem_dir = last
         .parent()
         .ok_or_else(|| "last_path has no parent stem dir".to_string())?;
@@ -170,7 +221,7 @@ pub fn validate_dispatch_cleanup_targets(
     if stem.contains("..") {
         return Err("invalid dispatch stem".into());
     }
-    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, worktree_handle)
+    Ok((stem_dir, stem))
 }
 
 /// Re-open the worktree without following symlinks and prove that the path
@@ -179,8 +230,11 @@ pub fn verify_dispatch_worktree_identity(
     artifacts: &DispatchAttemptArtifacts,
     worktree_path: &Path,
 ) -> Result<(), String> {
+    let expected = artifacts.worktree_handle.as_ref().ok_or_else(|| {
+        "worktree identity check requires a worktree-validated artifact set".to_string()
+    })?;
     let current = open_dispatch_dir(worktree_path)?;
-    same_file_identity(&artifacts.worktree_handle, &current)
+    same_file_identity(expected, &current)
         .then_some(())
         .ok_or_else(|| "worktree identity changed after cleanup validation".to_string())
 }
@@ -211,29 +265,61 @@ pub fn prune_validated_dispatch_attempt(
     unlink_validated_attempt_pair(artifacts)
 }
 
-/// Move the validated attempt's `last.txt` and `stdout.log` out of gitignored
-/// `tmp/` into `.orgasmic/dispatch-records/<started_tx>/`, then unlink the tmp
-/// copies. Returns the repo-relative `:REPORT_PATH:` (always `last.txt`).
+/// Move the validated attempt's `last.txt` and (bounded) `stdout.log` out of
+/// gitignored `tmp/` into `.orgasmic/dispatch-records/<started_tx>/`, then
+/// unlink the tmp copies when every intended copy succeeded.
 ///
-/// Both files are promoted: `last.txt` is the worker summary the tx names;
-/// `stdout.log` is the harness transcript that can falsify a curated close
-/// reason. Retention is forever (see manager-dispatch convention).
-// orgasmic:TASK-QGWK7
+/// `last.txt` is always promoted in full. `stdout.log` keeps falsifiability
+/// without unbounded git growth (TASK-QGWK7.1): empty files are skipped; larger
+/// files promote only the last [`STDOUT_PROMOTE_TAIL_BYTES`] and record the
+/// original byte count in `stdout.log.bytes` beside them. Retention numbers
+/// live in the manager-dispatch convention.
+// orgasmic:TASK-QGWK7,TASK-QGWK7.1
 pub fn promote_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
     project_root: &Path,
     started_tx: &str,
-) -> Result<String, String> {
+) -> Result<PromoteOutcome, String> {
     let report_rel = dispatch_record_report_rel(started_tx)?;
     let dest_dir = dispatch_record_dir(project_root, started_tx)?;
     std::fs::create_dir_all(&dest_dir).map_err(|err| err.to_string())?;
 
     #[cfg(unix)]
     {
-        copy_validated_artifact_to(&dest_dir.join("last.txt"), &artifacts.last_file)?;
-        copy_validated_artifact_to(&dest_dir.join("stdout.log"), &artifacts.stdout_file)?;
-        unlink_validated_attempt_pair(artifacts)?;
-        Ok(report_rel)
+        let last_dest = dest_dir.join("last.txt");
+        if let Err(err) = copy_validated_artifact_to(&last_dest, &artifacts.last_file) {
+            return Ok(PromoteOutcome {
+                report_path: None,
+                error: Some(format!("promote last.txt: {err}")),
+            });
+        }
+
+        let stdout_dest = dest_dir.join("stdout.log");
+        let stdout_bytes_dest = dest_dir.join("stdout.log.bytes");
+        match copy_validated_stdout_tail_to(
+            &stdout_dest,
+            &stdout_bytes_dest,
+            &artifacts.stdout_file,
+            STDOUT_PROMOTE_TAIL_BYTES,
+        ) {
+            Ok(_) => {
+                // Unlink tmp only after every intended copy succeeded so a
+                // partial failure duplicates rather than loses.
+                unlink_validated_attempt_pair(artifacts)?;
+                Ok(PromoteOutcome {
+                    report_path: Some(report_rel),
+                    error: None,
+                })
+            }
+            Err(err) => {
+                // last.txt is at the canonical path; name it. Leave tmp intact
+                // (no unlink) and scrub any mid-flight .promoting residue.
+                Ok(PromoteOutcome {
+                    report_path: Some(report_rel),
+                    error: Some(format!("promote stdout.log: {err}")),
+                })
+            }
+        }
     }
     #[cfg(not(unix))]
     {
@@ -264,32 +350,92 @@ fn unlink_validated_attempt_pair(artifacts: &DispatchAttemptArtifacts) -> Result
     }
 }
 
+/// Stream `source` to `dest` via a `.promoting` temp, without buffering the
+/// whole artifact in RSS (TASK-QGWK7.1 F-7). Scrubs the temp on failure so a
+/// half-flight promote leaves no tracked residue (F-8).
 #[cfg(unix)]
 fn copy_validated_artifact_to(dest: &Path, source: &std::fs::File) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::FileExt;
 
-    let mut buf = Vec::new();
-    let mut offset = 0u64;
-    loop {
-        let mut chunk = [0u8; 64 * 1024];
-        let n = source
-            .read_at(&mut chunk, offset)
-            .map_err(|err| err.to_string())?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        offset += n as u64;
-    }
     let tmp = dest.with_extension("promoting");
-    {
+    let result = (|| {
         let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
-        out.write_all(&buf).map_err(|err| err.to_string())?;
+        let mut offset = 0u64;
+        loop {
+            let mut chunk = [0u8; 64 * 1024];
+            let n = source
+                .read_at(&mut chunk, offset)
+                .map_err(|err| err.to_string())?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&chunk[..n]).map_err(|err| err.to_string())?;
+            offset += n as u64;
+        }
         out.sync_all().map_err(|err| err.to_string())?;
+        drop(out);
+        std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
-    Ok(())
+    result
+}
+
+/// Promote a bounded tail of `stdout.log`. Returns the original byte count.
+/// A 0-byte source is skipped entirely (no dest, no sidecar).
+#[cfg(unix)]
+fn copy_validated_stdout_tail_to(
+    dest: &Path,
+    bytes_sidecar: &Path,
+    source: &std::fs::File,
+    max_tail: u64,
+) -> Result<u64, String> {
+    use std::io::Write;
+    use std::os::unix::fs::FileExt;
+
+    let original_len = source.metadata().map_err(|err| err.to_string())?.len();
+    if original_len == 0 {
+        // Empty tmux panes are the common case; do not track a useless blob.
+        return Ok(0);
+    }
+
+    let start = original_len.saturating_sub(max_tail);
+    let tmp = dest.with_extension("promoting");
+    let bytes_tmp = bytes_sidecar.with_extension("promoting");
+    let result = (|| {
+        let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
+        let mut offset = start;
+        loop {
+            let mut chunk = [0u8; 64 * 1024];
+            let n = source
+                .read_at(&mut chunk, offset)
+                .map_err(|err| err.to_string())?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&chunk[..n]).map_err(|err| err.to_string())?;
+            offset += n as u64;
+        }
+        out.sync_all().map_err(|err| err.to_string())?;
+        drop(out);
+        {
+            let mut bytes_out =
+                std::fs::File::create(&bytes_tmp).map_err(|err| err.to_string())?;
+            write!(bytes_out, "{original_len}").map_err(|err| err.to_string())?;
+            bytes_out.sync_all().map_err(|err| err.to_string())?;
+        }
+        std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
+        std::fs::rename(&bytes_tmp, bytes_sidecar).map_err(|err| err.to_string())?;
+        Ok(original_len)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&bytes_tmp);
+    }
+    result
 }
 
 fn validate_dispatch_worktree(worktree_path: &Path) -> Result<std::fs::File, String> {
@@ -320,7 +466,7 @@ fn validate_dispatch_artifact_pair(
     stem: &str,
     last_path: &Path,
     stdout_path: &Path,
-    worktree_handle: std::fs::File,
+    worktree_handle: Option<std::fs::File>,
 ) -> Result<DispatchAttemptArtifacts, String> {
     let stem_dir_handle = open_dispatch_dir(stem_dir)?;
     let last_name = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
@@ -636,7 +782,7 @@ mod tests {
         assert!(legacy_last.exists());
     }
 
-    // orgasmic:TASK-QGWK7
+    // orgasmic:TASK-QGWK7,TASK-QGWK7.1
     #[test]
     fn promote_dispatch_attempt_keeps_report_under_started_tx() {
         let tmp = tempfile::tempdir().unwrap();
@@ -653,13 +799,15 @@ mod tests {
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
         let started_tx = "tx-20260806-orgasmic-4916";
-        let report_path =
+        let outcome =
             promote_validated_dispatch_attempt(&artifacts, &project_root, started_tx).unwrap();
 
         assert_eq!(
-            report_path,
-            ".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/last.txt"
+            outcome.report_path.as_deref(),
+            Some(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/last.txt")
         );
+        assert_eq!(outcome.error, None);
+        let report_path = outcome.report_path.unwrap();
         let promoted = project_root.join(&report_path);
         assert!(
             promoted.exists(),
@@ -669,16 +817,144 @@ mod tests {
             std::fs::read_to_string(&promoted).unwrap(),
             "worker report survives close"
         );
+        let record_dir =
+            project_root.join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916");
         assert_eq!(
-            std::fs::read_to_string(
-                project_root
-                    .join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/stdout.log")
-            )
-            .unwrap(),
+            std::fs::read_to_string(record_dir.join("stdout.log")).unwrap(),
             "harness stdout"
+        );
+        assert_eq!(
+            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
+            "14"
         );
         assert!(!last.exists(), "tmp last.txt must be moved, not copied");
         assert!(!stdout.exists(), "tmp stdout.log must be moved, not copied");
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn promote_skips_empty_stdout_and_bounds_tail_with_visible_byte_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "summary").unwrap();
+        std::fs::write(&stdout, "").unwrap();
+
+        let artifacts =
+            validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+                .unwrap();
+        let outcome =
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-empty-stdout")
+                .unwrap();
+        assert_eq!(outcome.error, None);
+        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-empty-stdout");
+        assert!(record_dir.join("last.txt").exists());
+        assert!(
+            !record_dir.join("stdout.log").exists(),
+            "0-byte stdout.log must not be promoted"
+        );
+        assert!(!record_dir.join("stdout.log.bytes").exists());
+
+        // Fresh attempt for the bounded-tail case.
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-tail");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let last = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "summary").unwrap();
+        let original_len = STDOUT_PROMOTE_TAIL_BYTES + 100;
+        let mut body = vec![b'a'; original_len as usize];
+        body[original_len as usize - 4..].copy_from_slice(b"TAIL");
+        std::fs::write(&stdout, &body).unwrap();
+        let artifacts =
+            validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+                .unwrap();
+        let outcome =
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-tail-stdout").unwrap();
+        assert_eq!(outcome.error, None);
+        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-tail-stdout");
+        let promoted = std::fs::read(record_dir.join("stdout.log")).unwrap();
+        assert_eq!(promoted.len() as u64, STDOUT_PROMOTE_TAIL_BYTES);
+        assert!(promoted.ends_with(b"TAIL"));
+        assert_eq!(
+            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
+            original_len.to_string(),
+            "truncation must be visible via the original byte count sidecar"
+        );
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn half_succeeded_promote_names_last_txt_and_leaves_no_promoting_residue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "kept report").unwrap();
+        std::fs::write(&stdout, "harness").unwrap();
+
+        let dest_dir = project_root.join(".orgasmic/dispatch-records/tx-half");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        // Block the stdout rename so last.txt lands and stdout fails.
+        std::fs::create_dir(dest_dir.join("stdout.log")).unwrap();
+
+        let artifacts =
+            validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+                .unwrap();
+        let outcome =
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-half").unwrap();
+        assert_eq!(
+            outcome.report_path.as_deref(),
+            Some(".orgasmic/dispatch-records/tx-half/last.txt")
+        );
+        assert!(
+            outcome.error.as_deref().unwrap_or("").contains("stdout"),
+            "stdout failure must be reported: {:?}",
+            outcome.error
+        );
+        assert!(dest_dir.join("last.txt").exists());
+        assert!(last.exists(), "tmp must remain when promote is partial");
+        assert!(stdout.exists(), "tmp must remain when promote is partial");
+        let residue: Vec<_> = std::fs::read_dir(&dest_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains("promoting"))
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "half-succeeded promote must leave no .promoting files: {residue:?}"
+        );
+    }
+
+    // orgasmic:TASK-QGWK7.1
+    #[test]
+    fn promote_targets_validate_without_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(&stem_dir).unwrap();
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "summary").unwrap();
+        std::fs::write(&stdout, "out").unwrap();
+
+        let artifacts =
+            validate_dispatch_promote_targets(&project_root, Some(&last), Some(&stdout)).unwrap();
+        let outcome =
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-no-wt").unwrap();
+        assert_eq!(outcome.error, None);
+        assert_eq!(
+            outcome.report_path.as_deref(),
+            Some(".orgasmic/dispatch-records/tx-no-wt/last.txt")
+        );
     }
 
     #[test]
