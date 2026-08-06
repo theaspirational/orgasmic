@@ -4002,21 +4002,30 @@ Two small consequences of TASK-G64ZH.1.1's write-time fallback:
 * BACKLOG TASK-QGWK7.1.1 follow-up: a git add failure mis-reports the close and silently keeps the branch    :dispatch:evidence:manager:
 :PROPERTIES:
 :ID: TASK-QGWK7.1.1
-:PRIORITY: P2
+:PRIORITY: P1
 :WRITE_SCOPE: crates/**,shipped/**,verify/**
 :FIX_SUBTASK: t
 :END:
 
-=== READ THIS FIRST — STATUS ===
-Follow-up round for the TASK-QGWK7.1 review (merged =955c8d6=, verdict
-*approve-with-follow-ups*). NO BLOCK SHIP. The parent chain's goal is MET: a
-promoted worker report now lands in the git index BY CONSTRUCTION, not by habit,
-and the reviewer traced every close path to confirm there is no third promote
-caller that skips staging.
+=== READ THIS FIRST — STATUS [updated 2026-08-07] ===
+*THIS TASK NOW CARRIES A REGRESSION, NOT ONLY FOLLOW-UPS. Read =M-0= FIRST — it
+was filed after the review and it is the reason this task is P1.* Staging the
+promoted record BREAKS =git merge= after a close, and the close-then-merge order
+is the one the review gate's own refusal message prescribes. Found by the
+TASK-STWVB.1.1 gate on its first honest workspace run; manager-confirmed failing
+in isolation.
 
-*One MEDIUM is a real behaviour bug this change introduced* and it is the reason
-this round exists rather than being folded into general polish. Everything else
-is LOW.
+The rest of this task is the follow-up round for the TASK-QGWK7.1 review (merged
+=955c8d6=, verdict *approve-with-follow-ups*), which had NO block ship. That
+verdict stands on what the review examined: the parent chain's goal IS met — a
+promoted worker report lands in the git index BY CONSTRUCTION, not by habit, and
+the reviewer traced every close path to confirm there is no third promote caller
+that skips staging. M-0 is not a defect the review missed by being careless; it
+is a consequence no static read of the diff would surface, because it only
+appears when a merge follows a close.
+
+*One further MEDIUM (=M-1=) is a real behaviour bug the same change introduced*
+and is the reason this round existed before M-0 arrived. Everything else is LOW.
 
 The full review is preserved at
 =.orgasmic/dispatch-records/tx-20260806-orgasmic-5026/last.txt=. Its predecessor
@@ -4186,3 +4195,53 @@ coverage the original F-3 and F-6 have.
 - The two accompanying tests enter the production call path, or are replaced by
   tests that do.
 - A decision is recorded on open question 3 (the =git stash= un-stage path).
+** M-0 — HIGH — staging the promoted record breaks git merge after a close
+*Filed 2026-08-07, AFTER the review, found by the TASK-STWVB.1.1 gate on its
+first honest workspace run. This is a REGRESSION from =955c8d6=, not a review
+finding — and it is the most important item on this task.*
+
+=crates/orgasmic-cli/tests/dispatch.rs:274=, test
+=reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge=.
+
+#+begin_example
+git ["merge", "--no-ff", "-m", "merge reviewed worker", "task-dispatch-test-impl"] failed
+stderr=error: Your local changes to the following files would be overwritten by merge:
+  .orgasmic/dispatch-records/tx-20260806-orgasmic-0006/last.txt
+Merge with strategy ort failed.
+#+end_example
+
+MANAGER-VERIFIED: it fails ALONE as well (5.49s, exit 101), so it is a genuine
+REAL and not load-sensitivity — the new classifier called it correctly.
+=955c8d6= touched =manager.rs= and =paths.rs= but NOT =tests/dispatch.rs=, and
+the last change to that test file was =0df25d0= (the TASK-QGWK7 parent). The
+test's flow is: reviewer =dispatch-close= (which now promotes AND STAGES its
+record) -> =git merge --no-ff= -> implementer =dispatch-close=. The staged
+=dispatch-records/= path is what the merge refuses to overwrite.
+
+*Why this matters beyond one test.* That test encodes the CLOSE-THEN-MERGE flow
+the review gate itself prescribes: its refusal message tells the manager to
+dispatch a reviewer and close it with =--verdict=, and only then does the
+default-branch merge unlock. A manager following that instruction literally
+closes first and merges second — and now the merge fails. This session's manager
+did not hit it only because it merged BEFORE closing, which the gate permits but
+does not prescribe.
+
+*It also sharpens the review's claim 1.* The reviewer asked what could UNSTAGE
+the record between =git add= and the commit. The answer that matters turned out
+to be the opposite direction: staging does not get undone, it BLOCKS a merge that
+wants to touch the same path.
+
+*Fix direction — decide, do not patch reflexively.* The options are not equal and
+the choice is part of this task:
+1. Stage only when the index is otherwise clean for that path, and report through
+   =CLEANUP_ERROR= when it is not. Preserves the guarantee in the common case.
+2. Commit the record instead of staging — rejected once already, because WHEN to
+   commit needs manager judgement; do not re-open without a reason.
+3. Keep staging and make the manager's documented flow merge-before-close.
+   Cheapest, but it moves the guarantee back into habit, which is exactly what
+   F-1 existed to remove.
+4. Stage with a mechanism that does not participate in merge conflict detection.
+   Investigate whether one exists before assuming it does.
+
+Whichever lands, *the failing test must go green with the durability property
+intact* — do not fix it by dropping the assertion or by un-staging in the test.

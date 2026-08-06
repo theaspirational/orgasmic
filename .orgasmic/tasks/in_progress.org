@@ -198,4 +198,67 @@ the field exists.
 - =verify/flake-registry.toml= byte-unchanged, as in both prior rounds.
 - Once B1 lands, the =ci.yml:200-206= comment is revisited: its stated
   justification is only true after B1 is fixed.
+** Evidence
+IMPLEMENTED 2026-08-06/07. Worker implementer-cursor-agent-tmux; driver tmux,
+harness cursor-agent, model cursor-grok-4.5-high-fast, effort omitted
+deliberately (the model id carries the tier). Merged b92199a. Report preserved
+at =.orgasmic/dispatch-records/tx-20260806-orgasmic-5045/last.txt=.
+
+B1 — THE SIGNAL IS NOW A RATE, AND IT WAS CALIBRATED AGAINST THE INVOCATION THAT
+MATTERS. One =--workspace= run of =scripts/run-tests.sh= with no arguments,
+BEFORE load 6.10: wall 356s, syspolicyd delta *+215.2s*, rate *0.6045 s/s*.
+*Under the old absolute 100s bound that calm-host run would have been DEGRADED* —
+which is the defect, measured on the exact command
+=.orgasmic/project.org:23= prescribes. Chosen: =SYSPOLICYD_RATE_DEGRADED=1.50=
+(~2.5x the measured workspace rate, above the scoped peak of 0.96, well below the
+historical thrash), with the justification written next to the constant at
+=scripts/run-tests.sh:93-98=. Load is demoted to corroborating only (F-C).
+
+THE ACCEPTANCE WAS DEMONSTRATED, NOT ASSERTED — and then independently
+re-demonstrated by the manager. The worker's no-arg run returned exit 1 (a real
+failure, see below), NOT exit 4, with =host : calm=. The manager then ran the
+real gate scoped (=-p orgasmic-core --lib=) on a calm host and got:
+=host : calm ... delta syspolicyd_cpu=0.2 wall_s=3, rate 0.0667=,
+=verdict: GREEN — no failures=, *exit 0*. That is the first time in this
+three-round chain the gate has returned a usable verdict.
+
+B2 — a crashed binary is no longer called green. With a stub cargo emitting
+SIGABRT / exit 101 on an injected degraded host, the verdict is
+=RED — cargo exited 101 with no per-test failure list= at exit 1.
+
+GATES at merge, manager-run: selftest 33 passed / 0 failed (up from 27);
+=--check= exit 0; clippy =-D warnings= clean; fmt clean;
+=orgasmic verify TASK-STWVB.1.1= PASS. The pinned red was checked against the
+log rather than trusted: it is the ONLY FAIL and it is the B1 rate case
+("long ambient syspolicyd accrual is calm as a rate (absolute would trip)").
+=verify/flake-registry.toml= byte-unchanged for the third consecutive round.
+
+*THE GATE'S FIRST REAL PRODUCT WAS CATCHING A REGRESSION FROM THE OTHER CHAIN,
+AND THAT IS THE STRONGEST EVIDENCE THIS WORK PAID OFF.* The worker's workspace
+run surfaced one REAL failure and reported it as unrelated. It is not unrelated:
+=reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge=
+(=crates/orgasmic-cli/tests/dispatch.rs:274=) fails because
+=git merge --no-ff= is refused with
+"Your local changes to the following files would be overwritten by merge:
+=.orgasmic/dispatch-records/tx-.../last.txt=". Manager-confirmed: it fails ALONE
+too (5.49s, exit 101), so the classifier was right to call it REAL rather than
+load-sensitive. Root cause is TASK-QGWK7.1's =955c8d6= staging change — that
+commit touched =manager.rs= and =paths.rs= but NOT =tests/dispatch.rs=, and the
+test's flow is reviewer =dispatch-close= (which now promotes AND STAGES) followed
+by =git merge=. Carried to TASK-QGWK7.1.1 as M-0.
+
+So a gate that could not discriminate for three rounds, on its first honest run,
+found a real regression that had already been merged and reviewed. That is the
+whole argument for the task.
+
+RESIDUAL, carried to the review:
+- The workspace acceptance run and the B1 calibration run are the SAME run. A
+  second independent workspace run was skipped on budget and reboot risk. The
+  manager's scoped GREEN is an independent second data point but is not a
+  workspace run.
+- A rate is the mirror of an absolute bound, and the mirror risk is SHORT
+  windows: a 3-second window that happens to catch a scan burst could spike the
+  rate spuriously. Measured once at wall_s=3 and it read 0.0667, so it did not
+  fire here — but n=1, and the failure mode is exactly the shape this chain
+  keeps producing.
 
