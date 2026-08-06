@@ -1,0 +1,464 @@
+# TASK-STWVB review — REJECT (mint TASK-STWVB.1)
+
+**Verdict: REJECT.** Part A is sound and should be kept. Part C's core interlock
+is sound and provably cannot green-wash a regression. Part B ships with its
+headline signal dead *and* structurally unmeasurable at the point it is sampled,
+and the combination of B's calibration with the verdict ordering means the gate
+now returns **no verdict** for the very suite it was built for — including for
+failures that fail in isolation, which load cannot explain. That is not the
+acceptance criterion ("a gate that returns a defensible verdict on a loaded
+machine"); it is a gate that returns "re-run when calm" forever.
+
+Four BLOCK-SHIP findings (F1–F4), five follow-ups (F5–F9). All are fixable
+inside `scripts/run-tests.sh` plus two lines of `test_fixtures.rs`; nothing here
+argues for reverting A.
+
+---
+
+## Ruling on the six claims, by number
+
+### Claim 1 — the dead syspolicyd signal: worse than the regex bug
+
+**Ruling: BLOCK SHIP, and the regex is the least of it.**
+
+Confirmed independently on this host:
+
+```
+$ ps -axo comm=  | grep syspolicyd     -> /usr/libexec/syspolicyd      (23 chars)
+$ ps -axo comm=,pcpu= | grep libexec/sys -> "/usr/libexec/sys   2.7"   (16 chars)
+$ ps -axo comm=,pcpu= | awk '/(^|\/)syspolicyd$/ {s+=$NF} END {if (NR||s>0) printf "%.1f",s}'
+0.0
+```
+
+So yes: `comm=` truncates to 16 characters *when combined with another column*,
+the regex cannot match, and the `END { if (NR || s > 0) ... }` guard turns the
+miss into a **measured `0.0`**.
+
+Three separate judgements:
+
+1. **Is load-average-alone sufficient?** No. The failure mode this task exists
+   to catch is precisely the one load average is worst at. The 2026-08-02
+   measurement is `syspolicyd at 586% CPU, load average 11.41` — a load reading
+   only 2.6× a quiet Mac, from a run that was 8–15× slowed. A scan storm is a
+   *serialization* stall: processes are blocked in exec, not runnable. The
+   canonical measurement in this very task ("the process is alive, blocked, and
+   has consumed ZERO CPU") describes a state that contributes to macOS load
+   average weakly and inconsistently. Dropping to load-alone deletes the only
+   signal that discriminates the mechanism.
+
+2. **Is `0.0` worse than the regex bug?** Yes, and materially. B's stated
+   purpose is stopping unmeasured conditions from looking like measurements, and
+   the sampler's own contract says "a missing signal is ignored, never fatal:
+   ... unknown fields become `?`". It then hard-codes the opposite. The verdict
+   block in the worker's own report reads `syspolicyd_cpu=0.0` three times and a
+   reader has no way to tell that from a calm-and-measured host. Fix `NR || s > 0`
+   → track a match flag and print `?` on zero matches. Once that is done the
+   regex bug announces itself on the next run instead of being invisible.
+
+3. **Does the same silent-zero shape exist on the load path?** Not the
+   silent-*zero* shape, but a sibling: `load=$(sysctl -n vm.loadavg | awk ...) ||
+   load="?"` — the `||` never fires because awk exits 0 on empty input, and only
+   the cpu field gets the `[ -n "$cpu" ] || cpu="?"` guard. An unreadable load
+   therefore stamps `load=` (blank), not `load=?`. It does not trip the gate
+   (`num("")` is false), so this is cosmetic — but it is the same class of bug
+   and should be fixed in the same pass. (F10 below.)
+
+**And the finding the brief did not anticipate — F1.** Even with the regex
+fixed, the signal still cannot be observed, because *nothing samples during the
+run*:
+
+```
+432:    HOST_DURING=$(sample_host_state)     # <- after SUITE_EXIT=$? on line 431
+434:    HOST_AFTER=$(sample_host_state)
+```
+
+`HOST_DURING` is taken after `cargo test` has already exited, back-to-back with
+`HOST_AFTER`. The header's "Sampled before / during / after the suite run" is
+not what the code does. The worker's own verdict block is the proof:
+`during load=22.49` and `after load=22.49`, identical. Load average survives
+this (1-minute decay), which is why B looks like it works; syspolicyd %CPU does
+not — the task's own note says killing the suite "dropped it to 75% within
+seconds". So the scan signal is unrecoverable at that sampling point regardless
+of the regex.
+
+I also checked whether `ps -o pcpu` is even the right instrument. It is a
+short-window decaying average, not a lifetime average (syspolicyd pid 495 read
+9.1, then 0.6, then 13.3 across three samples seconds apart, against a constant
+lifetime average of 8.26%). So a single point sample is noisy as well as
+mistimed. **The instrument this task already used successfully is the right
+one**: cumulative CPU-time delta across the run (`ps -o time=` before/after),
+which produced the clean `+281 s with rmux / +32 s without` result. It is
+immune to sampling jitter, immune to the timing problem, and needs no
+background sampler.
+
+### Claim 2 — is A's headline result caused by A?
+
+**Ruling: plausible, mechanism already established elsewhere, causal claim on
+this suite NOT established. Follow-up, not block-ship — keep A.**
+
+What is *not* in doubt: the mechanism. The task record already measured it
+independently — fresh direct exec 196 ms, second exec 4 ms, hard link to a new
+path 4 ms, byte-identical copy 162 ms. `link_shared_test_executable` is the
+right primitive and the inode is the cache key. I did not re-derive this.
+
+What the shipped evidence does not support is "14–20 → 0 because of A":
+
+- **The counters do not measure the mechanism.** `FRESH_FIRST_EXECS` /
+  `SHARED_LINK_REUSES` are incremented at fixture-*creation* sites
+  (`test_fixtures.rs:238,250,289,311`), not at exec. They count API calls. The
+  diff itself documents converted sites that are never executed at all —
+  `api.rs:23364`, *"Never executed (fence answers from PATH presence), but still
+  reuse the warmed inode"*. So `shared_link_reuses=134` is an upper bound on
+  avoided scans with no lower bound attached, and `fresh_first_execs=4` says
+  nothing about how many first-execs the *unconverted* rest of the suite still
+  pays.
+- **The before-number is an 8-site inventory on a different tree.** +8 converted
+  first-exec sites is a small delta against a suite that historically failed
+  14–20 tests, and the historical runs were at ~637 passed while the after-run
+  is 734 — different tree, different suite size, different host.
+- **The discriminator was not measured in the after-run.** All three samples read
+  `syspolicyd_cpu=0.0` because of Claim 1. There is therefore no evidence that
+  either after-run was under scan pressure at all, which is exactly the
+  condition under which A is supposed to matter. Claims 1 and 2 fail together:
+  the one number that would have tied the green to A is the number that never
+  fires.
+
+What *does* support A, and I want it on the record because it is the strongest
+thing here: the after-run went **734 passed / 0 failed at load 22.49**. Load ≥ 11
+historically produced 14 failures on this host. Going green at twice that load is
+meaningful. It is one data point, and load is not scan pressure, but it is not
+nothing.
+
+**A cheap controlled measurement that settles it without repeating the suite:**
+record syspolicyd cumulative CPU (`ps -o time= -p $(pgrep -x syspolicyd)`)
+immediately before and after **one** run of the *already-built* test binary, with
+and without consolidation behind a single env switch inside
+`link_shared_test_executable` (fall back to `create_fresh_test_executable` when
+set). Two runs of an existing binary, no rebuild, ~100 s total. That is the same
+instrument that produced +281 s / +32 s on this task. It also happens to be the
+fix for Claim 1, so one piece of work buys both.
+
+### Claim 3 — can C's interlock absorb a genuine regression?
+
+**Ruling: it cannot make the gate GREEN — that part of the design holds. But
+the interlock is unsound on `--classify`, and the calibration has collapsed the
+verdict vocabulary in the other direction.**
+
+**The good news, traced and confirmed.** `LOAD_COUNT` is only incremented at
+`:586` under `[ "$iso" -eq 0 ] && [ "$HOST_DEGRADED" -eq 1 ]`, and `HOST_DEGRADED`
+is set before classification begins and never cleared. So `LOAD_COUNT > 0`
+implies `HOST_DEGRADED == 1`, which means the `:822` branch always fires first
+and `STATUS=4`. There is **no input** where a real defect gets labelled
+LOAD-SENSITIVE and the gate exits 0. The `:836` "Interlock broken" branch is
+genuinely unreachable, and it is right to leave it in as a tripwire. A test that
+fails *alone* is always REAL regardless of load (`:599`), which is the correct
+rule. C does not green-wash.
+
+**F3 — the interlock is false on `--classify` (BLOCK SHIP).** Lines
+`:410,418-419` sample host state at *reclassification* time and assign it to
+before/during/after. That measurement has no relationship to the run that
+produced the log — it could be days later, or on a machine that is busy for
+entirely unrelated reasons. So the comment at `:582` ("THIS run's measured host
+state") is not true on that path: reclassifying an old log from a loaded shell
+relabels genuine REAL failures as LOAD-SENSITIVE and downgrades the verdict to
+INCONCLUSIVE. Worse, **all six new selftest cases drive `--classify`** — the only
+automated coverage the feature has is of the unsound path. Fix: on `--classify`,
+host state is *unknown*, so `HOST_DEGRADED=0` and LOAD-SENSITIVE is unavailable
+(unknown must not mint an excuse, exactly as unknown does not trip the gate
+elsewhere); or write the host stamp into the suite log at run time and read it
+back on reclassify.
+
+**F4 — the circularity is real and it has already fired (BLOCK SHIP).** The
+brief asked whether `HOST_DEGRADED` is computed from a sample the failing run
+itself could have caused. It is — entirely. The only surviving signal is load
+average, sampled seconds after a full-parallelism `cargo test` on a 10-core
+machine. This host idles at 4.50/6.64/6.34 with dispatches alone; a suite run on
+top of that clears 8.0 with room to spare. The implementer's own gate is the
+demonstration: **exit 4, INCONCLUSIVE, on 734 passed / 0 failed.**
+
+The brief predicted LOAD-SENSITIVE becoming the normal verdict. What actually
+happened is sharper, because the verdict ordering at `:822` puts INCONCLUSIVE
+*ahead of* REAL (`:842`), ahead of the interlock tripwire (`:836`), and ahead of
+the bare cargo-nonzero branch (`:847`):
+
+- A failure that also **fails in isolation** — which has already excluded load as
+  an explanation — returns exit 4 "re-run when calm" instead of exit 1 "this red
+  means something". The selftest encodes this as intended behaviour
+  (`degraded host + fails alone too -> INCONCLUSIVE`). It is not defensible: an
+  alone-red failure is a code fact whatever the host was doing.
+- A test binary that aborts without producing a failure list (`:847`) is likewise
+  swallowed into INCONCLUSIVE.
+- And since the suite always degrades the host, exit 0 and exit 1 both become
+  effectively unreachable for this crate.
+
+The registry-graveyard risk the brief worried about did not materialise. What
+materialised is its mirror image: instead of everything being excused, everything
+is *unadjudicated*. A gate whose answer is always "no verdict" has the same
+practical effect as a gate that is always red — people wave it through — and it
+is the same failure this task was opened to fix, one level up.
+
+**Fix direction, concretely.** (a) Degradation must be judged on host state *not
+attributable to this run*: use the BEFORE sample for the load signal, plus the
+syspolicyd cumulative-CPU delta measured across the run (which is inherently
+attributable but is the actual mechanism, and has a real threshold from the
++281/+32 measurement). In the worker's own run BEFORE was already 12.95 — three
+live workers — so that run would still, correctly, have been INCONCLUSIVE. (b)
+Let an alone-red REAL failure keep exit 1 regardless of host state; report the
+host stamp alongside it rather than replacing the verdict with it. Reorder `:822`
+to sit *after* `:842`. (c) Re-derive the load threshold against a measured
+calm-host baseline of the suite's own load, not against the 11.41 thrash reading.
+
+### Claim 4 — does exit code 4 break a caller?
+
+**Ruling: one caller, and it is the one that matters. MEDIUM, follow-up.**
+
+The complete consumer inventory:
+
+- **`.github/workflows/ci.yml:196-201`** — the *Workspace suite (classified)* job
+  on `macos-15` runs `bash scripts/run-tests.sh --work-dir ...`, captures
+  `status=$?`, and does `exit $status`. So exit 4 fails the lane. This is not a
+  misreport — non-zero is correctly propagated — but combined with F4 it converts
+  a lane that would otherwise be green into one that is red with the message
+  "INCONCLUSIVE — re-run when calm". That file's own header is the strongest
+  argument against shipping it: *"a lane that is red for reasons nobody is
+  expected to fix teaches everyone to ignore it, which is worse than no lane."*
+  Whether it actually trips depends on the runner: `macos-15` is a 3-vCPU
+  machine, so a whole-workspace run may or may not clear load 8.0. The new
+  verdict block prints the stamp, so the first CI run answers this for free —
+  read `host :` in the step summary before deciding.
+- `.github/workflows/ci.yml:192` — `run-tests.sh --check` returns before host
+  sampling. Unaffected.
+- `verify/TASK-DJ1WV/cmd`, `verify/TASK-S2KM0/cmd`, `verify/TASK-STWVB/cmd` all
+  invoke `run-tests-selftest.sh`, not `run-tests.sh`. Unaffected.
+- No script, no shipped convention, and no other workflow branches on specific
+  codes. Nothing treats 4 as anything but "non-zero".
+
+**Docs drift (F10):** `.orgasmic/project.org:23` says "All three must be green
+before a change is called done". Exit 4 is neither green nor red and that
+sentence now has no defined meaning for the suite gate. It was not updated. The
+house convention needs a line saying what a worker does with INCONCLUSIVE.
+
+### Claim 5 — did the fixture consolidation preserve test semantics?
+
+**Ruling: the link-vs-fresh boundary call is CORRECT at every site. One real
+defect in the malicious shim, and one coverage hole that let it ship.**
+
+I checked the boundary against what actually decides these tests — `revalidate`
+is `trusted_claude_target_matches_pin` (`api.rs:11606`), which is
+`canonicalize()` path equality **plus** `(dev, ino)` equality:
+
+| site | call | correct? |
+|---|---|---|
+| `seed_trusted_claude_symlink_layout` (`:18582`) | link | ✅ the pin records the shared inode; nothing asserts it is unique |
+| `pinned_claude_symlink_retarget_after_pin_is_rejected` (`:18611`) | **fresh** | ✅ needed — rejection is via canonicalize-path inequality, and a fresh inode also makes the ino check independently sound |
+| `pinned_claude_same_path_target_replacement_after_pin_is_rejected` (`:18633`) | **fresh** | ✅ **load-bearing** — the old target is renamed away first, so only a distinct inode makes `meta.ino() != pin.ino` fire. A link here would have been the silent-pass disaster |
+| `pinned_claude_config_retains_wrapper_inode_after_public_replacement` (`:18653,:18666`) | **fresh** ×2 | ✅ `assert_ne!(retained_meta.ino(), replacement_meta.ino())` is literally the assertion |
+| fence PATH binaries (`:23364`) | link | ✅ never executed; honestly commented |
+| `write_executable_stub` (`:26801`) | link | ✅ `real_tmux_on_path` decides on `which_binary` + rmux-shim detection, not on script output; both the negative and the positive control still discriminate |
+| `link_hanging_mux_shim` (`supervisor.rs:10279`) | link | ✅ `-V` answers before the armed check; the no-arg smoke exec hits `[ -f $armed ] || exit 0` and succeeds, as the test asserts |
+| `seed_test_pinned_exec_wrapper` (`:31005`) | link + sentinel | ✅ and it genuinely restores the exit-97 loud failure the round-2 review flagged as weakened — see F7 for the one gap |
+
+**F6 — `seed_malicious_path_claude_shim` (MEDIUM).** The shim itself still
+exercises what its test claims. I reconstructed `FIXTURE_SCRIPT` verbatim,
+installed it as `claude` with the two sidecars, and exec'd it through PATH with
+production-shaped argv:
+
+```
+$ PATH=.../shim:$PATH python3 -c "import os; os.execvp('claude',['claude','--resume','sess-1','-p','hello'])"
+.../shim/claude: line 67: exec: /bin/true: cannot execute: No such file or directory
+exit=126
+$ cat malicious-argv.log
+/private/.../shim/claude --resume sess-1 -p hello
+```
+
+Two results. Good news first: the `$0.malicious-log` side-channel **works**. I
+was concerned that a PATH-resolved binary would see a bare `$0` and lose the
+sidecar; it does not — the kernel's `#!` handling passes the path given to
+`execve`, which `execvp` has already resolved to absolute. So the negative
+assertion at `api.rs:31201` is still falsifiable and the security shape is
+preserved.
+
+The defect: **`/bin/true` does not exist on macOS** (`/usr/bin/true` does). The
+arm exits 126 with two errors on stderr instead of exec'ing cleanly. It does not
+break the one test that uses it, because that test asserts the shim *never*
+runs — which is exactly why it shipped: **no test in the suite ever executes this
+arm on its success path.** The whole arm is dead code that is only reachable when
+a test is failing. Fix `/bin/true` → `/usr/bin/true` (or `exit 0`), and add a
+positive control that execs the linked shim directly and asserts the log appears,
+so the negative assertion cannot rot into vacuity. This is the shape the brief
+warned about — "a test that still passes and no longer tests anything" — caught
+one step before it happened.
+
+### Claim 6 — the new fixture machinery
+
+**Ruling: sound in the paths that run; two LOW defects.**
+
+- **Overwrite-on-mismatch race (F8).** `pending.persist(&path)` is a rename
+  within the same directory, so the happy path is atomic and a concurrent
+  reader/exec keeps the old inode — safe. The `Err` fallback at `:240-251` is
+  `std::fs::write`, which truncates **in place**. Because every converted site is
+  a hard link to that inode, a fallback write mutates *every already-installed
+  fixture link in every running test simultaneously*, and can race an in-flight
+  exec (`ETXTBSY`, or a torn script). The path is close to unreachable — the path
+  is content-hashed, so reaching it needs a hash collision, a truncated leftover,
+  or a cross-device/permission failure — but the consequence if it ever fires is
+  precisely the cross-test flakiness this task exists to remove, and the safe
+  form (retry temp-file + rename) is two lines. Not a ship blocker; do it in the
+  fix round.
+- The content-hashed path **does** fix the stale-fixture trap the round-2 review
+  named, and the `assert_eq!` readback at `:255` is a real guard. Two notes: the
+  doc at `:199-201` says "editing the script cannot leave a stale file at the old
+  path" — accurate about *use*, but the old file is never removed, so
+  `target/debug/deps` accumulates one orphan per edit. And `DefaultHasher` is
+  documented as not stable across Rust releases; harmless here (a changed hash
+  just mints a new path) but worth not depending on.
+- **F7 — the exit-97 sentinel is shadowed (LOW).** The restored guard at
+  `:175-182` sits *after* the argv prelude at `:60-101`. For
+  `$1 ∈ {warm, artifact-ready, artifact-busy, cursor-worker-sibling, config}` the
+  prelude wins and the sentinel never runs; the old wrapper's
+  `[ "$1" = __exec-pinned ] || exit 97` was unconditional. `config` in particular
+  execs `/bin/sleep 30`, so that regression shape would **hang** rather than fail
+  loudly. Move the `orgasmic-pinned-wrapper` check above the prelude for links
+  that carry the marker.
+- `write_linked_fixture_text/value` and `link_hanging_mux_shim` are fine.
+  `link_shared_test_executable`'s uuid-staged `hard_link` + `rename` is race-free.
+  One portability note, loud rather than silent: `hard_link` fails across
+  filesystems, so a `TMPDIR` on a different volume from `target/` panics with a
+  clear message. Acceptable.
+
+---
+
+## Findings by severity
+
+**BLOCK SHIP**
+
+- **F1 HIGH bug** `scripts/run-tests.sh:432` — "during" is sampled after cargo
+  exits, back-to-back with "after"; nothing samples during the run, so the
+  scan-storm burst is unobservable even once the regex is fixed. Worker's own
+  block shows `during == after == 22.49`.
+- **F2 HIGH correctness** `scripts/run-tests.sh:320-321` — syspolicyd regex
+  cannot match 16-char truncated `comm=`, and `END { if (NR || s > 0) }` reports
+  the miss as a *measured* `0.0`. B ships with one of two signals, and the dead
+  one is the mechanism this task documented.
+- **F3 HIGH correctness** `scripts/run-tests.sh:410,418-419,586` — under
+  `--classify` the host sample is taken at reclassify time, so C's interlock is
+  false there; and all six new selftest cases exercise only that path.
+- **F4 HIGH design** `scripts/run-tests.sh:77,822` — `load>=8.0` sampled right
+  after a full-parallelism run means the suite trips its own gate, and
+  INCONCLUSIVE at `:822` preempts REAL (`:842`) and cargo-nonzero (`:847`). Exit
+  0 and exit 1 are both effectively unreachable for this crate; an alone-red
+  failure returns "re-run when calm". Demonstrated by the implementer's own gate:
+  exit 4 on 734 passed / 0 failed.
+
+**Follow-up (fold into the same TASK-STWVB.1 round)**
+
+- **F5 MEDIUM bug** `.github/workflows/ci.yml:196-201` — exit 4 fails the
+  workspace lane; read the `host :` line from the first CI run before deciding
+  whether it trips on a 3-vCPU runner.
+- **F6 MEDIUM test** `test_fixtures.rs:124` — `/bin/true` does not exist on
+  macOS; the arm has no positive coverage because its only user asserts it never
+  runs.
+- **F9 MEDIUM test** — A's before/after is not a controlled measurement; the
+  counters count API calls, and the discriminator read `0.0`. Keep A, settle it
+  with the syspolicyd-CPU-delta probe above.
+- **F7 LOW test** `test_fixtures.rs:175-182` — exit-97 sentinel shadowed by the
+  argv prelude for five argv values; `config` hangs 30 s instead.
+- **F8 LOW correctness** `test_fixtures.rs:240-251` — in-place `std::fs::write`
+  fallback mutates a shared inode under every installed link.
+- **F10 LOW docs** `scripts/run-tests.sh:313-317` blank-vs-`?` on the load path;
+  `.orgasmic/project.org:23` "must be green" undefined for exit 4.
+
+---
+
+## Open questions
+
+1. Does a whole-workspace run on a 3-vCPU `macos-15` runner clear load 8.0? The
+   new verdict block answers this on the first CI run at no cost — but the answer
+   determines whether F5 is theoretical or is already breaking merges.
+2. What is the suite's *own* calm-host load contribution on this 10-core Mac?
+   That number is what the threshold should be calibrated against, and nobody has
+   it. It is one `sysctl -n vm.loadavg` sampled mid-run.
+3. Is INCONCLUSIVE meant to be advisory or blocking for a worker's gate? F10 —
+   the house convention has no answer, and workers will invent one.
+
+## Verification notes
+
+Everything below was run by me on the merge tree; the implementer's numbers were
+treated as claims.
+
+**Independently reproduced**
+- `bash scripts/run-tests-selftest.sh` → **24 passed / 0 failed**, 3.85 s.
+- `verify/flake-registry.toml` byte-unchanged by the merge (`git diff --stat`
+  empty) — confirms the brief's item 1 rather than assuming it.
+- Every `api.rs` / `supervisor.rs` hunk is inside `mod tests` (read the full
+  diff) — confirms the brief's item 2.
+- The syspolicyd truncation, the `0.0` return, and the full-path form under
+  `comm=` alone — three `ps` invocations, output quoted above.
+- `ps -o pcpu` is a short-window decaying average, not a lifetime average
+  (syspolicyd read 9.1 / 0.6 / 13.3 seconds apart, lifetime average 8.26%). This
+  corrects a hypothesis of mine that the threshold was unreachable by
+  construction — it is not; it is mistimed and noisy, which is F1.
+- `$0` under `execvp` with a bare name resolves to the absolute script path
+  (bash-launched and `os.execvp`-launched, both) — this is what makes the
+  `write_linked_fixture_*` side channel sound for PATH-resolved shims.
+- The `malicious-claude` arm, reconstructed verbatim from `FIXTURE_SCRIPT` and
+  executed outside the repo: writes the log correctly, then fails
+  `exec /bin/true` with exit 126. `ls /bin/true` → No such file or directory;
+  `/usr/bin/true` exists.
+- Consumer inventory for exit 4: `grep -rn run-tests` across the repo minus
+  `target/` and `.git/`, then read `.github/workflows/ci.yml` in full.
+- `pin_trusted_claude_candidate` / `trusted_claude_target_matches_pin`
+  (`api.rs:11565,11606`) read in full to judge the link-vs-fresh boundary rather
+  than trusting the diff comments.
+
+**Not run, and why**
+- No full `cargo test -p orgasmic-daemon --lib`. Neither this worktree nor the
+  repo root has a built test binary (`target/debug/deps` is empty here), so it
+  would have meant a full cold compile plus a suite run — outside the execution
+  budget and squarely into the syspolicyd/reboot risk the brief calls out. The
+  consequence: I did not independently reproduce **734 passed / 0 failed**, and
+  Claim 2's headline rests on the implementer's two runs. F9 stands on the
+  *reasoning* about what the shipped evidence can support, not on a counter-run.
+- No synthetic load injection to prove the suite self-trips the 8.0 threshold.
+  Deliberately loading this host disrupts live dispatches (TASK-5FEN5 measured
+  exactly that). F4 rests instead on the implementer's own gate output (exit 4,
+  load 12.95 → 22.49, 734/0) plus this host's measured idle-with-dispatches
+  baseline of 4.50/6.64/6.34 on 10 cores.
+- No negative probes requiring an edit — read-only throughout. Scratch files were
+  written only under the session scratchpad, never in the repo.
+
+**Residual risk.** The one thing I could not check without a suite run is whether
+any *unconverted* fixture site still writes a fresh executable inside a timed
+section — A's coverage is asserted by inventory, and the counters cannot
+distinguish "few fresh execs" from "few fresh execs that matter".
+
+## Fix directions (TASK-STWVB.1)
+
+1. Sample host state **during** the run: background sampler at ~5 s taking the
+   max, or — better and simpler — record syspolicyd **cumulative CPU-time**
+   (`ps -o time=`) before and after and use the delta. Threshold from the
+   existing +281 s / +32 s measurement. (F1, and it revives Claim 1's signal
+   without needing the regex at all.)
+2. Fix the regex (`comm=` truncates; match `syspolicyd$` against a 16-char field,
+   or select by `pgrep -x syspolicyd` and read `-o time=`/`-o pcpu=` by pid), and
+   make a miss print `?`, not `0.0`. Same for the blank load case. (F2, F10)
+3. On `--classify`, host state is unknown: `HOST_DEGRADED=0`, LOAD-SENSITIVE
+   unavailable, and say so in the stamp. Add a selftest case that drives the
+   *live* sampler path so the feature has coverage that is not `--classify`. (F3)
+4. Judge degradation on host state not attributable to this run (the BEFORE
+   sample for load, plus the syspolicyd delta), and move the INCONCLUSIVE branch
+   *after* REAL so an alone-red failure keeps exit 1 and its "this red means
+   something" verdict. Re-derive the load threshold against a measured calm-host
+   baseline of the suite's own load. (F4)
+5. Decide and document what a worker does with exit 4, in
+   `.orgasmic/project.org:23` and in the ci.yml header. If the lane should not
+   fail on 4, say so explicitly at `ci.yml:200` rather than by accident. (F5, F10)
+6. `/bin/true` → `/usr/bin/true`, and add a positive control that execs the
+   malicious shim and asserts the log appears. (F6)
+7. Move the `orgasmic-pinned-wrapper` sentinel above the argv prelude. (F7)
+8. Replace the in-place `std::fs::write` fallback with a temp-file + rename
+   retry. (F8)
+9. Settle Claim 2 with the two-run syspolicyd-delta probe against the
+   already-built binary, behind a one-line consolidation kill switch. (F9)
+
+Nine tx entries filed as `reviewer.finding` against TASK-STWVB.
