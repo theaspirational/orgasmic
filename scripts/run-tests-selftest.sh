@@ -104,26 +104,37 @@ registry() {
 
 # Append a live-run host stamp to the synthetic suite log. --classify reads
 # this instead of sampling at reclassify time (TASK-STWVB.1 / F3).
+# Judgment is rate = syspolicyd_cpu / wall_s (TASK-STWVB.1.1). The live-path
+# e2e case below exercises write_host_stamp directly; these helpers only
+# feed --classify fixtures.
 stamp_host() {
     local before_load="$1" before_time="$2" after_load="$3" after_time="$4"
-    local delta_load="$5" delta_cpu="$6"
-    printf '# orgasmic-host-state: before=load=%s syspolicyd_time=%s | after=load=%s syspolicyd_time=%s | delta=load=%s syspolicyd_cpu=%s\n' \
+    local delta_load="$5" delta_cpu="$6" wall_s="$7"
+    printf '# orgasmic-host-state: before=load=%s syspolicyd_time=%s | after=load=%s syspolicyd_time=%s | delta=load=%s syspolicyd_cpu=%s wall_s=%s\n' \
         "$before_load" "$before_time" "$after_load" "$after_time" \
-        "$delta_load" "$delta_cpu" >> "$TMP/suite.log"
+        "$delta_load" "$delta_cpu" "$wall_s" >> "$TMP/suite.log"
 }
 
 stamp_host_calm() {
-    stamp_host 0.5 10:00.00 1.2 10:05.00 0.5 5.0
+    # rate = 5.0/100 = 0.05
+    stamp_host 0.5 10:00.00 1.2 10:05.00 0.5 5.0 100
 }
 
 stamp_host_degraded_load() {
-    # BEFORE load above threshold; delta calm — judgment uses BEFORE load.
-    stamp_host 11.41 10:00.00 22.0 10:05.00 11.41 5.0
+    # High BEFORE load is display-only (F-C); rate must clear the primary gate.
+    # rate = 200/100 = 2.0
+    stamp_host 11.41 10:00.00 22.0 10:05.00 11.41 200.0 100
 }
 
 stamp_host_degraded_syspolicy() {
-    # BEFORE load calm; syspolicyd cumulative delta above threshold.
-    stamp_host 0.5 10:00.00 1.0 12:00.00 0.5 120.0
+    # Calm BEFORE load; high syspolicyd rate.
+    # rate = 200/100 = 2.0
+    stamp_host 0.5 10:00.00 1.0 12:00.00 0.5 200.0 100
+}
+
+stamp_host_load_only_high() {
+    # High BEFORE load, ambient rate — must stay calm (F-C).
+    stamp_host 11.41 10:00.00 22.0 10:05.00 11.41 5.0 100
 }
 
 # Default --classify cases leave host state to the stamp (or unknown). The
@@ -373,7 +384,8 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
 # -- host state and load-sensitivity (TASK-STWVB / TASK-STWVB.1) -------------
 
 # Live sampler path (not --classify): snapshot prints ? for a missing signal,
-# never a measured 0.0 or a blank load field.
+# never a measured 0.0 or a blank load field. Assert on syspolicyd_time= (the
+# field this snapshot emits) — not syspolicyd_cpu=, which cannot appear here (F-F).
 start "live sampler path: snapshot uses ? for missing fields, never blank/0.0"
 sample=$("$RUNNER" --sample-host)
 printf '%s\n' "$sample" > "$TMP/sample.txt"
@@ -381,7 +393,7 @@ bad=""
 printf '%s' "$sample" | grep -Eq '^load=' || bad="$bad; missing load="
 printf '%s' "$sample" | grep -Eq 'syspolicyd_time=' || bad="$bad; missing syspolicyd_time="
 printf '%s' "$sample" | grep -Eq 'load=($| )' && bad="$bad; blank load"
-printf '%s' "$sample" | grep -Eq 'syspolicyd_cpu=0\.0' && bad="$bad; measured 0.0 cpu"
+printf '%s' "$sample" | grep -Eq 'syspolicyd_time=0(\.0)?($| )' && bad="$bad; measured 0.0 syspolicyd_time"
 # A miss must be `?`, not empty after the equals.
 load_val=${sample#load=}; load_val=${load_val%% *}
 time_val=${sample#*syspolicyd_time=}
@@ -496,6 +508,182 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "FLAKE (1)" \
     "host     : calm" \
     "verdict: GREEN modulo 1 registered flake"
+
+# -- TASK-STWVB.1.1 follow-ups ----------------------------------------------
+
+install_stub_cargo_ok() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<'EOF'
+#!/bin/sh
+cat <<'LOG'
+     Running unittests src/lib.rs (stub)
+running 1 test
+test tests::x ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+LOG
+exit 0
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
+install_stub_cargo_abort() {
+    # No per-test failure list — just a crashed binary (B2). The classifier
+    # must name the non-zero cargo exit, not claim the suite looked green.
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<'EOF'
+#!/bin/sh
+cat <<'LOG'
+     Running unittests src/lib.rs (stub)
+error: test failed, to rerun pass `-p orgasmic-daemon --lib`
+
+Caused by:
+  process didn't exit successfully: `target/debug/deps/stub` (signal: 6, SIGABRT: process abort signal)
+LOG
+exit 101
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
+# F-C: high BEFORE load alone must not trip the gate.
+start "high BEFORE load alone stays calm (load is corroborating only)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 2 tests
+test tests::unrelated_a ... ok
+test tests::unrelated_b ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+stamp_host_load_only_high
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : calm" \
+    "verdict: GREEN — no failures"
+
+# F-E: measured-nothing is unknown, not calm.
+start "all-unknown judgment prints host unknown, not calm"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::unrelated_a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+stamp_host '?' '?' '?' '?' '?' '?' '?'
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (no numeric host signal" \
+    "verdict: GREEN — no failures"
+
+start "unparseable judgment prints host unknown, not calm"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::unrelated_a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+stamp_host abc abc abc abc abc xyz qqq
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (no numeric host signal" \
+    "verdict: GREEN — no failures"
+
+# B2: crashed binary is never "suite looked green", even on a degraded host.
+start "crashed cargo on degraded host -> RED names exit, never looked green"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_abort
+PATH="$TMP/bin:$PATH" \
+    ORGASMIC_HOST_STATE_SAMPLE='load=11.41,syspolicyd_cpu=250.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+bad=""
+[ "$RUN_EXIT" = 1 ] || bad="exit $RUN_EXIT, wanted 1"
+grep -qF 'host     : DEGRADED' "$TMP/out.txt" || bad="$bad; output lacks \`host     : DEGRADED\`"
+grep -qF 'verdict: RED — cargo exited 101 with no per-test failure list' "$TMP/out.txt" \
+    || bad="$bad; output lacks cargo-exit RED"
+grep -qF 'suite looked green' "$TMP/out.txt" && bad="$bad; misreported suite looked green"
+if [ -z "$bad" ]; then
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+else
+    printf 'FAIL %s: %s\n' "$CASE" "${bad#; }"
+    printf -- '---- output ----\n'
+    cat "$TMP/out.txt"
+    printf -- '----------------\n'
+    FAILED=$((FAILED + 1))
+fi
+
+# F-D: live sampler + write_host_stamp + --classify round-trip on the log
+# that same run wrote. Format is not hand-copied here. Host word may be
+# calm or DEGRADED depending on ambient syspolicyd burn during the second
+# the stub cargo runs; what is pinned is the stamp contract.
+start "live path stamps host state; --classify reads that stamp"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/live-out.txt" 2>&1
+live_log="$TMP/work/suite.log"
+bad=""
+[ -f "$live_log" ] || bad="$bad; live run wrote no suite.log"
+if [ -z "$bad" ]; then
+    grep -qE "^# orgasmic-host-state:" "$live_log" \
+        || bad="$bad; live run wrote no host stamp"
+    grep -qE 'wall_s=[0-9]' "$live_log" \
+        || bad="$bad; live stamp lacks wall_s from writer"
+fi
+if [ -z "$bad" ]; then
+    cp "$live_log" "$TMP/suite.log"
+    # Capture the delta= judgment the writer emitted.
+    live_delta=$(grep -E "^# orgasmic-host-state:" "$live_log" | tail -n1 \
+        | sed -n 's/.*| delta=//p')
+    rm -rf "$TMP/work"
+    run --classify "$TMP/suite.log"
+    grep -qF "delta   $live_delta" "$TMP/out.txt" \
+        || bad="$bad; reclassify delta does not match live stamp"
+    grep -qF 'unknown (reclassify with no host stamp' "$TMP/out.txt" \
+        && bad="$bad; reclassify ignored the live stamp"
+    grep -qE 'wall_s=[0-9]' "$TMP/out.txt" \
+        || bad="$bad; reclassify output lacks wall_s"
+fi
+if [ -z "$bad" ]; then
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+else
+    printf 'FAIL %s: %s\n' "$CASE" "${bad#; }"
+    printf -- '---- live ----\n'
+    cat "$TMP/live-out.txt" 2>/dev/null || true
+    printf -- '---- classify ----\n'
+    cat "$TMP/out.txt" 2>/dev/null || true
+    printf -- '----------------\n'
+    FAILED=$((FAILED + 1))
+fi
+
+# orgasmic:TASK-STWVB.1.1
+# B1: ambient accrual over a long window crosses an absolute CPU-seconds
+# bound while remaining ambient as a rate (~0.075 s/s). Judging on a rate
+# keeps the default gate from returning exit 4 on a calm host.
+# verify/TASK-STWVB.1.1 pins this case as the FIRST failure under injection.
+start "long ambient syspolicyd accrual is calm as a rate (absolute would trip)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=105.0,wall_s=1400' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : calm" \
+    "verdict: GREEN — no failures"
 
 # ---------------------------------------------------------------------------
 
