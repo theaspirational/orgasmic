@@ -12831,3 +12831,243 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       stage C is complete and reviewed; the precondition probe cleared stage D to run
 :END:
+
+* TX 2026-08-06 Thu 09:13:03 task.state_transitioned TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4777
+:TIME:         [2026-08-06 Thu 09:13:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.4 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 09:13:04 manager.dispatch_started TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4778
+:TIME:         [2026-08-06 Thu 09:13:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4/worktree
+:BRANCH:       task-rq270.4-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-4/task-rq270-4-brief.md
+:STARTED_AT:   [2026-08-06 Thu 09:13:04]
+:LIVENESS:     78173ddba03028e764159a2696f3b08c153c540e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: excision stage D: retire the arch_ node class and delete architecture.org; stage C's carve-outs are on main and the precondition probe cleared it
+:END:
+
+* TX 2026-08-06 Thu 09:13:04 run.created TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4779
+:TIME:         [2026-08-06 Thu 09:13:04]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.4-implementer-20260806T091304.jsonl
+:REASON:       excision stage D: retire the arch_ node class and delete architecture.org; stage C's carve-outs are on main and the precondition probe cleared it
+:RUN_ID:       run-20260806T091304-95d6800abeb04ad1be02f99d5e5e1561
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-4/task-rq270-4-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-4/task-rq270-4-d7817e385e46450298d183f4a06da3cb-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-4/task-rq270-4-d7817e385e46450298d183f4a06da3cb-stdout.log
+:DISPATCH_ATTEMPT: d7817e385e46450298d183f4a06da3cb
+:DISPATCH_TX:  tx-20260806-orgasmic-4778
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 09:33:16 implementer.reported TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4780
+:TIME:         [2026-08-06 Thu 09:33:16]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:RUN_ID:       run-20260806T091304-95d6800abeb04ad1be02f99d5e5e1561
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4/worktree
+:SHA:          4ed239a6b64d3dbbd6438fd600c0da6fd7af1654
+:END:
+
+* TX 2026-08-06 Thu 09:38:28 implementer.done TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4781
+:TIME:         [2026-08-06 Thu 09:38:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:REASON:       implementer finalized; manager re-ran gates independently (orgasmic verify PASS with pinned red + byte-identical revert, cli_parity 3/3, dangling carve-out 5/5, historical_architector_ledger_row_still_parses_and_closes 1 passed). MERGED TO stage-d-staging, NOT main: merging to main deletes architecture.org from the live tree and the installed 0.0.15-dev.1 runtime predates the stage-C carve-outs, so the operator's board would show ~311 parse errors until a reinstall. That sequencing is an operator decision and is held.
+:MODEL:        cursor-grok-4.5-high-fast
+:WORKER_COMMIT: 4ed239a6b64d3dbbd6438fd600c0da6fd7af1654
+:MERGE_SHA:    0eee47f
+:BRANCH:       task-rq270.4-impl
+:MERGE_TARGET: stage-d-staging
+:MERGED_TO_MAIN: false
+:CLOSED_TX:    tx-20260806-orgasmic-4778
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 09:38:28 task.state_transitioned TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4782
+:TIME:         [2026-08-06 Thu 09:38:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.4 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 09:38:53 manager.dispatch_started TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4783
+:TIME:         [2026-08-06 Thu 09:38:53]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4-review/worktree
+:BRANCH:       task-rq270.4-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-4-review/task-rq270-4-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 09:38:53]
+:LIVENESS:     0eee47f2640519228b2c41cd535ae9890bed7061
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: review stage D on the staging merge; main is untouched pending the operator's red-board sequencing call
+:END:
+
+* TX 2026-08-06 Thu 09:38:54 run.created TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4784
+:TIME:         [2026-08-06 Thu 09:38:54]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.4-reviewer-20260806T093853.jsonl
+:REASON:       review stage D on the staging merge; main is untouched pending the operator's red-board sequencing call
+:RUN_ID:       run-20260806T093853-3eac2127aca14466a7c22b9e762b477f
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-4-review/task-rq270-4-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-4-review/task-rq270-4-review-036aeb41977f4be2a828b058c421d288-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-4-review/task-rq270-4-review-036aeb41977f4be2a828b058c421d288-stdout.log
+:DISPATCH_ATTEMPT: 036aeb41977f4be2a828b058c421d288
+:DISPATCH_TX:  tx-20260806-orgasmic-4783
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 10:01:47 reviewer.reported TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4785
+:TIME:         [2026-08-06 Thu 10:01:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:RUN_ID:       run-20260806T093853-3eac2127aca14466a7c22b9e762b477f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.4-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 10:03:07 reviewer.done TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4786
+:TIME:         [2026-08-06 Thu 10:03:07]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:REASON:       APPROVE WITH FOLLOW-UPS, 5 findings, none BLOCK SHIP. Zero-parse-errors claim independently reproduced with a four-cell table plus a positive control (3 injected GONE99 refs -> exactly 3 errors), so the zero is non-vacuous. Pin proved by mechanism not assertion text: the injected build puts arch_RN73Z into graph.nodes with parse errors still 0 in BOTH columns - the guard goes quiet silently, exactly as warned. ArchEdge/ArtifactNode confirmed already dead on main before this change. Inverted api.rs test confirmed correct; the history contract is carried by three separate uninverted tests, all green. F1 is an unmet item of stage D's own declared scope that the manager's brief omitted.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: main..stage-d-staging
+:VERDICT:      ship
+:CLOSED_TX:    tx-20260806-orgasmic-4783
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 10:03:09 task.state_transitioned TASK-RQ270.4
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4787
+:TIME:         [2026-08-06 Thu 10:03:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.4
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-RQ270.4 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 10:05:31 task.created TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4788
+:TIME:         [2026-08-06 Thu 10:05:31]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       filed from the stage-D review (F2): shipped doctrine instructs orgasmic id mint --class architecture, which the stage-D binary now rejects, and both ship in the same runtime package
+:END:
+
+* TX 2026-08-06 Thu 10:05:54 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4789
+:TIME:         [2026-08-06 Thu 10:05:54]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HBK6A
+:NODE_ID:      dec_HBK6A
+:END:

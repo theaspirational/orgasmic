@@ -3767,129 +3767,104 @@ The =is_retired_architecture_id= comment scope question (finding 2 of that
 review) is *already resolved*: the manager ruled the carve-out stays
 unconditional and corrected the comment in =604efd7=.
 
-* BACKLOG TASK-RQ270.4 Excision stage D — retire the arch_ node class and delete architecture.org    :daemon:cli:shipped:
+* BACKLOG TASK-RQ270.5 Excision stage E — rewrite the shipped doctrine that still instructs a retired architecture layer    :shipped:cli:docs:
 :PROPERTIES:
-:ID: TASK-RQ270.4
+:ID: TASK-RQ270.5
 :PRIORITY: P1
-:WRITE_SCOPE: crates/**,.orgasmic/**,verify/**
+:WRITE_SCOPE: shipped/**,crates/**,.orgasmic/**,README.md
 :END:
 
 ** Description
-Stage D of dec_HBK6A: retire the =arch_= node class and delete
-=.orgasmic/architecture.org=. The parent TASK-RQ270 carries the staged plan.
-Stages A, B and C are done; C's two carve-outs are on main and are the
-precondition this stage consumes.
+Stage E of dec_HBK6A: rewrite the shipped doctrine so the runtime stops
+instructing agents to use an architecture layer that no longer exists. Stages
+A-D are done and reviewed. This is the last stage.
 
-** The precondition is satisfied, and it was proved properly
-The TASK-RQ270.3.2.1 reviewer ran a read-only probe: the merged lint against a
-COPY of this repository with =architecture.org= deleted, with a pre-fix control.
+Stage E existed only as prose inside TASK-RQ270's body until now. The stage-D
+review pointed out that the tracking gap acquired teeth the moment stage D
+landed, because stage D converted a documentation lag into a *live CLI error*.
 
-| repo copy                 | rule    | findings |
-| =architecture.org= absent | merged  |        0 |
-| absent                    | pre-fix |       78 |
-| present                   | merged  |        0 |
-| present                   | pre-fix |        0 |
+** Why this is now urgent rather than tidy
+=shipped/= is copied verbatim into the runtime package
+(=scripts/package-runtime.sh:166=), so the erroring instruction and the erroring
+binary ship in the SAME artifact. An agent that follows shipped conventions hits
+a hard failure.
 
-The control is what makes the zero mean something. The 78 independently matches
-the residual the manager measured after restoring the file during the invalid
-live-daemon experiment recorded on the parent.
+Measured against built code by the stage-D reviewer:
 
-** Three recorded claims are WRONG — corrected here by measurement
-Measured on main at 670f607. The parent's stage-D paragraph predates stages
-A-C and its references have rotted. Do not trust it over this section.
+: $ orgasmic id mint --class architecture
+: error: invalid value 'architecture' for '--class <CLASS>'
+:   [possible values: task, decision, term, artifact]
 
-*** 1. There is no legacy-ledger parse problem at =manager.rs:3805-3817=
-The parent calls that "THE ONE PLACE naive deletion breaks history". Both halves
-are wrong.
+while =shipped/prompt-studio/conventions/manager-dispatch.org:374= still says
+"Mint with =orgasmic id mint --class task|decision|architecture|term=".
 
-- Wrong location. Nothing at =manager.rs:3805-3817= mentions architector. The
-  manager's dispatch-ledger scan is =dispatch_record_from_entry=
-  (=manager.rs:6907=) and it reads =extra(entry, "KIND")= into a plain =String=
-  (=manager.rs:6913=). It never converts to =WorkerKind=. Deleting the variant
-  cannot break it.
-- Wrong risk. The real =WorkerKind::from_str= callers are
-  =governance.rs:313,317,326,329=, reached from =config.rs:178= parsing the
-  =dispatch:= governance map in =.orgasmic/config.org=. An unparseable key there
-  is =tracing::warn!= + =continue= (=config.rs:179-188=) — graceful skip, not a
-  fatal. Every =WorkerKind=-typed struct field is in-memory
-  (=StageSpec=, =StageWorker=, =resolve_addressed_stage_worker=); none is
-  deserialized from persisted state.
+** The inventory, measured
+- =shipped/prompt-studio/conventions/manager-dispatch.org:374= — instructs the
+  now-invalid =--class architecture=. Hard error.
+- =shipped/entry/router.org:78= — still lists =architecture.org= as a source of
+  truth. HIGHEST TRAFFIC: every dispatched worker is told to run
+  =orgasmic entry=.
+- =shipped/prompt-studio/prompt-specs/manager.org:46= — same claim in the
+  manager spec.
+- =shipped/skills/orgasmic/SKILL.md:38= — describes =audit= as comparing
+  =architecture.org= claims against shipped code.
+- =shipped/project-scaffold/tasks/backlog.org:126-147= — every NEWLY SCAFFOLDED
+  project still gets bootstrap task =TASK-C9V29.3 infer-architecture= with
+  =:WRITE_SCOPE: .orgasmic/architecture.org=, instructing an agent to author a
+  file class the runtime retired. **This one is pinned green** by
+  =crates/orgasmic-core/tests/fixtures.rs:326=
+  (=shipped_scaffold_seeds_bootstrap_task_tree=, asserting the write scope
+  contains =architecture.org= at =:361=), so it keeps shipping until that test
+  changes with it.
+- The parent's stage-E list also names =tx.org= (architector rows become a
+  historical note), the planner/griller/base/general/implementer specs, and
+  =conventions.org=.
 
-So the fallback the plan demands may not need to exist. That is a finding to
-report with evidence, not a licence to skip the question.
+** The gate that should have caught this
+=cli_parity= DOES scan the whole shipped corpus
+(=crates/orgasmic-cli/tests/cli_parity.rs:21=, with a
+=MINIMUM_SHIPPED_INVOCATIONS = 100= guard against a silently-empty extractor) —
+but it validates **verb paths only**. =orgasmic id mint= resolves, so the test
+passes and the =--class= value-enum drift is invisible to it. cli_parity was
+green on the stage-D branch and told us nothing about this.
 
-*** 2. The live drawer line numbers are stale
-=:IMPLEMENTS: arch_RN73Z= is at =backlog.org:82= and =backlog.org:98=, not
-=:38,:54=. Two tasks, TASK-CQM2X and TASK-VBSG2.
+*Widen it*: validate =--class= / =--kind= / other value-enum arguments in
+shipped prose against clap's =possible_values=. That is the durable fix; the
+text edits above are the immediate one.
 
-*** 3. The marker count is 57 lines / 14 distinct ids, not 59/36
-The reviewer corrected this WITH the mechanism: =normalize_marker_node_id=
-(=marker.rs:96=) collapses =arch_X.1= -> =arch_X=, so the indexer sees far fewer
-distinct ids than raw grep does. Stage D's real surface is 14 ids.
-
-** The load-bearing invariant this stage creates
-=looks_like_structured_node_id= (=index.rs:1109=) KEEPS =arch_= in its list.
-That is the sole reason a =:PRODUCES: arch_X= target is not materialized into
-=graph.nodes=, and =arch_= staying out of =graph.nodes= is what actually holds
-the write-time rejection boundary — not any prefix check in
-=unresolved_reference_tokens=.
-
-After this stage, that one list entry is the only thing stopping a retired id
-from becoming addable again. Someone deleting it later as cosmetic cleanup of a
-retired class would silently switch off rejection on all four write handlers:
-nothing fails, the guard just goes quiet. =identity_lint.rs:391-394= says this in
-prose. Stage D must ALSO pin it as an executable assertion.
-
-** Scope
-*** Delete
-- =ArchitectureNode= / =ArchNode= / =parse_arch_edges= — =schema.rs:360,386,482,632=,
-  and the =is_arch_id= uses at =schema.rs:611,622,658=.
-- =NodeIdClass::Architecture= and =is_arch_id= — =id.rs:21,31,41,57,361,406,516=,
-  plus =id_repair.rs:51= (a second mapper the plan never named) and the
-  =lib.rs:31,69= re-exports.
-- =NodeKind::Architecture= — =node_kind.rs:14,26,37=, and the daemon arms at
-  =api.rs:12863= with their stage-D comments at =:12759,:12897=.
-- The identity-lint architecture collectors — =identity_lint.rs:50,182,255,266,289=
-  and =lint_arch_heading_id_token=.
-- =WorkerKind::Architector= — =schema.rs:126,141,159=, =governance.rs:199=,
-  =api.rs:2363=.
-- =.orgasmic/architecture.org= itself.
-
-*** Keep
-- =is_retired_architecture_id= (=identity_lint.rs:377=) and the graph-edge
-  carve-out. They are what makes the deletion survivable; they are unconditional
-  by design and must stay unconditional.
-- =looks_like_structured_node_id='s =arch_= entry (=index.rs:1109=). See above.
-- The generic marker scanner and =/graph/markers=. The 57 markers stay indexed
-  and queryable.
-- Every historical parse path: tx TYPE is free-string, =done.org='s 231
-  =:IMPLEMENTS: arch= tokens stay, =decisions.org= keeps its arch_ prose.
-
-*** State edits, through daemon verbs or git only
-- Repoint =backlog.org:82= and =:98= from =:IMPLEMENTS: arch_RN73Z= to
-  =:MOTIVATED_BY: dec_PC6T2 dec_WDR5K=.
-- The 4 glossary =:PRIMARY_LEAF:= refs (=glossary.org:355,366,377,388=) are
-  unvalidated and inert; repointing them is optional and should be a separate
-  judgement, not a silent side effect.
+** Also carried into this stage
+- **TASK-ZFNE1** — =README.md:6='s hero graphic labels =architect= as an LLM
+  agent role and =README.md:10= states the loop as "Grilling -> Decisions+Glossary
+  -> Architecture -> Tasks -> Code -> Repeat". Deferred through stages A-D
+  deliberately, because redrawing before the true picture was known guaranteed a
+  second redraw. The picture is now known. Operator deferred once already
+  ("we'll redraw later") — confirm before spending on art.
+- **The =glossarist= dispatchability check**, never done: it is shown as an agent
+  role in the same hero image. Verify it is actually dispatchable before the
+  image asserts it again.
+- **Settle the 4 glossary =:PRIMARY_LEAF: arch_*= refs deliberately**
+  (=glossary.org:355,366,377,388=). Stage D left them, and both the stage-D
+  implementer and reviewer independently judged that correct: =PRIMARY_LEAF= is
+  not in =REFERENCE_PROPERTY_KEYS=, nothing validates it, and singling out 4
+  pointers while 231 structurally identical =:IMPLEMENTS: arch_= edges in
+  =done.org= stay is less coherent than leaving all of them. dec_HBK6A's own
+  Consequences call them "inert references, cleaned opportunistically".
+  *Record the decision either way* — an indefinitely deferred cleanup is how a
+  loose end becomes folklore.
 
 ** Acceptance
-- =orgasmic status --errors= reports 0 against this repository with
-  =architecture.org= deleted, measured on BUILT code, not on the installed daemon.
-- =historical_architector_ledger_row_still_parses_and_closes=
-  (=manager.rs:7760=) is GREEN. Its own doc comment names stage D as the thing
-  that must not break it.
-- =api.rs:18250='s =architect_production_surfaces_are_retired_but_history_still_parses=
-  either stays green or its =WorkerKind::from_str("architector")= assertion is
-  replaced by an assertion about what history-reading path actually survives —
-  with the reason stated.
-- An executable pin that =looks_like_structured_node_id("arch_X")= is true, sited
-  where someone deleting the entry will see why.
-- The dec_/TASK-/term_ over-carve guard (=index.rs:2864=) still fires.
-- =cli_parity= passes.
+- No shipped instruction names a verb, flag value, worker kind or state file the
+  runtime no longer has.
+- =cli_parity= passes, and is widened to catch value-enum drift (or a follow-up
+  is filed saying explicitly why not).
+- =shipped_scaffold_seeds_bootstrap_task_tree= is updated with the seed it
+  guards, not deleted.
+- A newly scaffolded project contains no architecture bootstrap task.
+- Historical references stay: =shipped/schema/tx.org:108,145='s
+  =architector.reported= rows are CORRECT and must not be removed — tx TYPE is a
+  free string and history must stay readable.
 
-** Sequencing warning — the operator's board goes red until a reinstall
-Merging this turns the live board red. Measured: with =architecture.org= absent,
-the INSTALLED runtime (=0.0.15-dev.1= from =05e1813=, predating both carve-outs)
-produces ~311 =dangling advisory marker= parse errors. That is a faithful preview
-of the interval between this merge and the runtime reinstall, and the parent
-records both orderings. The merge decision is the operator's.
+** Sequencing
+The stage-D merge already forces a runtime reinstall. This stage should land
+BEFORE that reinstall, so the new =shipped/= corpus and the new binary reach the
+operator's machine together rather than one release apart.
