@@ -5,8 +5,9 @@
 :VERSION:            1
 :END:
 
-Architecture graph policy:
-- Prefer functional component nodes with clear interfaces and source paths.
-- Use typed edges where possible: READS, WRITES, EXPOSES_REST, EXPOSES_WS,
-  SUBSCRIBES_TO, SPAWNS, CALLS.
-- Use DEPENDS_ON only when no more precise edge applies.
+Retired (dec_HBK6A): the architecture graph layer and its authoring policy are
+gone. Durable design rationale lives in `.orgasmic/decisions.org`; domain
+language in `.orgasmic/glossary.org`. Do not author `.orgasmic/architecture.org`
+or mint `arch_*` ids. Keep this part only so historical prompt compilations that
+still name it resolve to an explicit retirement notice rather than silent
+topology guidance.

@@ -368,15 +368,16 @@ check the rest of the invocation too.
 arbitrary argv unless the adapter documents otherwise.
 
 ** Filing new nodes: mint IDs, never max+1
-New task/decision/architecture/glossary nodes get SHORT-RANDOM ids — 5-char
+New task/decision/glossary/artifact nodes get SHORT-RANDOM ids — 5-char
 Crockford base32 (0-9 A-Z minus I L O U, uppercase, at least one letter),
-class-prefixed: =TASK-XXXXX= / =dec_XXXXX= / =arch_XXXXX= / =term_XXXXX=.
-Mint with =orgasmic id mint --class task|decision|architecture|term= (no
+class-prefixed: =TASK-XXXXX= / =dec_XXXXX= / =term_XXXXX= / =ART-XXXXX=.
+Mint with =orgasmic id mint --class task|decision|term|artifact= (no
 daemon needed), or any local CSPRNG honouring the grammar. NEVER allocate
 max+1-by-eye from the file — concurrent writers collide (two clones, two
 sessions, same next number). Daemon creation routes auto-mint when =id= is
 omitted and reject legacy sequential-numeric ids on create. Legacy ids
-remain valid as references.
+(including historical =arch_XXXXX= architecture nodes) remain valid as
+references; the architecture class is no longer mintable (dec_HBK6A).
 
 ** Housekeeping while dispatching
 - When you (or a dispatched implementer) encounter any pre-existing

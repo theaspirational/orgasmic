@@ -324,11 +324,14 @@ fn shipped_scaffold_state_files_ship_without_seed_headings() {
 
 #[test]
 fn shipped_scaffold_seeds_bootstrap_task_tree() {
-    // A freshly scaffolded project starts with one bootstrap task (a minted bootstrap id)
-    // and three inference subtasks. Every heading must be schema-valid so the
-    // daemon can index a just-bootstrapped project, and the parent/subtask
-    // structure + ordering must hold (dec_056). Under the file-per-state
-    // layout (dec_QQYXM) the tree ships in backlog.org — its stage.
+    // A freshly scaffolded project starts with one bootstrap task (a minted
+    // bootstrap id) and three subtasks: infer-project, infer-decisions, then
+    // migrate-instructions. Every heading must be schema-valid so the daemon
+    // can index a just-bootstrapped project, and the parent/subtask structure +
+    // ordering must hold (dec_056). Under the file-per-state layout
+    // (dec_QQYXM) the tree ships in backlog.org — its stage.
+    // orgasmic:TASK-RQ270.5 — infer-architecture was removed with the
+    // architecture layer (dec_HBK6A); migrate-instructions took the .3 slot.
     let rel = "shipped/project-scaffold/tasks/backlog.org";
     let f = parse_or_panic(rel);
     let tasks: Vec<TaskHeading> = f
@@ -352,14 +355,23 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
         assert_eq!(sub.parent_task.as_deref(), Some("TASK-C9V29"));
         assert_eq!(sub.lifecycle_stage, LifecycleStage::Backlog);
     }
-    // infer-architecture depends on infer-decisions, which depends on
-    // infer-project — so .orgasmic/ fills in a sound order.
-    let arch = tasks.iter().find(|t| t.id == "TASK-C9V29.3").unwrap();
-    assert!(arch
+    assert!(
+        !tasks.iter().any(|t| t.id == "TASK-C9V29.4"),
+        "bootstrap tree must not keep a fourth subtask after architecture excision"
+    );
+    // migrate-instructions depends on infer-decisions, which depends on
+    // infer-project — so .orgasmic/ fills in a sound order, with no
+    // architecture.org write scope left in the seed.
+    let migrate = tasks.iter().find(|t| t.id == "TASK-C9V29.3").unwrap();
+    assert!(
+        migrate.title.contains("migrate-instructions"),
+        "TASK-C9V29.3 must be migrate-instructions, not infer-architecture"
+    );
+    assert!(migrate
         .write_scope
         .iter()
-        .any(|s| s.contains("architecture.org")));
-    assert!(arch.depends_on.contains(&"TASK-C9V29.2"));
+        .all(|s| !s.contains("architecture.org")));
+    assert!(migrate.depends_on.contains(&"TASK-C9V29.2"));
     let decisions = tasks.iter().find(|t| t.id == "TASK-C9V29.2").unwrap();
     assert!(decisions.depends_on.contains(&"TASK-C9V29.1"));
 }

@@ -30,8 +30,7 @@ else — trust it. Read any other file only when a trigger below names it.
 5. Produce the briefing.
 
 The bootstrap is read-only and writes nothing. No tx-log reading, no
-decisions.org or architecture.org reread, no full task-file scan — those are
-trigger-gated below.
+decisions.org reread, no full task-file scan — those are trigger-gated below.
 
 ## Triggers for deeper reads
 

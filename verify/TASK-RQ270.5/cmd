@@ -1,0 +1,4 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RQ270.5`.
+# Pins stage-E value-enum drift: shipped prose naming --class architecture
+# must fail against clap possible_values after the architecture class was retired.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test cli_parity shipped_value_enum_arguments_match_clap_possible_values

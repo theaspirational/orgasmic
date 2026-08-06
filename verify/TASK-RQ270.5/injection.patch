@@ -1,0 +1,10 @@
+diff --git a/shipped/prompt-studio/conventions/manager-dispatch.org b/shipped/prompt-studio/conventions/manager-dispatch.org
+--- a/shipped/prompt-studio/conventions/manager-dispatch.org
++++ b/shipped/prompt-studio/conventions/manager-dispatch.org
+@@ -371,5 +371,5 @@
+ New task/decision/glossary/artifact nodes get SHORT-RANDOM ids — 5-char
+ Crockford base32 (0-9 A-Z minus I L O U, uppercase, at least one letter),
+ class-prefixed: =TASK-XXXXX= / =dec_XXXXX= / =term_XXXXX= / =ART-XXXXX=.
+-Mint with =orgasmic id mint --class task|decision|term|artifact= (no
++Mint with =orgasmic id mint --class task|decision|architecture|term= (no
+ daemon needed), or any local CSPRNG honouring the grammar. NEVER allocate

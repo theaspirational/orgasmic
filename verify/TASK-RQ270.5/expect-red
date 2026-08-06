@@ -1,0 +1,7 @@
+# Pinned from /tmp/task-rq270.5/pre-fix-red.log on 2026-08-06. The pinned
+# message was the FIRST failing assertion: manager-dispatch.org still named
+# --class architecture while MintClassArg's possible_values no longer include it.
+exit: 101
+contains: `orgasmic id mint --class architecture` is not in clap possible values
+contains: test shipped_value_enum_arguments_match_clap_possible_values ... FAILED
+contains: test result: FAILED. 0 passed; 1 failed

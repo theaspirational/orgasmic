@@ -736,7 +736,7 @@ enum GraphCmd {
         #[arg(long)]
         dir: Option<String>,
         /// Only edges whose other endpoint is of this node layer (task,
-        /// decision, architecture, glossary, artifact).
+        /// decision, glossary, artifact).
         #[arg(long)]
         kind: Option<String>,
         /// Only edges of this relation (the drawer key that produced them,

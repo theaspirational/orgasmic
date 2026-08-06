@@ -209,6 +209,72 @@ fn shipped_entry_commands_resolve_against_the_cli() {
     );
 }
 
+/// Value-enum arguments named in shipped prose must be in clap's
+/// `possible_values` for that flag.
+///
+/// orgasmic:TASK-RQ270.5 — stage D retired `--class architecture` while
+/// `manager-dispatch.org` still minted it; verb-path parity could not see the
+/// drift because `orgasmic id mint` itself resolves.
+#[test]
+fn shipped_value_enum_arguments_match_clap_possible_values() {
+    let invocations = shipped_entry_invocations();
+    assert!(
+        invocations.len() >= MINIMUM_SHIPPED_INVOCATIONS,
+        "only {} `orgasmic ...` invocations found under {SHIPPED_DIR}/ (expected at least \
+         {MINIMUM_SHIPPED_INVOCATIONS}); the extractor is broken, not the prose",
+        invocations.len()
+    );
+
+    let mut failures = Vec::new();
+    for invocation in &invocations {
+        if invocation.enum_values.is_empty() {
+            continue;
+        }
+        for path in invocation.command_paths() {
+            let help = match try_help(&path) {
+                Ok(help) => help,
+                Err(err) => {
+                    failures.push(format!(
+                        "{}: `{}` does not resolve ({err})",
+                        invocation.source,
+                        format_command_path(&path)
+                    ));
+                    continue;
+                }
+            };
+            for (flag, value_token) in &invocation.enum_values {
+                let Some(allowed) = possible_values_for_flag(&help, flag) else {
+                    // Flag has no clap value-enum (e.g. free-string `--mode`).
+                    continue;
+                };
+                for value in value_token.split('|') {
+                    let value = value.trim();
+                    if value.is_empty() || value.starts_with('<') || value.starts_with('[') {
+                        continue;
+                    }
+                    if !allowed.iter().any(|a| a == value) {
+                        failures.push(format!(
+                            "{}: `{} {} {}` is not in clap possible values {:?} for {}",
+                            invocation.source,
+                            format_command_path(&path),
+                            flag,
+                            value,
+                            allowed,
+                            flag
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "shipped prose names value-enum arguments the CLI rejects:\n  {}",
+        failures.join("\n  ")
+    );
+}
+
 /// Every flag and positional on every leaf command must say what it does.
 ///
 /// TASK-HXSW0's item 1: `manager dispatch --help` rendered `--task`, `--brief`,
@@ -332,6 +398,14 @@ fn split_help_entry(line: &str) -> Option<(usize, &str, &str)> {
     Some((indent, name, rest))
 }
 
+/// Value-enum flags whose clap `possible_values` shipped prose must respect.
+///
+/// TASK-RQ270.5: verb-path parity alone was green while
+/// `--class architecture` still shipped after stage D retired that class.
+/// Only flags that clap renders with `[possible values: …]` are checked;
+/// free-string flags such as `--mode` (driver catalog) are skipped.
+const VALUE_ENUM_FLAGS: &[&str] = &["--class", "--kind", "--status", "--mode"];
+
 /// One `orgasmic ...` invocation quoted in shipped prose.
 struct EntryInvocation {
     /// `file:span` for the failure message.
@@ -340,6 +414,9 @@ struct EntryInvocation {
     words: Vec<String>,
     /// Long flags named after the subcommand path.
     flags: Vec<String>,
+    /// `(flag, value-token)` pairs for value-enum flags, where the value may
+    /// itself be an `a|b` alternation (`--class task|decision|architecture`).
+    enum_values: Vec<(String, String)>,
 }
 
 impl EntryInvocation {
@@ -539,18 +616,111 @@ fn invocations_in_span(file: &str, span: &str) -> Vec<EntryInvocation> {
             .map(|token| (*token).to_string())
             .collect::<Vec<_>>();
         // Flags belong to this invocation until the next one starts.
-        let flags = rest
+        let owned: Vec<&str> = rest
             .iter()
             .take_while(|token| **token != "orgasmic")
+            .copied()
+            .collect();
+        let flags = owned
+            .iter()
             .filter_map(|token| long_flag(token))
             .collect::<Vec<_>>();
+        let enum_values = enum_values_in_tokens(&owned);
         out.push(EntryInvocation {
             source: format!("{file}: `{}`", span.trim()),
             words,
             flags,
+            enum_values,
         });
     }
     out
+}
+
+/// `(--flag, value)` pairs for [`VALUE_ENUM_FLAGS`] in one invocation's tokens.
+fn enum_values_in_tokens(tokens: &[&str]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let Some(flag) = long_flag(tokens[index]) else {
+            index += 1;
+            continue;
+        };
+        if !VALUE_ENUM_FLAGS.contains(&flag.as_str()) {
+            index += 1;
+            continue;
+        }
+        let Some(raw) = tokens.get(index + 1) else {
+            break;
+        };
+        // `--flag=value` is already folded by clap help style; prose usually
+        // writes `--flag value` or `--flag a|b|c`.
+        let value =
+            raw.trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ',' | '.' | ';' | '='));
+        if value.is_empty() || long_flag(value).is_some() {
+            index += 1;
+            continue;
+        }
+        // A value token is letters/digits/dashes/underscores, or an a|b
+        // alternation of those. Placeholders (`<CLASS>`) fail the char check.
+        let looks_like_value = value.split('|').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        });
+        if looks_like_value {
+            out.push((flag, value.to_string()));
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    out
+}
+
+/// Clap's `[possible values: a, b, c]` list for one flag in a `--help` blob.
+fn possible_values_for_flag(help: &str, flag: &str) -> Option<Vec<String>> {
+    let mut collecting = false;
+    let mut buf = String::new();
+    for line in help.lines() {
+        let trimmed = line.trim();
+        if !collecting {
+            if !trimmed.contains(flag) {
+                continue;
+            }
+            if let Some(start) = trimmed.find("[possible values:") {
+                buf.push_str(&trimmed[start..]);
+                if buf.contains(']') {
+                    return parse_possible_values_bracket(&buf);
+                }
+                collecting = true;
+            }
+            continue;
+        }
+        buf.push(' ');
+        buf.push_str(trimmed);
+        if buf.contains(']') {
+            return parse_possible_values_bracket(&buf);
+        }
+    }
+    None
+}
+
+fn parse_possible_values_bracket(fragment: &str) -> Option<Vec<String>> {
+    let start = fragment.find("[possible values:")? + "[possible values:".len();
+    let rest = fragment[start..].trim_start();
+    let end = rest.find(']')?;
+    let inner = rest[..end].trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(
+        inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
 }
 
 /// A bare subcommand word: lowercase, possibly an `a|b` alternation. Anything
