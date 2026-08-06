@@ -11676,3 +11676,149 @@
 :DEPENDS_ON:   TASK-RQ270.3.1
 :WRITE_SCOPE:  crates/
 :END:
+
+* TX 2026-08-06 Thu 04:20:48 task.state_transitioned TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4714
+:TIME:         [2026-08-06 Thu 04:20:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatching stage C part 1
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-06 Thu 04:20:49 task.state_transitioned TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4715
+:TIME:         [2026-08-06 Thu 04:20:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.3.1 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 04:20:50 manager.dispatch_started TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4716
+:TIME:         [2026-08-06 Thu 04:20:50]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.1/worktree
+:BRANCH:       task-rq270.3.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-1/task-rq270-3-1-brief.md
+:STARTED_AT:   [2026-08-06 Thu 04:20:50]
+:LIVENESS:     6f64b6dcfa3e05b296b249a355a9c3ae2d6a6d66
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: excision stage C part 1: remove the architecture read surface from the UI
+:END:
+
+* TX 2026-08-06 Thu 04:20:50 run.created TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4717
+:TIME:         [2026-08-06 Thu 04:20:50]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.1-implementer-20260806T042050.jsonl
+:REASON:       excision stage C part 1: remove the architecture read surface from the UI
+:RUN_ID:       run-20260806T042050-da6d219bf12f425888cd67c4f70a5dbd
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.1/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-1/task-rq270-3-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-3-1/task-rq270-3-1-7d6b3c660b404ebf98938a56548fa68a-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-3-1/task-rq270-3-1-7d6b3c660b404ebf98938a56548fa68a-stdout.log
+:DISPATCH_ATTEMPT: 7d6b3c660b404ebf98938a56548fa68a
+:DISPATCH_TX:  tx-20260806-orgasmic-4716
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 04:33:47 implementer.reported TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4718
+:TIME:         [2026-08-06 Thu 04:33:47]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:RUN_ID:       run-20260806T042050-da6d219bf12f425888cd67c4f70a5dbd
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.1/worktree
+:SHA:          f4f22645af76f04b60d988aa70651b6474ffa40a
+:END:
+
+* TX 2026-08-06 Thu 04:36:00 task.edited TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4719
+:TIME:         [2026-08-06 Thu 04:36:00]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RQ270.3.1
+:NODE_ID:      TASK-RQ270.3.1
+:END:
+
+* TX 2026-08-06 Thu 04:36:06 implementer.done TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4720
+:TIME:         [2026-08-06 Thu 04:36:06]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:REASON:       manager verified on the merged tree: claim-shaped source audit clean, postStage union reduced to grill|plan, built-bundle audit finds no architecture surface, typecheck exit 0, build exit 0 (5695 modules), npm test 38 files / 264 tests all passed. The implementer found two surfaces the manager's task list missed — vite.config.ts's SPA fallback regex and ui/README.md's screens row
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WORKER_COMMIT: f4f2264
+:MERGE_SHA:    18739ea
+:BRANCH:       task-rq270.3.1-impl
+:REVIEWED_DIFF: 6f64b6d..18739ea
+:CLOSED_TX:    tx-20260806-orgasmic-4716
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 04:36:06 task.state_transitioned TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4721
+:TIME:         [2026-08-06 Thu 04:36:06]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.3.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
