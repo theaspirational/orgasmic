@@ -10,7 +10,7 @@ import { useResource } from '@/lib/useResource';
  * task descriptions, activity comments). Recognizes three token classes without
  * requiring authored org markup:
  *   - `:UPPER_SNAKE:` org property/config keys  -> inline code
- *   - TASK-/dec_/arch_ node ids                 -> clickable entity links
+ *   - TASK-/dec_ node ids                       -> clickable entity links
  *   - glossary canonical phrases                -> clickable glossary links
  *
  * The matchers live behind a context so any surface can decorate without prop
@@ -73,12 +73,6 @@ export function RichTextProvider({
           params: { projectId },
           search: routeSearch((prev) => appendDrawerStack(prev, token)),
         });
-      } else if (/^arch_/.test(token)) {
-        void navigate({
-          to: '/projects/$projectId/architecture',
-          params: { projectId },
-          search: routeSearch((prev) => appendDrawerStack(prev, token)),
-        });
       }
     };
 
@@ -113,7 +107,7 @@ export function RichTextProvider({
 
 const ENTITY_STEM = String.raw`(?:\d+|(?=[0-9A-HJKMNP-TV-Z]{0,4}[A-HJKMNP-TV-Z])[0-9A-HJKMNP-TV-Z]{5})`;
 const KEY_OR_ENTITY_RE = new RegExp(
-  String.raw`(:[A-Z][A-Z0-9_]{2,}:)|\b(TASK-${ENTITY_STEM}(?:\.\d+)*|dec_${ENTITY_STEM}|arch_${ENTITY_STEM}(?:\.\d+)*)\b`,
+  String.raw`(:[A-Z][A-Z0-9_]{2,}:)|\b(TASK-${ENTITY_STEM}(?:\.\d+)*|dec_${ENTITY_STEM})\b`,
   'g',
 );
 

@@ -23,7 +23,7 @@ export type FieldEditor = 'prose' | 'text' | 'chips';
 export type ChipSeparator = 'space' | 'comma';
 
 /** Which node list backs a link-chip's labels and autocomplete. */
-export type SuggestSource = 'glossary' | 'decision' | 'architecture' | 'task';
+export type SuggestSource = 'glossary' | 'decision' | 'task';
 
 export type NodeFieldDescriptor = {
   label: string;
@@ -79,55 +79,6 @@ export const GLOSSARY_DESCRIPTOR: NodeDescriptor = {
   ],
 };
 
-export const ARCHITECTURE_DESCRIPTOR: NodeDescriptor = {
-  kind: 'architecture',
-  editableTitle: true,
-  fields: [
-    { label: 'Purpose', binding: { kind: 'section', title: 'Purpose' }, editor: 'prose', placeholder: 'What does this node own?' },
-    { label: 'Interface', binding: { kind: 'property', key: 'INTERFACE' }, editor: 'chips', separator: 'space', placeholder: 'Add an interface keyword…' },
-    { label: 'Constraints', binding: { kind: 'property', key: 'CONSTRAINTS' }, editor: 'chips', separator: 'space', placeholder: 'Add a constraint keyword…' },
-    { label: 'Depends On', binding: { kind: 'property', key: 'DEPENDS_ON' }, editor: 'chips', separator: 'space', link: true, suggest: 'architecture', placeholder: 'Link an architecture node…' },
-    { label: 'Motivating Decisions', binding: { kind: 'property', key: 'MOTIVATED_BY' }, editor: 'chips', separator: 'space', link: true, suggest: 'decision', placeholder: 'Link a decision…' },
-    { label: 'Glossary', binding: { kind: 'property', key: 'GLOSSARY_REFS' }, editor: 'chips', separator: 'space', link: true, suggest: 'glossary', placeholder: 'Link a glossary term…' },
-    // Leaf-node (arch_NNN.M) scoped test commands. `;`-separated; commands
-    // contain spaces, so this is a single text field rather than chips.
-    // hideWhenEmpty keeps it off top-level nodes, which carry no :TESTS:.
-    { label: 'Tests', binding: { kind: 'property', key: 'TESTS' }, editor: 'text', placeholder: 'cargo test -p <crate>; …', hideWhenEmpty: true },
-  ],
-};
-
-// Leaf component nodes (arch_NNN.M) speak a different vocabulary than
-// top-level architecture nodes: their description is direct body prose (no
-// `** Purpose` child), and their properties name code surfaces
-// (SOURCE_PATHS / TESTS / CALLS / READS / WRITES / …) rather than
-// INTERFACE / CONSTRAINTS keywords — those live on the parent node.
-export const ARCHITECTURE_LEAF_DESCRIPTOR: NodeDescriptor = {
-  kind: 'architecture',
-  editableTitle: true,
-  fields: [
-    { label: 'Description', binding: { kind: 'body' }, editor: 'prose', placeholder: 'What does this component do?' },
-    { label: 'Source Paths', binding: { kind: 'property', key: 'SOURCE_PATHS' }, editor: 'chips', separator: 'space', placeholder: 'Add a source path…' },
-    { label: 'Tests', binding: { kind: 'property', key: 'TESTS' }, editor: 'text', placeholder: 'cargo test -p <crate>; …' },
-    { label: 'Calls', binding: { kind: 'property', key: 'CALLS' }, editor: 'chips', separator: 'space', link: true, suggest: 'architecture', placeholder: 'Link a called node…' },
-    { label: 'Depends On', binding: { kind: 'property', key: 'DEPENDS_ON' }, editor: 'chips', separator: 'space', link: true, suggest: 'architecture', placeholder: 'Link an architecture node…' },
-    { label: 'Reads', binding: { kind: 'property', key: 'READS' }, editor: 'chips', separator: 'space', placeholder: 'file:… topic:…', hideWhenEmpty: true },
-    { label: 'Writes', binding: { kind: 'property', key: 'WRITES' }, editor: 'chips', separator: 'space', placeholder: 'file:… topic:…', hideWhenEmpty: true },
-    { label: 'Exposes REST', binding: { kind: 'property', key: 'EXPOSES_REST' }, editor: 'chips', separator: 'space', placeholder: 'Add an endpoint…', hideWhenEmpty: true },
-    { label: 'Exposes WS', binding: { kind: 'property', key: 'EXPOSES_WS' }, editor: 'chips', separator: 'space', placeholder: 'Add a ws route…', hideWhenEmpty: true },
-    { label: 'Subscribes To', binding: { kind: 'property', key: 'SUBSCRIBES_TO' }, editor: 'chips', separator: 'space', placeholder: 'Add a topic…', hideWhenEmpty: true },
-    { label: 'Spawns', binding: { kind: 'property', key: 'SPAWNS' }, editor: 'chips', separator: 'space', placeholder: 'Add a spawned worker…', hideWhenEmpty: true },
-  ],
-};
-
-const ARCH_LEAF_ID = /^arch_\d+\.\d+$/;
-
-/** Pick the architecture descriptor variant for a node id: leaf component
- *  nodes (`arch_NNN.M`) get the component vocabulary, everything else the
- *  top-level one. */
-export function architectureDescriptorFor(id: string): NodeDescriptor {
-  return ARCH_LEAF_ID.test(id) ? ARCHITECTURE_LEAF_DESCRIPTOR : ARCHITECTURE_DESCRIPTOR;
-}
-
 // project.org's PROJECT heading has an authored, open-ended section set
 // (Mission, Operating Constraints, Product Baseline, …). Render them all rather
 // than pinning a fixed list, so newly authored sections appear automatically.
@@ -160,6 +111,5 @@ export const TASK_DESCRIPTOR: NodeDescriptor = {
 
 export const DESCRIPTORS: Record<NodeKind, NodeDescriptor> = {
   decision: DECISION_DESCRIPTOR,
-  architecture: ARCHITECTURE_DESCRIPTOR,
   glossary: GLOSSARY_DESCRIPTOR,
 };

@@ -31,7 +31,6 @@ const ORG_FILES = [
   '.orgasmic/tasks/cancelled.org',
   '.orgasmic/tasks/goal.org',
   '.orgasmic/decisions.org',
-  '.orgasmic/architecture.org',
   '.orgasmic/glossary.org',
   '.orgasmic/project.org',
 ];

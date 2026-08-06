@@ -34,9 +34,6 @@ import { navPageVisible } from '@/lib/capabilities';
 const ActivityView = lazy(() =>
   import('@/components/ActivityView').then((module) => ({ default: module.ActivityView })),
 );
-const ArchitectureView = lazy(() =>
-  import('@/components/ArchitectureView').then((module) => ({ default: module.ArchitectureView })),
-);
 const ArtifactsView = lazy(() =>
   import('@/components/ArtifactsView').then((module) => ({ default: module.ArtifactsView })),
 );
@@ -111,7 +108,6 @@ type ActivityRange = 'today' | '7d' | '30d' | 'custom' | 'all';
 type DrawerSearch = { drawer_stack?: string[] };
 type RootSearch = { manager?: ManagerSearchSize };
 type DecisionsSearch = DrawerSearch & { tag?: string[]; q?: string };
-type ArchitectureSearch = DrawerSearch & { q?: string };
 type GlossarySearch = DrawerSearch & { q?: string };
 type TasksLayoutSearch = 'list' | 'kanban';
 type TasksSearch = { task?: string; layout?: TasksLayoutSearch };
@@ -171,14 +167,6 @@ function decisionsSearch(raw: SearchRecord): DecisionsSearch {
   return {
     ...drawerSearch(raw),
     ...(tag.length > 0 ? { tag } : {}),
-    ...(q ? { q } : {}),
-  };
-}
-
-function architectureSearch(raw: SearchRecord): ArchitectureSearch {
-  const q = readString(raw.q);
-  return {
-    ...drawerSearch(raw),
     ...(q ? { q } : {}),
   };
 }
@@ -409,21 +397,6 @@ const decisionsRoute = createRoute({
   },
 });
 
-const architectureRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: 'architecture',
-  validateSearch: architectureSearch,
-  component: function ArchitectureRoute() {
-    const { projectId } = projectRoute.useParams();
-    rememberProject(projectId);
-    return (
-      <Suspense fallback={fallback('Loading architecture...')}>
-        <ArchitectureView projectId={projectId} />
-      </Suspense>
-    );
-  },
-});
-
 const glossaryRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'glossary',
@@ -621,7 +594,6 @@ const routeTree = rootRoute.addChildren([
     projectIndexRoute,
     projectOverviewRoute,
     decisionsRoute,
-    architectureRoute,
     glossaryRoute,
     artifactsRoute,
     artifactViewRoute,

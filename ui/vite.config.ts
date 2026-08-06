@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 
 const PROJECT_SPA_PAGES =
-  '(?:project|decisions|architecture|glossary|tasks|prompts|adr|snapshots|activity|graph|runs|org|settings|status)';
+  '(?:project|decisions|glossary|tasks|prompts|adr|snapshots|activity|graph|runs|org|settings|status)';
 
 function isSpaNavigation(pathname: string): boolean {
   return (

@@ -32,7 +32,6 @@ last view; `/board` is cross-project. Project screens live under
 | `/projects/:id` · `…/decisions` | Decisions | `GET /decisions` |
 | `…/project` | Project overview | `GET /projects/:id`, `GET /projects/:id/tasks` |
 | `…/tasks` (`?task=`, `?layout=list\|kanban`) | Tasks + Task dialog | `GET /projects/:id/tasks`, `GET /projects/:id/tasks/:taskId`, `GET /tasks/:taskId/activity`, `POST /tasks/:taskId/comments`, `POST /tasks/:taskId/subtasks` |
-| `…/architecture` | Architecture | `GET /architecture`, `GET /architecture/nodes` |
 | `…/glossary` | Glossary | `GET /glossary` |
 | `…/graph` | Graph | `GET /graph/nodes`, `/graph/edges`, `/graph/layout` (+ `PATCH`), `/graph/parse-errors` |
 | `…/activity` | Activity | `GET /tasks/:taskId/activity` |

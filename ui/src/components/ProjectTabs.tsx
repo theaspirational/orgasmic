@@ -28,7 +28,6 @@ import { ProjectsManageDialog } from './ProjectsManageDialog';
 
 const VIEW_LABELS: Record<TabView, string> = {
   decisions: 'Decisions',
-  architecture: 'Architecture',
   tasks: 'Tasks',
   glossary: 'Glossary',
   project: 'Project',

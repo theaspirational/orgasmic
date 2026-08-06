@@ -1,4 +1,4 @@
-export type NodeKind = 'decision' | 'architecture' | 'glossary';
+export type NodeKind = 'decision' | 'glossary';
 
 export type OrgProperty = {
   key: string;
@@ -45,7 +45,6 @@ type PropertyDrawer = {
 export function inferNodeKind(id: string | null | undefined): NodeKind | null {
   if (!id) return null;
   if (id.startsWith('dec_')) return 'decision';
-  if (id.startsWith('arch_')) return 'architecture';
   return 'glossary';
 }
 
