@@ -10715,3 +10715,134 @@
 :FIX_SUBTASK:  t
 :WRITE_SCOPE:  crates/orgasmic-core/,ui/
 :END:
+
+* TX 2026-08-06 Thu 01:13:38 task.state_transitioned TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4659
+:TIME:         [2026-08-06 Thu 01:13:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.2.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 01:13:39 manager.dispatch_started TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4660
+:TIME:         [2026-08-06 Thu 01:13:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1/worktree
+:BRANCH:       task-rq270.2.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-1/task-rq270-2-1-brief.md
+:STARTED_AT:   [2026-08-06 Thu 01:13:39]
+:LIVENESS:     1f14c351a7e5c0d6789e33a679561d5bdd946449
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: fix round: strip the @arch back-edges the manager's inventory missed, and reword the schema legend
+:END:
+
+* TX 2026-08-06 Thu 01:13:39 run.created TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4661
+:TIME:         [2026-08-06 Thu 01:13:39]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.2.1-implementer-20260806T011339.jsonl
+:REASON:       fix round: strip the @arch back-edges the manager's inventory missed, and reword the schema legend
+:RUN_ID:       run-20260806T011339-c0b44cd0a9ea4db5b52c276ac5779d15
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-1/task-rq270-2-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-2-1/task-rq270-2-1-807a4c7e1846411e9e7b03e73446093a-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-2-1/task-rq270-2-1-807a4c7e1846411e9e7b03e73446093a-stdout.log
+:DISPATCH_ATTEMPT: 807a4c7e1846411e9e7b03e73446093a
+:DISPATCH_TX:  tx-20260806-orgasmic-4660
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 01:25:03 implementer.reported TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4662
+:TIME:         [2026-08-06 Thu 01:25:03]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:RUN_ID:       run-20260806T011339-c0b44cd0a9ea4db5b52c276ac5779d15
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1/worktree
+:SHA:          e56af71263f0fdea080f0c5beb2b3c602ea4ccf5
+:END:
+
+* TX 2026-08-06 Thu 01:31:21 task.edited TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4663
+:TIME:         [2026-08-06 Thu 01:31:21]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RQ270.2.1
+:NODE_ID:      TASK-RQ270.2.1
+:END:
+
+* TX 2026-08-06 Thu 01:31:30 implementer.done TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4664
+:TIME:         [2026-08-06 Thu 01:31:30]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:REASON:       manager verified independently: zero matches for all four retired prefixes, the ui/ diff is provably comment-only (26 files, one line each, nothing else), and a per-path marker comparison across three revisions is invariant at 60 records. cli and core suites GREEN 0 failures, cli_parity 3 passed, clippy and fmt exit 0, and the real binary emits the reworded legend
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WORKER_COMMIT: e56af71
+:MERGE_SHA:    3536be8
+:BRANCH:       task-rq270.2.1-impl
+:REVIEWED_DIFF: 1f14c35..3536be8
+:CLOSED_TX:    tx-20260806-orgasmic-4660
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 01:31:30 task.state_transitioned TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4665
+:TIME:         [2026-08-06 Thu 01:31:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-RQ270.2.1 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
