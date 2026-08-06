@@ -99,3 +99,55 @@ onto fd 1 inside the existing =STDOUT_REDIRECT_LOCK= (=logging.rs:569=).
 - The three service definitions orgasmic writes suppress the mirror BY
   CONSTRUCTION, with =is_terminal()= retained only as the fallback.
 - Both branches of the mirror gate are asserted, including the tty side.
+** Evidence
+*Implementer* =implementer-cursor-agent-tmux= — tmux / cursor-agent /
+cursor-grok-4.5-high-fast. Run
+=run-20260806T132510-d29306f2346c4f87b663e8648e7b18f7=, started_tx
+=tx-20260806-orgasmic-4866=, base =fb82610=, worker commit =2a4aa8a=, merged
+=eaa88da=.
+
+*F1 — the bound.* Exponential backoff 1s -> 60s cap on =SinkState=
+(=next_reopen_attempt=, =reopen_backoff=), with =maybe_reopen_durable()= as the
+single owner of the retry. =maybe_rotate= is no longer called while
+=state.durable= is =None=, and the three sites that used to park =bytes_written=
+at =max_bytes + 1= now call =schedule_reopen_retry()= instead. A dropped line
+increments =dropped_log_writes= ONCE.
+
+*F2 — by construction.* =serve --no-log-mirror= plus =ORGASMIC_LOG_MIRROR=off=
+(also =0=/=false=), resolved by =requested_log_mirror()= before install and wired
+at =lib.rs:909=. Emitted by all four launch paths orgasmic writes: the launchd
+plist =ProgramArguments=, the systemd =ExecStart=, the Windows wrapper, and the
+detached fallback in =daemon_lifecycle.rs=. Precedence is flag > env > request,
+and explicit off beats a tty. =is_terminal()= is retained as the fallback and is
+what an ALREADY-INSTALLED plist still relies on — it stays correct on its own
+there, because launchd's stdout is a file rather than a tty.
+
+*F3 — both branches.* The predicate is injectable via
+=new_with_terminal_gate(.., stdout_is_terminal)= threaded into =resolve_mirror=;
+=mirror_gate_keeps_stdout_on_terminal_and_suppresses_off_terminal= and
+=interactive_terminal_gate_keeps_stdout_mirror_under_redirect= assert both sides.
+The four ZBYH3.1 tests drive only the non-tty side.
+
+*Gates, replayed by the manager on the MERGED tree* (not taken from the worker's
+report): =cargo fmt --all --check= clean; =cargo test -p orgasmic-daemon --lib
+logging= 12 passed 0 failed; =cargo test -p orgasmic-daemon --test logging_sink=
+1 passed; the seven =daemon_service::tests= service-definition tests passed;
+=cargo clippy --workspace --all-targets -- -D warnings= clean.
+
+*Proof.* =verify/TASK-G64ZH/= pins the reopen bound: 40 lines inside the initial
+1s backoff window must cost ONE reopen attempt. The injection forces the backoff
+gate open (=false && Instant::now() < self.next_reopen_attempt=) and
+=open_attempts= goes to 40. Replayed green on the committed tree.
+
+*Two things carried to the reviewer rather than fixed here.* (1) THE
+RENAME-FAILURE BRANCH IS STILL PER-LINE when reopen succeeds: a persistent
+failure renaming =daemon.out.log -> .1= leaves =bytes_written= back at the file's
+length, still above the threshold, so =maybe_rotate= re-enters on every
+subsequent line — up to 31 =exists()= calls, a failing rename, a =record_drop()=
+and a stderr write each time. The implementer declared it a residual on the
+grounds that F1's acceptance names a persistent OPEN failure; the existing tests
+exercise the scenario but assert only that it does not propagate, never that its
+cost is bounded. (2) PUTTING =--no-log-mirror= IN THE GENERATED PLIST MAKES A
+RUNTIME ROLLBACK A STARTUP FAILURE rather than a degradation: an older binary
+rejects the unknown flag and does not start at all. The env form would be ignored
+harmlessly by an old binary, and both surfaces are already implemented.
