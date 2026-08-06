@@ -69,7 +69,7 @@ pub use crate::index::{
 };
 pub use crate::logging::{
     dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, LogMirror, LogRotation,
-    DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES,
+    DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES, MAX_LOG_KEEP,
 };
 pub use crate::prompt_compiler::{
     CompiledPrompt, ContextPackView, PromptCompileRequest, PromptDiagnostic, PromptPartSaveRequest,
@@ -912,6 +912,12 @@ impl Daemon {
                 key = %key,
                 path = %home.config().display(),
                 "unrecognized key in orgasmic config.yaml (ignored)"
+            );
+        }
+        for warning in &cfg.config_warnings {
+            warn!(
+                path = %home.config().display(),
+                "{warning}"
             );
         }
         // orgasmic:dec_WDR5K

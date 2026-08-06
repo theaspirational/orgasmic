@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZBYH3.1`.
+#
+# Pins the production discriminator (`LogMirror::Stdout`) under a launchd-shaped
+# redirect: one logged line must appear once across daemon.out.log and
+# daemon.stdout.log COMBINED. Under the injection the tty gate is forced open
+# and the line appears twice — the relocated double-write after ruling A.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact logging::tests::launchd_shaped_stdout_mirror_writes_each_line_once_across_both_files

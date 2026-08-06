@@ -1,0 +1,14 @@
+# Pinned from the pre-fix red run of 2026-08-06 (worker implementer for
+# TASK-ZBYH3.1). Under a launchd-shaped stdout redirect to a distinct file, the
+# inode gate left LogMirror::Stdout alive and the line appeared in both
+# daemon.out.log and daemon.stdout.log (combined count 2).
+#
+# The injection forces the tty gate open (`true || is_terminal()`), restoring
+# that double-write. The FIRST failing assertion is the combined-count check
+# below — not a missing-line check.
+
+exit: 101
+
+contains: line logged once must appear once across daemon.out.log and daemon.stdout.log combined under a launchd-shaped (non-tty) stdout redirect (got 2)
+
+contains: test result: FAILED. 0 passed; 1 failed
