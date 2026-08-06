@@ -10975,3 +10975,176 @@
 :REASON:       edited task node TASK-RQ270.2.1
 :NODE_ID:      TASK-RQ270.2.1
 :END:
+
+* TX 2026-08-06 Thu 01:40:44 task.state_transitioned TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4673
+:TIME:         [2026-08-06 Thu 01:40:44]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       POLICY, NOT A CORRECTION: the reviewer closed has-issues, which the installed runtime maps to in_progress, and a reviewer dispatch is refused from there. The manager fixed the finding directly and a fresh review is still owed
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 01:40:50 manager.dispatch_started TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4674
+:TIME:         [2026-08-06 Thu 01:40:50]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1-review/worktree
+:BRANCH:       task-rq270.2.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-1-review2/task-rq270-2-1-review2-brief.md
+:STARTED_AT:   [2026-08-06 Thu 01:40:50]
+:LIVENESS:     d389e874da1b1c0f21f50d8fcd5ecac8f49024ef
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: second review: the manager fixed round 1's BLOCK SHIP personally, which still owes a fresh review, and stage B's completeness was explicitly withheld
+:END:
+
+* TX 2026-08-06 Thu 01:40:50 run.created TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4675
+:TIME:         [2026-08-06 Thu 01:40:50]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.2.1-reviewer-20260806T014050.jsonl
+:REASON:       second review: the manager fixed round 1's BLOCK SHIP personally, which still owes a fresh review, and stage B's completeness was explicitly withheld
+:RUN_ID:       run-20260806T014050-3523769017584e1aa32a6f3498108bd4
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-1-review2/task-rq270-2-1-review2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-2-1-review2/task-rq270-2-1-review2-7f2c70128ac846b492ae01290135ede5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-2-1-review2/task-rq270-2-1-review2-7f2c70128ac846b492ae01290135ede5-stdout.log
+:DISPATCH_ATTEMPT: 7f2c70128ac846b492ae01290135ede5
+:DISPATCH_TX:  tx-20260806-orgasmic-4674
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 01:49:59 reviewer.reported TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4676
+:TIME:         [2026-08-06 Thu 01:49:59]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:RUN_ID:       run-20260806T014050-3523769017584e1aa32a6f3498108bd4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2.1-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 01:51:04 reviewer.done TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4677
+:TIME:         [2026-08-06 Thu 01:51:04]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:REASON:       Reviewer states EXCISION STAGE B IS COMPLETE and confirms the manager's own fix is correct. Its one BLOCK SHIP is stage-A-facing doctrine (three files still advertising the retired architect production surface), which the manager confirmed and is carrying to a stage-A fix round rather than dropping
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 3536be8..d389e87
+:VERDICT:      ship
+:STAGE_B:      complete per the reviewer verdict
+:FINDINGS:     1 BLOCK SHIP, stage-A-facing; carried to TASK-RQ270.1.1
+:CLOSED_TX:    tx-20260806-orgasmic-4674
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: done
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 01:51:04 task.state_transitioned TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4678
+:TIME:         [2026-08-06 Thu 01:51:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-RQ270.2.1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 01:51:32 task.edited TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4679
+:TIME:         [2026-08-06 Thu 01:51:32]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-RQ270.2.1
+:NODE_ID:      TASK-RQ270.2.1
+:END:
+
+* TX 2026-08-06 Thu 01:51:52 task.created TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4680
+:TIME:         [2026-08-06 Thu 01:51:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by the TASK-RQ270.2.1 review and confirmed by the manager; shipped/entry/router.org is compiled into every worker prompt, so each dispatched worker gets a role list naming a producer that cannot launch
+:END:
+
+* TX 2026-08-06 Thu 01:51:53 task.property_updated TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4681
+:TIME:         [2026-08-06 Thu 01:51:53]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       documentation and shipped doctrine only
+:FIX_SUBTASK:  t
+:WRITE_SCOPE:  README.md,ui/README.md,shipped/
+:END:
+
+* TX 2026-08-06 Thu 01:52:03 task.state_transitioned TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4682
+:TIME:         [2026-08-06 Thu 01:52:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       excision stage B is complete. Merged bb06bc4; its review found the manager's inventory had missed two of the comparator's four marker prefixes, fixed by TASK-RQ270.2.1 (merged 3536be8) which was itself reviewed twice, the second review stating stage B complete
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
