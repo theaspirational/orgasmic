@@ -169,3 +169,52 @@ would remove a standing tripwire cheaply. The review traced the inheritance and
 found nothing broken TODAY — =env_log_mirror_off= has exactly two callers,
 =requested_log_mirror= has exactly one production caller, and that is the =serve=
 path only.
+** Evidence
+*Implementer* =implementer-cursor-agent-tmux= — tmux / cursor-agent /
+cursor-grok-4.5-high-fast. Run
+=run-20260806T142420-fcdd1fc649aa4846b72221f3d1fd4393=, started_tx
+=tx-20260806-orgasmic-4904=, worker commit =b86d46c=, merged =40f3ec1=.
+
+*THE DYNAMIC FIX, taken by choice and stated as one.* =MirrorState= gained
+=StdoutWhenNoDurable=, which records only the INTENT to suppress; the write path
+decides from =state.durable.is_none()= at write time. So a live handle means no
+double-write (F1's original defect stays dead) and a missing handle means the
+line goes to stdout instead of nowhere. It discharges R-1, BOTH halves of R-2,
+and the post-roll reopen-failure silence — which was PRE-EXISTING, older than
+this whole chain — for free. The narrow alternative (handle-presence into
+=resolve_mirror=) was available and would have left that last case silent.
+
+*Manager check on the rotation window, because it was the sharpest risk.* The
+fallback could have leaked into =daemon.stdout.log= on every roll, since
+=maybe_rotate= deliberately drops the handle before renaming. It does not: the
+durable write, the mirror decision and =maybe_rotate= all happen under ONE mutex
+hold, and rotation runs AFTER that line's mirror decision, so no line can observe
+the intermediate =durable = None=. Only a FAILED reopen leaves the handle missing
+past the lock, which is the intended fallback.
+
+*R-3.* The replacement computes the deadline independently
+(=start + REOPEN_BACKOFF_CAP=) instead of reading =next_reopen_attempt= back out
+of state. The implementer ran the pre-probe the brief asked for and confirmed the
+=now() + 86400s= mutation left all 16 tests green beforehand; it now fails on
+"scheduled retry must be bounded by REOPEN_BACKOFF_CAP".
+
+*R-4.* =open_durable_log= is quiet; construction and =try_open_durable= own
+stderr through =last_open_err_kind= — first failure, error-kind transition, or
+first success after a streak. Same-kind retries are silent.
+
+*Gates, replayed by the manager on the MERGED tree:* fmt clean; =cargo test -p
+orgasmic-daemon --lib logging= 19 passed (12 -> 16 -> 19 across the three
+rounds); =--test logging_sink= 1 passed; =daemon_service::tests= 25 passed;
+=cargo clippy --workspace --all-targets -- -D warnings= clean.
+
+*Proofs — all THREE replay green on the committed tree, each red log carrying
+EXACTLY ONE panic and that panic being the pinned assertion.*
+=verify/TASK-G64ZH.1.1/= pins R-1 on the test that did not exist before:
+"failed boot open with LogMirror::Stdout and non-tty stdout must keep a
+write-time fallback, not resolve to permanent silence".
+
+*The proof edit was checked, not accepted.* =verify/TASK-G64ZH.1/='s injection
+follows the new =Result<File, DurableOpenError>= return and its README records
+the adaptation — but =expect-red= is UNTOUCHED, so the pinned assertion and its
+message are provably unchanged. That is the bar this chain set for editing an
+approved artifact, and it is now met twice.
