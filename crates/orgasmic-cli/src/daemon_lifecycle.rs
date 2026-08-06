@@ -454,6 +454,9 @@ fn spawn_detached(home: &Home) -> Result<u32> {
     let mut command = Command::new(exe);
     command
         .arg("serve")
+        // orgasmic:TASK-G64ZH — answer the mirror question by construction;
+        // stdout is redirected to an unrotated capture file here.
+        .arg("--no-log-mirror")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(cwd)
         .stdin(Stdio::null())

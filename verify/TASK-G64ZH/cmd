@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-G64ZH`.
+#
+# Pins the production reopen path: 40 lines under a persistent open failure
+# inside the initial 1s backoff window must cost one reopen attempt, not one
+# per line. Under the injection the backoff gate is forced open and
+# open_attempts == 40.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact logging::tests::persistent_open_failure_bounds_reopen_attempts_not_per_line

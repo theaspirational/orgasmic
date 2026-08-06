@@ -68,8 +68,8 @@ pub use crate::index::{
     ProjectIndex, TaskId, TaskOwner, TaskSummary, TxRecord,
 };
 pub use crate::logging::{
-    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, LogMirror, LogRotation,
-    DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES, MAX_LOG_KEEP,
+    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, requested_log_mirror,
+    LogMirror, LogRotation, DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES, MAX_LOG_KEEP,
 };
 pub use crate::prompt_compiler::{
     CompiledPrompt, ContextPackView, PromptCompileRequest, PromptDiagnostic, PromptPartSaveRequest,
@@ -253,6 +253,10 @@ pub struct DaemonOptions {
     /// daemon outlive many drain budgets, or exhaust one, without waiting out
     /// the production numbers (TASK-R74E8).
     pub shutdown_budgets: Option<ShutdownBudgets>,
+    /// When true, suppress the stdout tracing mirror by construction
+    /// (`serve --no-log-mirror`). Service definitions orgasmic writes set this;
+    /// `ORGASMIC_LOG_MIRROR=off` is an equivalent env form. orgasmic:TASK-G64ZH
+    pub no_log_mirror: bool,
 }
 
 impl Default for DaemonOptions {
@@ -274,6 +278,7 @@ impl Default for DaemonOptions {
             release_admission_delay: None,
             trusted_exec_wrapper_override: None,
             shutdown_budgets: None,
+            no_log_mirror: false,
         }
     }
 }
@@ -895,13 +900,13 @@ impl Daemon {
         }
         // Durable file sink under $ORGASMIC_HOME/logs; stdout is a best-effort
         // mirror so a closed pipe cannot poison request handling (TASK-FZF2D).
-        // When stdout is the same inode as the durable file (launchd), the
-        // mirror is suppressed so lines are not double-written (TASK-ZBYH3).
+        // Service defs pass `--no-log-mirror` by construction; otherwise
+        // `is_terminal()` is the fallback (TASK-ZBYH3.1, TASK-G64ZH).
         let daemon_log = home.logs().join(DAEMON_OUT_LOG);
         init_tracing_to(
             &cfg.log_level,
             Some(&daemon_log),
-            LogMirror::Stdout,
+            requested_log_mirror(opts.no_log_mirror),
             LogRotation {
                 max_bytes: cfg.log_max_bytes,
                 keep: cfg.log_keep,

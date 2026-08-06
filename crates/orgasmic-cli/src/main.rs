@@ -163,6 +163,12 @@ Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/
         /// the OS pick a free port (printed on stdout).
         #[arg(long)]
         port: Option<u16>,
+        /// Suppress the stdout tracing mirror. Service managers orgasmic writes
+        /// pass this by construction so durable rotation owns the only copy;
+        /// `ORGASMIC_LOG_MIRROR=off` is equivalent. Without either flag,
+        /// `is_terminal()` is the fallback (TASK-G64ZH).
+        #[arg(long)]
+        no_log_mirror: bool,
     },
     /// Show daemon status (boot_id, projects, parse errors, tx count).
     #[command(after_help = "\
@@ -1381,7 +1387,11 @@ fn main() -> Result<()> {
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
         },
         Cmd::Board => cmd_project_list(&home, false),
-        Cmd::Serve { bind, port } => cmd_serve(&home, bind, port),
+        Cmd::Serve {
+            bind,
+            port,
+            no_log_mirror,
+        } => cmd_serve(&home, bind, port, no_log_mirror),
         Cmd::Status { errors } => {
             if errors {
                 cmd_status_errors(&home)
@@ -2218,10 +2228,16 @@ fn cmd_project_list(home: &Home, ids: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_serve(home: &Home, bind: Option<IpAddr>, port: Option<u16>) -> Result<()> {
+fn cmd_serve(
+    home: &Home,
+    bind: Option<IpAddr>,
+    port: Option<u16>,
+    no_log_mirror: bool,
+) -> Result<()> {
     let opts = DaemonOptions {
         bind_override: bind,
         port_override: port,
+        no_log_mirror,
         ..DaemonOptions::default()
     };
     let home_clone = home.clone();
