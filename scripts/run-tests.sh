@@ -89,8 +89,12 @@ LOAD_DEGRADED_THRESHOLD=8.0
 # syspolicyd CPU seconds per wall second of the sampled window.
 # Ambient (two independent 60 s idle windows, 2026-08-06): 0.0737–0.0753 s/s.
 # Scoped in-run on this Mac: 0.35–0.96 s/s. Historical +32/+281 pair is the
-# same quantity re-expressed over its wall. Workspace calibration and the
-# chosen number are recorded in the constant comment below after measurement.
+# same quantity re-expressed over its wall (~0.64 calm vs ~5.6 thrash at ~50 s).
+# Workspace calibration 2026-08-06 (scripts/run-tests.sh, no args, BEFORE load
+# 6.10): wall_s=356, syspolicyd_cpu=+215.2, rate=0.6045 — under the old
+# absolute 100 s bound this run would have been DEGRADED on a calm host.
+# 1.50 is ~2.5× the measured workspace rate, above the scoped peak (0.96),
+# and well below the historical thrash rate.
 SYSPOLICYD_RATE_DEGRADED=1.50
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
