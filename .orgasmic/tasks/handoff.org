@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         c03dc66
+:LIVENESS:         11ec913
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -202,46 +202,59 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-ONE DISPATCH RUNNING: TASK-QGWK7 (P1) implementer,
-=implementer-cursor-agent-tmux= (tmux / cursor-agent / cursor-grok-4.5-high-fast),
-run =run-20260806T151244-7572bac5ee574bd6956fcf560376cf4f=, started_tx
-=tx-20260806-orgasmic-4939=, base =c03dc66=. Report lands at
-=.orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-8b3fc1ac3ffb460fa74a4e962c1276da-last.txt=.
+ONE DISPATCH RUNNING: TASK-QGWK7 REVIEWER, =reviewer-claude-tmux= (tmux / claude
+/ claude-opus-5 / high), run
+=run-20260806T153149-15ba05b4c6bf49f692488686f55efb5c=, started_tx
+=tx-20260806-orgasmic-4946=. Verdict lands at
+=.orgasmic/tmp/dispatch/task-qgwk7-review/task-qgwk7-review-0065995791114588b7135e12f5fc967f-last.txt=.
 
-WHAT IT IS FIXING: =dispatch-close= deletes the worker's =last.txt= and the
-=*.reported= tx carries no body, and =.orgasmic/.gitignore= excludes =tmp/= (zero
-commits ever), so a closed dispatch has NO durable record of what the worker
-said. The brief survives and the report does not.
+*COPY THAT FILE OUT BEFORE YOU CLOSE ANYTHING.* The fix is MERGED (=da88c19=) but
+the CLI that runs =dispatch-close= is the INSTALLED one, which still deletes the
+report. The change cannot protect its own dispatch or its own review. The
+implementer's report was already preserved at
+=<session scratchpad>/reports/qgwk7-implementer.txt= for the same reason.
 
-THE IRONY IS OPERATIONAL, NOT DECORATIVE: this defect is LIVE right now and will
-stay live for this dispatch and its review, because the fix has to merge AND the
-runtime has to be rebuilt before =dispatch-close= behaves differently. So EXTRACT
-EVERY FINDING FROM THIS WORKER'S REPORT AND ITS REVIEW BEFORE YOU CLOSE THEM, and
-write close =REASON=s detailed enough to file tasks from, with =file:line=
-anchors. The TASK-G64ZH chain lost three reviews and four implementer reports to
-exactly this, and two findings had to be filed from their titles alone.
+CLOSE SEQUENCE (=--merge-sha= is refused on a default branch until a verdict
+exists for that generation):
+1. =dispatch-close --task TASK-QGWK7 --started-tx tx-20260806-orgasmic-4946
+   --status done --verdict <v>=
+2. =dispatch-close --task TASK-QGWK7 --started-tx tx-20260806-orgasmic-4939
+   --status done --merge-sha da88c19 --worktree-remove --branch-delete=
 
-THE DESIGN IS SETTLED ON THE HEADING — do not re-open it if the worker argues.
-The report is NOT inlined into the task node: =done.org= is 26,106 lines and is
-reparsed whole on every reindex, a review is ~25KB, and a markdown body with =#=
-headings and code fences is a file-corruption surface in an org file (which is
-why =node body set= refuses column-0 headings). =last.txt= stays as the run-time
-streaming sink. The fix is to PROMOTE the record at close to a TRACKED path keyed
-by =started_tx= — per GENERATION, because this chain ran six dispatches across
-three tasks — plus =REPORT_PATH= on the completion tx.
+WHAT LANDED: close promotes =last.txt= + =stdout.log= out of gitignored
+=tmp/dispatch/= into TRACKED =.orgasmic/dispatch-records/<started_tx>/=, keyed by
+GENERATION not task; close tx and =*.reported= carry =:REPORT_PATH:=; the
+convention names the post-close path and the retention policy. Promotion is
+fd-anchored (=read_at= off the validated handle, unlink only after BOTH copies
+succeed, so partial failure DUPLICATES rather than loses), promote-failure records
+=CLEANUP_ERROR= without falling back to delete, and the worktree salvage path is
+untouched. Gates green; =verify TASK-QGWK7= PASS with one panic, the pinned
+readability claim.
 
-THE ONE ANCHOR THE BRIEF DELIBERATELY DID NOT GUESS: the deletion site inside
-=crates/orgasmic-cli/src/manager.rs=. There are several =remove_file= /
-=remove_dir_all= sites and at least one belongs to the WORKTREE SALVAGE path,
-which must not be disturbed — TASK-2BPWM and TASK-D0GA3 exist because it
-destroyed worker output twice. The brief tells the worker to find the right one
-and says why a guessed anchor would be dangerous here.
+TWO MANAGER CLAIMS THE REVIEW WAS TOLD TO ATTACK:
+1. THE FIX MAY RECREATE ITS OWN DEFECT SHAPE ONE LAYER OUT. Retention is "keep
+   forever", the destination is TRACKED, and =stdout.log= is promoted too — the
+   largest on this project is 478,920 bytes. On tmux they are 0 bytes TODAY
+   (pane content is never persisted), so the cost is invisible in this session
+   but is transport-dependent, and COMMITTED BYTES ARE PERMANENT in a way a log
+   file's are not. Same unbounded-unrotated-growth shape TASK-ZBYH3 -> TASK-G64ZH
+   spent three rounds removing.
+2. DURABILITY STILL DEPENDS ON A MANUAL COMMIT. The convention says to commit the
+   promoted dir; nothing enforces it. The fix trades "the manager must
+   transcribe" for "the manager must commit" — better, but still a manual link in
+   a durability chain, in a task filed BECAUSE durability depended on one.
 
-CURSOR PROMPT CLEARING NOW POLLS INSTEAD OF SLEEPING, and the numbers justify it:
-this dispatch's trust prompt appeared at 1s and its allowlist prompt at 14s. A
-fixed sleep between the two is what missed it on TASK-G64ZH.1.1. Poll for
-=Workspace Trust Required= then =Not in allowlist=, sending =a= and =BTab=.
-TASK-VD0VB is the real fix.
+A MANAGER ERROR RECORDED SO IT STOPS RECURRING: TWO merge shas were typed from
+memory today and NEITHER resolved — =40f3ec1= for TASK-G64ZH.1.1 (caught by
+=dispatch-close= refusing it) and =0e8ba1e= here (caught by checking before the
+reviewer read it). Real values: =f74256b= and =da88c19=. READ THE SHA OUT OF
+=git log --grep="Merge <branch>"= INTO A VARIABLE at merge time; never retype it
+into prose. Both errors reached committed state before being caught.
+
+A SCOPE SLIP, also the manager's: TASK-QGWK7's =WRITE_SCOPE= is
+=crates/**,shipped/**= but the brief demanded a =verify/= artifact. The =verify/=
+writes are authorised; the drawer was never updated. Update the drawer or stop
+demanding artifacts outside scope — the reviewer was told not to flag it.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions
