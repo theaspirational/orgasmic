@@ -28,8 +28,7 @@ branched, and committed.
 models; assign each to the work it is best suited
 for: orchestration, implementation, review, planning, architecture. Prompt Studio lets you inspect and edit the exact initial prompt each
 specialized worker receives.
-- **Disciplined spec-to-code framework** — inspired by Matt Pocock's "grilling-with-docs" approach and domain-driven software design principles, a typed pipeline from intent to code: griller agent stress-tests assumptions into `decisions.org` and `glossary.org`, architector authors the architecture graph (source paths,
-typed edges, per-node test gates), planner agent turns accepted design into bounded
+- **Disciplined spec-to-code framework** — inspired by Matt Pocock's "grilling-with-docs" approach and domain-driven software design principles, a typed pipeline from intent to code: griller agent stress-tests assumptions into `decisions.org` and `glossary.org`, planner agent turns accepted decisions into bounded
 tasks, and implementer agents change code inside declared read/write scope and
 acceptance criteria. The manager dispatches these agents with prompts compiled from specs and closes every landing with an adversarial reviewer.
 - **UI, browser, app, remote, and mobile access** — Install orgasmic once, then
