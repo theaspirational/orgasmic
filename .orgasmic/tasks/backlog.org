@@ -3019,6 +3019,29 @@ It then added a POSITIVE CONTROL the brief did not ask for: merged code, file ab
 *Findings, all actioned:* F1 =.orgasmic/conventions/decision-graph.org= instructed =orgasmic architecture create= — an item of stage D's DECLARED scope that the manager's brief dropped when rewriting the stale inventory, a scope-transcription gap; fixed on main =05c7c12=. F2 shipped doctrine still instructs =orgasmic id mint --class architecture=, which the stage-D binary rejects, and both ship in the same runtime package; filed as TASK-RQ270.5. F3 this decision's legacy-ledger-fallback requirement was wrong on both location and risk; dec_HBK6A amended. F4 orphaned =// orgasmic:task_KY80Q= marker; fixed on staging =ebb699d=. F5 =is_valid_greenfield_arch_id= kept without a note; commented on staging — and the review's rationale CORRECTED, because after stage D nothing produces an =arch_= identity occurrence, so the MalformedIdentity failure it described is latent, not live.
 
 *Harness note:* =tmux/cursor-agent= has TWO blocking prompts before first execution (workspace trust, then command allowlist), each parked at 0% CPU and indistinguishable from a hung transport. Unattended, each would have hit the 600s stall release and died looking like an infrastructure failure.
+=== Stage D IS ON MAIN, and the reinstall came first [2026-08-06]
+Operator chose: reinstall the runtime first, then merge. The board never went red.
+
+*Runtime reinstall.* Built from main =d803d49= (carries both stage-C carve-outs, NOT stage D), codesigned =orgasmic dev codesign=, release build 2m52s. Drain 1s, daemon answering 3s after bootstrap, new pid 71325. Rollback dir =~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260806a= (the =05e1813= build it replaced). This finally makes the SEVEN merged-but-inert changes live: TASK-XCJYC's transport rename, TASK-YN5FJ.1's =--verdict=, TASK-M47E5's worktree relocation and its =worktree-prune= gate, and the two stage-C carve-outs.
+
+*The swap was proved behaviourally, because it cannot be proved any other way* — both builds call themselves =0.0.15-dev.1= and =install.sh= silently skips the unpack when the version dir exists. Four pre-states captured before, all flipped after:
+
+| probe | before (=05e1813=) | after (=d803d49=) |
+| =dispatch-close --verdict= | unexpected argument | accepted (reached tx lookup) |
+| transport mode names | =acp-stdio= / =acp-ws= | =stdio= / =ws= |
+| =manager worktree-prune= | unrecognized subcommand | present and REFUSING by construction |
+| =bin/orgasmic= inode | 521369262 | 526812347 |
+
+The third is the sharpest: TASK-M47E5.3 gated the verb off rather than deleting it, so "absent" and "present but refuses" are distinguishable states. The inode check ruled out the launchd-restarted-the-old-binary no-op — the running daemon's =txt= inode matches the on-disk binary.
+
+*Then the merge.* =85f5eec=, =.orgasmic/architecture.org= deleted. Measured on the LIVE daemon, which is the instrument that was lying before the reinstall:
+- *parse_errors: 0*, 6 projects, no unindexed projects, zero permission errors in =daemon.err.log= (TCC intact).
+- *231 graph edges still touch =arch_=* out of 1129 total — exactly the count the stage-D reviewer measured in its probe. History is fully queryable with the file gone.
+- =orgasmic verify TASK-RQ270.4= replays PASS on main: red exit 101 with the pinned signature, tree byte-identical after revert, green exit 0.
+
+The ~311-parse-error interval never happened, because the daemon had the carve-outs before the file disappeared.
+
+*Stages A-D are done. Stage E is TASK-RQ270.5* and should land before the NEXT reinstall so the shipped corpus and the binary that matches it arrive together — currently the shipped doctrine instructs =orgasmic id mint --class architecture=, which this newly-installed binary rejects.
 
 ** Description
 Execute the excision decided in dec_HBK6A. The measuring is already done — do
