@@ -11450,3 +11450,174 @@
 :REASON:       edited task node TASK-RQ270.1.1
 :NODE_ID:      TASK-RQ270.1.1
 :END:
+
+* TX 2026-08-06 Thu 02:24:44 task.state_transitioned TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4700
+:TIME:         [2026-08-06 Thu 02:24:44]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       the has-issues close mapped to in_progress on the installed runtime; the manager fixed the BLOCK SHIP directly and a fresh review is still owed
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 02:24:45 manager.dispatch_started TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4701
+:TIME:         [2026-08-06 Thu 02:24:45]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:BRANCH:       task-rq270.1.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-1-1-review2/task-rq270-1-1-review2-brief.md
+:STARTED_AT:   [2026-08-06 Thu 02:24:45]
+:LIVENESS:     011625231f66555747f89841239efb423def71f0
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: second review: the manager fixed the synonym-shaped BLOCK SHIP personally, which still owes a fresh review
+:END:
+
+* TX 2026-08-06 Thu 02:24:45 run.created TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4702
+:TIME:         [2026-08-06 Thu 02:24:45]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.1.1-reviewer-20260806T022445.jsonl
+:REASON:       second review: the manager fixed the synonym-shaped BLOCK SHIP personally, which still owes a fresh review
+:RUN_ID:       run-20260806T022445-4feb3bd928c148a787c15e8d47594e02
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-1-1-review2/task-rq270-1-1-review2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-1-1-review2/task-rq270-1-1-review2-cbb233f7c570486b93efc7052095e864-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-1-1-review2/task-rq270-1-1-review2-cbb233f7c570486b93efc7052095e864-stdout.log
+:DISPATCH_ATTEMPT: cbb233f7c570486b93efc7052095e864
+:DISPATCH_TX:  tx-20260806-orgasmic-4701
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 02:31:41 reviewer.reported TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4703
+:TIME:         [2026-08-06 Thu 02:31:41]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:RUN_ID:       run-20260806T022445-4feb3bd928c148a787c15e8d47594e02
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 02:33:03 reviewer.done TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4704
+:TIME:         [2026-08-06 Thu 02:33:03]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:REASON:       REJECT: README.md:6 embeds a hero graphic that visibly labels architect as an LLM agent role. Manager confirmed by viewing the image. The finding is real and the fifth distinct audit failure shape — text search cannot see rasterized words — but regenerating a hand-illustrated graphic is disproportionate to a stage-A doc cleanup and premature while stages C and D are pending
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: bc29c7e..0116252
+:VERDICT:      has-issues
+:FINDINGS:     1 BLOCK SHIP: the README hero image labels an architect agent; carried to a new task, not fixed here
+:CLOSED_TX:    tx-20260806-orgasmic-4701
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 02:33:03 task.state_transitioned TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4705
+:TIME:         [2026-08-06 Thu 02:33:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 02:33:04 task.created TASK-ZFNE1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4706
+:TIME:         [2026-08-06 Thu 02:33:04]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZFNE1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by the TASK-RQ270.1.1 second review by inspecting the rendered PNG; the fifth distinct audit failure shape, and the first no text search could reach
+:END:
+
+* TX 2026-08-06 Thu 02:33:32 task.edited TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4707
+:TIME:         [2026-08-06 Thu 02:33:32]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RQ270.1.1
+:NODE_ID:      TASK-RQ270.1.1
+:END:
+
+* TX 2026-08-06 Thu 02:33:32 task.state_transitioned TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4708
+:TIME:         [2026-08-06 Thu 02:33:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       the TEXT doctrine is corrected and independently verified: the reviewer reproduced and broadened the claim-shaped sweep with additional stems and synonyms and found no remaining text claim, confirmed the router reattach decision, and confirmed the stage C hand-off is captured live. The one surviving BLOCK SHIP is a rasterized claim in the README hero image, carried by name to TASK-ZFNE1 — regenerating it now, before stages C and D land, would guarantee a second redraw
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 02:33:45 task.edited TASK-RQ270
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4709
+:TIME:         [2026-08-06 Thu 02:33:45]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-RQ270
+:NODE_ID:      TASK-RQ270
+:END:
