@@ -407,6 +407,25 @@ pub fn is_valid_greenfield_dec_id(value: &str) -> bool {
 }
 
 /// Post-migration architecture identity: minted stem with optional `.N` sub-id.
+///
+/// KEPT DELIBERATELY after dec_HBK6A stage D retired the `arch_` class; it is
+/// not an oversight that its sibling `is_arch_id` was deleted while this
+/// survives.
+///
+/// It stays reachable from `is_valid_greenfield_identity`, whose only consumer
+/// is `identity_lint::lint_identity_occurrences`: an id that fails it becomes a
+/// `MalformedIdentity` finding. Dropping the `arch_` arm would therefore turn
+/// any `arch_` identity occurrence into a parse error.
+///
+/// Be precise about the risk, because the stage-D review overstated it: after
+/// this stage `collect_identity_occurrences` reads task files, `decisions.org`
+/// and `glossary.org` only, so **no `arch_` heading id has a producer any more**
+/// and the failure is latent rather than live. The arm is retained because it
+/// costs nothing and this is an exported general-purpose predicate over
+/// arbitrary id strings — including the `arch_` tokens that history keeps
+/// (231 `:IMPLEMENTS: arch_` edges in `done.org`, 57 source markers). Removing
+/// it "for symmetry" buys nothing and re-arms that path for any caller that
+/// later feeds it a historical id.
 pub fn is_valid_greenfield_arch_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("arch_") else {
         return false;

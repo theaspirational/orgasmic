@@ -1253,8 +1253,6 @@ fn lint_decision_heading_id_tokens(file: &OrgFile, path: &Path, snap: &mut Index
     }
 }
 
-// orgasmic:task_KY80Q
-
 // orgasmic:task_HC7PW
 fn lint_phantom_task_headings(file: &OrgFile, path: &Path, snap: &mut IndexSnapshot) {
     for h in &file.headings {
