@@ -18160,3 +18160,127 @@
 :REASON:       update properties on TASK-STWVB.1.1.1.1
 :FIX_SUBTASK:  t
 :END:
+
+* TX 2026-08-06 Thu 21:47:39 task.state_transitioned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5098
+:TIME:         [2026-08-06 Thu 21:47:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 21:47:39 manager.dispatch_started TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5099
+:TIME:         [2026-08-06 Thu 21:47:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1
+:BRANCH:       task-qgwk7.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7-1-1-impl/task-qgwk7-1-1-impl-brief.md
+:STARTED_AT:   [2026-08-06 Thu 21:47:39]
+:LIVENESS:     5d2b1559e421be78f79a68656cd5122266cc0ccb
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: M-0 is a regression from 955c8d6 that breaks git merge after a close — prioritized ahead of the STWVB round-5 false green because that one is pre-existing and this one was introduced this session. M-0's fix is a decision among four options, stated in the brief.
+:END:
+
+* TX 2026-08-06 Thu 21:47:39 run.created TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5100
+:TIME:         [2026-08-06 Thu 21:47:39]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1.1-implementer-20260806T214739.jsonl
+:REASON:       M-0 is a regression from 955c8d6 that breaks git merge after a close — prioritized ahead of the STWVB round-5 false green because that one is pre-existing and this one was introduced this session. M-0's fix is a decision among four options, stated in the brief.
+:RUN_ID:       run-20260806T214739-2aaef56ae870414a82f67cdd589d8504
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7-1-1-impl/task-qgwk7-1-1-impl-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7-1-1-impl/task-qgwk7-1-1-impl-152c8d7383094e28a8f4b629b9198a46-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7-1-1-impl/task-qgwk7-1-1-impl-152c8d7383094e28a8f4b629b9198a46-stdout.log
+:DISPATCH_ATTEMPT: 152c8d7383094e28a8f4b629b9198a46
+:DISPATCH_TX:  tx-20260806-orgasmic-5099
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 21:56:53 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5101
+:TIME:         [2026-08-06 Thu 21:56:53]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_Z8MCK
+:NODE_ID:      dec_Z8MCK
+:END:
+
+* TX 2026-08-06 Thu 22:06:42 manager.dispatch_orphaned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5102
+:TIME:         [2026-08-06 Thu 22:06:42]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1.1-implementer-20260806T214739.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260806T214739-2aaef56ae870414a82f67cdd589d8504
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1
+:END:
+
+* TX 2026-08-06 Thu 22:08:23 manager.dispatch_aborted TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5103
+:TIME:         [2026-08-06 Thu 22:08:23]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:REASON:       Worker died ~20min in without calling finalize; tmux server gone entirely, no pane left to capture, stdout.log 0 bytes (normal for tmux). Cause UNDETERMINED — ruled out: no reboot (up 4 days), load calm at 3.91, no WindowServer watchdog report, so not the syspolicyd chain. Left 712 insertions across 8 files plus an authored verify/TASK-QGWK7.1.1/, all UNCOMMITTED and UNVERIFIED (no gates run, no summary). Manager committed it as 0273e9f on task-qgwk7.1.1-impl rather than let dispatch-close salvage it to a ref, and kept the worktree. NOT merged: nothing about that work has been verified, and it also modifies the PARENT's verify/TASK-QGWK7.1 artifact, which needs judging rather than inheriting.
+:CLOSED_TX:    tx-20260806-orgasmic-5099
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 22:08:23 task.state_transitioned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5104
+:TIME:         [2026-08-06 Thu 22:08:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-QGWK7.1.1 to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
