@@ -25052,6 +25052,47 @@ stage D's binary and stage E's corpus together. Operator authorization required.
 
 TASK-ZFNE1 (the README hero PNG) remains deferred by the operator; the reviewer
 verified its five now-false claims are accurate and complete.
+=== The second reinstall landed — the excision is now DELIVERED [2026-08-06]
+Built from main =206d5bc= (stages A-E), codesigned, installed, LaunchAgent
+bootstrapped. Drain 1s, daemon answering 4s, new pid 41745. Rollback dir
+=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260806b= (the =d803d49=
+build it replaced).
+
+*Verified behaviourally* — both builds call themselves =0.0.15-dev.1=, so version
+strings prove nothing:
+
+| probe | before (=d803d49=) | after (=206d5bc=) |
+| =id mint --class architecture= | minted =arch_RAWTY= | invalid value [task, decision, term, artifact] |
+| scaffold seeds =infer-architecture= | yes | *no* |
+| mint-class doctrine | =task\|decision\|architecture\|term= | =task\|decision\|term\|artifact= |
+| SKILL.md audit line | "comparing =architecture.org= claims" | "comparing decision and glossary claims" |
+| =bin/orgasmic= inode | 526812347 | 527048231 (running daemon's txt inode matches) |
+
+Health: *0 parse errors*, 6 projects, no unindexed, zero permission errors in
+=daemon.err.log= (TCC intact). =--verdict= still accepted; =--kind= = implementer,
+reviewer.
+
+=== Two corrections to what was recorded before
+1. *The installed Claude skill needs NO separate re-sync.* Both the stage-E
+   reviewer and the manager recorded it as an outstanding delivery step. It is a
+   symlink chain — =~/.claude/skills/orgasmic= -> =~/.agents/skills/orgasmic= ->
+   =~/.orgasmic/current/shipped/skills/orgasmic= — so it follows =current= and
+   updated with the runtime. =install.sh='s =link_agent_skill= maintains it as a
+   link deliberately, and even detects a stale COPY sitting where the link should
+   be, backs it up, and replaces it. Verified: the user's skill now reads the
+   stage-E line.
+
+2. *=~/.orgasmic/shipped= is a STALE ORPHAN DIRECTORY (dated Jul 28) that nothing
+   reads*, and the manager's first three post-install probes read it and wrongly
+   reported the install as half-applied. The runtime resolves
+   =home.source()/shipped/= (=home.rs:50= -> =root/orgasmic=), and
+   =~/.orgasmic/orgasmic= is a symlink to =current=. Confirmed fresh through that
+   path. The only other =join("shipped")= sites are a project root
+   (=id_repair.rs:192=), a repo root fallback (=api.rs:4279=
+   =resolve_stage_repo_root=), and a test fixture. *Left in place rather than
+   deleted — it is operator state, and removing it is their call* — but it is a
+   trap: the next audit that probes =~/.orgasmic/shipped= will draw the same wrong
+   conclusion.
 
 ** Description
 Execute the excision decided in dec_HBK6A. The measuring is already done — do
