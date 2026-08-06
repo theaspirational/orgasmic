@@ -80,14 +80,18 @@ EXIT_MISUSE=3
 EXIT_INCONCLUSIVE=4
 
 # orgasmic:TASK-STWVB.1
-# LOAD: BEFORE sample only. Calm-host mid-run suite contribution measured
-# 2026-08-06 on this 10-core Mac during `cargo test -p orgasmic-daemon --lib`
-# (see constant update after the measurement probe). Threshold stays above a
-# quiet BEFORE (~4–6.5) and below the worker-busy BEFORE (12.95) that must
-# still yield INCONCLUSIVE.
+# LOAD: BEFORE sample only. Calm-host suite contribution measured 2026-08-06
+# on this 10-core Mac during already-built `orgasmic-daemon --lib`:
+#   mid-run 1-min load ~7.35 (BEFORE was already 8.94 from other workers)
+#   post-run after calm BEFORE 4.13 → 7.87
+# So the suite's own load sits near 7–8; that is why during/after load must
+# not trip the gate. Threshold stays above a quiet BEFORE (~4–6.5) and below
+# the worker-busy BEFORE (12.95) that must still yield INCONCLUSIVE.
 LOAD_DEGRADED_THRESHOLD=8.0
 # syspolicyd cumulative CPU-time delta (seconds) across the suite run.
 # Historical TASK-STWVB readings: +32 s calm / +281 s under scan storm.
+# F9 probe on this host (2026-08-06): +53.9 s consolidated / +49.3 s with
+# link kill-switch (second run; cache-warmed — see finalize summary).
 SYSPOLICYD_CPU_DEGRADED=100.0
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
