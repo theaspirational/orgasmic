@@ -68,7 +68,8 @@ pub use crate::index::{
     ProjectIndex, TaskId, TaskOwner, TaskSummary, TxRecord,
 };
 pub use crate::logging::{
-    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, LogMirror, DAEMON_OUT_LOG,
+    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, LogMirror, LogRotation,
+    DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES,
 };
 pub use crate::prompt_compiler::{
     CompiledPrompt, ContextPackView, PromptCompileRequest, PromptDiagnostic, PromptPartSaveRequest,
@@ -894,8 +895,18 @@ impl Daemon {
         }
         // Durable file sink under $ORGASMIC_HOME/logs; stdout is a best-effort
         // mirror so a closed pipe cannot poison request handling (TASK-FZF2D).
+        // When stdout is the same inode as the durable file (launchd), the
+        // mirror is suppressed so lines are not double-written (TASK-ZBYH3).
         let daemon_log = home.logs().join(DAEMON_OUT_LOG);
-        init_tracing_to(&cfg.log_level, Some(&daemon_log), LogMirror::Stdout);
+        init_tracing_to(
+            &cfg.log_level,
+            Some(&daemon_log),
+            LogMirror::Stdout,
+            LogRotation {
+                max_bytes: cfg.log_max_bytes,
+                keep: cfg.log_keep,
+            },
+        );
         for key in &cfg.unrecognized_keys {
             warn!(
                 key = %key,

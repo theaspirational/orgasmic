@@ -20,6 +20,7 @@ use crate::governance::{
     known_governance_patch_keys, known_sandbox_permission_keys, normalize_governance_key,
     DispatchGovernanceOverlay, GovernancePatch,
 };
+use crate::logging::{DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -31,6 +32,16 @@ pub struct DaemonConfig {
     pub mdns: bool,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// Roll `$ORGASMIC_HOME/logs/daemon.out.log` when it exceeds this many bytes.
+    /// `0` disables rotation. Overridable via `log.max_bytes` in config.yaml.
+    /// orgasmic:TASK-ZBYH3
+    #[serde(default = "default_log_max_bytes")]
+    pub log_max_bytes: u64,
+    /// Keep this many rolled durable logs (`daemon.out.log.1` .. `.N`).
+    /// Overridable via `log.keep` in config.yaml.
+    /// orgasmic:TASK-ZBYH3
+    #[serde(default = "default_log_keep")]
+    pub log_keep: u32,
     #[serde(default = "default_debounce_ms")]
     pub watcher_debounce_ms: u64,
     #[serde(default = "default_commit_to_project")]
@@ -74,6 +85,14 @@ fn default_log_level() -> String {
     "info".into()
 }
 
+fn default_log_max_bytes() -> u64 {
+    DEFAULT_LOG_MAX_BYTES
+}
+
+fn default_log_keep() -> u32 {
+    DEFAULT_LOG_KEEP
+}
+
 fn default_debounce_ms() -> u64 {
     200
 }
@@ -107,6 +126,16 @@ impl DaemonConfig {
                 lan: parsed.lan_enabled.or(parsed.lan).unwrap_or(false),
                 mdns: parsed.mdns.unwrap_or(false),
                 log_level: parsed.log_level.unwrap_or_else(default_log_level),
+                log_max_bytes: parsed
+                    .log
+                    .as_ref()
+                    .and_then(|log| log.max_bytes)
+                    .unwrap_or_else(default_log_max_bytes),
+                log_keep: parsed
+                    .log
+                    .as_ref()
+                    .and_then(|log| log.keep)
+                    .unwrap_or_else(default_log_keep),
                 watcher_debounce_ms: parsed
                     .watcher
                     .as_ref()
@@ -135,6 +164,8 @@ impl DaemonConfig {
                 lan: false,
                 mdns: false,
                 log_level: default_log_level(),
+                log_max_bytes: default_log_max_bytes(),
+                log_keep: default_log_keep(),
                 watcher_debounce_ms: default_debounce_ms(),
                 tx_commit_to_project: default_commit_to_project(),
                 manager_actor: None,
@@ -279,6 +310,7 @@ pub fn collect_unrecognized_keys(value: &serde_yaml::Value) -> Vec<String> {
             | "mdns"
             | "log_level"
             | "watcher_debounce_ms" => {}
+            "log" => collect_object_keys(child, "log", &["max_bytes", "keep"], &mut out),
             "watcher" => collect_object_keys(child, "watcher", &["debounce_ms"], &mut out),
             "tx" => collect_object_keys(child, "tx", &["commit_to_project"], &mut out),
             "manager" => collect_object_keys(child, "manager", &["actor"], &mut out),
@@ -404,12 +436,19 @@ struct YamlConfig {
     lan: Option<bool>,
     mdns: Option<bool>,
     log_level: Option<String>,
+    log: Option<LogYaml>,
     watcher_debounce_ms: Option<u64>,
     watcher: Option<WatcherYaml>,
     tx: Option<TxYaml>,
     manager: Option<ManagerYaml>,
     dispatch: Option<DispatchYaml>,
     drivers: Option<DriversYaml>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LogYaml {
+    max_bytes: Option<u64>,
+    keep: Option<u32>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -474,6 +513,21 @@ mod tests {
         assert!(cfg.auto_commit_signal);
         assert_eq!(cfg.driver_defaults, DriverDefaults::default());
         assert!(cfg.dispatch_governance.is_empty());
+        assert!(cfg.unrecognized_keys.is_empty());
+        assert_eq!(cfg.log_max_bytes, DEFAULT_LOG_MAX_BYTES);
+        assert_eq!(cfg.log_keep, DEFAULT_LOG_KEEP);
+    }
+
+    #[test]
+    fn loads_log_rotation_overrides_from_yaml() {
+        // orgasmic:TASK-ZBYH3
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(home.config(), "log:\n  max_bytes: 4096\n  keep: 5\n").unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert_eq!(cfg.log_max_bytes, 4096);
+        assert_eq!(cfg.log_keep, 5);
         assert!(cfg.unrecognized_keys.is_empty());
     }
 
