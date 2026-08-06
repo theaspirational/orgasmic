@@ -4010,49 +4010,73 @@ Two small consequences of TASK-G64ZH.1.1's write-time fallback:
 =orgasmic manager dispatch-close= DELETES the worker's =last.txt= and
 =stdout.log=, leaving only the brief — and the =implementer.reported= /
 =reviewer.reported= tx entries carry NO BODY, only metadata (=TX_ID=, =RUN_ID=,
-=WORKTREE=). So after a close, the ONLY durable record of what a worker actually
-reported is whatever the manager happened to paste into the close tx's =REASON=.
+=WORKTREE=). Nor is there a copy in git: =.orgasmic/.gitignore= line 1 is =tmp/=,
+and =git log -- .orgasmic/tmp= returns ZERO commits, so the dispatch record tree
+has never been committed. After a close, the only surviving record of what a
+worker said is the prose the manager pasted into the close tx's =REASON=.
 
-Observed live 2026-08-06 while filing follow-ups from a review: all four dispatch
-record dirs for the TASK-G64ZH chain
-(=task-g64zh-review=, =task-g64zh-1-review=, =task-g64zh-1-1-review=,
-=task-g64zh-1-1=) contain their =-brief.md= and nothing else. Three reviews and
-four implementer reports, gone. Two review findings (F-4, F-5) had to be filed
-from their titles alone because the manager's =REASON= summary was the only
-surviving trace — see TASK-3RTM0's status block.
+Observed live 2026-08-06: all four dispatch record dirs for the TASK-G64ZH chain
+contain their =-brief.md= and nothing else. Three reviews (22.8KB, 24.7KB,
+23.4KB) and four implementer reports, gone. Two review findings had to be filed
+from their TITLES alone — see TASK-3RTM0's status block.
 
 ** Why this matters more than it looks
 - The BRIEF survives and the REPORT does not, which is backwards: the brief is
   reconstructible from the task and the convention, the report is not.
-- It silently punishes the correct workflow. A manager who closes promptly — which
-  the convention and the review gate both push toward — destroys the evidence. A
-  manager who leaves dispatches open keeps it.
-- It defeats the audit trail the tx log exists to be. =reviewer.done= records that
-  a review happened and what verdict it carried, but the FINDINGS, their
-  =file:line= anchors and their mechanisms live only in prose the manager chose to
-  copy. A later manager cannot check whether a finding was actioned faithfully.
-- It interacts badly with the =:FIX_SUBTASK:= flow: a fix round's task body quotes
-  the findings, so the quote becomes the only copy, and any transcription error in
-  it is permanent and unfalsifiable.
+- It silently punishes the correct workflow. The exit checklist forbids leaving
+  orphan pre-flight tx and the default-branch gate forces the reviewer close
+  before the implementer close, so every review reaches the deletion. A manager
+  who closes promptly destroys the evidence; one who leaves dispatches open keeps
+  it.
+- THE TRANSCRIPTION IS NOT THE DEFECT — being the ONLY copy is. What a manager
+  writes into =REASON= and the fix-round body is CURATED: which findings survived
+  checking against the code, which is worth more than the raw report. The problem
+  is that an error in the curation is then unfalsifiable. Demonstrated the same
+  session: a merge sha was written as =40f3ec1= into the handoff AND the task
+  Evidence, and only =dispatch-close= refusing it revealed the real =f74256b=.
+  You want the curated claim AND the source it came from.
+- It interacts badly with =:FIX_SUBTASK:=: the fix task's body quotes the
+  findings, so that quote becomes the only copy of them.
 
 ** Direction — decide, then implement
-1. Preferred: persist the report body on the completion tx. =dispatch finalize=
-   already receives it verbatim (=--summary-file=); write it into the
-   =*.reported= entry, or into a sibling node the tx references, so it survives
-   independently of the filesystem. Mind =tx.org= size — a long review is tens of
-   KB, so a reference to a stored artifact may beat inlining.
-2. Cheaper: stop deleting =last.txt= at close. Only the WORKTREE needs reclaiming;
-   the record dir is small and already per-task. If the deletion is deliberate
-   (disk hygiene), make it opt-in and say so in the convention.
-3. At minimum: make the convention state that the report is destroyed at close, so
-   a manager knows to extract findings BEFORE closing rather than after.
+The shape is settled by two measurements, so do not re-litigate them:
 
-Whichever lands, the =manager-dispatch= convention's Integrate step should say
-plainly where a report can be read AFTER a close, because today the honest answer
-is "nowhere".
+*Why the report must NOT go verbatim into the task node.* =done.org= is already
+26,106 lines and the daemon reparses it whole on every reindex; this one chain's
+three reviews would have added ~70KB and ~1000 lines. And a review body is
+markdown with =#= headings and code fences — verbatim worker output in an org
+node is a file-corruption surface, which is why =node body set= refuses column-0
+=* = headings and why TASK-KBHAN had to escape review comment bodies already.
+
+*Why =last.txt= must still exist during the run.* It is a streaming sink for
+unbounded untrusted bytes from a worker that may die mid-write. That is a file's
+job, not a parsed indexed node's.
+
+So:
+1. At close, MOVE the record out of =tmp/= into a TRACKED path rather than
+   deleting it. Key it by the GENERATION (=started_tx=), not the task: this chain
+   had six dispatches across three tasks, and a task node has no natural slot for
+   six reports.
+2. Add a =REPORT_PATH= property to the =*.reported= tx (and/or the close tx) so
+   =reviewer.reported= stops being body-less and becomes resolvable.
+3. Leave the node carrying the CURATED Evidence plus a pointer. Do not replace
+   curation with the raw dump — both have jobs.
+4. Decide retention deliberately and say it in the convention. If old records
+   should age out, that is a policy with a number, not a silent delete at close.
+
+The =manager-dispatch= convention's Integrate step must then say plainly where a
+report can be read AFTER a close, because today the honest answer is "nowhere".
 
 ** Acceptance
-- After a =dispatch-close --worktree-remove --branch-delete=, the worker's report
-  is still readable, and the convention names where.
-- A test or a documented probe proves it for both an implementer and a reviewer
-  close.
+- After =dispatch-close --worktree-remove --branch-delete=, the worker's report is
+  still readable, from a path the tx names.
+- The path is tracked in git, so a fresh clone or another machine can read it.
+- Reports are keyed per dispatch generation, so a task with six dispatches keeps
+  six distinct reports.
+- =done.org= and the other state files do not grow by the size of the reports.
+- The convention names where a closed dispatch's report lives, and the retention
+  policy if there is one.
+** Until this lands
+EXTRACT EVERY FINDING BEFORE CLOSING, and write a close =REASON= detailed enough
+to file tasks from — with =file:line= anchors, not just prose. The reasons written
+on 2026-08-06 are the only thing that kept F-1 through F-5 recoverable at all.
