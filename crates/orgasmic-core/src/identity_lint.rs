@@ -1,5 +1,5 @@
 //! Post-migration identity lint: duplicate ids, malformed mints, dangling refs,
-//! and heading-token vs `:ID:` equality on task/decision/arch nodes.
+//! and heading-token vs `:ID:` equality on task/decision nodes.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::id::is_valid_greenfield_identity;
 use crate::iter_task_file_paths;
 use crate::org::{Heading, OrgFile};
-use crate::schema::{ArchitectureNode, DecisionNode, GlossaryTerm};
+use crate::schema::{DecisionNode, GlossaryTerm};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentityOccurrence {
@@ -40,16 +40,6 @@ pub fn lint_task_heading_id_token(heading: &Heading) -> Option<String> {
 pub fn lint_decision_heading_id_token(heading: &Heading) -> Option<String> {
     let id = heading.property("ID")?;
     if !id.starts_with("dec_") {
-        return None;
-    }
-    heading_id_token_drift_message(heading, id)
-}
-
-/// Return a lint message when the heading title's leading ID token disagrees
-/// with (or omits) the drawer `:ID:` for an architecture node.
-pub fn lint_arch_heading_id_token(heading: &Heading) -> Option<String> {
-    let id = heading.property("ID")?;
-    if !id.starts_with("arch_") {
         return None;
     }
     heading_id_token_drift_message(heading, id)
@@ -179,21 +169,6 @@ fn collect_decision_identities(path: &Path, file: &OrgFile, out: &mut Vec<Identi
     }
 }
 
-fn collect_architecture_identities(path: &Path, file: &OrgFile, out: &mut Vec<IdentityOccurrence>) {
-    let Ok(nodes) = ArchitectureNode::from_org(file, &path.to_string_lossy()) else {
-        return;
-    };
-    for node in nodes {
-        push_identity(
-            out,
-            node.id,
-            path,
-            None,
-            &format!("architecture node {}", node.id),
-        );
-    }
-}
-
 fn collect_glossary_identities(path: &Path, file: &OrgFile, out: &mut Vec<IdentityOccurrence>) {
     for heading in &file.headings {
         if heading.property("ID").is_none() {
@@ -252,7 +227,6 @@ pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurren
     }
     for path in [
         orgasmic.join("decisions.org"),
-        orgasmic.join("architecture.org"),
         orgasmic.join("glossary.org"),
     ] {
         if !path.exists() {
@@ -263,8 +237,6 @@ pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurren
         };
         if path.ends_with("decisions.org") {
             collect_decision_identities(&path, &file, &mut out);
-        } else if path.ends_with("architecture.org") {
-            collect_architecture_identities(&path, &file, &mut out);
         } else {
             collect_glossary_identities(&path, &file, &mut out);
         }
@@ -286,7 +258,7 @@ pub fn collect_reference_occurrences(
             collect_dangling_reference_tokens(&path, &file, &mut out);
         }
     }
-    for rel in ["decisions.org", "architecture.org", "glossary.org"] {
+    for rel in ["decisions.org", "glossary.org"] {
         let path = orgasmic.join(rel);
         if let Some(file) = read_org(&path) {
             collect_dangling_reference_tokens(&path, &file, &mut out);
@@ -426,11 +398,7 @@ pub fn org_state_rel_paths(project_root: &Path) -> Vec<PathBuf> {
                 .to_path_buf()
         })
         .collect::<Vec<_>>();
-    for rel in [
-        ".orgasmic/decisions.org",
-        ".orgasmic/architecture.org",
-        ".orgasmic/glossary.org",
-    ] {
+    for rel in [".orgasmic/decisions.org", ".orgasmic/glossary.org"] {
         let path = project_root.join(rel);
         if path.exists() {
             paths.push(PathBuf::from(rel));
@@ -541,19 +509,11 @@ mod tests {
     }
 
     #[test]
-    fn heading_id_token_lint_flags_decision_and_arch_mismatch() {
+    fn heading_id_token_lint_flags_decision_mismatch() {
         let decisions = "#+title: decisions\n\n\
             * dec_WRONG Decision\n:PROPERTIES:\n:ID: dec_RIGHT\n:END:\n";
         let file = OrgFile::parse(decisions, "decisions.org").unwrap();
         assert!(lint_decision_heading_id_token(&file.headings[0]).is_some());
-
-        let arch = "#+title: architecture\n\n\
-            * arch_WRONG Label\n:PROPERTIES:\n:ID: arch_RIGHT\n:END:\n\n\
-            ** arch_CHILD.1 Child\n:PROPERTIES:\n:ID: arch_PARENT.1\n:END:\n";
-        let file = OrgFile::parse(arch, "architecture.org").unwrap();
-        assert!(lint_arch_heading_id_token(&file.headings[0]).is_some());
-        let child = file.headings[0].sections.first().expect("child arch");
-        assert!(lint_arch_heading_id_token(child).is_some());
     }
 
     #[test]
@@ -565,7 +525,6 @@ mod tests {
         assert_eq!(heading.title, "human-readable slug");
         assert!(lint_task_heading_id_token(heading).is_none());
         assert!(lint_decision_heading_id_token(heading).is_none());
-        assert!(lint_arch_heading_id_token(heading).is_none());
     }
 
     #[test]

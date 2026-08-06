@@ -145,10 +145,6 @@ async fn heading_id_token_mismatch_surfaces_via_parse_errors() {
         &format!("#+title: decisions\n\n* dec_WRONG Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"),
     );
     write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n\n* arch_WRONG Node\n:PROPERTIES:\n:ID: arch_RIGHT\n:END:\n",
-    );
-    write(
         &project_root.join(".orgasmic/glossary.org"),
         "#+title: glossary\n\n* human slug title\n:PROPERTIES:\n:ID: term_ABCDE\n:END:\n",
     );
@@ -181,9 +177,8 @@ async fn heading_id_token_mismatch_surfaces_via_parse_errors() {
         "expected decision mismatch lint, got {msgs:?}"
     );
     assert!(
-        msgs.iter()
-            .any(|m| m.contains("heading-token/:ID: mismatch") && m.contains("arch_WRONG")),
-        "expected arch mismatch lint, got {msgs:?}"
+        !msgs.iter().any(|m| m.contains("arch_")),
+        "architecture heading-token lint is retired with the arch_ class: {msgs:?}"
     );
     assert!(
         !msgs.iter().any(|m| m.contains("human slug title")),

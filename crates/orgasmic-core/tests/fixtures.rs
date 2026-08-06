@@ -10,8 +10,8 @@ use std::sync::{
 };
 
 use orgasmic_core::{
-    org::OrgRewriter, parse_tx_file, ArchEdgeKind, ArchEdgeTarget, ArchitectureNode,
-    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile, ProjectFile, TaskHeading,
+    org::OrgRewriter, parse_tx_file, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile,
+    ProjectFile, TaskHeading,
 };
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};
@@ -234,130 +234,6 @@ fn parses_real_decisions() {
             .unwrap_or("")
             .is_empty(),
         "ADR record has a Decision section"
-    );
-}
-
-#[test]
-fn parses_real_architecture() {
-    let f = parse_or_panic(".orgasmic/architecture.org");
-    let arch_heading = f.find_by_id("arch_BVH7M").expect("arch_BVH7M present");
-    let view =
-        ArchitectureNode::from_heading(&f, arch_heading, ".orgasmic/architecture.org").unwrap();
-    assert_eq!(view.id, "arch_BVH7M");
-    assert!(view.motivated_by.contains(&"dec_R75SW"));
-    assert!(view.purpose.unwrap().contains("file profile"));
-}
-
-#[test]
-fn architecture_top_level_only_parses_unchanged() {
-    let source = "#+title: architecture\n\n* arch_001 Component\n:PROPERTIES:\n:ID:                 arch_001\n:DEPENDS_ON:         arch_002\n:MOTIVATED_BY:       dec_001\n:END:\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let nodes = ArchitectureNode::from_org(&file, "inline.org").unwrap();
-    assert_eq!(nodes.len(), 1);
-    assert_eq!(nodes[0].id, "arch_001");
-    assert_eq!(nodes[0].label, "Component");
-    assert_eq!(nodes[0].parent_id, None);
-    assert_eq!(nodes[0].depends_on, vec!["arch_002"]);
-}
-
-#[test]
-fn architecture_child_heading_parses_parent_label_body_and_source_paths() {
-    let source = "#+title: architecture\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n\n** arch_006.3 Materialized index\n:PROPERTIES:\n:ID:                 arch_006.3\n:SOURCE_PATHS:       crates/orgasmic-daemon/src/index.rs\n:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon\n:READS:              file:board\n:WRITES:             projection:materialized-index\n:END:\nReads project board.org to hydrate the in-memory project graph.\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let nodes = ArchitectureNode::from_org(&file, "inline.org").unwrap();
-    let child = nodes.iter().find(|node| node.id == "arch_006.3").unwrap();
-    assert_eq!(child.label, "Materialized index");
-    assert_eq!(child.parent_id.as_deref(), Some("arch_006"));
-    assert_eq!(
-        child.source_paths,
-        vec!["crates/orgasmic-daemon/src/index.rs"]
-    );
-    // `:TESTS:` is `;`-separated and preserves intra-command spaces.
-    assert_eq!(
-        child.tests,
-        vec![
-            "cargo test -p orgasmic-core".to_string(),
-            "cargo test -p orgasmic-daemon".to_string(),
-        ]
-    );
-    assert!(child
-        .description
-        .as_deref()
-        .unwrap()
-        .contains("hydrate the in-memory project graph"));
-}
-
-#[test]
-fn architecture_multiple_children_and_nested_typed_edges_parse() {
-    let source = "#+title: architecture\n\n* arch_004 Runtime supervisor\n:PROPERTIES:\n:ID:                 arch_004\n:END:\n\n** arch_004.1 Supervisor acquire\n:PROPERTIES:\n:ID:                 arch_004.1\n:CALLS:              arch_004.2 arch_006\n:SPAWNS:             arch_004.3\n:END:\n\n** arch_004.2 Worker trait\n:PROPERTIES:\n:ID:                 arch_004.2\n:READS:              file:sessions\n:END:\n\n** arch_004.3 Driver task\n:PROPERTIES:\n:ID:                 arch_004.3\n:SUBSCRIBES_TO:      socket:events\n:END:\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let nodes = ArchitectureNode::from_org(&file, "inline.org").unwrap();
-    assert_eq!(nodes.len(), 4);
-    let first = nodes.iter().find(|node| node.id == "arch_004.1").unwrap();
-    assert!(first
-        .edges
-        .iter()
-        .any(|edge| edge.kind == ArchEdgeKind::Calls
-            && edge.target
-                == (ArchEdgeTarget::Node {
-                    id: "arch_004.2".into()
-                })));
-    assert!(first
-        .edges
-        .iter()
-        .any(|edge| edge.kind == ArchEdgeKind::Spawns
-            && edge.target
-                == (ArchEdgeTarget::Node {
-                    id: "arch_004.3".into()
-                })));
-}
-
-#[test]
-fn architecture_artifact_schemes_parse() {
-    let source = "#+title: architecture\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n\n** arch_006.1 Router\n:PROPERTIES:\n:ID:                 arch_006.1\n:READS:              file:tx projection:materialized-index socket:events\n:END:\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let nodes = ArchitectureNode::from_org(&file, "inline.org").unwrap();
-    let child = nodes.iter().find(|node| node.id == "arch_006.1").unwrap();
-    let schemes = child
-        .edges
-        .iter()
-        .filter_map(|edge| match &edge.target {
-            ArchEdgeTarget::Artifact(artifact) => Some(artifact.scheme.clone()),
-            ArchEdgeTarget::Node { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        schemes,
-        vec![
-            ArtifactScheme::File,
-            ArtifactScheme::Projection,
-            ArtifactScheme::Socket
-        ]
-    );
-}
-
-#[test]
-fn architecture_invalid_artifact_scheme_is_parse_error() {
-    let source = "#+title: architecture\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n\n** arch_006.1 Router\n:PROPERTIES:\n:ID:                 arch_006.1\n:READS:              unknown:foo\n:END:\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let err = ArchitectureNode::from_org(&file, "inline.org").unwrap_err();
-    assert!(err.to_string().contains("unknown architecture namespace"));
-}
-
-#[test]
-fn architecture_edge_property_splits_multiple_values() {
-    let source = "#+title: architecture\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n\n** arch_006.2 HTTP router\n:PROPERTIES:\n:ID:                 arch_006.2\n:WRITES:             file:tx projection:materialized-index arch_006.3\n:END:\n";
-    let file = OrgFile::parse(source, "inline.org").unwrap();
-    let nodes = ArchitectureNode::from_org(&file, "inline.org").unwrap();
-    let child = nodes.iter().find(|node| node.id == "arch_006.2").unwrap();
-    let targets = child
-        .edges
-        .iter()
-        .map(|edge| edge.target.id())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        targets,
-        vec!["file:tx", "projection:materialized-index", "arch_006.3"]
     );
 }
 

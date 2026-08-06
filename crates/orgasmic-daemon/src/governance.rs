@@ -196,7 +196,6 @@ pub fn kind_defaults(kind: WorkerKind) -> GovernanceDefaults {
     match kind {
         WorkerKind::Implementer => defaults(Some(20), Some(600_000), BASE_STATES),
         WorkerKind::Reviewer => defaults(Some(10), Some(600_000), REVIEWER_STATES),
-        WorkerKind::Architector => defaults(Some(14), Some(560_000), BASE_STATES),
         WorkerKind::Planner => defaults(Some(12), Some(480_000), BASE_STATES),
         WorkerKind::Artifactor => defaults(Some(20), Some(600_000), BASE_STATES),
         WorkerKind::Griller => defaults(Some(10), Some(400_000), BASE_STATES),

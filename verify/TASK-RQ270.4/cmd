@@ -1,0 +1,4 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RQ270.4`.
+# Pins the stage-D invariant: arch_ must stay in looks_like_structured_node_id
+# or write-time rejection of retired architecture ids silently goes quiet.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib retired_architecture_prefix_stays_structured_node_id

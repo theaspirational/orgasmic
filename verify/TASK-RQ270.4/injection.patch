@@ -1,0 +1,9 @@
+diff --git a/crates/orgasmic-daemon/src/index.rs b/crates/orgasmic-daemon/src/index.rs
+--- a/crates/orgasmic-daemon/src/index.rs
++++ b/crates/orgasmic-daemon/src/index.rs
+@@ -1108,5 +1108,4 @@
+     // goes quiet. See `retired_architecture_prefix_stays_structured_node_id`.
+     value.starts_with("TASK-")
+-        || value.starts_with("arch_")
+         || value.starts_with("dec_")
+         || value.starts_with("term_")

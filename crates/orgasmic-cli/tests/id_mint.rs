@@ -33,7 +33,6 @@ fn id_mint_prints_conforming_task_id_without_daemon() {
 fn id_mint_all_classes_use_crockford_alphabet() {
     for (class, prefix) in [
         (NodeIdClass::Decision, "dec_"),
-        (NodeIdClass::Architecture, "arch_"),
         (NodeIdClass::Term, "term_"),
         (NodeIdClass::Artifact, "ART-"),
     ] {
@@ -44,7 +43,6 @@ fn id_mint_all_classes_use_crockford_alphabet() {
                 "--class",
                 match class {
                     NodeIdClass::Decision => "decision",
-                    NodeIdClass::Architecture => "architecture",
                     NodeIdClass::Term => "term",
                     NodeIdClass::Artifact => "artifact",
                     NodeIdClass::Task => unreachable!(),
