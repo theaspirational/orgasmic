@@ -14550,3 +14550,123 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-06 Thu 13:52:18 reviewer.reported TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4876
+:TIME:         [2026-08-06 Thu 13:52:18]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:RUN_ID:       run-20260806T134255-249bcf3f561d49d5be4fc57b5beccc6d
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh-review
+:END:
+
+* TX 2026-08-06 Thu 13:53:18 reviewer.done TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4877
+:TIME:         [2026-08-06 Thu 13:53:18]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:REASON:       REJECT, two BLOCK SHIP, both verified against the code by the manager. F-A: with --no-log-mirror in the service definitions, a boot-time durable-open failure is TOTAL SILENCE — init_tracing_to's and_then discards the path with the handle, resolve_mirror's durable-absent early return hands back the caller's LogMirror::None, and durable_path=None makes the new backoff unreachable forever; pre-diff the caller passed Stdout unconditionally so every line landed in launchd's StandardOutPath. The most likely production trigger gets none of the fix. F-B: the generated plist/unit/wrapper embed --no-log-mirror, so a manual runtime rollback (update.rs keeps one previous install for exactly that) gives an old binary an unknown flag under KeepAlive=true — a launchd crash loop writing clap usage into the unrotated daemon.err.log, the same growth shape this chain exists to remove, on a daemon that is DOWN. The env form is already implemented and an old binary ignores it. Non-blocking: F-C the rename branch stays per-line (pre-existing, not a regression, mint a follow-up), F-D the F3 seam moved rather than closed, F-E only the backoff ceiling is pinned not the floor, F-F the env parser has no test at all.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260806-orgasmic-4873
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 13:53:18 task.state_transitioned TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4878
+:TIME:         [2026-08-06 Thu 13:53:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-G64ZH to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 13:53:20 implementer.done TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4879
+:TIME:         [2026-08-06 Thu 13:53:20]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    eaa88dab9f7fae2aaf904a7526d0020723706e37
+:BRANCH:       task-g64zh-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4866
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 13:53:20 task.state_transitioned TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4880
+:TIME:         [2026-08-06 Thu 13:53:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-G64ZH to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 13:55:04 task.created TASK-CGJM7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4881
+:TIME:         [2026-08-06 Thu 13:55:04]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CGJM7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-G64ZH review F-C: pre-existing, not a regression, so it gets its own task rather than riding the fix round — it needs a rotate-side backoff design
+:END:
+
+* TX 2026-08-06 Thu 13:55:12 task.created TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4882
+:TIME:         [2026-08-06 Thu 13:55:12]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-G64ZH reviewed REJECT with two BLOCK SHIP findings, both regressions introduced by eaa88da and both verified against the code by the manager
+:END:
+
+* TX 2026-08-06 Thu 13:55:13 task.property_updated TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4883
+:TIME:         [2026-08-06 Thu 13:55:13]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-G64ZH.1
+:FIX_SUBTASK:  t
+:END:
