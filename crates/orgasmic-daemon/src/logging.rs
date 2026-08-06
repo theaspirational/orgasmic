@@ -1,13 +1,14 @@
 //! Best-effort tracing sinks so a dead stdout/stderr pipe never kills the
 //! daemon or fails an HTTP request (TASK-FZF2D).
 //!
-//! Size-triggered rotation: TASK-ZBYH3. Stdout mirror: explicit
-//! `--no-log-mirror` / `ORGASMIC_LOG_MIRROR=off` by construction in service
-//! definitions orgasmic writes, with `is_terminal()` as the fallback for
-//! supervisors it did not write (TASK-ZBYH3.1, TASK-G64ZH). Reopen after a
-//! failed durable open is backoff-bounded (TASK-G64ZH).
+//! Size-triggered rotation: TASK-ZBYH3. Stdout mirror: service definitions
+//! orgasmic writes set `ORGASMIC_LOG_MIRROR=off` (an older binary ignores the
+//! unknown env and degrades); `--no-log-mirror` remains the interactive
+//! override. `is_terminal()` is the fallback for supervisors orgasmic did not
+//! write (TASK-ZBYH3.1, TASK-G64ZH, TASK-G64ZH.1). Reopen after a failed
+//! durable open — including boot — is backoff-bounded (TASK-G64ZH).
 //!
-//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1,TASK-G64ZH
+//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1,TASK-G64ZH,TASK-G64ZH.1
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
@@ -23,6 +24,12 @@ use tracing_subscriber::EnvFilter;
 const REOPEN_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 /// Cap for the reopen backoff (TASK-G64ZH F1).
 const REOPEN_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// Env var that suppresses the stdout tracing mirror when set to `off` / `0` /
+/// `false` (case-insensitive). Service definitions orgasmic writes set this
+/// so a runtime rollback cannot hand an older binary an unknown CLI flag.
+/// orgasmic:TASK-G64ZH.1
+pub const LOG_MIRROR_ENV: &str = "ORGASMIC_LOG_MIRROR";
 
 /// Default durable daemon log under `$ORGASMIC_HOME/logs/`.
 pub const DAEMON_OUT_LOG: &str = "daemon.out.log";
@@ -93,13 +100,13 @@ impl Default for LogRotation {
 ///
 /// Precedence (TASK-G64ZH F2):
 /// 1. `no_log_mirror` CLI flag (`serve --no-log-mirror`) → [`LogMirror::None`]
-/// 2. else `ORGASMIC_LOG_MIRROR=off` (also `0` / `false`, case-insensitive) →
+/// 2. else [`LOG_MIRROR_ENV`]=`off` (also `0` / `false`, case-insensitive) →
 ///    [`LogMirror::None`]
 /// 3. else [`LogMirror::Stdout`], and [`resolve_mirror`] applies the
 ///    `is_terminal()` fallback when a durable sink is present
 ///
 /// Explicit off always wins over a tty. An old LaunchAgent plist without the
-/// flag still suppresses under launchd because stdout is not a terminal.
+/// env still suppresses under launchd because stdout is not a terminal.
 pub fn requested_log_mirror(no_log_mirror: bool) -> LogMirror {
     if no_log_mirror || env_log_mirror_off() {
         LogMirror::None
@@ -108,8 +115,9 @@ pub fn requested_log_mirror(no_log_mirror: bool) -> LogMirror {
     }
 }
 
-fn env_log_mirror_off() -> bool {
-    match std::env::var("ORGASMIC_LOG_MIRROR") {
+/// True when [`LOG_MIRROR_ENV`] requests mirror suppression.
+pub fn env_log_mirror_off() -> bool {
+    match std::env::var(LOG_MIRROR_ENV) {
         Ok(value) => {
             let value = value.trim();
             value.eq_ignore_ascii_case("off") || value == "0" || value.eq_ignore_ascii_case("false")
@@ -118,14 +126,26 @@ fn env_log_mirror_off() -> bool {
     }
 }
 
+/// Map a requested durable path to `(path, open_result)`.
+///
+/// Keeps the path when the boot open fails so [`SinkState::maybe_reopen_durable`]
+/// owns the 1s→60s retry and [`record_drop`] fires per dropped line
+/// (TASK-G64ZH.1 F-A). Collapsing with `and_then` discarded the path and made
+/// `resolve_mirror` hand back the caller's [`LogMirror::None`] — total silence,
+/// with the reopen backoff unreachable for the whole daemon lifetime.
+fn resolve_durable_open(durable_log: Option<&Path>) -> Option<(PathBuf, Option<File>)> {
+    durable_log.map(|path| (path.to_path_buf(), open_durable_log(path)))
+}
+
 /// Install the global tracing subscriber once. Later calls are no-ops.
 ///
 /// When `durable_log` is set, logs append to that path (created if needed, never
-/// truncated). `mirror` is best-effort: failures are counted and swallowed so
-/// they cannot propagate into request handling. When a durable sink is present,
-/// a [`LogMirror::Stdout`] mirror is kept only if stdout is a terminal — unless
+/// truncated). A failed boot open still retains the path so reopen backoff can
+/// recover. `mirror` is best-effort: failures are counted and swallowed so they
+/// cannot propagate into request handling. When a durable path is present, a
+/// [`LogMirror::Stdout`] mirror is kept only if stdout is a terminal — unless
 /// the caller already passed [`LogMirror::None`] (explicit `--no-log-mirror` /
-/// `ORGASMIC_LOG_MIRROR=off`). Without a durable sink (non-`serve` CLI), the
+/// [`LOG_MIRROR_ENV`]=`off`). Without a durable path (non-`serve` CLI), the
 /// stdout mirror is left alone so piped/redirected CLI tracing still works.
 ///
 /// Returns `true` when this call installed the subscriber.
@@ -139,8 +159,7 @@ pub fn init_tracing_to(
     let filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(default_filter))
         .unwrap_or_else(|_| EnvFilter::new("info"));
-    let durable =
-        durable_log.and_then(|path| open_durable_log(path).map(|file| (path.to_path_buf(), file)));
+    let durable = resolve_durable_open(durable_log);
     let sink = BestEffortMakeWriter::new(durable, mirror, rotation);
     tracing_subscriber::fmt()
         .with_env_filter(filter)
@@ -205,13 +224,13 @@ fn same_file_as_path(_file: &File, _path: &Path) -> bool {
 /// Resolve a requested mirror when a durable sink is present.
 ///
 /// Production (`LogMirror::Stdout`): keep the mirror only when
-/// `stdout_is_terminal` is true. Service managers orgasmic writes pass
-/// `--no-log-mirror` so the caller supplies [`LogMirror::None`] already;
-/// `is_terminal()` remains the fallback for supervisors orgasmic did not
-/// write (and for already-installed plists that lack the flag). When
+/// `stdout_is_terminal` is true. Service managers orgasmic writes set
+/// [`LOG_MIRROR_ENV`]=`off` so the caller supplies [`LogMirror::None`]
+/// already; `is_terminal()` remains the fallback for supervisors orgasmic did
+/// not write (and for already-installed plists that lack the env). When
 /// `durable_path` is `None` (non-`serve` CLI via [`init_tracing`]), the mirror
 /// is returned unchanged so piped/redirected CLI tracing still works —
-/// orgasmic:TASK-ZBYH3.1,TASK-G64ZH.
+/// orgasmic:TASK-ZBYH3.1,TASK-G64ZH,TASK-G64ZH.1.
 fn resolve_mirror(
     mirror: LogMirror,
     durable_path: Option<&Path>,
@@ -268,6 +287,11 @@ struct SinkState {
     /// Test-only: lines that never landed in the durable file (TASK-G64ZH F1).
     #[cfg(test)]
     lines_dropped: u64,
+    /// Test-only clock for backoff liveness (TASK-G64ZH.1 F-E). When set,
+    /// used instead of [`Instant::now`] so a second attempt can be asserted
+    /// without sleeping.
+    #[cfg(test)]
+    clock: Option<Instant>,
 }
 
 enum MirrorState {
@@ -277,14 +301,20 @@ enum MirrorState {
 }
 
 impl BestEffortMakeWriter {
-    fn new(durable: Option<(PathBuf, File)>, mirror: LogMirror, rotation: LogRotation) -> Self {
+    /// `durable` is `(path, open_file)`. Pass `(path, None)` when the boot open
+    /// failed so the path is retained for reopen backoff (TASK-G64ZH.1 F-A).
+    fn new(
+        durable: Option<(PathBuf, Option<File>)>,
+        mirror: LogMirror,
+        rotation: LogRotation,
+    ) -> Self {
         Self::new_with_terminal_gate(durable, mirror, rotation, io::stdout().is_terminal())
     }
 
     /// Like [`Self::new`], but with an injectable terminal predicate so both
     /// mirror-gate branches can be asserted (TASK-G64ZH F3).
     fn new_with_terminal_gate(
-        durable: Option<(PathBuf, File)>,
+        durable: Option<(PathBuf, Option<File>)>,
         mirror: LogMirror,
         rotation: LogRotation,
         stdout_is_terminal: bool,
@@ -297,10 +327,11 @@ impl BestEffortMakeWriter {
             LogMirror::None => MirrorState::None,
         };
         let (durable_path, durable, bytes_written) = match durable {
-            Some((path, file)) => {
+            Some((path, Some(file))) => {
                 let len = file.metadata().map(|m| m.len()).unwrap_or(0);
                 (Some(path), Some(file), len)
             }
+            Some((path, None)) => (Some(path), None, 0),
             None => (None, None, 0),
         };
         Self {
@@ -320,6 +351,8 @@ impl BestEffortMakeWriter {
                 rotate_attempts: 0,
                 #[cfg(test)]
                 lines_dropped: 0,
+                #[cfg(test)]
+                clock: None,
             })),
         }
     }
@@ -341,12 +374,21 @@ impl BestEffortMakeWriter {
                 open_attempts: 0,
                 rotate_attempts: 0,
                 lines_dropped: 0,
+                clock: None,
             })),
         }
     }
 }
 
 impl SinkState {
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(t) = self.clock {
+            return t;
+        }
+        Instant::now()
+    }
+
     fn try_open_durable(&mut self) -> bool {
         let Some(path) = self.durable_path.clone() else {
             return false;
@@ -369,7 +411,7 @@ impl SinkState {
                 self.bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
                 self.durable = Some(file);
                 self.reopen_backoff = REOPEN_BACKOFF_INITIAL;
-                self.next_reopen_attempt = Instant::now();
+                self.next_reopen_attempt = self.now();
                 true
             }
             None => false,
@@ -377,7 +419,7 @@ impl SinkState {
     }
 
     fn schedule_reopen_retry(&mut self) {
-        self.next_reopen_attempt = Instant::now() + self.reopen_backoff;
+        self.next_reopen_attempt = self.now() + self.reopen_backoff;
         self.reopen_backoff = self
             .reopen_backoff
             .saturating_mul(2)
@@ -393,7 +435,7 @@ impl SinkState {
         if self.durable_path.is_none() {
             return false;
         }
-        if Instant::now() < self.next_reopen_attempt {
+        if self.now() < self.next_reopen_attempt {
             return false;
         }
         if self.try_open_durable() {
@@ -625,7 +667,7 @@ mod tests {
             .unwrap();
         let mirror = closed_pipe_writer();
         let sink = BestEffortMakeWriter::new(
-            Some((path.clone(), durable)),
+            Some((path.clone(), Some(durable))),
             LogMirror::Writer(mirror),
             LogRotation::default(),
         );
@@ -673,7 +715,7 @@ mod tests {
             .unwrap();
         let mirror = OpenOptions::new().append(true).open(&path).unwrap();
         let sink = BestEffortMakeWriter::new(
-            Some((path.clone(), durable)),
+            Some((path.clone(), Some(durable))),
             LogMirror::Writer(mirror),
             LogRotation::default(),
         );
@@ -741,7 +783,7 @@ mod tests {
         let _restore = RestoreStdout(saved_fd);
 
         let sink = BestEffortMakeWriter::new(
-            Some((durable_path.clone(), durable)),
+            Some((durable_path.clone(), Some(durable))),
             LogMirror::Stdout,
             LogRotation::default(),
         );
@@ -779,8 +821,11 @@ mod tests {
             max_bytes: 20,
             keep: 2,
         };
-        let sink =
-            BestEffortMakeWriter::new(Some((path.clone(), durable)), LogMirror::None, rotation);
+        let sink = BestEffortMakeWriter::new(
+            Some((path.clone(), Some(durable))),
+            LogMirror::None,
+            rotation,
+        );
         {
             let mut writer = sink.make_writer();
             // Each write exceeds the threshold so every line triggers a roll.
@@ -1052,7 +1097,7 @@ mod tests {
 
         // Inject terminal=true: the production interactive-serve branch.
         let sink = BestEffortMakeWriter::new_with_terminal_gate(
-            Some((durable_path.clone(), durable)),
+            Some((durable_path.clone(), Some(durable))),
             LogMirror::Stdout,
             LogRotation::default(),
             true,
@@ -1097,8 +1142,11 @@ mod tests {
             max_bytes: 16,
             keep: 2,
         };
-        let sink =
-            BestEffortMakeWriter::new(Some((path.clone(), durable)), LogMirror::None, rotation);
+        let sink = BestEffortMakeWriter::new(
+            Some((path.clone(), Some(durable))),
+            LogMirror::None,
+            rotation,
+        );
         let before = dropped_log_writes();
         {
             let mut writer = sink.make_writer();
@@ -1133,8 +1181,11 @@ mod tests {
             max_bytes: 16,
             keep: 2,
         };
-        let sink =
-            BestEffortMakeWriter::new(Some((path.clone(), durable)), LogMirror::None, rotation);
+        let sink = BestEffortMakeWriter::new(
+            Some((path.clone(), Some(durable))),
+            LogMirror::None,
+            rotation,
+        );
         let before = dropped_log_writes();
         {
             let mut writer = sink.make_writer();
@@ -1158,5 +1209,275 @@ mod tests {
             contents.contains("still-logging-after-failed-rotation"),
             "daemon must keep logging the current file after a failed rotation: {contents:?}"
         );
+    }
+
+    /// orgasmic:TASK-G64ZH.1 F-A — boot-time durable-open failure under a
+    /// mirror-suppressed launch must keep the path. Pre-fix, `and_then`
+    /// discarded it with the handle, `resolve_mirror` handed back
+    /// `LogMirror::None`, and the daemon logged nothing for its whole life
+    /// with the reopen backoff unreachable.
+    #[test]
+    fn boot_open_failure_with_mirror_suppressed_keeps_path_counts_drops_and_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.out.log");
+        // EISDIR: OpenOptions::open fails deterministically, no permission games.
+        std::fs::create_dir(&path).unwrap();
+
+        // Same construction `init_tracing_to` uses after a failed boot open.
+        let durable = resolve_durable_open(Some(&path));
+        let sink = BestEffortMakeWriter::new(durable, LogMirror::None, LogRotation::default());
+
+        // FIRST assertion — verify/TASK-G64ZH.1 pins this message under injection.
+        {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert!(
+                state.durable_path.is_some(),
+                "boot-time open failure must keep durable_path so reopen backoff and \
+                 record_drop remain reachable (TASK-G64ZH.1 F-A)"
+            );
+            assert!(
+                state.durable.is_none(),
+                "boot open failed; durable handle must be absent"
+            );
+        }
+
+        let before = dropped_log_writes();
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"boot-fail-silenced\n").unwrap();
+            writer.write_all(b"boot-fail-still-silenced\n").unwrap();
+        }
+        let mid = dropped_log_writes();
+        assert!(
+            mid > before,
+            "mirror-suppressed boot open failure must move dropped_log_writes \
+             ({before} -> {mid})"
+        );
+        {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(
+                state.open_attempts, 1,
+                "first writes share one reopen attempt inside the backoff window \
+                 (got {})",
+                state.open_attempts
+            );
+            assert_eq!(
+                state.lines_dropped, 2,
+                "each dropped line must count once (got {})",
+                state.lines_dropped
+            );
+        }
+
+        // Make the path openable and expire the backoff so reopen recovers.
+        std::fs::remove_dir(&path).unwrap();
+        {
+            let mut state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            state.next_reopen_attempt = state.now();
+        }
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"recovered-after-boot-fail\n").unwrap();
+            writer.flush().unwrap();
+        }
+        let contents = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            contents.contains("recovered-after-boot-fail"),
+            "1s->60s reopen backoff must retry a boot-time open failure once \
+             the path is openable again: {contents:?}"
+        );
+    }
+
+    /// orgasmic:TASK-G64ZH.1 F-D — the TRUE side of the production terminal
+    /// predicate, through the production constructor. Hardcoding
+    /// `new_with_terminal_gate(..., false)` at `new` keeps every other test
+    /// green and silences interactive `orgasmic serve`.
+    #[test]
+    fn production_new_keeps_stdout_mirror_when_stdout_is_pty() {
+        let _lock = STDOUT_REDIRECT_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+
+        let mut master = 0;
+        let mut slave = 0;
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            0,
+            "openpty"
+        );
+
+        struct RestorePty {
+            saved: i32,
+            master: i32,
+            slave: i32,
+        }
+        impl Drop for RestorePty {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::dup2(self.saved, libc::STDOUT_FILENO);
+                    libc::close(self.saved);
+                    libc::close(self.master);
+                    libc::close(self.slave);
+                }
+            }
+        }
+        let saved = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved >= 0, "dup stdout");
+        assert!(
+            unsafe { libc::dup2(slave, libc::STDOUT_FILENO) } >= 0,
+            "dup2 pty slave onto stdout"
+        );
+        let _restore = RestorePty {
+            saved,
+            master,
+            slave,
+        };
+        assert!(
+            io::stdout().is_terminal(),
+            "pty slave on fd 1 must make is_terminal() true"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let durable_path = dir.path().join("daemon.out.log");
+        let durable = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&durable_path)
+            .unwrap();
+        // PRODUCTION constructor — not new_with_terminal_gate with a literal.
+        let sink = BestEffortMakeWriter::new(
+            Some((durable_path, Some(durable))),
+            LogMirror::Stdout,
+            LogRotation::default(),
+        );
+        let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+        assert!(
+            matches!(state.mirror, MirrorState::Stdout),
+            "production new() must keep Stdout mirror when fd 1 is a pty; \
+             hardcoding terminal=false at new() would silence interactive serve"
+        );
+    }
+
+    /// orgasmic:TASK-G64ZH.1 F-E — the backoff floor: after the window expires,
+    /// a second reopen attempt must occur. Ceiling-only tests leave a
+    /// permanent backoff (now+86400s) green.
+    #[test]
+    fn reopen_backoff_expires_and_allows_a_second_attempt() {
+        assert_eq!(
+            REOPEN_BACKOFF_CAP,
+            Duration::from_secs(60),
+            "REOPEN_BACKOFF_CAP must stay 60s"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.out.log");
+        let sink = BestEffortMakeWriter::with_missing_durable(
+            path,
+            LogRotation {
+                max_bytes: 0,
+                keep: 2,
+            },
+        );
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"first-window\n").unwrap();
+        }
+        let next = {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(state.open_attempts, 1);
+            assert!(
+                state.next_reopen_attempt > state.now(),
+                "failed open must schedule a future retry"
+            );
+            assert_eq!(
+                state.reopen_backoff,
+                REOPEN_BACKOFF_INITIAL.saturating_mul(2),
+                "backoff must double after the first failure"
+            );
+            state.next_reopen_attempt
+        };
+        // Advance the injected clock to the scheduled retry — no sleep.
+        {
+            let mut state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            state.clock = Some(next);
+        }
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"second-window\n").unwrap();
+        }
+        let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            state.open_attempts, 2,
+            "after the backoff window expires a second reopen attempt must run \
+             (got {}); a permanent backoff would leave this at 1",
+            state.open_attempts
+        );
+    }
+
+    /// Process-wide env mutation must not race other tests that touch
+    /// [`LOG_MIRROR_ENV`].
+    static LOG_MIRROR_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// orgasmic:TASK-G64ZH.1 F-F — `requested_log_mirror` / `env_log_mirror_off`
+    /// including the accepted value set. Load-bearing once service defs rely
+    /// on the env form.
+    #[test]
+    fn requested_log_mirror_and_env_log_mirror_off_cover_accepted_values() {
+        let _guard = LOG_MIRROR_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let saved = std::env::var_os(LOG_MIRROR_ENV);
+        struct Restore(Option<std::ffi::OsString>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var(LOG_MIRROR_ENV, v),
+                    None => std::env::remove_var(LOG_MIRROR_ENV),
+                }
+            }
+        }
+        let _restore = Restore(saved);
+
+        std::env::remove_var(LOG_MIRROR_ENV);
+        assert!(
+            !env_log_mirror_off(),
+            "unset {LOG_MIRROR_ENV} must not suppress"
+        );
+        assert!(
+            matches!(requested_log_mirror(false), LogMirror::Stdout),
+            "default request is Stdout"
+        );
+        assert!(
+            matches!(requested_log_mirror(true), LogMirror::None),
+            "CLI flag must suppress even when env is unset"
+        );
+
+        for value in ["off", "OFF", "0", "false", "False", " false "] {
+            std::env::set_var(LOG_MIRROR_ENV, value);
+            assert!(
+                env_log_mirror_off(),
+                "{LOG_MIRROR_ENV}={value:?} must suppress"
+            );
+            assert!(
+                matches!(requested_log_mirror(false), LogMirror::None),
+                "{LOG_MIRROR_ENV}={value:?} must yield LogMirror::None"
+            );
+        }
+        for value in ["on", "1", "true", "stdout", ""] {
+            std::env::set_var(LOG_MIRROR_ENV, value);
+            assert!(
+                !env_log_mirror_off(),
+                "{LOG_MIRROR_ENV}={value:?} must not suppress"
+            );
+        }
+        // Flag still wins when env would not suppress.
+        std::env::set_var(LOG_MIRROR_ENV, "on");
+        assert!(matches!(requested_log_mirror(true), LogMirror::None));
     }
 }

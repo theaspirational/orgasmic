@@ -163,10 +163,11 @@ Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/
         /// the OS pick a free port (printed on stdout).
         #[arg(long)]
         port: Option<u16>,
-        /// Suppress the stdout tracing mirror. Service managers orgasmic writes
-        /// pass this by construction so durable rotation owns the only copy;
-        /// `ORGASMIC_LOG_MIRROR=off` is equivalent. Without either flag,
-        /// `is_terminal()` is the fallback (TASK-G64ZH).
+        /// Suppress the stdout tracing mirror. Interactive/ad-hoc override;
+        /// service managers orgasmic writes set `ORGASMIC_LOG_MIRROR=off`
+        /// instead so a runtime rollback cannot hand an older binary an
+        /// unknown flag. Without either, `is_terminal()` is the fallback
+        /// (TASK-G64ZH, TASK-G64ZH.1).
         #[arg(long)]
         no_log_mirror: bool,
     },

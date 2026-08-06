@@ -68,8 +68,9 @@ pub use crate::index::{
     ProjectIndex, TaskId, TaskOwner, TaskSummary, TxRecord,
 };
 pub use crate::logging::{
-    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, requested_log_mirror,
-    LogMirror, LogRotation, DAEMON_OUT_LOG, DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES, MAX_LOG_KEEP,
+    dropped_log_writes, env_log_mirror_off, ignore_sigpipe, init_tracing, init_tracing_to,
+    requested_log_mirror, LogMirror, LogRotation, DAEMON_OUT_LOG, DEFAULT_LOG_KEEP,
+    DEFAULT_LOG_MAX_BYTES, LOG_MIRROR_ENV, MAX_LOG_KEEP,
 };
 pub use crate::prompt_compiler::{
     CompiledPrompt, ContextPackView, PromptCompileRequest, PromptDiagnostic, PromptPartSaveRequest,
@@ -253,9 +254,11 @@ pub struct DaemonOptions {
     /// daemon outlive many drain budgets, or exhaust one, without waiting out
     /// the production numbers (TASK-R74E8).
     pub shutdown_budgets: Option<ShutdownBudgets>,
-    /// When true, suppress the stdout tracing mirror by construction
-    /// (`serve --no-log-mirror`). Service definitions orgasmic writes set this;
-    /// `ORGASMIC_LOG_MIRROR=off` is an equivalent env form. orgasmic:TASK-G64ZH
+    /// When true, suppress the stdout tracing mirror (`serve --no-log-mirror`).
+    /// Service definitions orgasmic writes set `ORGASMIC_LOG_MIRROR=off`
+    /// instead so a runtime rollback cannot hand an older binary an unknown
+    /// flag; the CLI flag remains the interactive override.
+    /// orgasmic:TASK-G64ZH,TASK-G64ZH.1
     pub no_log_mirror: bool,
 }
 
@@ -900,8 +903,10 @@ impl Daemon {
         }
         // Durable file sink under $ORGASMIC_HOME/logs; stdout is a best-effort
         // mirror so a closed pipe cannot poison request handling (TASK-FZF2D).
-        // Service defs pass `--no-log-mirror` by construction; otherwise
-        // `is_terminal()` is the fallback (TASK-ZBYH3.1, TASK-G64ZH).
+        // Service defs set ORGASMIC_LOG_MIRROR=off by construction; otherwise
+        // `is_terminal()` is the fallback (TASK-ZBYH3.1, TASK-G64ZH,
+        // TASK-G64ZH.1). A failed boot open keeps the path so reopen backoff
+        // can recover.
         let daemon_log = home.logs().join(DAEMON_OUT_LOG);
         init_tracing_to(
             &cfg.log_level,

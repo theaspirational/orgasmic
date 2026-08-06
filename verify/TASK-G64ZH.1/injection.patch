@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-daemon/src/logging.rs b/crates/orgasmic-daemon/src/logging.rs
+--- a/crates/orgasmic-daemon/src/logging.rs
++++ b/crates/orgasmic-daemon/src/logging.rs
+@@ -134,7 +134,9 @@
+ /// `resolve_mirror` hand back the caller's [`LogMirror::None`] — total silence,
+ /// with the reopen backoff unreachable for the whole daemon lifetime.
+ fn resolve_durable_open(durable_log: Option<&Path>) -> Option<(PathBuf, Option<File>)> {
+-    durable_log.map(|path| (path.to_path_buf(), open_durable_log(path)))
++    // INJECTED (TASK-G64ZH.1): discard the path when boot open fails —
++    // restores the total-silence chain under LogMirror::None.
++    durable_log.and_then(|path| open_durable_log(path).map(|file| (path.to_path_buf(), Some(file))))
+ }
+ 
+ /// Install the global tracing subscriber once. Later calls are no-ops.
