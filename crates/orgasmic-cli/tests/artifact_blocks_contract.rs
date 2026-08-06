@@ -1,5 +1,5 @@
 //! Contract discoverability (TASK-SPBTA): `artifact blocks --full` and the
-//! `architecture|decision|glossary schema` verbs must be daemon-free and
+//! `decision|glossary schema` verbs must be daemon-free and
 //! must not point at dangling paths. These are process-level smoke checks
 //! that never touch the daemon.
 
@@ -72,11 +72,7 @@ fn artifact_submit_help_points_at_block_contract() {
 
 #[test]
 fn node_schema_verbs_run_without_a_daemon() {
-    for (kind, id_prefix) in [
-        ("architecture", "arch_"),
-        ("decision", "dec_"),
-        ("glossary", "term_"),
-    ] {
+    for (kind, id_prefix) in [("decision", "dec_"), ("glossary", "term_")] {
         let output = run(&[kind, "schema"]);
         assert!(
             output.status.success(),

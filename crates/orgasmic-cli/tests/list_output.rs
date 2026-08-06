@@ -2,7 +2,7 @@
 //! and `--ids` emits a stable one-id-per-line porcelain stream.
 //!
 //! Drives a freshly scaffolded project (via `project init`) against a real
-//! daemon: `glossary`/`architecture` start with no `.org` file at all (a
+//! daemon: `glossary` starts with no `.org` file at all (a
 //! genuinely empty list), while `decision`/`tasks` start pre-seeded by the
 //! shipped scaffold (`dec_K1DR7`, `TASK-C9V29`) — covering both the empty
 //! and non-empty paths for each list verb.
@@ -131,9 +131,8 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
     run_git(&project_root, &["commit", "-m", "scaffold .orgasmic"]);
     wait_for_project_loaded(&home, &running, &project_root, project_id);
 
-    // --- F13: genuinely empty lists (no glossary.org/architecture.org file
-    // at all in a freshly scaffolded project) print a "0 <noun>" message,
-    // never nothing. ---
+    // --- F13: genuinely empty lists (no glossary.org file at all in a freshly
+    // scaffolded project) print a "0 <noun>" message, never nothing. ---
     let empty_glossary = run_cli(
         &home,
         &running,
@@ -147,21 +146,6 @@ async fn list_verbs_never_empty_and_silent_and_ids_mode_is_porcelain() {
     assert!(
         empty_glossary.contains("0 glossary terms"),
         "got: {empty_glossary}"
-    );
-
-    let empty_architecture = run_cli(
-        &home,
-        &running,
-        &project_root,
-        &["architecture", "list", "--project", project_id],
-    );
-    assert!(
-        !empty_architecture.trim().is_empty(),
-        "empty architecture list must not print nothing"
-    );
-    assert!(
-        empty_architecture.contains("0 architecture nodes"),
-        "got: {empty_architecture}"
     );
 
     // Same guarantee for a genuinely empty --ids stream: zero lines, but the

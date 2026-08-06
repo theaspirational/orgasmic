@@ -1,15 +1,12 @@
-// orgasmic:arch_MPAQT
-//! Canonical, parity-tested node examples printed by `orgasmic architecture
-//! schema` / `decision schema` / `glossary schema` (TASK-SPBTA).
+//! Canonical, parity-tested node examples printed by `orgasmic decision schema`
+//! and `glossary schema` (TASK-SPBTA).
 //!
 //! The battle-test finding this closes: the property vocabulary for these
-//! node types (`:SOURCE_PATHS:`, `:MOTIVATED_BY:`, `:GLOSSARY_REFS:`, typed
-//! edges, `:TESTS:`, ...) was only discoverable by reading another project's
-//! `architecture.org` as a de-facto schema. These functions print one
-//! canonical node per type instead.
+//! node types was only discoverable by reading another project's durable state.
+//! These functions print one canonical node per supported type instead.
 //!
-//! Each example's property drawer is built from a single ordered spec list
-//! (`ARCH_PROPERTIES` etc.), so the keys shown in the human-readable legend
+//! Each example's property drawer is built from a single ordered spec list, so
+//! the keys shown in the human-readable legend
 //! and the keys actually written into the parseable example can never
 //! diverge from each other. `schema_example_parity` (below) round-trips
 //! every example back through this crate's own [`crate::schema`] parsers
@@ -37,102 +34,6 @@ fn legend(id_key: &str, id_note: &str, specs: &[PropertySpec]) -> String {
     for spec in specs {
         out.push_str(&format!("  :{}: — {}\n", spec.key, spec.note));
     }
-    out
-}
-
-// --- architecture ------------------------------------------------------------
-
-const ARCH_ID: &str = "arch_7K2QX";
-
-const ARCH_PROPERTIES: &[PropertySpec] = &[
-    PropertySpec {
-        key: "KIND",
-        value: "component",
-        note: "free-text node category, e.g. component/service/store; not enum-validated",
-    },
-    PropertySpec {
-        key: "MOTIVATED_BY",
-        value: "dec_7K2QX",
-        note: "decision ids this node exists to satisfy (space-separated node ids)",
-    },
-    PropertySpec {
-        key: "GLOSSARY_REFS",
-        value: "term_7K2QX",
-        note: "glossary term ids whose definitions this node's language depends on",
-    },
-    PropertySpec {
-        key: "INTERFACE",
-        value: "POST /widgets/:id",
-        note: "free-text interface-surface tokens, one per call site",
-    },
-    PropertySpec {
-        key: "CONSTRAINTS",
-        value: "idempotent",
-        note: "free-text invariant tokens/tags",
-    },
-    PropertySpec {
-        key: "COMPOSES",
-        value: "arch_9M4NP",
-        note: "architecture node ids this node is built from",
-    },
-    PropertySpec {
-        key: "DEPENDS_ON",
-        value: "arch_9M4NP",
-        note: "architecture node ids this node depends on; also emits a `depends_on` typed edge",
-    },
-    PropertySpec {
-        key: "SOURCE_PATHS",
-        value: "crates/example/src/widgets.rs",
-        note: "repo paths that implement this architecture node",
-    },
-    PropertySpec {
-        key: "TESTS",
-        value: "cargo test -p example widgets",
-        note: "`;`-separated commands to run when SOURCE_PATHS change",
-    },
-    PropertySpec {
-        key: "READS",
-        value: "file:crates/example/src/config.toml",
-        note: "typed edge: this node reads that target (a node id, or a file:/projection:/socket: pseudo-node)",
-    },
-    PropertySpec {
-        key: "WRITES",
-        value: "arch_9M4NP",
-        note: "typed edge: this node writes to that target. Siblings: EXPOSES_REST, EXPOSES_WS, SUBSCRIBES_TO, SPAWNS, CALLS, DEPENDS_ON",
-    },
-    PropertySpec {
-        key: "DECIDED_AT",
-        value: "2026-01-01",
-        note: "date this node's shape was settled",
-    },
-];
-
-/// One parseable canonical architecture node.
-pub fn architecture_schema_example() -> String {
-    let mut out = format!("* {ARCH_ID} Example Architecture Node\n");
-    out.push_str(&drawer("ID", ARCH_ID, ARCH_PROPERTIES));
-    out.push_str(
-        "\nFree prose directly under the heading, before the first `**` \
-         subsection, becomes this node's description.\n\n\
-         ** Purpose\nWhy this node exists.\n\n\
-         ** Interfaces\nWhat it exposes to callers.\n\n\
-         ** Constraints\nInvariants callers must honor.\n",
-    );
-    out
-}
-
-/// Human-readable per-property legend for [`architecture_schema_example`].
-pub fn architecture_schema_legend() -> String {
-    let mut out = legend(
-        "ID",
-        "stable node id; mint with `orgasmic id mint --class architecture`",
-        ARCH_PROPERTIES,
-    );
-    out.push_str(
-        "\nChild nodes: nest a second heading (e.g. `** arch_7K2QX.1 ...`) \
-         under a parent heading instead of repeating properties — the \
-         parent's id becomes the child's parent_id.\n",
-    );
     out
 }
 
@@ -241,77 +142,11 @@ pub fn glossary_schema_legend() -> String {
 mod schema_example_parity {
     use super::*;
     use crate::org::OrgFile;
-    use crate::schema::{ArchitectureNode, DecisionNode, GlossaryTerm};
+    use crate::schema::{DecisionNode, GlossaryTerm};
 
     fn parsed(body: &str) -> OrgFile {
         let source = format!("#+title: example\n\n{body}");
         OrgFile::parse(source, "example.org").expect("example must be valid org")
-    }
-
-    /// Anti-drift guarantee (TASK-SPBTA): every field on [`ArchitectureNode`]
-    /// must be exercised by the printed example, or this destructure (no
-    /// `..`) fails to compile the moment `schema.rs` grows a new field.
-    #[test]
-    fn architecture_example_round_trips_and_covers_every_field() {
-        let file = parsed(&architecture_schema_example());
-        let nodes = ArchitectureNode::from_org(&file, "example.org").expect("parses");
-        assert_eq!(nodes.len(), 1, "example must describe exactly one node");
-        let ArchitectureNode {
-            id,
-            label,
-            kind,
-            semantic_hash: _semantic_hash,
-            motivated_by,
-            glossary_refs,
-            interface,
-            constraints,
-            composes,
-            depends_on,
-            source_paths,
-            tests,
-            edges,
-            parent_id,
-            description,
-            decided_at,
-            purpose,
-            interfaces_section,
-            constraints_section,
-        } = &nodes[0];
-        assert_eq!(*id, ARCH_ID);
-        assert!(!label.is_empty());
-        assert!(kind.is_some());
-        assert!(!motivated_by.is_empty());
-        assert!(!glossary_refs.is_empty());
-        assert!(!interface.is_empty());
-        assert!(!constraints.is_empty());
-        assert!(!composes.is_empty());
-        assert!(!depends_on.is_empty());
-        assert!(!source_paths.is_empty());
-        assert!(!tests.is_empty());
-        assert!(
-            !edges.is_empty(),
-            "READS/WRITES must parse into typed edges"
-        );
-        assert!(
-            parent_id.is_none(),
-            "top-level canonical example has no parent"
-        );
-        assert!(description.is_some());
-        assert!(decided_at.is_some());
-        assert!(purpose.is_some());
-        assert!(interfaces_section.is_some());
-        assert!(constraints_section.is_some());
-
-        // Every ARCH_PROPERTIES key must actually appear in the printed
-        // legend, so the two can never list different vocabularies.
-        let legend_text = architecture_schema_legend();
-        for spec in ARCH_PROPERTIES {
-            assert!(
-                legend_text.contains(&format!(":{}:", spec.key)),
-                "legend missing {}",
-                spec.key
-            );
-        }
     }
 
     #[test]

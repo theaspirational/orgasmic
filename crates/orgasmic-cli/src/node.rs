@@ -13,7 +13,6 @@ use crate::manager::resolve_project;
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 pub enum NodeKindArg {
     Decision,
-    Architecture,
     Glossary,
     Project,
     Task,
@@ -25,7 +24,6 @@ impl From<NodeKindArg> for orgasmic_core::NodeKind {
     fn from(value: NodeKindArg) -> Self {
         match value {
             NodeKindArg::Decision => Self::Decision,
-            NodeKindArg::Architecture => Self::Architecture,
             NodeKindArg::Glossary => Self::Glossary,
             NodeKindArg::Project => Self::Project,
             NodeKindArg::Task => Self::Task,
@@ -53,14 +51,14 @@ pub enum NodeCmd {
     },
     /// Delete one node through the daemon org-node surface (OCC + tx).
     Delete {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Project id; omitted → resolved from the `.orgasmic/project.org`
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, architecture, glossary,
-        /// artifact); omitted → inferred from the id prefix.
+        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Optimistic-concurrency token from `org node get` / prior edit; fetched when omitted.
@@ -81,7 +79,7 @@ pub enum NodeCmd {
 pub enum NodeBodyCmd {
     /// Replace a node's free prose body (between drawer and first nested heading).
     Set {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Project id; omitted → resolved from the `.orgasmic/project.org`
         /// above the current directory.
@@ -118,14 +116,14 @@ pub enum NodeBodyCmd {
     },
     /// Append to a node's free prose body.
     Append {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Project id; omitted → resolved from the `.orgasmic/project.org`
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, architecture, glossary,
-        /// artifact); omitted → inferred from the id prefix.
+        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Target a named `**` section instead of the free prose body.
@@ -157,7 +155,7 @@ pub enum NodeBodyCmd {
     /// `prop unset`. `node delete` cannot do this: it addresses whole nodes by
     /// `:ID:`, and a section has none.
     Unset {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Project id; omitted → resolved from the `.orgasmic/project.org`
         /// above the current directory.
@@ -191,7 +189,7 @@ pub enum NodePropCmd {
     /// PARENT) take space-separated node ids, not prose — an unresolvable
     /// token is rejected at write time (use --force to skip the check).
     Set {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Drawer property key. UPPERCASE org drawer spelling — the reader
         /// compares keys byte for byte.
@@ -202,8 +200,8 @@ pub enum NodePropCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, architecture, glossary,
-        /// artifact); omitted → inferred from the id prefix.
+        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
@@ -225,7 +223,7 @@ pub enum NodePropCmd {
     },
     /// Remove one drawer property.
     Unset {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
         /// Drawer property key. UPPERCASE org drawer spelling — the reader
         /// compares keys byte for byte.
@@ -234,8 +232,8 @@ pub enum NodePropCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-        /// Node layer to address (task, decision, architecture, glossary,
-        /// artifact); omitted → inferred from the id prefix.
+        /// Node layer to address (task, decision, glossary, artifact); omitted
+        /// → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Optimistic-concurrency token from a prior read/edit; fetched when
@@ -731,7 +729,8 @@ mod node_kind_parity {
 
     /// Anti-drift guarantee (TASK-JJ9RD): the CLI `--kind` enum must offer
     /// exactly the kinds the daemon accepts (`orgasmic_daemon::api::
-    /// accepted_node_kinds`, itself sourced from `orgasmic_core::NodeKind`).
+    /// accepted_node_kinds`). Core keeps historical kinds parseable even when
+    /// they are no longer accepted by the daemon.
     #[test]
     fn cli_kind_arg_matches_daemon_registry() {
         let cli_kinds: BTreeSet<&str> = NodeKindArg::value_variants()

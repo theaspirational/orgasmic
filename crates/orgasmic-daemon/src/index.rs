@@ -19,9 +19,9 @@ use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
     iter_task_file_paths, lint_arch_heading_id_token, lint_decision_heading_id_token,
     lint_project_identities, lint_task_heading_id_token, marker_node_ids_in_line,
-    should_skip_marker_path, validate_parent_tree, ArchEdgeTarget, ArchitectureNode, DecisionNode,
-    GlossaryTerm, Heading, Home, LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError,
-    ParentTreeNode, SandboxAllowlist, TaskHeading,
+    should_skip_marker_path, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
+    LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
+    SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
 use tokio::io::AsyncReadExt;
@@ -163,10 +163,7 @@ pub enum ActivityKind {
 pub struct GraphIndex {
     pub decisions: Vec<DecisionSummary>,
     pub decision_tree: BTreeMap<String, DecisionTreeEntry>,
-    pub architecture: Vec<ArchitectureSummary>,
-    pub architecture_artifacts: Vec<ArchitectureArtifactSummary>,
     pub edges: Vec<GraphEdgeSummary>,
-    pub architecture_edges: Vec<ArchitectureEdgeSummary>,
     pub glossary: Vec<GlossarySummary>,
     pub nodes: Vec<GraphNodeSummary>,
 }
@@ -199,95 +196,11 @@ pub struct DecisionTreeEntry {
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchitectureSummary {
-    pub id: String,
-    pub label: String,
-    pub motivated_by: Vec<String>,
-    pub glossary_refs: Vec<String>,
-    pub interface: Vec<String>,
-    pub constraints: Vec<String>,
-    pub depends_on: Vec<String>,
-    pub source_paths: Vec<String>,
-    pub tests: Vec<String>,
-    pub parent_id: Option<String>,
-    pub description: Option<String>,
-    pub source_file: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchitectureArtifactSummary {
-    pub id: String,
-    pub kind: String,
-    pub scheme: String,
-    pub name: String,
-}
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct GraphEdgeSummary {
     pub kind: String,
     pub from: String,
     pub to: String,
-}
-
-pub type ArchitectureEdgeSummary = GraphEdgeSummary;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchitectureNodesResponse {
-    pub nodes: Vec<ArchitectureGraphNode>,
-    pub edges: Vec<ArchitectureEdgeSummary>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchitectureGraphNode {
-    pub id: String,
-    pub kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub source_paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tests: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scheme: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-}
-
-impl GraphIndex {
-    pub fn architecture_nodes_response(&self) -> ArchitectureNodesResponse {
-        let mut nodes = Vec::new();
-        for node in &self.architecture {
-            nodes.push(ArchitectureGraphNode {
-                id: node.id.clone(),
-                kind: "arch".to_string(),
-                label: Some(node.label.clone()),
-                parent_id: node.parent_id.clone(),
-                source_paths: node.source_paths.clone(),
-                tests: node.tests.clone(),
-                scheme: None,
-                name: None,
-            });
-        }
-        for artifact in &self.architecture_artifacts {
-            nodes.push(ArchitectureGraphNode {
-                id: artifact.id.clone(),
-                kind: artifact.kind.clone(),
-                label: None,
-                parent_id: None,
-                source_paths: Vec::new(),
-                tests: Vec::new(),
-                scheme: Some(artifact.scheme.clone()),
-                name: Some(artifact.name.clone()),
-            });
-        }
-        ArchitectureNodesResponse {
-            nodes,
-            edges: self.architecture_edges.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -823,12 +736,10 @@ impl Index {
         let architecture = orgasmic_dir.join("architecture.org");
         if architecture.exists() {
             match read_org(&architecture) {
-                Ok(file) => {
-                    lint_arch_heading_id_tokens(&file, &architecture, snap);
-                    if let Err(err) = load_architecture(&file, &architecture, &mut project.graph) {
-                        push_parse_error(snap, architecture, err.to_string());
-                    }
-                }
+                // Stage D removes this file and its heading-token lint. Until
+                // then the lint remains deliberately independent of the
+                // retired read model.
+                Ok(file) => lint_arch_heading_id_tokens(&file, &architecture, snap),
                 Err(err) => push_parse_error(snap, architecture, err),
             }
         }
@@ -1062,77 +973,6 @@ fn decision_tree_parse_error(
     (path, format!("decision tree :PARENT: error: {err}"))
 }
 
-fn load_architecture(
-    file: &OrgFile,
-    source: &Path,
-    graph: &mut GraphIndex,
-) -> Result<(), orgasmic_core::SchemaError> {
-    let mut artifacts = BTreeMap::new();
-    for node in ArchitectureNode::from_org(file, &source.to_string_lossy())? {
-        let mut outgoing = own_vec(&node.motivated_by);
-        outgoing.extend(node.edges.iter().map(|edge| edge.target.id()));
-        graph.nodes.push(GraphNodeSummary {
-            id: node.id.to_string(),
-            layer: "architecture".to_string(),
-            outgoing,
-            source_file: source.to_path_buf(),
-            superseded: false,
-        });
-        graph.architecture.push(ArchitectureSummary {
-            id: node.id.to_string(),
-            label: node.label,
-            motivated_by: own_vec(&node.motivated_by),
-            glossary_refs: own_vec(&node.glossary_refs),
-            interface: own_vec(&node.interface),
-            constraints: own_vec(&node.constraints),
-            depends_on: own_vec(&node.depends_on),
-            source_paths: own_vec(&node.source_paths),
-            tests: node.tests,
-            parent_id: node.parent_id,
-            description: node.description.or(node.purpose),
-            source_file: source.to_path_buf(),
-        });
-        for target in &node.motivated_by {
-            graph.edges.push(GraphEdgeSummary {
-                kind: "motivated_by".to_string(),
-                from: node.id.to_string(),
-                to: (*target).to_string(),
-            });
-        }
-        for edge in node.edges {
-            if let ArchEdgeTarget::Artifact(artifact) = &edge.target {
-                let id = artifact.id();
-                artifacts
-                    .entry(id.clone())
-                    .or_insert_with(|| ArchitectureArtifactSummary {
-                        id,
-                        kind: "artifact".to_string(),
-                        scheme: artifact.scheme.as_str().to_string(),
-                        name: artifact.name.clone(),
-                    });
-            }
-            let summary = GraphEdgeSummary {
-                kind: edge.kind.as_str().to_string(),
-                from: edge.source_node_id,
-                to: edge.target.id(),
-            };
-            graph.architecture_edges.push(summary.clone());
-            graph.edges.push(summary);
-        }
-    }
-    for artifact in artifacts.into_values() {
-        graph.nodes.push(GraphNodeSummary {
-            id: artifact.id.clone(),
-            layer: "artifact".to_string(),
-            outgoing: Vec::new(),
-            source_file: source.to_path_buf(),
-            superseded: false,
-        });
-        graph.architecture_artifacts.push(artifact);
-    }
-    Ok(())
-}
-
 fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
     for heading in &file.headings {
         // Legacy headings: `* term:slug Title`; minted (dec_X72P5): `* term_XXXXX Title`.
@@ -1165,7 +1005,7 @@ fn load_task_graph(project: &mut ProjectIndex) {
     // dedups artifacts produced by more than one task; the node is pushed once
     // after the loop so a shared artifact never appears multiple times in
     // graph.nodes (VJXXC reviewer HIGH).
-    let mut artifacts: BTreeMap<String, (ArchitectureArtifactSummary, PathBuf)> = BTreeMap::new();
+    let mut artifacts: BTreeMap<String, PathBuf> = BTreeMap::new();
     for task in &project.tasks {
         let mut outgoing = task.depends_on.clone();
         outgoing.extend(task.implements.clone());
@@ -1198,17 +1038,9 @@ fn load_task_graph(project: &mut ProjectIndex) {
                 to: target.clone(),
             });
             if !looks_like_structured_node_id(target) {
-                artifacts.entry(target.clone()).or_insert_with(|| {
-                    (
-                        ArchitectureArtifactSummary {
-                            id: target.clone(),
-                            kind: "artifact".to_string(),
-                            scheme: "file".to_string(),
-                            name: target.clone(),
-                        },
-                        task.source_file.clone(),
-                    )
-                });
+                artifacts
+                    .entry(target.clone())
+                    .or_insert_with(|| task.source_file.clone());
             }
         }
     }
@@ -1218,7 +1050,7 @@ fn load_task_graph(project: &mut ProjectIndex) {
         .iter()
         .map(|node| node.id.clone())
         .collect();
-    for (id, (summary, source_file)) in artifacts {
+    for (id, source_file) in artifacts {
         if existing.contains(&id) {
             continue;
         }
@@ -1229,7 +1061,6 @@ fn load_task_graph(project: &mut ProjectIndex) {
             source_file,
             superseded: false,
         });
-        project.graph.architecture_artifacts.push(summary);
     }
 }
 
@@ -1250,9 +1081,9 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
         // Only structured-id targets are linted (a PRODUCES file-path artifact
         // is always materialized as a node above, so it never dangles). dec_/
         // term_ included so a motivated_by/implements edge to a missing
-        // decision or term surfaces too (VJXXC reviewer MEDIUM).
+        // decision or term surfaces too (VJXXC reviewer MEDIUM). Retired
+        // `arch_` ids are historical tokens, not resolvable graph targets.
         if !edge.to.starts_with("TASK-")
-            && !edge.to.starts_with("arch_")
             && !edge.to.starts_with("dec_")
             && !edge.to.starts_with("term_")
         {
@@ -1276,6 +1107,10 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
 }
 
 fn looks_like_structured_node_id(value: &str) -> bool {
+    // This helper controls whether a task :PRODUCES: target is materialized as
+    // a generic artifact node. Keep `arch_` here: dropping it would make a
+    // retired architecture id resolvable again as an artifact, the opposite
+    // of the lint carve-out above.
     value.starts_with("TASK-")
         || value.starts_with("arch_")
         || value.starts_with("dec_")
@@ -2475,15 +2310,6 @@ mod tests {
             &project_root.join(".orgasmic/tasks/backlog.org"),
             "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-RDY12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n\n* BACKLOG TASK-RDY12 Ready dependency :work:\n:PROPERTIES:\n:ID:               TASK-RDY12\n:END:\n",
         );
-        write(
-            &project_root.join(".orgasmic/decisions.org"),
-            "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_KEEP1 Keep it\n:PROPERTIES:\n:ID:               dec_KEEP1\n:END:\n",
-        );
-        write(
-            &project_root.join(".orgasmic/architecture.org"),
-            "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_APP12 App\n:PROPERTIES:\n:ID:               arch_APP12\n:MOTIVATED_BY:     dec_KEEP1\n:DEPENDS_ON:       arch_STR12\n:END:\n\n* arch_STR12 Store\n:PROPERTIES:\n:ID:               arch_STR12\n:END:\n",
-        );
-
         let index = Index::new(home);
         index.rebuild().await;
         let snap = index.snapshot().await;
@@ -2504,28 +2330,12 @@ mod tests {
             from: "TASK-BKC12".to_string(),
             to: "crates/example.rs".to_string(),
         }));
-        assert!(edges.contains(&GraphEdgeSummary {
-            kind: "motivated_by".to_string(),
-            from: "arch_APP12".to_string(),
-            to: "dec_KEEP1".to_string(),
-        }));
-        assert!(edges.contains(&GraphEdgeSummary {
-            kind: "depends_on".to_string(),
-            from: "arch_APP12".to_string(),
-            to: "arch_STR12".to_string(),
-        }));
         let implemented_by: Vec<_> = edges
             .iter()
             .filter(|edge| edge.kind == "implements" && edge.to == "arch_APP12")
             .map(|edge| edge.from.as_str())
             .collect();
         assert_eq!(implemented_by, vec!["TASK-BKC12"]);
-        let motivates: Vec<_> = edges
-            .iter()
-            .filter(|edge| edge.kind == "motivated_by" && edge.to == "dec_KEEP1")
-            .map(|edge| edge.from.as_str())
-            .collect();
-        assert_eq!(motivates, vec!["arch_APP12"]);
         assert!(snap.parse_errors.is_empty());
     }
 
@@ -2556,14 +2366,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dangling_motivated_by_decision_target_surfaces_as_parse_error() {
+    async fn retired_architecture_implements_target_does_not_surface_parse_error() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
         write(
-            &project_root.join(".orgasmic/architecture.org"),
-            "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_APP12 App\n:PROPERTIES:\n:ID:               arch_APP12\n:MOTIVATED_BY:     dec_GONE99\n:DEPENDS_ON:       arch_STR12\n:END:\n\n* arch_STR12 Store\n:PROPERTIES:\n:ID:               arch_STR12\n:END:\n",
+            &project_root.join(".orgasmic/tasks/done.org"),
+            "#+title: x done\n#+orgasmic_version: 1\n\n* DONE TASK-BKC12 Historical implementation edge :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       arch_GONE99\n:END:\n",
         );
 
         let index = Index::new(home);
@@ -2571,8 +2381,67 @@ mod tests {
         let snap = index.snapshot().await;
         let project = snap.project("proj-x").unwrap();
         assert!(project.graph.edges.contains(&GraphEdgeSummary {
-            kind: "motivated_by".to_string(),
-            from: "arch_APP12".to_string(),
+            kind: "implements".to_string(),
+            from: "TASK-BKC12".to_string(),
+            to: "arch_GONE99".to_string(),
+        }));
+        assert!(
+            !snap
+                .parse_errors
+                .iter()
+                .any(|error| error.message.contains("dangling target arch_GONE99")),
+            "retired architecture target must not emit a dangling-edge parse error"
+        );
+    }
+
+    #[tokio::test]
+    async fn arch_like_produced_target_is_not_materialized_as_an_artifact() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/tasks/backlog.org"),
+            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:PRODUCES:         arch_GONE99\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let project = snap.project("proj-x").unwrap();
+        assert!(project.graph.edges.contains(&GraphEdgeSummary {
+            kind: "produces".to_string(),
+            from: "TASK-BKC12".to_string(),
+            to: "arch_GONE99".to_string(),
+        }));
+        assert!(
+            project
+                .graph
+                .nodes
+                .iter()
+                .all(|node| node.id != "arch_GONE99"),
+            "retired architecture ids must not become resolvable artifact nodes"
+        );
+    }
+
+    #[tokio::test]
+    async fn dangling_implements_decision_target_surfaces_as_parse_error() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/tasks/backlog.org"),
+            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Work :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:IMPLEMENTS:       dec_GONE99\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let project = snap.project("proj-x").unwrap();
+        assert!(project.graph.edges.contains(&GraphEdgeSummary {
+            kind: "implements".to_string(),
+            from: "TASK-BKC12".to_string(),
             to: "dec_GONE99".to_string(),
         }));
         assert!(snap.parse_errors.iter().any(|error| {

@@ -693,12 +693,6 @@ pub fn router(state: ApiState) -> Router {
             "/decisions/:id",
             get(get_decision).post(post_decision_action),
         )
-        // dec_HBK6A: the architecture layer is read-only from here on. The GET
-        // projections stay until the read model retires; nothing can create or
-        // revise an architecture node through the daemon any more.
-        .route("/architecture", get(get_architecture))
-        .route("/architecture/nodes", get(get_architecture_nodes))
-        .route("/architecture/:id", get(get_architecture_node))
         .route("/grill", post(post_grill))
         .route("/plan", post(post_plan))
         .route("/graph/markers/:node_id", get(get_graph_markers))
@@ -769,9 +763,6 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/graph/edges"),
     ("GET", "/decisions"),
     ("GET", "/decisions/:id"),
-    ("GET", "/architecture"),
-    ("GET", "/architecture/nodes"),
-    ("GET", "/architecture/:id"),
     ("GET", "/glossary"),
     ("GET", "/glossary/:id"),
     ("GET", "/artifacts"),
@@ -12354,6 +12345,9 @@ async fn get_org_file(
     Query(q): Query<OrgFileQuery>,
 ) -> Result<Json<OrgFileResponse>, ApiError> {
     let rel = validate_org_edit_path(&q.path)?;
+    if rel == FsPath::new(".orgasmic/architecture.org") {
+        return Err(ApiError::not_found("org file not found"));
+    }
     let rel_str = rel.to_string_lossy().to_string();
     let snap = state.index.snapshot().await;
     let project = select_project(&snap, q.project.as_deref())?;
@@ -12438,7 +12432,6 @@ fn validate_org_edit_path(path: &str) -> Result<PathBuf, ApiError> {
 fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
     match relative_path.file_name().and_then(|s| s.to_str()) {
         Some("decisions.org") => "decisions file",
-        Some("architecture.org") => "architecture file",
         Some("glossary.org") => "glossary file",
         Some(name) if relative_path.starts_with("docs/adr") && name.ends_with(".org") => "ADR file",
         Some(name) if name.starts_with("adr-") && name.ends_with(".org") => "ADR file",
@@ -12576,47 +12569,6 @@ async fn get_decision(
         .cloned()
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("decision {id}")))
-}
-
-async fn get_architecture(
-    State(state): State<ApiState>,
-    Extension(identity): Extension<Identity>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<Vec<crate::index::ArchitectureSummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
-    Ok(Json(project.graph.architecture.clone()))
-}
-
-async fn get_architecture_nodes(
-    State(state): State<ApiState>,
-    Extension(identity): Extension<Identity>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<crate::index::ArchitectureNodesResponse>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
-    Ok(Json(project.graph.architecture_nodes_response()))
-}
-
-async fn get_architecture_node(
-    State(state): State<ApiState>,
-    Extension(identity): Extension<Identity>,
-    Path(id): Path<String>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<crate::index::ArchitectureSummary>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
-    project
-        .graph
-        .architecture
-        .iter()
-        .find(|node| node.id == id)
-        .cloned()
-        .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("architecture node {id}")))
 }
 
 async fn get_glossary(
@@ -12804,10 +12756,8 @@ async fn post_glossary_action(
 
 /// The layers the daemon will CREATE or REVISE a graph heading in.
 ///
-/// dec_HBK6A dropped `Architecture`: with `POST /architecture` and
-/// `POST /architecture/:id` retired there is no way to reach it, so the variant
-/// would be dead. Reading architecture nodes is unaffected — that goes through
-/// [`NodeLayer`] and the index projections, which still carry the layer.
+/// dec_HBK6A dropped `Architecture`: the retired layer is neither created nor
+/// revised through this shared graph-heading machinery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GraphLayer {
     Decision,
@@ -12847,7 +12797,6 @@ impl GraphLayer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeLayer {
     Decision,
-    Architecture,
     Glossary,
     Project,
     Task,
@@ -12859,7 +12808,6 @@ impl NodeLayer {
     fn layer_name(self) -> &'static str {
         match self {
             Self::Decision => "decision",
-            Self::Architecture => "architecture",
             Self::Glossary => "glossary",
             Self::Project => "project",
             Self::Task => "task",
@@ -12871,7 +12819,6 @@ impl NodeLayer {
     fn file_name(self) -> Option<&'static str> {
         match self {
             Self::Decision => Some("decisions.org"),
-            Self::Architecture => Some("architecture.org"),
             Self::Glossary => Some("glossary.org"),
             Self::Project => Some("project.org"),
             Self::Task => None,
@@ -12882,7 +12829,6 @@ impl NodeLayer {
     fn artifact_name(self) -> &'static str {
         match self {
             Self::Decision => "decisions file",
-            Self::Architecture => "architecture file",
             Self::Glossary => "glossary file",
             Self::Project => "project file",
             Self::Task => "task file",
@@ -12891,46 +12837,36 @@ impl NodeLayer {
         }
     }
 
-    /// Infer the org-node layer that owns a node id: `TASK-*` -> task,
-    /// `dec_*` -> decisions, `arch_*` -> architecture, `handoff-current` ->
-    /// handoff, `goal-*` -> goal, anything else -> glossary. The project layer
-    /// has no distinctive id prefix, so it can only be selected explicitly via
-    /// [`NodeLayer::from_kind`].
-    fn for_id(id: &str) -> Self {
-        if id.starts_with("TASK-") {
-            Self::Task
+    /// Infer the org-node layer that owns a node id. Retired `arch_` ids are
+    /// rejected rather than falling through to the glossary file.
+    fn for_id(id: &str) -> Option<Self> {
+        if id.starts_with("arch_") {
+            None
+        } else if id.starts_with("TASK-") {
+            Some(Self::Task)
         } else if id.starts_with("dec_") {
-            Self::Decision
-        } else if id.starts_with("arch_") {
-            Self::Architecture
+            Some(Self::Decision)
         } else if id == "handoff-current" {
-            Self::Handoff
+            Some(Self::Handoff)
         } else if id.starts_with("goal-") {
-            Self::Goal
+            Some(Self::Goal)
         } else {
-            Self::Glossary
+            Some(Self::Glossary)
         }
     }
 
-    /// Resolve an explicit `kind` selector back to a layer. Used when the node
-    /// id alone cannot identify the owning file. The accepted set is the
-    /// single-sourced [`orgasmic_core::NodeKind`] registry so the CLI's
-    /// `--kind` enum can be parity-tested against it.
+    /// Resolve an explicit `kind` selector back to a live read-model layer.
+    /// Used when the node id alone cannot identify the owning file. The core
+    /// registry still carries retired kinds until their owning excision stage.
     fn from_kind(kind: &str) -> Option<Self> {
-        orgasmic_core::NodeKind::parse(kind).map(NodeLayer::from)
-    }
-}
-
-impl From<orgasmic_core::NodeKind> for NodeLayer {
-    fn from(kind: orgasmic_core::NodeKind) -> Self {
-        match kind {
-            orgasmic_core::NodeKind::Decision => Self::Decision,
-            orgasmic_core::NodeKind::Architecture => Self::Architecture,
-            orgasmic_core::NodeKind::Glossary => Self::Glossary,
-            orgasmic_core::NodeKind::Project => Self::Project,
-            orgasmic_core::NodeKind::Task => Self::Task,
-            orgasmic_core::NodeKind::Goal => Self::Goal,
-            orgasmic_core::NodeKind::Handoff => Self::Handoff,
+        match orgasmic_core::NodeKind::parse(kind)? {
+            orgasmic_core::NodeKind::Architecture => None,
+            orgasmic_core::NodeKind::Decision => Some(Self::Decision),
+            orgasmic_core::NodeKind::Glossary => Some(Self::Glossary),
+            orgasmic_core::NodeKind::Project => Some(Self::Project),
+            orgasmic_core::NodeKind::Task => Some(Self::Task),
+            orgasmic_core::NodeKind::Goal => Some(Self::Goal),
+            orgasmic_core::NodeKind::Handoff => Some(Self::Handoff),
         }
     }
 }
@@ -12939,7 +12875,6 @@ impl From<NodeLayer> for orgasmic_core::NodeKind {
     fn from(layer: NodeLayer) -> Self {
         match layer {
             NodeLayer::Decision => Self::Decision,
-            NodeLayer::Architecture => Self::Architecture,
             NodeLayer::Glossary => Self::Glossary,
             NodeLayer::Project => Self::Project,
             NodeLayer::Task => Self::Task,
@@ -12949,11 +12884,20 @@ impl From<NodeLayer> for orgasmic_core::NodeKind {
     }
 }
 
-/// Kinds this daemon accepts for `--kind` on `node prop/body get/set`. Exposed
-/// so the CLI can parity-test its `--kind` enum against the daemon's actual
-/// acceptance set instead of duplicating the list by hand (TASK-JJ9RD).
+const ACCEPTED_NODE_KINDS: [orgasmic_core::NodeKind; 6] = [
+    orgasmic_core::NodeKind::Decision,
+    orgasmic_core::NodeKind::Glossary,
+    orgasmic_core::NodeKind::Project,
+    orgasmic_core::NodeKind::Task,
+    orgasmic_core::NodeKind::Goal,
+    orgasmic_core::NodeKind::Handoff,
+];
+
+/// Kinds this daemon accepts for `--kind` on `node prop/body get/set`.
+/// `NodeKind::Architecture` remains parseable in core until stage D, but it no
+/// longer names a daemon read/edit surface.
 pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
-    &orgasmic_core::NodeKind::ALL
+    &ACCEPTED_NODE_KINDS
 }
 
 /// The known node id universe for a project, mirroring the id set
@@ -13400,7 +13344,7 @@ pub struct NodeQuery {
     #[serde(default)]
     pub project: Option<String>,
     pub id: String,
-    /// Explicit layer selector (`decision`/`architecture`/`glossary`/`project`/`task`).
+    /// Explicit layer selector (`decision`/`glossary`/`project`/`task`).
     /// Required for ids whose owning file cannot be inferred from the id prefix
     /// (e.g. the `project` node). When absent, the layer is inferred from `id`.
     #[serde(default)]
@@ -13447,8 +13391,7 @@ pub struct NodeDoc {
     pub todo: Option<String>,
     pub tags: Vec<String>,
     /// The heading's own free prose (between its drawer and first nested
-    /// heading). Leaf architecture nodes keep their description here rather
-    /// than in a named `**` section.
+    /// heading).
     pub body: String,
     pub properties: Vec<NodeProperty>,
     pub sections: Vec<NodeSection>,
@@ -13746,7 +13689,8 @@ fn resolve_node_layer(kind: Option<&str>, id: &str) -> Result<NodeLayer, ApiErro
     match kind {
         Some(kind) => NodeLayer::from_kind(kind)
             .ok_or_else(|| ApiError::bad_request(format!("unknown node kind {kind}"))),
-        None => Ok(NodeLayer::for_id(id)),
+        None => NodeLayer::for_id(id)
+            .ok_or_else(|| ApiError::bad_request("architecture node layer is retired")),
     }
 }
 
@@ -14116,7 +14060,6 @@ async fn inbound_reference_owners(
     let mut paths = vec![
         dotorg.join("project.org"),
         dotorg.join("decisions.org"),
-        dotorg.join("architecture.org"),
         dotorg.join("glossary.org"),
         goal_file_path(&project.root),
         handoff_file_path(&project.root),
@@ -16802,8 +16745,11 @@ async fn assemble_artifact_context(
 ) -> String {
     let mut out = String::new();
     for id in node_ids {
-        let layer = NodeLayer::for_id(id);
         out.push_str(&format!("### {id}\n"));
+        let Some(layer) = NodeLayer::for_id(id) else {
+            out.push_str("(retired node layer)\n");
+            continue;
+        };
         match org_node_path(state, Some(project_id), id, layer).await {
             Ok((_, path, source_file)) => match read_artifact(&path, layer.artifact_name()) {
                 Ok(source) => match OrgFile::parse(source, path.to_string_lossy()) {
@@ -18321,7 +18267,7 @@ pub(crate) mod tests {
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         symlink_repo_source(&home);
-        let mut project = test_project(tmp.path(), &[], &[], &[]);
+        let mut project = test_project(tmp.path(), &[], &[]);
         let task_id = "TASK-FIX";
         let task_title = "Canonical fixture task title";
         let task_description = "CANONICAL-DESCRIPTION-ONLY";
@@ -18441,7 +18387,7 @@ pub(crate) mod tests {
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         symlink_repo_source(&home);
-        let mut project = test_project(tmp.path(), &[], &[], &[]);
+        let mut project = test_project(tmp.path(), &[], &[]);
         project.tasks.push(crate::index::TaskSummary {
             id: "TASK-FIX".to_string(),
             title: "Command-session policy fixture".to_string(),
@@ -18503,7 +18449,6 @@ pub(crate) mod tests {
     fn test_project(
         project_root: &FsPath,
         decisions: &[&str],
-        architecture: &[(&str, &str)],
         glossary: &[&str],
     ) -> crate::index::ProjectIndex {
         let mut graph = crate::index::GraphIndex::default();
@@ -18528,30 +18473,6 @@ pub(crate) mod tests {
                 layer: "decision".to_string(),
                 outgoing: Vec::new(),
                 source_file: decisions_file.clone(),
-                superseded: false,
-            });
-        }
-        let architecture_file = project_root.join(".orgasmic/architecture.org");
-        for (id, _status) in architecture {
-            graph.architecture.push(crate::index::ArchitectureSummary {
-                id: (*id).to_string(),
-                label: String::new(),
-                motivated_by: Vec::new(),
-                glossary_refs: Vec::new(),
-                interface: Vec::new(),
-                constraints: Vec::new(),
-                depends_on: Vec::new(),
-                source_paths: Vec::new(),
-                tests: Vec::new(),
-                parent_id: None,
-                description: None,
-                source_file: architecture_file.clone(),
-            });
-            graph.nodes.push(crate::index::GraphNodeSummary {
-                id: (*id).to_string(),
-                layer: "architecture".to_string(),
-                outgoing: Vec::new(),
-                source_file: architecture_file.clone(),
                 superseded: false,
             });
         }
@@ -18609,10 +18530,6 @@ pub(crate) mod tests {
         assert_eq!(
             org_file_artifact_label(FsPath::new(".orgasmic/decisions.org")),
             "decisions file"
-        );
-        assert_eq!(
-            org_file_artifact_label(FsPath::new(".orgasmic/architecture.org")),
-            "architecture file"
         );
         assert_eq!(
             org_file_artifact_label(FsPath::new(".orgasmic/glossary.org")),
@@ -18946,10 +18863,6 @@ pub(crate) mod tests {
         write(
             project_root.join(".orgasmic/decisions.org"),
             "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice :topic:\n:PROPERTIES:\n:ID:                 dec_001\n:DECIDES:\n:END:\n",
-        );
-        write(
-            project_root.join(".orgasmic/architecture.org"),
-            "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_001 Component\n:PROPERTIES:\n:ID:                 arch_001\n:DEPENDS_ON:\n:MOTIVATED_BY:\n:END:\n",
         );
         write(
             project_root.join(".orgasmic/glossary.org"),
@@ -25895,7 +25808,7 @@ pub(crate) mod tests {
         .unwrap();
         let brief = tmp.path().join("brief.md");
         std::fs::write(&brief, "no-worker compile smoke").unwrap();
-        let mut project = test_project(&project_root, &[], &[], &[]);
+        let mut project = test_project(&project_root, &[], &[]);
         project.project_id = "proj-no-workers".into();
         project.tasks.push(crate::index::TaskSummary {
             id: "TASK-NO-WORKERS".into(),
@@ -26366,7 +26279,7 @@ pub(crate) mod tests {
     fn dispatch_task_slots_use_empty_defaults_and_task_overrides_win() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        let mut project = test_project(root, &[], &[], &[]);
+        let mut project = test_project(root, &[], &[]);
         project.tasks.push(crate::index::TaskSummary {
             id: "TASK-DEFAULT".to_string(),
             title: "defaulted".to_string(),
@@ -27865,8 +27778,8 @@ pub(crate) mod tests {
         let _ = running.join.await;
     }
 
-    /// TASK-KSD6D sink 1: `mutate_graph_heading` (decision/architecture/
-    /// glossary revise) must front-run the same unresolvable-reference-token
+    /// TASK-KSD6D sink 1: `mutate_graph_heading` (decision/glossary revise)
+    /// must front-run the same unresolvable-reference-token
     /// class TASK-4T80X guarded on create + node-prop-set, write-nothing on
     /// reject.
     #[tokio::test]

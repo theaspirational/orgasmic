@@ -1868,15 +1868,6 @@ async fn graph_edges_route_exposes_forward_and_inverse_queries() {
         &project_root.join(".orgasmic/tasks/backlog.org"),
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-WRK12 Work task :work:\n:PROPERTIES:\n:ID:               TASK-WRK12\n:DEPENDS_ON:       TASK-BAS12\n:IMPLEMENTS:       arch_APP12\n:PRODUCES:         crates/example.rs\n:END:\n\n* BACKLOG TASK-BAS12 Base task :work:\n:PROPERTIES:\n:ID:               TASK-BAS12\n:END:\n",
     );
-    write(
-        &project_root.join(".orgasmic/decisions.org"),
-        "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_KEEP1 Keep it\n:PROPERTIES:\n:ID:               dec_KEEP1\n:END:\n",
-    );
-    write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_APP12 App\n:PROPERTIES:\n:ID:               arch_APP12\n:MOTIVATED_BY:     dec_KEEP1\n:END:\n",
-    );
-
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let client = reqwest::Client::new();
@@ -1910,22 +1901,6 @@ async fn graph_edges_route_exposes_forward_and_inverse_queries() {
     assert_eq!(
         inverse,
         serde_json::json!([{"kind": "implements", "from": "TASK-WRK12", "to": "arch_APP12"}])
-    );
-
-    let resp = client
-        .get(format!(
-            "http://{}/api/graph/edges?project=proj-pre&node=dec_KEEP1&relation=motivates",
-            running.addr
-        ))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success());
-    let motivates: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(
-        motivates,
-        serde_json::json!([{"kind": "motivated_by", "from": "arch_APP12", "to": "dec_KEEP1"}])
     );
 
     let _ = running.shutdown.send(());
@@ -2127,10 +2102,6 @@ async fn task_008_graph_routes_are_real() {
         "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice :product-scope:\n:PROPERTIES:\n:ID:                 dec_001\n:DECIDES:            dec_002\n:GLOSSARY_REFS:      term-a\n:END:\n** Context\nA test decision.\n** Decision\nChoose option a.\n** Consequences\nNone notable.\n",
     );
     write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_001 Component\n:PROPERTIES:\n:ID:                 arch_001\n:DECIDES:            dec_001\n:GLOSSARY_REFS:      term-a\n:INTERFACE:          read write\n:CONSTRAINTS:        conservative\n:DEPENDS_ON:\n:END:\n",
-    );
-    write(
         &project_root.join(".orgasmic/glossary.org"),
         "#+title: glossary\n#+orgasmic_version: 1\n\n* term:term-a Term A\n:PROPERTIES:\n:ID:                 term-a\n:CANONICAL:          term a\n:RELATES_TO:         dec_001\n:DEFINITION:         A test term.\n:END:\n",
     );
@@ -2141,7 +2112,6 @@ async fn task_008_graph_routes_are_real() {
     for route in &[
         "/api/graph/nodes?project=orgasmic",
         "/api/decisions?project=orgasmic",
-        "/api/architecture?project=orgasmic",
         "/api/glossary?project=orgasmic",
     ] {
         let resp = client
@@ -2227,8 +2197,7 @@ async fn task_008_graph_routes_are_real() {
         .unwrap();
     assert!(resp.status().is_success(), "accept: {}", resp.status());
 
-    // Revising a decision no longer propagates staleness to architecture; the
-    // removed consistency engine does not mutate architecture graph metadata.
+    // Decision revision remains part of the real graph route contract.
     let resp = client
         .post(format!("http://{}/api/decisions/dec_001", running.addr))
         .bearer_auth(&token)
@@ -2241,28 +2210,16 @@ async fn task_008_graph_routes_are_real() {
         .await
         .unwrap();
     assert!(resp.status().is_success(), "revise: {}", resp.status());
-    let resp = client
-        .get(format!(
-            "http://{}/api/architecture/arch_001?project=orgasmic",
-            running.addr
-        ))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    let arch: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(arch["id"], "arch_001");
-    assert!(arch.get("status").is_none());
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// dec_HBK6A stage A acceptance, on the real router: nothing can CREATE or
-/// REVISE architecture content, and no dispatch can spawn an architector — but
-/// the read projections are untouched (they retire in stage C).
+/// dec_HBK6A stage C acceptance on the real router: the architecture file may
+/// still exist until stage D, but no dedicated, generic-node, raw-file, or
+/// materialized-index route reads it.
 #[tokio::test]
-async fn architecture_production_routes_are_gone_while_reads_still_serve() {
+async fn architecture_production_and_read_routes_are_gone() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -2327,175 +2284,58 @@ async fn architecture_production_routes_are_gone_while_reads_still_serve() {
         "{body}"
     );
 
-    // Reads are untouched (stage C owns those).
-    let resp = client
-        .get(format!("{base}/api/architecture?project=orgasmic"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success());
-    let nodes: serde_json::Value = resp.json().await.unwrap();
-    assert!(nodes
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|node| node["id"] == "arch_006"));
+    for path in [
+        "/api/architecture?project=orgasmic",
+        "/api/architecture/nodes?project=orgasmic",
+        "/api/architecture/arch_006?project=orgasmic",
+    ] {
+        let status = client
+            .get(format!("{base}{path}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .status();
+        assert_eq!(status, reqwest::StatusCode::NOT_FOUND, "GET {path}");
+    }
 
-    let _ = running.shutdown.send(());
-    let _ = running.join.await;
-}
-
-#[tokio::test]
-async fn architecture_nodes_endpoint_returns_child_nodes_artifacts_and_edges() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = Home::at(tmp.path().join("home"));
-    home.ensure().unwrap();
-    let project_root = tmp.path().join("proj");
-    seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:DEPENDS_ON:\n:END:\n\n** Purpose\nOwns the daemon HTTP and materialized graph surface.\n\n** arch_006.1 HTTP router\n:PROPERTIES:\n:ID:                 arch_006.1\n:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs\n:TESTS:              cargo test -p orgasmic-daemon\n:READS:              projection:materialized-index arch_006.2\n:WRITES:             file:tx\n:EXPOSES_WS:         socket:events\n:END:\nServes architecture graph data over HTTP.\n\n** arch_006.2 Materialized index\n:PROPERTIES:\n:ID:                 arch_006.2\n:SOURCE_PATHS:       crates/orgasmic-daemon/src/index.rs\n:WRITES:             projection:materialized-index\n:END:\n",
-    );
-    let running = boot(home.clone()).await;
-    let token = read_token(&home);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!(
-            "http://{}/api/architecture?project=orgasmic",
-            running.addr
-        ))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success());
-    let architecture: serde_json::Value = resp.json().await.unwrap();
-    assert!(architecture.as_array().unwrap().iter().any(|node| {
-        node["id"] == "arch_006"
-            && node["description"]
-                .as_str()
-                .map(|description| {
-                    description.trim() == "Owns the daemon HTTP and materialized graph surface."
-                })
-                .unwrap_or(false)
-    }));
-
-    let resp = client
-        .get(format!(
-            "http://{}/api/architecture/nodes?project=orgasmic",
-            running.addr
-        ))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success());
-    let body: serde_json::Value = resp.json().await.unwrap();
-    let nodes = body["nodes"].as_array().unwrap();
-    assert!(nodes
-        .iter()
-        .any(|node| node["id"] == "arch_006" && node["kind"] == "arch"));
-    assert!(nodes.iter().any(|node| {
-        node["id"] == "arch_006.1"
-            && node["parent_id"] == "arch_006"
-            && node["source_paths"][0] == "crates/orgasmic-daemon/src/api.rs"
-            && node["tests"][0] == "cargo test -p orgasmic-daemon"
-    }));
-    // Leaf nodes without :TESTS: omit the field entirely (skip_serializing_if).
-    assert!(nodes
-        .iter()
-        .any(|node| node["id"] == "arch_006.2" && node["tests"].is_null()));
-    assert!(nodes.iter().any(|node| {
-        node["id"] == "projection:materialized-index"
-            && node["kind"] == "artifact"
-            && node["scheme"] == "projection"
-            && node["name"] == "materialized-index"
-    }));
-    let edges = body["edges"].as_array().unwrap();
-    assert!(edges.iter().any(|edge| {
-        edge["kind"] == "reads" && edge["from"] == "arch_006.1" && edge["to"] == "arch_006.2"
-    }));
-    assert!(edges.iter().any(|edge| {
-        edge["kind"] == "writes" && edge["from"] == "arch_006.1" && edge["to"] == "file:tx"
-    }));
-
-    let _ = running.shutdown.send(());
-    let _ = running.join.await;
-}
-
-#[tokio::test]
-async fn org_node_leaf_architecture_tests_round_trip() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = Home::at(tmp.path().join("home"));
-    home.ensure().unwrap();
-    let project_root = tmp.path().join("proj");
-    seed_project(&home, &project_root, "orgasmic");
-    write(
-        &project_root.join(".orgasmic/architecture.org"),
-        "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_006 Daemon API\n:PROPERTIES:\n:ID:                 arch_006\n:END:\n\n** arch_006.3 Filesystem watcher\n:PROPERTIES:\n:ID:                 arch_006.3\n:SOURCE_PATHS:       crates/orgasmic-daemon/src/watcher.rs\n:TESTS:              cargo test -p orgasmic-daemon\n:END:\nDebounces fs events.\n",
-    );
-    let running = boot(home.clone()).await;
-    let token = read_token(&home);
-    let client = reqwest::Client::new();
-    let base = format!("http://{}", running.addr);
-
-    // Reading a nested leaf node resolves through recursive id lookup and
-    // exposes its :TESTS: property.
-    let doc: serde_json::Value = client
+    let status = client
         .get(format!("{base}/api/org/node"))
         .bearer_auth(&token)
-        .query(&[("project", "orgasmic"), ("id", "arch_006.3")])
+        .query(&[("project", "orgasmic"), ("id", "arch_006")])
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+
+    let status = client
+        .get(format!("{base}/api/org/file"))
+        .bearer_auth(&token)
+        .query(&[
+            ("project", "orgasmic"),
+            ("path", ".orgasmic/architecture.org"),
+        ])
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
+
+    let graph_nodes: serde_json::Value = client
+        .get(format!("{base}/api/graph/nodes?project=orgasmic"))
+        .bearer_auth(&token)
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert_eq!(doc["id"], "arch_006.3");
-    let tests_prop = doc["properties"]
+    assert!(graph_nodes
         .as_array()
         .unwrap()
         .iter()
-        .find(|p| p["key"] == "TESTS")
-        .expect("TESTS property present on leaf doc");
-    assert_eq!(tests_prop["value"], "cargo test -p orgasmic-daemon");
-    let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
-
-    // Editing the leaf node's :TESTS: writes only that nested heading.
-    let resp = client
-        .post(format!("{base}/api/org/node/arch_006.3/edit?json=true"))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({
-            "project": "orgasmic",
-            "request_id": "leaf-tests-edit",
-            "base_version": base_version,
-            "ops": [
-                { "op": "set_property", "key": "TESTS", "value": "cargo test -p orgasmic-daemon; cargo clippy -p orgasmic-daemon" }
-            ]
-        }))
-        .send()
-        .await
-        .unwrap();
-    let status = resp.status();
-    let updated: serde_json::Value = resp.json().await.unwrap();
-    assert!(status.is_success(), "edit leaf node: {status} {updated}");
-    let updated_tests = updated["properties"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["key"] == "TESTS")
-        .unwrap();
-    assert_eq!(
-        updated_tests["value"],
-        "cargo test -p orgasmic-daemon; cargo clippy -p orgasmic-daemon"
-    );
-
-    // On-disk file reflects the edit and keeps the parent heading intact.
-    let on_disk = std::fs::read_to_string(project_root.join(".orgasmic/architecture.org")).unwrap();
-    assert!(on_disk.contains("cargo clippy -p orgasmic-daemon"));
-    assert!(on_disk.contains("* arch_006 Daemon API"));
+        .all(|node| node["id"] != "arch_006" && node["layer"] != "architecture"));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
