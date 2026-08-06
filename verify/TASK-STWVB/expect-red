@@ -1,0 +1,13 @@
+# Pinned from the injected red run of 2026-08-06 (worker implementer for
+# TASK-STWVB). With classify_one's host-state gate removed, a calm-host
+# unregistered isolation-green failure is mis-labeled LOAD-SENSITIVE.
+#
+# The FIRST failing assertion is the earlier selftest case that exercises the
+# same interlock ("unregistered failure -> REAL … even though it is green in
+# isolation") — not a later registry or billed-test case.
+
+exit: 1
+
+contains: FAIL unregistered failure -> REAL, exit 1, even though it is green in isolation
+
+contains: LOAD-SENSITIVE — failed under parallelism, green alone

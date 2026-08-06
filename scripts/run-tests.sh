@@ -14,7 +14,9 @@
 #   4. print a verdict block that separates REAL from FLAKE, owners named
 #
 # Exit 0 only when every failure is a registered, signature-matched flake that
-# is green in isolation. Anything else is red that means something.
+# is green in isolation, AND the host was calm enough for that verdict to mean
+# something. Anything else is either red that means something, or inconclusive
+# because the host was thrashing (see HOST STATE below).
 #
 # Usage:
 #   scripts/run-tests.sh                          whole workspace
@@ -25,7 +27,29 @@
 #   scripts/run-tests.sh --help
 #
 # Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry
-# rejected · 3 wrapper misuse.
+# rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
+#
+# Host state (TASK-STWVB):
+#   Sampled before / during / after the suite run (or once for --classify).
+#   Signals on macOS: 1-minute load average, and syspolicyd %CPU when that
+#   process exists. Either signal past its threshold marks the host degraded.
+#
+#   Thresholds, justified by the 2026-08-02 measurement on TASK-STWVB
+#   (syspolicyd at 586% CPU, load average 11.41, suite 8–15× slower than the
+#   42.9–85.9 s calm baseline; every failure green alone in 8 s against the
+#   same binary):
+#     LOAD_DEGRADED_THRESHOLD=8.0        # below the 11.41 thrash reading, well
+#                                        # above a quiet developer Mac (<4)
+#     SYSPOLICYD_CPU_DEGRADED=200.0      # well below the 586% peak; the gotcha
+#                                        # kill-guard uses ~400% sustained
+#
+#   A missing signal is ignored, never fatal: Linux has no syspolicyd, and a
+#   sampler that cannot read load must not turn a clean run red.
+#
+#   Injector for the self-test (and only for that): set
+#     ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>
+#   to force the sample the classifier sees. Omit a key to leave it unknown.
+#   Without the env override the live sampler runs.
 
 set -uo pipefail
 
@@ -46,6 +70,13 @@ SCRUB=(env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME)
 EXIT_REAL=1
 EXIT_REGISTRY=2
 EXIT_MISUSE=3
+EXIT_INCONCLUSIVE=4
+
+# orgasmic:TASK-STWVB
+# See header for the measured justification of these two numbers.
+LOAD_DEGRADED_THRESHOLD=8.0
+SYSPOLICYD_CPU_DEGRADED=200.0
+HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 
 die() {
     printf 'run-tests: %s\n' "$1" >&2
@@ -272,16 +303,120 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# host state (TASK-STWVB)
+# ---------------------------------------------------------------------------
+
+# One sample: prints `load=<f|?> syspolicyd_cpu=<f|?>` on stdout.
+# Degrades gracefully: unknown fields become `?`, never abort the run.
+sample_host_state_live() {
+    local load="?" cpu="?"
+    if [ -r /proc/loadavg ]; then
+        load=$(awk '{ print $1 }' /proc/loadavg 2>/dev/null) || load="?"
+    elif command -v sysctl >/dev/null 2>&1; then
+        load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }') || load="?"
+    fi
+    # macOS only: syspolicyd is the Gatekeeper evaluator. Absent elsewhere.
+    if command -v ps >/dev/null 2>&1; then
+        cpu=$(ps -axo comm=,pcpu= 2>/dev/null |
+            awk '/(^|\/)syspolicyd$/ { s += $NF } END { if (NR || s > 0) printf "%.1f", s; }') ||
+            cpu=""
+        [ -n "$cpu" ] || cpu="?"
+    fi
+    printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu"
+}
+
+# Parse ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f> (comma or space).
+sample_host_state_injected() {
+    local raw="${ORGASMIC_HOST_STATE_SAMPLE-}" load="?" cpu="?" part key val
+    raw=$(printf '%s' "$raw" | tr ',' ' ')
+    for part in $raw; do
+        key=${part%%=*}
+        val=${part#*=}
+        case "$key" in
+            load) load=$val ;;
+            syspolicyd_cpu) cpu=$val ;;
+        esac
+    done
+    printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu"
+}
+
+sample_host_state() {
+    if [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
+        sample_host_state_injected
+    else
+        sample_host_state_live
+    fi
+}
+
+# True (exit 0) when either measured signal clears its degraded threshold.
+# Unknown (`?`) signals do not trip the gate — absence of evidence is not
+# evidence of thrash.
+host_is_degraded() {
+    local sample="$1" load cpu
+    load=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
+    cpu=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
+    awk -v load="$load" -v cpu="$cpu" \
+        -v load_lim="$LOAD_DEGRADED_THRESHOLD" \
+        -v cpu_lim="$SYSPOLICYD_CPU_DEGRADED" '
+        function num(x) { return (x != "" && x != "?" && x + 0 == x) }
+        BEGIN {
+            if (num(load) && load + 0 >= load_lim + 0) exit 0
+            if (num(cpu)  && cpu  + 0 >= cpu_lim  + 0) exit 0
+            exit 1
+        }'
+}
+
+# Peak across before/during/after for the verdict stamp.
+HOST_BEFORE=""
+HOST_DURING=""
+HOST_AFTER=""
+HOST_PEAK=""
+HOST_DEGRADED=0
+
+record_host_peak() {
+    local sample="$1" load cpu pload pcpu
+    load=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
+    cpu=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
+    pload=$(printf '%s' "$HOST_PEAK" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
+    pcpu=$(printf '%s' "$HOST_PEAK" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
+    [ -n "$pload" ] || pload="?"
+    [ -n "$pcpu" ] || pcpu="?"
+    load=$(awk -v a="$load" -v b="$pload" 'BEGIN {
+        an = (a != "" && a != "?" && a + 0 == a); bn = (b != "" && b != "?" && b + 0 == b)
+        if (an && bn) { print (a+0 > b+0) ? a : b; exit }
+        if (an) { print a; exit }
+        if (bn) { print b; exit }
+        print "?"
+    }')
+    cpu=$(awk -v a="$cpu" -v b="$pcpu" 'BEGIN {
+        an = (a != "" && a != "?" && a + 0 == a); bn = (b != "" && b != "?" && b + 0 == b)
+        if (an && bn) { print (a+0 > b+0) ? a : b; exit }
+        if (an) { print a; exit }
+        if (bn) { print b; exit }
+        print "?"
+    }')
+    HOST_PEAK=$(printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu")
+    if host_is_degraded "$HOST_PEAK"; then
+        HOST_DEGRADED=1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
 
 SUITE_LOG="$WORK/suite.log"
+
+HOST_BEFORE=$(sample_host_state)
+record_host_peak "$HOST_BEFORE"
 
 if [ -n "$CLASSIFY_LOG" ]; then
     [ -f "$CLASSIFY_LOG" ] || die "no such log: $CLASSIFY_LOG"
     cp "$CLASSIFY_LOG" "$SUITE_LOG" || die "cannot copy $CLASSIFY_LOG"
     SUITE_CMD="(reclassified from $CLASSIFY_LOG)"
     SUITE_EXIT="?"
+    HOST_DURING=$HOST_BEFORE
+    HOST_AFTER=$HOST_BEFORE
 else
     # `--no-fail-fast` because a classification needs the WHOLE failure list;
     # stopping at the first red binary is how a real failure hides behind a
@@ -294,6 +429,10 @@ else
     "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
         -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
     SUITE_EXIT=$?
+    HOST_DURING=$(sample_host_state)
+    record_host_peak "$HOST_DURING"
+    HOST_AFTER=$(sample_host_state)
+    record_host_peak "$HOST_AFTER"
 fi
 
 # The skip is a default, not a promise. Assert it held.
@@ -387,10 +526,13 @@ rerun_isolated() {
 
 REAL_REPORT="$WORK/real.txt"
 FLAKE_REPORT="$WORK/flake.txt"
+LOAD_REPORT="$WORK/load.txt"
 : > "$REAL_REPORT"
 : > "$FLAKE_REPORT"
+: > "$LOAD_REPORT"
 REAL_COUNT=0
 FLAKE_COUNT=0
+LOAD_COUNT=0
 
 # The registry is keyed by the name cargo prints. A bare function name is
 # accepted too, so an entry does not go stale when a test moves module.
@@ -436,6 +578,24 @@ classify_one() {
     if [ -z "$entries" ]; then
         rerun_isolated "$bin" "$name" "$iso_log"
         iso=$?
+        # C's interlock (TASK-STWVB): an unregistered failure that is green in
+        # isolation is LOAD-SENSITIVE only when THIS run's measured host state
+        # was degraded. On a calm host the same shape stays REAL — the registry
+        # remains the only sanctioned excuse, and a thrashing host cannot mint
+        # a permanent one. Failing alone is always REAL regardless of load.
+        if [ "$iso" -eq 0 ] && [ "$HOST_DEGRADED" -eq 1 ]; then
+            LOAD_COUNT=$((LOAD_COUNT + 1))
+            {
+                printf '  %s\n' "$name"
+                printf '      binary   : %s\n' "$bin"
+                printf '      why      : LOAD-SENSITIVE — failed under parallelism, green alone,\n'
+                printf '                 and this run measured a degraded host (not a registry excuse)\n'
+                printf '      isolation: passed\n'
+                printf '      panic    : %s\n' "$(first_panic "$detail")"
+                printf '      next     : re-run when calm; do NOT register this — there is no owner\n'
+            } >> "$LOAD_REPORT"
+            return
+        fi
         REAL_COUNT=$((REAL_COUNT + 1))
         {
             printf '  %s\n' "$name"
@@ -443,6 +603,9 @@ classify_one() {
             printf '      why      : NOT IN THE REGISTRY — no entry claims this failure\n'
             printf '      isolation: %s\n' "$(iso_word "$iso")"
             printf '      panic    : %s\n' "$(first_panic "$detail")"
+            if [ "$iso" -eq 0 ]; then
+                printf '      note     : green alone on a calm host is still REAL until owned\n'
+            fi
             printf '      next     : fix it, or register it against the open task that owns it\n'
         } >> "$REAL_REPORT"
         return
@@ -604,6 +767,19 @@ if [ -z "$SKIPPED_TOOLS" ]; then
 else
     printf '  environ  : INCOMPLETE — %s test(s) gated out by absent tooling\n' "$SKIPPED_TESTS"
 fi
+# Host-state stamp: always printed so a green on a thrashing host cannot look
+# like a trusted clean run.
+if [ "$HOST_DEGRADED" -eq 1 ]; then
+    printf '  host     : DEGRADED (thresholds load>=%s syspolicyd_cpu>=%s)\n' \
+        "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
+else
+    printf '  host     : calm (thresholds load>=%s syspolicyd_cpu>=%s)\n' \
+        "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
+fi
+printf '             before  %s\n' "$HOST_BEFORE"
+printf '             during  %s\n' "${HOST_DURING:-$HOST_BEFORE}"
+printf '             after   %s\n' "${HOST_AFTER:-$HOST_BEFORE}"
+printf '             peak    %s\n' "$HOST_PEAK"
 
 if [ -n "$SKIPPED_TOOLS" ]; then
     printf '\nNOT RUN (%s) — tooling absent, and %s said that was acceptable.\n' \
@@ -626,6 +802,11 @@ if [ "$REAL_COUNT" -gt 0 ]; then
     printf '\nREAL (%s):\n' "$REAL_COUNT"
     cat "$REAL_REPORT"
 fi
+if [ "$LOAD_COUNT" -gt 0 ]; then
+    printf '\nLOAD-SENSITIVE (%s) — isolation-green, unregistered, host was degraded:\n' \
+        "$LOAD_COUNT"
+    cat "$LOAD_REPORT"
+fi
 if [ "$FLAKE_COUNT" -gt 0 ]; then
     printf '\nFLAKE (%s) — green in isolation, registered signature matched:\n' "$FLAKE_COUNT"
     cat "$FLAKE_REPORT"
@@ -637,6 +818,26 @@ if [ "$BILLED_RAN" -eq 1 ]; then
     STATUS=$EXIT_REAL
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
+    STATUS=$EXIT_REAL
+elif [ "$HOST_DEGRADED" -eq 1 ]; then
+    # B: a degraded host makes the whole run inconclusive — green or red.
+    # A green on a thrashing host is not evidence; a red is not a code fact.
+    printf '\nverdict: INCONCLUSIVE — re-run when calm. Host was degraded'
+    if [ "$REAL_COUNT" -gt 0 ]; then
+        printf ' (%s alone-red failure(s) also seen; do not trust either way).\n' "$REAL_COUNT"
+    elif [ "$LOAD_COUNT" -gt 0 ]; then
+        printf ' (%s load-sensitive failure(s); not a registry excuse).\n' "$LOAD_COUNT"
+    elif [ "$FAIL_COUNT" -gt 0 ]; then
+        printf ' (failures were registered flakes; still not a trusted green).\n'
+    else
+        printf ' (suite looked green; that green is not trusted).\n'
+    fi
+    STATUS=$EXIT_INCONCLUSIVE
+elif [ "$LOAD_COUNT" -gt 0 ]; then
+    # Unreachable when the C interlock holds: LOAD-SENSITIVE requires a
+    # degraded host. If this fires, the host-state gate was bypassed.
+    printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
+        "$LOAD_COUNT"
     STATUS=$EXIT_REAL
 elif [ "$REAL_COUNT" -gt 0 ]; then
     printf '\nverdict: RED — %s real failure(s). This red means something.\n' "$REAL_COUNT"

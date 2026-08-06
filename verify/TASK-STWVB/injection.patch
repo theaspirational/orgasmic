@@ -1,0 +1,12 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -583,7 +583,7 @@ classify_one() {
+         # was degraded. On a calm host the same shape stays REAL — the registry
+         # remains the only sanctioned excuse, and a thrashing host cannot mint
+         # a permanent one. Failing alone is always REAL regardless of load.
+-        if [ "$iso" -eq 0 ] && [ "$HOST_DEGRADED" -eq 1 ]; then
++        if [ "$iso" -eq 0 ]; then  # INJECTED (TASK-STWVB): drop host-state gate
+             LOAD_COUNT=$((LOAD_COUNT + 1))
+             {
+                 printf '  %s\n' "$name"

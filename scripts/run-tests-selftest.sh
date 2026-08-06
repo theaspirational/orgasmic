@@ -102,8 +102,12 @@ registry() {
     printf '%s\n' "$@" > "$TMP/registry.toml"
 }
 
+# Default every case onto a calm injected host so a thrashing Mac cannot flip
+# the self-test. Cases that exercise the degraded path set the override
+# themselves for the duration of `run`.
 run() {
-    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" "$@" \
+    ORGASMIC_HOST_STATE_SAMPLE="${ORGASMIC_HOST_STATE_SAMPLE:-load=0.5,syspolicyd_cpu=1.0}" \
+        "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" "$@" \
         > "$TMP/out.txt" 2>&1
     RUN_EXIT=$?
     rm -rf "$TMP/work"
@@ -342,6 +346,79 @@ run --classify "$TMP/suite.log"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "environ  : complete — no tool requirement was waived" \
     "ignored  : 2 test(s) carrying #[ignore]"
+
+# -- host state and load-sensitivity (TASK-STWVB) ----------------------------
+
+# The load-bearing interlock: on a calm host an unregistered isolation-green
+# failure is still REAL. Removing that gate would let a thrashing-host excuse
+# become a permanent one. The verify/TASK-STWVB injection proves this case.
+start "calm host + unregistered isolation-green -> REAL, exit 1 (C interlock)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
+ORGASMIC_HOST_STATE_SAMPLE="load=0.5,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "REAL (1)" \
+    "NOT IN THE REGISTRY" \
+    "green alone on a calm host is still REAL until owned" \
+    "host     : calm" \
+    "verdict: RED"
+
+start "degraded host + unregistered isolation-green -> LOAD-SENSITIVE, exit 4"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
+ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=586.0" run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "LOAD-SENSITIVE (1)" \
+    "host was degraded" \
+    "host     : DEGRADED" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "load-sensitive failure"
+
+start "degraded host + clean suite -> INCONCLUSIVE (green is not trusted)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 2 tests
+test tests::unrelated_a ... ok
+test tests::unrelated_b ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : DEGRADED" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "suite looked green; that green is not trusted"
+
+start "degraded host + registered flake -> INCONCLUSIVE, not a trusted green"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+ORGASMIC_HOST_STATE_SAMPLE="load=0.1,syspolicyd_cpu=250.0" run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "FLAKE (1)" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "registered flakes; still not a trusted green"
+
+start "degraded host + fails alone too -> INCONCLUSIVE, alone-red still named"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/red" "tests::nobody_has_ever_seen_this_one" "hard failure under load"
+ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=586.0" run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "REAL (1)" \
+    "NOT IN THE REGISTRY" \
+    "isolation: FAILED (exit 101)" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "alone-red failure"
+
+start "calm host + registered flake still GREEN modulo flake, exit 0"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+ORGASMIC_HOST_STATE_SAMPLE="load=0.5,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "FLAKE (1)" \
+    "host     : calm" \
+    "verdict: GREEN modulo 1 registered flake"
 
 # ---------------------------------------------------------------------------
 

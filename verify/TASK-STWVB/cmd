@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-STWVB`.
+#
+# Pins C's interlock: on a calm host an unregistered isolation-green failure
+# must stay REAL. Under the injection the host-state gate is removed and the
+# FIRST failing selftest assertion is the calm-host interlock case below.
+scripts/run-tests-selftest.sh

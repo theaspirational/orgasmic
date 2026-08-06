@@ -10276,34 +10276,22 @@ mod tests {
             // (`probe_rmux_binary`, which execs it) out of the timed section;
             // see the residual risk note on that call.
             //
-            // The first exec of a newly created executable is serialized
-            // through syspolicy on macOS (`.orgasmic/gotchas.org`), and that
-            // latency must not land inside the timed section either — so the
-            // shim exits immediately until the test arms it, and the test execs
-            // it once first.
-            std::fs::write(
+            // Hard-link the suite-wide warmed fixture (TASK-STWVB): a fresh
+            // script here used to pay a Gatekeeper first-exec inside the timed
+            // section under parallel load. The inode is already warm; per-test
+            // paths live in adjacent files.
+            crate::test_fixtures::link_hanging_mux_shim(
                 &shim,
-                format!(
-                    "#!/bin/sh\n\
-                     for a in \"$@\"; do [ \"$a\" = -V ] && {{ echo 'rmux {version}'; exit 0; }}; \
-                     done\n\
-                     [ -f {armed} ] || exit 0\n\
-                     echo $$ > {pidfile}\n\
-                     exec sleep 120\n",
-                    version = orgasmic_drivers::modes::rmux::RMUX_REQUIRED_VERSION,
-                    armed = armed.display(),
-                    pidfile = pidfile.display(),
-                ),
-            )
-            .expect("write hanging mux shim");
-            std::fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-                .expect("chmod shim");
+                orgasmic_drivers::modes::rmux::RMUX_REQUIRED_VERSION,
+                &armed,
+                &pidfile,
+            );
             assert!(
                 Command::new(&shim)
                     .status()
-                    .expect("warm the shim")
+                    .expect("smoke the linked hanging-mux shim")
                     .success(),
-                "the warm-up exec must succeed before the timed section"
+                "the linked shim must answer before the timed section"
             );
 
             // Install the override for this arm only, and restore it after.

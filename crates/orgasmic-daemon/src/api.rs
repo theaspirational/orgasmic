@@ -18579,12 +18579,7 @@ pub(crate) mod tests {
         let versions = home_root.join(".local/share/claude/versions");
         std::fs::create_dir_all(&versions).unwrap();
         let target = versions.join("2.1.217");
-        std::fs::write(&target, "#!/bin/sh\nexec true\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::test_fixtures::link_shared_test_executable(&target);
         let entry = home_root.join(".local/bin/claude");
         std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&target, &entry).unwrap();
@@ -18613,11 +18608,10 @@ pub(crate) mod tests {
         let pinned = seed_trusted_claude_symlink_layout(tmp.path());
         let replacement = tmp.path().join(".local/share/claude/versions/evil");
         std::fs::create_dir_all(replacement.parent().unwrap()).unwrap();
-        std::fs::write(&replacement, "#!/bin/sh\nexec true\n").unwrap();
+        // Fresh inode on purpose: revalidate must notice the retarget.
+        crate::test_fixtures::create_fresh_test_executable(&replacement, "#!/bin/sh\nexec true\n");
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).unwrap();
             std::fs::remove_file(&pinned.entry_path).unwrap();
             std::os::unix::fs::symlink(&replacement, &pinned.entry_path).unwrap();
         }
@@ -18636,13 +18630,11 @@ pub(crate) mod tests {
         let pinned = seed_trusted_claude_symlink_layout(tmp.path());
         let old_target = pinned.target_path.with_extension("old");
         std::fs::rename(&pinned.target_path, &old_target).unwrap();
-        std::fs::write(&pinned.target_path, "#!/bin/sh\nexec true\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&pinned.target_path, std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-        }
+        // Fresh inode on purpose: revalidate must notice the replacement.
+        crate::test_fixtures::create_fresh_test_executable(
+            &pinned.target_path,
+            "#!/bin/sh\nexec true\n",
+        );
         assert!(
             !pinned.revalidate(),
             "same-path target replacement after pin must fail closed"
@@ -18652,14 +18644,14 @@ pub(crate) mod tests {
     #[test]
     #[cfg(unix)]
     fn pinned_claude_config_retains_wrapper_inode_after_public_replacement() {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::fs::MetadataExt;
 
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let wrapper = tmp.path().join("orgasmic-wrapper");
-        std::fs::write(&wrapper, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Distinct inodes are the assertion; these two must stay fresh.
+        crate::test_fixtures::create_fresh_test_executable(&wrapper, "#!/bin/sh\nexit 0\n");
         let claude = seed_trusted_claude_executable(&home);
         let pin = pin_trusted_claude_candidate(&claude).unwrap();
 
@@ -18671,8 +18663,7 @@ pub(crate) mod tests {
         );
         let retained_meta = std::fs::symlink_metadata(&retained).unwrap();
         std::fs::rename(&wrapper, wrapper.with_extension("old")).unwrap();
-        std::fs::write(&wrapper, "#!/bin/sh\nexit 91\n").unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_fixtures::create_fresh_test_executable(&wrapper, "#!/bin/sh\nexit 91\n");
 
         let replacement_meta = std::fs::metadata(&wrapper).unwrap();
         assert_ne!(retained_meta.ino(), replacement_meta.ino());
@@ -23371,13 +23362,9 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&populated).unwrap();
         std::fs::create_dir_all(&empty).unwrap();
         for binary in ["hermes", "codex", "claude"] {
-            let path = populated.join(binary);
-            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            // Never executed (fence answers from PATH presence), but still
+            // reuse the warmed inode so a mistaken exec cannot queue Gatekeeper.
+            crate::test_fixtures::link_shared_test_executable(&populated.join(binary));
         }
 
         let exe = std::env::current_exe().expect("this test binary");
@@ -26809,10 +26796,10 @@ pub(crate) mod tests {
 
     // orgasmic:task_JGHNC
     /// A file `which` will hand back: present, and executable.
+    /// Reuses the suite-wide warmed inode (TASK-STWVB) so PATH stubs do not
+    /// each pay a Gatekeeper first-exec.
     fn write_executable_stub(path: &FsPath) {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_fixtures::link_shared_test_executable(path);
     }
 
     // orgasmic:task_K4G1D
@@ -31011,22 +30998,17 @@ pub(crate) mod tests {
     fn seed_malicious_path_claude_shim(shim_dir: &FsPath, malicious_log: &FsPath) {
         std::fs::create_dir_all(shim_dir).unwrap();
         let shim = shim_dir.join("claude");
-        std::fs::write(
-            &shim,
-            format!(
-                "#!/bin/sh\necho \"$0 $*\" > {malicious_log}\nexec true\n",
-                malicious_log = malicious_log.display()
-            ),
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_fixtures::link_shared_test_executable(&shim);
+        crate::test_fixtures::write_linked_fixture_text(&shim, "orgasmic-mode", "malicious-claude");
+        crate::test_fixtures::write_linked_fixture_value(&shim, "malicious-log", malicious_log);
     }
 
     #[cfg(unix)]
     fn seed_test_pinned_exec_wrapper(home: &Home) {
         let wrapper = home.bin_orgasmic();
         crate::test_fixtures::link_shared_test_executable(&wrapper);
+        // Loud failure if production stops passing __exec-pinned (TASK-STWVB).
+        crate::test_fixtures::write_linked_fixture_text(&wrapper, "orgasmic-pinned-wrapper", "1");
     }
 
     // orgasmic:TASK-5HBST
