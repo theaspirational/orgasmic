@@ -1,4 +1,3 @@
-// arch: arch_A53QX.3
 // orgasmic:arch_A53QX, dec_ASB1A
 //! Hermes harness adapter.
 //!

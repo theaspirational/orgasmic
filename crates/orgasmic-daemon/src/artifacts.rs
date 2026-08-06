@@ -1,4 +1,3 @@
-// arch: arch_045Q0.1
 // orgasmic:arch_ARSPJ
 //! Artifact store: on-disk layout, block registry, index projection helpers,
 //! and read/write functions called from the API handlers.

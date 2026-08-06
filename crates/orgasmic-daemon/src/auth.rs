@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.1
 // orgasmic:arch_C87Z9, dec_XV9AK, dec_N17XX
 //! Bearer token storage and middleware.
 //!

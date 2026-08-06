@@ -1,4 +1,3 @@
-// arch: arch_A53QX.3
 // orgasmic:arch_A53QX, dec_ASB1A, task_TGGAJ
 //! Claude Code harness adapter for its own stdio stream-json wire.
 //!

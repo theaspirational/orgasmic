@@ -1,4 +1,3 @@
-// arch: arch_A53QX.4
 // orgasmic:arch_A53QX, arch_R3EPE, arch_QXS5W, dec_ASB1A
 //! Tmux mode driver.
 //!

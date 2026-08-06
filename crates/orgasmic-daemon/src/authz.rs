@@ -1,4 +1,3 @@
-// arch: arch_Z8CW2
 // orgasmic:arch_Z8CW2, dec_KF2MR
 //! The authorization seam: role -> capability table, grant resolution, and
 //! the one [`require`] function every gated route/WS handler calls through.

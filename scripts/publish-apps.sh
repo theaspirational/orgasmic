@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# arch: arch_WZFAX.4
 # orgasmic:arch_WZFAX.4, dec_B4147
 # Local-first apps publish. Builds the maintainer-buildable app targets on one
 # macOS host — the darwin-arm macOS app (.dmg + Tauri updater .app.tar.gz/.sig)

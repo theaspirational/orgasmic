@@ -8,13 +8,11 @@
 //! piece of durable state they touch. See `.orgasmic/architecture.org`
 //! (arch_002, arch_003, arch_011) for the design contract.
 
-// arch: arch_004 — see decisions dec_016
+pub mod home;
 pub mod id;
 pub mod id_repair;
 pub mod identity_lint;
 pub mod marker;
-// arch: arch_003 — see decisions dec_017 dec_019
-pub mod home;
 pub mod members;
 pub mod node_kind;
 pub mod org;

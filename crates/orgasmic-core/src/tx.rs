@@ -1,4 +1,3 @@
-// arch: arch_BVH7M.2, arch_R3EPE.2
 // orgasmic:arch_BVH7M, dec_WH9PD, dec_R75SW
 //! Property-drawer-only tx heading writer.
 //!

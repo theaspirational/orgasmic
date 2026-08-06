@@ -1,4 +1,3 @@
-// arch: arch_A53QX.4
 pub mod jsonrpc;
 pub mod rmux;
 pub mod stdio;

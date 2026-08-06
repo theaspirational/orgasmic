@@ -1,4 +1,3 @@
-// arch: arch_WZFAX.2
 // orgasmic:arch_WZFAX
 //! Install the executed `orgasmic` binary as a real file at a stable path.
 //!

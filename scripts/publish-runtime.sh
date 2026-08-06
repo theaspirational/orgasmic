@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# arch: arch_WZFAX.3
 # orgasmic:arch_WZFAX.3, dec_B4147
 # Local-first runtime publish. Builds the four maintainer-buildable runtime
 # targets on one macOS host (darwin x2 native+cross, linux x2 via cargo-zigbuild

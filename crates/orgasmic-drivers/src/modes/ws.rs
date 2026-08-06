@@ -1,4 +1,3 @@
-// arch: arch_A53QX.4
 // orgasmic:arch_A53QX, dec_ASB1A
 //! WebSocket mode.
 //!

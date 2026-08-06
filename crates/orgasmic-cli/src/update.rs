@@ -1,4 +1,3 @@
-// arch: arch_WZFAX.2
 // orgasmic:arch_WZFAX
 //! `orgasmic update`: update either a managed runtime bundle or an explicit
 //! contributor source checkout, depending on `$ORGASMIC_HOME/install.json`.

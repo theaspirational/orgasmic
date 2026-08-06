@@ -1,4 +1,3 @@
-// arch: arch_A53QX.1, arch_A53QX.5, arch_Z3Z3V.1, arch_Z3Z3V.2
 // orgasmic:arch_A53QX, arch_Z3Z3V, dec_CSKBD
 //! Run supervisor — owns the live driver session map and the
 //! `(task_id, kind)` lease table.

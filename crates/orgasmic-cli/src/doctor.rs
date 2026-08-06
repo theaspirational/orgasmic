@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.5
 // orgasmic:arch_WZFAX,dec_2D5BC
 //! Diagnose the local orgasmic install — missing home dirs, missing shipped
 //! files, broken binary symlink.

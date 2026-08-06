@@ -1,4 +1,3 @@
-// arch: arch_Z8CW2
 // orgasmic:arch_Z8CW2, dec_N9HW0, dec_KF2MR
 //! Host-local member records: name, hashed token, per-project capability
 //! grants. Lives at `$ORGASMIC_HOME/user/auth/members.org` — never in the

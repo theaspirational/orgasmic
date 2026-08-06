@@ -1,4 +1,3 @@
-// arch: arch_BVH7M.1, arch_QFQTD.2
 // orgasmic:arch_BVH7M, dec_QWZB2
 //! App-owned Org parser and rewriter.
 //!

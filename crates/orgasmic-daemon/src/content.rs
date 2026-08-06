@@ -1,4 +1,3 @@
-// arch: arch_QXS5W.1, arch_QXS5W.2
 // orgasmic:arch_R3EPE, arch_PCSQE, arch_QXS5W
 //! Loader-backed manager skill content.
 

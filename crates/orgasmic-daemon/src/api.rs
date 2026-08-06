@@ -1,4 +1,3 @@
-// arch: arch_045Q0.1, arch_C87Z9.1, arch_MPAQT.1, arch_MPAQT.2, arch_PCSQE.1, arch_PCSQE.2, arch_QFQTD.1, arch_QFQTD.3, arch_QXS5W.2, arch_R3EPE.1, arch_R3EPE.2, arch_Z3Z3V.2
 // orgasmic:arch_R3EPE, arch_C87Z9, arch_QXS5W, dec_XV9AK, dec_N17XX
 //! Axum REST routes mirroring the arch_006 inventory.
 //!

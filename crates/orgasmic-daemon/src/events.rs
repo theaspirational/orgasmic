@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.2
 // orgasmic:arch_C87Z9, arch_Z3Z3V
 //! Daemon-wide event bus.
 //!

@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.5, arch_R3EPE.1
 //! Manager-owned dispatch helpers.
 //!
 //! This module intentionally keeps manager-side dispatch orchestration in the

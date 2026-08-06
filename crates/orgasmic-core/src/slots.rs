@@ -1,4 +1,3 @@
-// arch: arch_QXS5W.1
 // orgasmic:arch_QXS5W
 //! Strict slot compiler for prompt templates.
 //!

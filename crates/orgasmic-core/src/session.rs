@@ -1,4 +1,3 @@
-// arch: arch_A53QX.5, arch_BVH7M.2
 // orgasmic:arch_BVH7M, arch_A53QX, dec_R75SW
 //! Append-only JSONL session writer.
 //!

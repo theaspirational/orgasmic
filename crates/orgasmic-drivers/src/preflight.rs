@@ -1,4 +1,3 @@
-// arch: arch_A53QX.2
 // orgasmic:arch_A53QX, TASK-TJKFC
 //! Shared machinery for harness readiness probes.
 //!
