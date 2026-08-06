@@ -15527,3 +15527,93 @@
 :REASON:       edited task node TASK-QGWK7
 :NODE_ID:      TASK-QGWK7
 :END:
+
+* TX 2026-08-06 Thu 15:12:43 task.state_transitioned TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4938
+:TIME:         [2026-08-06 Thu 15:12:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 15:12:44 manager.dispatch_started TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4939
+:TIME:         [2026-08-06 Thu 15:12:44]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7
+:BRANCH:       task-qgwk7-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-brief.md
+:STARTED_AT:   [2026-08-06 Thu 15:12:44]
+:LIVENESS:     c03dc66b512e5ff56b53f8b7677a4b17b38544fd
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: promote the worker report to a tracked path at close instead of deleting it, keyed by dispatch generation, with REPORT_PATH on the completion tx — today a closed dispatch has no durable record of what the worker said
+:END:
+
+* TX 2026-08-06 Thu 15:12:44 run.created TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4940
+:TIME:         [2026-08-06 Thu 15:12:44]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7-implementer-20260806T151244.jsonl
+:REASON:       promote the worker report to a tracked path at close instead of deleting it, keyed by dispatch generation, with REPORT_PATH on the completion tx — today a closed dispatch has no durable record of what the worker said
+:RUN_ID:       run-20260806T151244-7572bac5ee574bd6956fcf560376cf4f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-8b3fc1ac3ffb460fa74a4e962c1276da-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-8b3fc1ac3ffb460fa74a4e962c1276da-stdout.log
+:DISPATCH_ATTEMPT: 8b3fc1ac3ffb460fa74a4e962c1276da
+:DISPATCH_TX:  tx-20260806-orgasmic-4939
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 15:13:45 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4941
+:TIME:         [2026-08-06 Thu 15:13:45]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-06 Thu 15:13:45 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4942
+:TIME:         [2026-08-06 Thu 15:13:45]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         ce4387e
+:LIVENESS:         c03dc66
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -202,41 +202,46 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-NOTHING IS IN FLIGHT. Checked four ways: =orgasmic manager dispatch-status=
-prints no open dispatch, =in_progress= and =in_review= are EMPTY, =git worktree
-list= shows only the main checkout, and the tree is clean.
+ONE DISPATCH RUNNING: TASK-QGWK7 (P1) implementer,
+=implementer-cursor-agent-tmux= (tmux / cursor-agent / cursor-grok-4.5-high-fast),
+run =run-20260806T151244-7572bac5ee574bd6956fcf560376cf4f=, started_tx
+=tx-20260806-orgasmic-4939=, base =c03dc66=. Report lands at
+=.orgasmic/tmp/dispatch/task-qgwk7/task-qgwk7-8b3fc1ac3ffb460fa74a4e962c1276da-last.txt=.
 
-THE TASK-G64ZH CHAIN IS CLOSED — three rounds, six dispatches, all three tasks
-DONE. Merges: =eaa88da= (round 1), =44e7e8d= (round 2), =f74256b= (round 3, the
-one that worked). Round three's review was the FIRST in the chain to find no new
-silence and no new double-write.
+WHAT IT IS FIXING: =dispatch-close= deletes the worker's =last.txt= and the
+=*.reported= tx carries no body, and =.orgasmic/.gitignore= excludes =tmp/= (zero
+commits ever), so a closed dispatch has NO durable record of what the worker
+said. The brief survives and the report does not.
 
-BEFORE YOU DISPATCH ANYTHING, READ TASK-QGWK7 (P1, filed this session).
-=dispatch-close= DELETES the worker's =last.txt=, and the =*.reported= tx carries
-NO BODY — so after a close, the only durable record of what a worker said is
-whatever the manager pasted into the close tx =REASON=. All four dispatch record
-dirs in this chain now hold their brief and nothing else; three reviews and four
-implementer reports are gone. Two review findings had to be filed from their
-TITLES alone (TASK-3RTM0 carries a status block saying so). UNTIL THAT LANDS:
-EXTRACT EVERY FINDING YOU CARE ABOUT BEFORE CLOSING, and write a close =REASON=
-detailed enough to file tasks from — the ones written this session are the only
-reason F-1 through F-5 survived at all.
+THE IRONY IS OPERATIONAL, NOT DECORATIVE: this defect is LIVE right now and will
+stay live for this dispatch and its review, because the fix has to merge AND the
+runtime has to be rebuilt before =dispatch-close= behaves differently. So EXTRACT
+EVERY FINDING FROM THIS WORKER'S REPORT AND ITS REVIEW BEFORE YOU CLOSE THEM, and
+write close =REASON=s detailed enough to file tasks from, with =file:line=
+anchors. The TASK-G64ZH chain lost three reviews and four implementer reports to
+exactly this, and two findings had to be filed from their titles alone.
 
-A CORRECTION WORTH KEEPING, because it nearly went into the record as fact: the
-round-three merge sha was written as =40f3ec1= in the handoff and in
-TASK-G64ZH.1.1's Evidence before =dispatch-close= refused it — "does not resolve
-to a commit". The real sha is =f74256b=. The close gate caught a manager error
-that two prose surfaces had already accepted. Verify a sha with =git log=, not
-from memory of what you typed earlier.
+THE DESIGN IS SETTLED ON THE HEADING — do not re-open it if the worker argues.
+The report is NOT inlined into the task node: =done.org= is 26,106 lines and is
+reparsed whole on every reindex, a review is ~25KB, and a markdown body with =#=
+headings and code fences is a file-corruption surface in an org file (which is
+why =node body set= refuses column-0 headings). =last.txt= stays as the run-time
+streaming sink. The fix is to PROMOTE the record at close to a TRACKED path keyed
+by =started_tx= — per GENERATION, because this chain ran six dispatches across
+three tasks — plus =REPORT_PATH= on the completion tx.
 
-CURSOR-AGENT NEEDS TWO MANUAL CLEARS PER DISPATCH (TASK-VD0VB, P1). Seen on all
-three cursor dispatches this session, each into a fresh worktree path, so it can
-never warm up. Workspace trust = =tmux send-keys -t <session> a=; the command
-allowlist = =BTab= ("Run Everything"). THE TWO ARE SEPARATED BY A VARIABLE DELAY
-— the second appears only after the worker reads its bundle — so POLL for the
-prompt string, do not sleep between them; a fixed sleep missed it on round three
-and the worker sat parked until a monitor caught it. Both claude reviewer
-dispatches started clean, which scopes this to cursor-agent, not tmux.
+THE ONE ANCHOR THE BRIEF DELIBERATELY DID NOT GUESS: the deletion site inside
+=crates/orgasmic-cli/src/manager.rs=. There are several =remove_file= /
+=remove_dir_all= sites and at least one belongs to the WORKTREE SALVAGE path,
+which must not be disturbed — TASK-2BPWM and TASK-D0GA3 exist because it
+destroyed worker output twice. The brief tells the worker to find the right one
+and says why a guessed anchor would be dangerous here.
+
+CURSOR PROMPT CLEARING NOW POLLS INSTEAD OF SLEEPING, and the numbers justify it:
+this dispatch's trust prompt appeared at 1s and its allowlist prompt at 14s. A
+fixed sleep between the two is what missed it on TASK-G64ZH.1.1. Poll for
+=Workspace Trust Required= then =Not in allowlist=, sending =a= and =BTab=.
+TASK-VD0VB is the real fix.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions
