@@ -561,7 +561,7 @@ enum IdCmd {
     /// Print one minted node id to stdout (no daemon required).
     Mint {
         /// Node class the id is minted for; fixes the id prefix
-        /// (`task` → `TASK-…`, `decision` → `dec_…`, `architecture` → `arch_…`).
+        /// (`task` → `TASK-…`, `decision` → `dec_…`, `term` → `term_…`).
         #[arg(long, value_enum)]
         class: MintClassArg,
     },
@@ -571,7 +571,6 @@ enum IdCmd {
 enum MintClassArg {
     Task,
     Decision,
-    Architecture,
     Term,
     Artifact,
 }
@@ -581,7 +580,6 @@ impl From<MintClassArg> for orgasmic_core::NodeIdClass {
         match value {
             MintClassArg::Task => Self::Task,
             MintClassArg::Decision => Self::Decision,
-            MintClassArg::Architecture => Self::Architecture,
             MintClassArg::Term => Self::Term,
             MintClassArg::Artifact => Self::Artifact,
         }

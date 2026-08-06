@@ -5,9 +5,7 @@
 //! Downstream crates use these for daemon projection, manager prompts, and
 //! graph operations.
 
-use crate::id::{
-    derive_task_parent_id, is_arch_id, is_valid_task_path_id, parse_parent_value, NodeIdClass,
-};
+use crate::id::{derive_task_parent_id, is_valid_task_path_id, parse_parent_value, NodeIdClass};
 
 use std::fmt;
 use std::str::FromStr;
@@ -123,7 +121,6 @@ pub enum WorkerKind {
     Reviewer,
     Planner,
     Analyzer,
-    Architector,
     Griller,
     Glossarist,
     Babysitter,
@@ -138,7 +135,6 @@ impl WorkerKind {
             Self::Reviewer => "reviewer",
             Self::Planner => "planner",
             Self::Analyzer => "analyzer",
-            Self::Architector => "architector",
             Self::Griller => "griller",
             Self::Glossarist => "glossarist",
             Self::Babysitter => "babysitter",
@@ -156,7 +152,6 @@ impl FromStr for WorkerKind {
             "reviewer" => Self::Reviewer,
             "planner" => Self::Planner,
             "analyzer" => Self::Analyzer,
-            "architector" => Self::Architector,
             "griller" => Self::Griller,
             "glossarist" => Self::Glossarist,
             "babysitter" => Self::Babysitter,
@@ -355,219 +350,6 @@ impl<'a> DecisionNode<'a> {
     }
 }
 
-// orgasmic:arch_MPAQT
-#[derive(Debug, Clone, Serialize)]
-pub struct ArchitectureNode<'a> {
-    pub id: &'a str,
-    pub label: String,
-    pub kind: Option<&'a str>,
-    pub semantic_hash: Option<&'a str>,
-    pub motivated_by: Vec<&'a str>,
-    pub glossary_refs: Vec<&'a str>,
-    pub interface: Vec<&'a str>,
-    pub constraints: Vec<&'a str>,
-    pub composes: Vec<&'a str>,
-    pub depends_on: Vec<&'a str>,
-    pub source_paths: Vec<&'a str>,
-    /// Per-node test commands an agent should run when touching this node's
-    /// `source_paths`, parsed from the `:TESTS:` property. Commands are
-    /// `;`-separated in the org source; each element here is one trimmed
-    /// command. Empty for top-level (non-leaf) nodes.
-    pub tests: Vec<String>,
-    pub edges: Vec<ArchEdge>,
-    pub parent_id: Option<String>,
-    pub description: Option<String>,
-    pub decided_at: Option<&'a str>,
-    pub purpose: Option<String>,
-    pub interfaces_section: Option<String>,
-    pub constraints_section: Option<String>,
-}
-
-pub type ArchNode<'a> = ArchitectureNode<'a>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArchEdgeKind {
-    Reads,
-    Writes,
-    ExposesRest,
-    ExposesWs,
-    SubscribesTo,
-    Spawns,
-    Calls,
-    DependsOn,
-}
-
-impl ArchEdgeKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Reads => "reads",
-            Self::Writes => "writes",
-            Self::ExposesRest => "exposes_rest",
-            Self::ExposesWs => "exposes_ws",
-            Self::SubscribesTo => "subscribes_to",
-            Self::Spawns => "spawns",
-            Self::Calls => "calls",
-            Self::DependsOn => "depends_on",
-        }
-    }
-
-    fn property_key(self) -> &'static str {
-        match self {
-            Self::Reads => "READS",
-            Self::Writes => "WRITES",
-            Self::ExposesRest => "EXPOSES_REST",
-            Self::ExposesWs => "EXPOSES_WS",
-            Self::SubscribesTo => "SUBSCRIBES_TO",
-            Self::Spawns => "SPAWNS",
-            Self::Calls => "CALLS",
-            Self::DependsOn => "DEPENDS_ON",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArchEdgeTarget {
-    Node { id: String },
-    Artifact(ArtifactNode),
-}
-
-impl ArchEdgeTarget {
-    pub fn id(&self) -> String {
-        match self {
-            Self::Node { id } => id.clone(),
-            Self::Artifact(artifact) => artifact.id(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArchEdge {
-    pub kind: ArchEdgeKind,
-    pub source_node_id: String,
-    pub target: ArchEdgeTarget,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactScheme {
-    File,
-    Projection,
-    Socket,
-}
-
-impl ArtifactScheme {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::Projection => "projection",
-            Self::Socket => "socket",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ArtifactNode {
-    pub scheme: ArtifactScheme,
-    pub name: String,
-}
-
-impl ArtifactNode {
-    pub fn id(&self) -> String {
-        format!("{}:{}", self.scheme.as_str(), self.name)
-    }
-}
-
-impl<'a> ArchitectureNode<'a> {
-    pub fn from_org(file: &'a OrgFile, display: &str) -> Result<Vec<Self>, SchemaError> {
-        let mut nodes = Vec::new();
-        for heading in &file.headings {
-            if !heading.title.starts_with("arch_") {
-                continue;
-            }
-            let node = Self::from_heading(file, heading, display)?;
-            let parent_id = node.id.to_string();
-            nodes.push(node);
-            for child in &heading.sections {
-                if !child.title.starts_with("arch_") {
-                    continue;
-                }
-                let child_node =
-                    Self::from_child_heading(file, child, display, parent_id.as_str())?;
-                nodes.push(child_node);
-            }
-        }
-        Ok(nodes)
-    }
-
-    pub fn from_heading(
-        file: &'a OrgFile,
-        heading: &'a Heading,
-        display: &str,
-    ) -> Result<Self, SchemaError> {
-        Self::from_arch_heading(file, heading, display, None)
-    }
-
-    fn from_child_heading(
-        file: &'a OrgFile,
-        heading: &'a Heading,
-        display: &str,
-        parent_id: &str,
-    ) -> Result<Self, SchemaError> {
-        let node = Self::from_arch_heading(file, heading, display, Some(parent_id.to_string()))?;
-        let expected_prefix = format!("{parent_id}.");
-        if !node.id.starts_with(&expected_prefix) {
-            return Err(SchemaError::InvalidPropertyValue {
-                file: display.into(),
-                heading: node.id.into(),
-                key: "ID".into(),
-                detail: format!("child architecture id must start with {expected_prefix}"),
-            });
-        }
-        Ok(node)
-    }
-
-    fn from_arch_heading(
-        file: &'a OrgFile,
-        heading: &'a Heading,
-        display: &str,
-        parent_id: Option<String>,
-    ) -> Result<Self, SchemaError> {
-        let id = architecture_heading_id(heading, display)?;
-        // Tolerant parse (dec_HJENQ): `:ID:` wins for indexing when the title
-        // token drifts; equality is enforced by read-time lint.
-        let label = heading
-            .title
-            .strip_prefix(id)
-            .map(str::trim_start)
-            .unwrap_or(&heading.title)
-            .to_string();
-        let edges = parse_arch_edges(heading, id, display)?;
-        Ok(Self {
-            id,
-            label,
-            kind: heading.property("KIND"),
-            semantic_hash: heading.property("SEMANTIC_HASH"),
-            motivated_by: tokenize(heading.property("MOTIVATED_BY")),
-            glossary_refs: tokenize(heading.property("GLOSSARY_REFS")),
-            interface: tokenize(heading.property("INTERFACE")),
-            constraints: tokenize(heading.property("CONSTRAINTS")),
-            composes: tokenize(heading.property("COMPOSES")),
-            depends_on: tokenize(heading.property("DEPENDS_ON")),
-            source_paths: tokenize(heading.property("SOURCE_PATHS")),
-            tests: tokenize_commands(heading.property("TESTS")),
-            edges,
-            parent_id,
-            description: direct_body(file, heading),
-            decided_at: heading.property("DECIDED_AT"),
-            purpose: section_body(file, heading, "Purpose"),
-            interfaces_section: section_body(file, heading, "Interfaces"),
-            constraints_section: section_body(file, heading, "Constraints"),
-        })
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct GlossaryTerm<'a> {
     pub id: &'a str,
@@ -591,110 +373,6 @@ impl<'a> GlossaryTerm<'a> {
         })
     }
 }
-
-const ARCH_EDGE_KINDS: &[ArchEdgeKind] = &[
-    ArchEdgeKind::Reads,
-    ArchEdgeKind::Writes,
-    ArchEdgeKind::ExposesRest,
-    ArchEdgeKind::ExposesWs,
-    ArchEdgeKind::SubscribesTo,
-    ArchEdgeKind::Spawns,
-    ArchEdgeKind::Calls,
-    ArchEdgeKind::DependsOn,
-];
-
-fn architecture_heading_id<'a>(
-    heading: &'a Heading,
-    display: &str,
-) -> Result<&'a str, SchemaError> {
-    if let Some(id) = heading.property("ID") {
-        if is_arch_id(id) {
-            return Ok(id);
-        }
-        return Err(SchemaError::InvalidPropertyValue {
-            file: display.into(),
-            heading: heading.title.clone(),
-            key: "ID".into(),
-            detail: "expected arch_NNN, arch_XXXXX, or arch_NNN.M / arch_XXXXX.M".into(),
-        });
-    }
-    let id = heading.title.split_whitespace().next().unwrap_or("");
-    if is_arch_id(id) {
-        return Ok(id);
-    }
-    Err(SchemaError::MissingProperty {
-        file: display.into(),
-        heading: heading.title.clone(),
-        key: "ID".into(),
-    })
-}
-
-fn parse_arch_edges(
-    heading: &Heading,
-    source_node_id: &str,
-    display: &str,
-) -> Result<Vec<ArchEdge>, SchemaError> {
-    let mut edges = Vec::new();
-    for kind in ARCH_EDGE_KINDS {
-        let key = kind.property_key();
-        for value in tokenize(heading.property(key)) {
-            let target = parse_arch_edge_target(value, heading, key, display)?;
-            edges.push(ArchEdge {
-                kind: *kind,
-                source_node_id: source_node_id.to_string(),
-                target,
-            });
-        }
-    }
-    Ok(edges)
-}
-
-fn parse_arch_edge_target(
-    value: &str,
-    heading: &Heading,
-    key: &str,
-    display: &str,
-) -> Result<ArchEdgeTarget, SchemaError> {
-    if is_arch_id(value) {
-        return Ok(ArchEdgeTarget::Node {
-            id: value.to_string(),
-        });
-    }
-    if let Some((scheme, name)) = value.split_once(':') {
-        if name.is_empty() {
-            return Err(SchemaError::InvalidPropertyValue {
-                file: display.into(),
-                heading: heading.title.clone(),
-                key: key.into(),
-                detail: "artifact pseudo-node name cannot be empty".into(),
-            });
-        }
-        let scheme = match scheme {
-            "file" => ArtifactScheme::File,
-            "projection" => ArtifactScheme::Projection,
-            "socket" => ArtifactScheme::Socket,
-            _ => {
-                return Err(SchemaError::InvalidPropertyValue {
-                    file: display.into(),
-                    heading: heading.title.clone(),
-                    key: key.into(),
-                    detail: format!("unknown architecture namespace {scheme}:"),
-                });
-            }
-        };
-        return Ok(ArchEdgeTarget::Artifact(ArtifactNode {
-            scheme,
-            name: name.to_string(),
-        }));
-    }
-    Err(SchemaError::InvalidPropertyValue {
-        file: display.into(),
-        heading: heading.title.clone(),
-        key: key.into(),
-        detail: format!("expected arch id or artifact pseudo-node, got {value}"),
-    })
-}
-
 // orgasmic:arch_BVH7M, dec_R75SW
 #[derive(Debug, Clone, Serialize)]
 pub struct TxHeadingView<'a> {
@@ -788,32 +466,8 @@ pub(crate) fn section_body(file: &OrgFile, heading: &Heading, title: &str) -> Op
         .map(|s| file.slice(s.body.clone()).to_string())
 }
 
-fn direct_body(file: &OrgFile, heading: &Heading) -> Option<String> {
-    let body = file.slice(heading.body.clone()).trim();
-    if body.is_empty() {
-        None
-    } else {
-        Some(body.to_string())
-    }
-}
-
 pub(crate) fn tokenize(value: Option<&str>) -> Vec<&str> {
     value
         .map(|v| v.split_whitespace().collect())
-        .unwrap_or_default()
-}
-
-/// Split a `;`-separated command list (e.g. the `:TESTS:` property) into
-/// trimmed, non-empty commands. Unlike [`tokenize`], this preserves
-/// intra-command whitespace so `cargo test -p orgasmic-core` stays one entry.
-pub(crate) fn tokenize_commands(value: Option<&str>) -> Vec<String> {
-    value
-        .map(|v| {
-            v.split(';')
-                .map(str::trim)
-                .filter(|cmd| !cmd.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
         .unwrap_or_default()
 }

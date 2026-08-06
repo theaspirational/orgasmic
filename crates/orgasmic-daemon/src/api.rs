@@ -2360,7 +2360,6 @@ fn worker_kind_name(kind: WorkerKind) -> &'static str {
         WorkerKind::Reviewer => "reviewer",
         WorkerKind::Planner => "planner",
         WorkerKind::Analyzer => "analyzer",
-        WorkerKind::Architector => "architector",
         WorkerKind::Griller => "griller",
         WorkerKind::Glossarist => "glossarist",
         WorkerKind::Babysitter => "babysitter",
@@ -12860,7 +12859,6 @@ impl NodeLayer {
     /// registry still carries retired kinds until their owning excision stage.
     fn from_kind(kind: &str) -> Option<Self> {
         match orgasmic_core::NodeKind::parse(kind)? {
-            orgasmic_core::NodeKind::Architecture => None,
             orgasmic_core::NodeKind::Decision => Some(Self::Decision),
             orgasmic_core::NodeKind::Glossary => Some(Self::Glossary),
             orgasmic_core::NodeKind::Project => Some(Self::Project),
@@ -12894,8 +12892,6 @@ const ACCEPTED_NODE_KINDS: [orgasmic_core::NodeKind; 6] = [
 ];
 
 /// Kinds this daemon accepts for `--kind` on `node prop/body get/set`.
-/// `NodeKind::Architecture` remains parseable in core until stage D, but it no
-/// longer names a daemon read/edit surface.
 pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
     &ACCEPTED_NODE_KINDS
 }
@@ -18242,11 +18238,14 @@ pub(crate) mod tests {
         );
     }
 
-    /// dec_HBK6A: the dispatch endpoint no longer spawns an architector, and
-    /// the retired stage name is no longer a stage spec — but neither removal
-    /// may touch the READ side, so this also pins that `WorkerKind` still
-    /// parses the persisted `architector` string (the ledger-history contract
-    /// whose CLI half lives in `manager::ledger_kind_architector_still_parses`).
+    /// dec_HBK6A stage D: the dispatch endpoint no longer spawns an architector,
+    /// the retired stage name is no longer a stage spec, and
+    /// `WorkerKind::Architector` is gone. History still parses because the
+    /// ledger path reads `:KIND:` as a free `String`
+    /// (`manager::dispatch_record_from_entry`) and never calls
+    /// `WorkerKind::from_str` — so deleting the variant cannot break tx
+    /// close/report vocabulary. The CLI half of that contract is
+    /// `historical_architector_ledger_row_still_parses_and_closes`.
     #[test]
     fn architect_production_surfaces_are_retired_but_history_still_parses() {
         assert!(DispatchEndpointKind::from_str("architector").is_err());
@@ -18255,9 +18254,15 @@ pub(crate) mod tests {
         assert!(stage_spec_for("grill").is_some());
         assert!(stage_spec_for("plan").is_some());
 
-        assert_eq!(
-            WorkerKind::from_str("architector").unwrap(),
-            WorkerKind::Architector
+        // Stage D deleted the variant: from_str must fail. The surviving
+        // history-reading path is free-string KIND on the ledger, not an
+        // enum round-trip — a stale plan that demanded a from_str fallback
+        // was wrong on both location and risk (config.rs warns+skips an
+        // unparseable governance key; no WorkerKind field is deserialized
+        // from persisted state).
+        assert!(
+            WorkerKind::from_str("architector").is_err(),
+            "WorkerKind::Architector is retired; ledger history uses free-string KIND"
         );
     }
 
@@ -25763,7 +25768,6 @@ pub(crate) mod tests {
         for kind in [
             WorkerKind::Implementer,
             WorkerKind::Reviewer,
-            WorkerKind::Architector,
             WorkerKind::Griller,
             WorkerKind::Planner,
             WorkerKind::Artifactor,

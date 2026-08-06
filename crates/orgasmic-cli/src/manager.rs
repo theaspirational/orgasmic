@@ -7754,8 +7754,9 @@ mod tests {
     /// vocabulary — otherwise a dispatch opened before the excision is
     /// unclosable and its history is unreadable.
     ///
-    /// This is the load-bearing test of stage A. Stage D deletes
-    /// `WorkerKind::Architector`; it must keep this green.
+    /// This is the load-bearing test of stage A. Stage D deleted
+    /// `WorkerKind::Architector`; this must stay green because the ledger
+    /// stores KIND as a free string and never calls WorkerKind::from_str.
     #[test]
     fn historical_architector_ledger_row_still_parses_and_closes() {
         // Nothing can START one any more.
