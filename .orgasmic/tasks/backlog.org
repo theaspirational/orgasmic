@@ -3102,6 +3102,62 @@ TASK-ZFNE1: =README.md:6='s hero graphic labels =architect= as an LLM agent role
 Filed rather than fixed during stage A's doctrine round because the graphic depicts the WHOLE loop and most of it is still true — =architecture.org= exists until stage D. Redrawing before stages C and D land guarantees a second redraw.
 
 *Do it once, in stage E or immediately after stage D*, when the true picture is known: which agent roles exist, whether architecture remains a pipeline stage, and what =.orgasmic/= contains. Also verify whether =glossarist= — shown as an agent role in the same image — is dispatchable; that was never checked.
+** Stage D warning — the live board goes red until the runtime is reinstalled
+*Stage D will visibly break the operator's live board until the runtime is
+reinstalled.* Measured, not predicted.
+
+=== What was measured
+
+While gating TASK-RQ270.3.2.1, the manager moved =.orgasmic/architecture.org=
+aside, reindexed, and counted parse errors. Result: *311 parse errors*, all of
+the form =dangling advisory marker `arch_XXXXX` in <file>=. Restoring the file
+and restarting the daemon returned the count to 0.
+
+=== The experiment was INVALID for the question it was asked
+
+It was run to answer "is stage D safe now that the carve-outs have landed". *It
+cannot answer that*, and the manager should have seen it before running it: the
+daemon that indexes this repository is the INSTALLED runtime =0.0.15-dev.1= built
+from =05e1813=, which predates BOTH carve-outs — the graph-edge one
+(TASK-RQ270.3.2) and the identity-lint one (TASK-RQ270.3.2.1). It measured the
+OLD policy.
+
+Whether main's carve-outs are sufficient is established by the tests and the two
+injection proofs, which run against BUILT code. Not by probing the live daemon.
+
+=== But it accidentally measured something worth having
+
+Reframed correctly, 311 is a faithful preview of *what stage D does to the
+installed runtime*. After stage D deletes =architecture.org=, the operator's
+running daemon — until it is reinstalled — will index a repository whose 59
+=orgasmic:arch_= markers name ids nothing defines, and report roughly 311 parse
+errors across the working tree.
+
+=== The sequencing consequence
+
+*Stage D should be paired with the runtime reinstall*, or the operator should
+expect a red board in the interval. The two orderings:
+
+1. *Reinstall first, then stage D.* The daemon has the carve-outs before the file
+   disappears; the board never goes red. Requires the reinstall, which is an
+   operator-authorization item (zero-worker window, codesign-or-lose-TCC).
+2. *Stage D first.* Correct on main, but the live board shows ~311 parse errors
+   until the reinstall, and every =status= reads red in the meantime.
+
+This is a real cost of the excision that the staged plan does not mention, and it
+is now six merged changes deep into being inert.
+
+=== Incident note, recorded because it cost something
+
+Moving the file put the daemon's index into a state where restoring the file did
+NOT restore the count — it settled at 78 rather than 0, and neither a =touch= nor
+=reindex= cleared it. =orgasmic daemon restart= via the INSTALLED binary fixed it
+(0 parse errors, LaunchAgent intact, pid 33500).
+
+No data was lost: =architecture.org= was byte-identical throughout and
+=git status= stayed clean the whole time. But the lesson is real —
+*a live-daemon experiment is a write to operator state, not a read*, and this one
+was run against a daemon that could not answer the question anyway.
 
 * BACKLOG TASK-37WN7 serve announces readiness before it installs the SIGTERM handler, so the announcement is not a precondition for signal delivery    :test:cli:
 :PROPERTIES:
