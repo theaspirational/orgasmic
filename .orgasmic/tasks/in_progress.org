@@ -1,3 +1,231 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-RQ270.3.2 Excision stage C part 2 — remove the architecture read model and land the lint carve-out
+:PROPERTIES:
+:ID: TASK-RQ270.3.2
+:PRIORITY: P1
+:DEPENDS_ON: TASK-RQ270.3.1
+:WRITE_SCOPE: crates/
+:END:
+
+** Description
+
+Stage C, part 2 of 2: remove the architecture READ MODEL from the daemon and CLI,
+*and land the dangling-edge lint carve-out*. Read =TASK-RQ270= for the staged plan
+and the coupling map. TASK-RQ270.3.1 removes the UI and lands first.
+
+** THE ORDERING CONSTRAINT THIS WHOLE EXCISION DEPENDS ON
+
+*The lint carve-out lands HERE and must be on main BEFORE stage D deletes
+=.orgasmic/architecture.org=.* If stage D runs first, every =:IMPLEMENTS: arch_=
+token in the task ledger becomes a dangling graph edge and the daemon starts
+emitting parse errors for the whole board.
+
+Measured at HEAD, not estimated: *141 =:IMPLEMENTS:= lines carrying =arch_=
+tokens* across the task files — 138 in =done.org=, 3 in =backlog.org= — bearing
+*243 individual =arch_= tokens*. (The parent task says 231; that figure is
+approximate and predates this measurement.)
+
+The two sites:
+
+- =crates/orgasmic-daemon/src/index.rs:1255= — =lint_dangling_graph_edges= only
+  lints structured-id targets, and =arch_= is one of the four prefixes it checks.
+  Dropping =arch_= there is the carve-out.
+- =crates/orgasmic-daemon/src/index.rs:1280= — =looks_like_structured_node_id=
+  carries the same four prefixes and governs write-time reference validation.
+
+*Decide both deliberately and say why.* Dropping =arch_= from the first stops the
+dangling lint firing after stage D. Dropping it from the second stops =arch_=
+tokens being treated as resolvable references at write time — which is what a
+retired class should look like, but it is a different consequence. Do not assume
+one answer covers both.
+
+** In scope
+
+- =GET /architecture=, =/architecture/nodes=, =/architecture/:id=
+  (=api.rs:699-701=) and their entries in the route inventory (=:772-774=).
+- =load_architecture= (=index.rs:1065=), =architecture_nodes_response=
+  (=index.rs:260=), and the call sites at =index.rs:827-828=.
+- CLI =architecture {list, get, schema}= (=main.rs:302, 731, 3081-3116=) and the
+  =schema_examples= architecture example and legend
+  (=orgasmic-core/src/schema_examples.rs:111,125=).
+- The =node.rs= architecture arms.
+- The lint carve-out above.
+
+** Explicitly NOT in this stage
+
+- =ArchitectureNode= / =parse_arch_edges= (=schema.rs=), =NodeIdClass::Architecture=
+  / =is_arch_id= (=id.rs=), the identity-lint arch collectors, the =node_kind=
+  variant, and =WorkerKind::Architector= removal — *stage D*.
+- Deleting =.orgasmic/architecture.org= or repointing the two live task drawers
+  (=backlog.org:82,:98=, TASK-CQM2X and TASK-VBSG2) — *stage D*.
+- =lint_arch_heading_id_tokens= (=index.rs:1428=), which lints headings inside
+  =architecture.org= — it dies with the file in stage D.
+
+** Acceptance
+
+- No route, index projection or CLI verb reads the architecture layer.
+- The dangling-edge lint does not fire on =arch_= targets, proven by a test that
+  constructs an =:IMPLEMENTS: arch_= edge with no resolving node and asserts *no
+  parse error*. This is the gate stage D depends on; assert it, do not describe
+  it.
+- Historical =arch_= references in =tx=, =done.org= and =decisions.org= still
+  parse.
+- =parse_errors= is 0 on this repository's own state after the change.
+- =cli_parity= passes — it resolves every =orgasmic ...= invocation in =shipped/=
+  against the real binary, so doctrine naming a deleted verb fails there.
+
+** Not to be broken — the coupling map
+
+=GraphLayer= / =NodeLayer= / =NodeKind= / =NodeIdClass=, =read_or_seed_graph_file=,
+writer authority, tx append, the generic marker scanner and =GraphEdgeSummary=
+all serve decisions, glossary and tasks too. Excision removes VARIANTS AND THEIR
+MATCH ARMS, never the enum machinery. =:IMPLEMENTS:= remains a legal task drawer
+key; only the LINT's arch-prefix handling changes.
+** Landed and verified by the manager
+Merged =c157c05= (worker =8822f61=, base =94a4961=). *11 files, +224/-842.*
+
+=== The judgement call reached the OPPOSITE conclusion from the obvious one, correctly
+
+The brief named two lint sites and insisted each be decided separately —
+"do not assume one answer covers both". That instruction earned its place.
+
+- =lint_dangling_graph_edges= (now =index.rs:1086=): =arch_= REMOVED from the
+  prefix list. This is the carve-out; historical =:IMPLEMENTS: arch_= edges stay
+  in the graph and no longer emit dangling-target errors.
+- =looks_like_structured_node_id= (=index.rs:1109=): =arch_= *KEPT*, deliberately.
+
+*Manager verified the second, because it is counter-intuitive and I would have
+got it wrong.* That predicate has exactly ONE production caller,
+=index.rs:1040=, inside the =produces= loop:
+
+: if !looks_like_structured_node_id(target) { artifacts.entry(target.clone())... }
+
+So it decides whether a =:PRODUCES:= value is materialised as a generic ARTIFACT
+node. Dropping =arch_= there would make a retired architecture id resolvable
+again — as an artifact. Exactly backwards for an excision. The implementer pinned
+the consequence with
+=arch_like_produced_target_is_not_materialized_as_an_artifact=.
+
+Had the brief said "drop both", this change would have introduced a defect.
+
+=== The proof pins the gate stage D depends on
+
+=verify/TASK-RQ270.3.2/injection.patch= is a ONE-LINE restoration of =arch_= to
+the dangling lint's prefix list. Manager read the red log: *exactly one panic*,
+=retired architecture target must not emit a dangling-edge parse error= at
+=index.rs:2389=. The test writes an unresolved =:IMPLEMENTS: arch_GONE99= edge,
+proves the edge WAS parsed, then asserts no parse error — so it cannot pass by
+the edge simply going missing.
+
+=== THE UNMET CRITERION WAS THE MANAGER'S DEFECT, AND REPORTING IT WAS RIGHT
+
+The brief demanded =parse_errors= be 0 and said "measure it, do not assume it".
+The implementer measured *2*, declared the criterion *UNMET*, diagnosed both to
+=TASK-RQ270.3.1= and =.3.2= deriving an *absent parent =TASK-RQ270.3=*, and
+declined to repair it as a daemon-managed ledger change outside its =crates/**=
+scope.
+
+All of that is correct. *The manager minted =X.3.1= and =X.3.2= without ever
+creating =X.3=.* Task parentage is derived from the id grammar and nothing else,
+so both children orphaned against an id that never existed. Nothing at creation
+time warns you; the board tells you afterwards through the parse-error count —
+which is precisely why the brief demanded it be measured.
+
+Fixed by creating =TASK-RQ270.3= as the stage C umbrella (it is semantically
+real: stage C IS one unit in two halves). *=parse_errors= is now 0.*
+
+A worker that rounds an inconvenient measurement to the expected value hides
+exactly this. This one did not.
+
+=== Gates on the merged tree
+
+- =scripts/run-tests.sh -p orgasmic-cli= — *GREEN, 0 failures*.
+- =scripts/run-tests.sh -p orgasmic-core= — *GREEN, 0 failures*.
+- =cargo test -p orgasmic-cli --test cli_parity= — 3 passed.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0; =fmt --check=
+  exit 0.
+- =orgasmic verify TASK-RQ270.3.2= — PASS, one panic, the pinned one.
+- =orgasmic status --errors= — *0 parse errors*.
+- Claim-shaped audit re-run by the manager: zero hits for the routes,
+  =load_architecture=, =architecture_nodes_response=, =ArchitectureCmd=, and the
+  schema example/legend. The real binary now answers
+  =error: unrecognized subcommand 'architecture'=.
+- Daemon suite: implementer reported one green run and one red on two supervisor
+  probe tests, both isolation-green — the measured nondeterminism on TASK-STWVB,
+  correctly not chased.
+
+=== Stage D's precondition is now satisfied
+
+The carve-out is on main. Stage D may delete =.orgasmic/architecture.org=
+without turning the ledger's 243 =arch_= tokens into dangling edges.
+** Review round 1 — REJECT: a second parse-error path; stage D is not safe yet
+Reviewer =reviewer-codex-tmux= (tmux/codex/gpt-5.6-sol/high) on merge =c157c05=
+vs base =94a4961=. REJECT, one BLOCK SHIP. *Stage D is NOT safe to run yet.*
+
+=== The finding: a SECOND, independent path to parse errors
+
+The brief asked exactly this — "is the carve-out complete, or only complete for
+the case tested?" The answer is incomplete, and the reviewer found the path the
+manager and implementer both missed.
+
+The graph-edge carve-out only touches =lint_dangling_graph_edges=. A separate
+production path survives:
+
+1. =index.rs:685= scans source markers and runs =lint_project_identity_state=;
+   =index.rs:1172= pushes every finding into =parse_errors=.
+2. =identity_lint.rs:253= collects architecture identities into the known-id
+   universe *only while =.orgasmic/architecture.org= exists* — the loop is gated
+   on =path.exists()=.
+3. =identity_lint.rs:358= emits =dangling advisory marker `{id}` in {file}= for
+   every scanned marker id absent from that universe. *No retired-=arch_=
+   carve-out.*
+
+*Manager confirmed the mechanism and measured the blast radius*: *59 scanned
+=orgasmic:arch_= marker lines naming 36 distinct ids* across =crates/=, =ui/= and
+=scripts/=.
+
+The example that makes it vivid: =crates/orgasmic-daemon/src/index.rs:1= carries
+=// orgasmic:arch_C87Z9=, resolved today only because
+=.orgasmic/architecture.org:572= defines it. *After stage D, the file that runs
+the lint flags itself.*
+
+=== Why this matters more than an ordinary miss
+
+Stage C part 2 exists to be stage D's safety precondition. Its own acceptance
+said =parse_errors= must be 0. Landing stage D on this carve-out would have
+produced dozens of parse errors across the working tree — and the manager would
+have discovered it by breaking the board, not by reading a review.
+
+The archived excision estimate asserts a dead marker is inert. *The reviewer
+contradicted that from current production source, and code is authoritative over
+a document.* That is the same class as every other miss in this excision:
+trusting a written inventory over the reader.
+
+=== What the review CONFIRMED, and did not merely accept
+
+- The graph carve-out is correct AND general: the prefix decision is applied
+  after iterating every =GraphEdgeSummary=, so =implements=, =depends_on=,
+  =produces= and =arch_= sub-ids share one exemption. The brief asked whether
+  other edge kinds were covered; they are.
+- The counter-intuitive =looks_like_structured_node_id= decision is right, from
+  its own =git grep=: one production caller at =index.rs:1040=, task =PRODUCES=
+  artifact materialisation. Keeping =arch_= prevents a retired id becoming an
+  artifact node. Both pinning tests re-run and passed.
+- The raw-file tombstone is an exact GET-side comparison at =api.rs:12343=, after
+  relative-path validation and before the filesystem read. *It does not prevent
+  git deleting the file* and tombstones no other org path — the specific
+  reassurance stage D needed.
+- Shared substrate intact: =task_008_graph_routes_are_real= passes; decision and
+  glossary graph reads and writes remain live. =GraphLayer=, =NodeLayer=,
+  =GraphEdgeSummary=, =read_or_seed_graph_file=, writer/tx paths and the generic
+  marker scanner all retained.
+
+=== Honest process note, worth the same credit
+
+Its first cargo wrapper was transport-interrupted after logging a pass but before
+writing its atomic status file. It did NOT duplicate the running attempt, waited
+for exit, then re-ran the built test binary once for a clean pass — and said so.
+Naming an ambiguous measurement instead of quietly claiming the pass is the habit
+this board depends on.
