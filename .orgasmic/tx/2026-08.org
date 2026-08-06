@@ -10427,3 +10427,149 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-06 Thu 00:40:21 task.state_transitioned TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4643
+:TIME:         [2026-08-06 Thu 00:40:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatching excision stage B
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-06 Thu 00:40:27 task.state_transitioned TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4644
+:TIME:         [2026-08-06 Thu 00:40:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.2 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 00:40:28 manager.dispatch_started TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4645
+:TIME:         [2026-08-06 Thu 00:40:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2/worktree
+:BRANCH:       task-rq270.2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2/task-rq270-2-brief.md
+:STARTED_AT:   [2026-08-06 Thu 00:40:28]
+:LIVENESS:     f59ce414531dc19d27040b2686caa311d81c211a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: excision stage B: retire the drift comparator and the // arch: back-edges; inventory re-verified at HEAD before dispatch
+:END:
+
+* TX 2026-08-06 Thu 00:40:28 run.created TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4646
+:TIME:         [2026-08-06 Thu 00:40:28]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.2-implementer-20260806T004028.jsonl
+:REASON:       excision stage B: retire the drift comparator and the // arch: back-edges; inventory re-verified at HEAD before dispatch
+:RUN_ID:       run-20260806T004028-ecc1ae66bd30494db29121851448cdaf
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2/task-rq270-2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-2/task-rq270-2-dd505cbe03e347879aea678e2c5dbd21-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-2/task-rq270-2-dd505cbe03e347879aea678e2c5dbd21-stdout.log
+:DISPATCH_ATTEMPT: dd505cbe03e347879aea678e2c5dbd21
+:DISPATCH_TX:  tx-20260806-orgasmic-4645
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 00:54:25 implementer.reported TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4647
+:TIME:         [2026-08-06 Thu 00:54:25]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:RUN_ID:       run-20260806T004028-ecc1ae66bd30494db29121851448cdaf
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2/worktree
+:SHA:          37f28c4ff993fc80494ed290c7bba1daad5b844a
+:END:
+
+* TX 2026-08-06 Thu 01:00:58 task.edited TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4648
+:TIME:         [2026-08-06 Thu 01:00:58]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RQ270.2
+:NODE_ID:      TASK-RQ270.2
+:END:
+
+* TX 2026-08-06 Thu 01:01:01 implementer.done TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4649
+:TIME:         [2026-08-06 Thu 01:01:01]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:REASON:       manager re-verified every inventory claim on the merged tree and reproduced the marker sha256 across both commits (identical, all 60 survive). cli suite GREEN 0 failures, cli_parity 3 passed, clippy exit 0, fmt exit 0, and the real binary no longer offers the drift verb
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:WORKER_COMMIT: 37f28c4
+:MERGE_SHA:    bb06bc4
+:BRANCH:       task-rq270.2-impl
+:REVIEWED_DIFF: f59ce41..bb06bc4
+:CLOSED_TX:    tx-20260806-orgasmic-4645
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 01:01:01 task.state_transitioned TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4650
+:TIME:         [2026-08-06 Thu 01:01:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
