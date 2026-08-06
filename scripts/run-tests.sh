@@ -42,16 +42,21 @@
 #   Reclassify-time sampling is never used — it has no relationship to the run
 #   under review and must not mint a LOAD-SENSITIVE excuse.
 #
-#   Thresholds (TASK-STWVB.1.1):
+#   Thresholds (TASK-STWVB.1.1 / TASK-STWVB.1.1.1):
 #     SYSPOLICYD_RATE_DEGRADED — syspolicyd CPU seconds per wall second of the
 #       sampled window. An absolute CPU-seconds bound is a bound on run
 #       duration (ambient alone reaches 100 s in ~22 min). Load is
 #       corroborating only: it is printed on the stamp but does not trip the
 #       gate alone (and on Linux there is no Gatekeeper scan storm to excuse).
+#     SYSPOLICYD_RATE_MIN_WALL_S — minimum wall seconds before the rate may
+#       gate at all. Shorter windows are `unknown (window too short to judge)`,
+#       neither calm nor DEGRADED.
 #
 #   A missing signal is ignored, never fatal: unknown fields become `?`, never
 #   a measured `0.0` or a blank. Linux has no syspolicyd. The summary word is
-#   `unknown` when no signal parsed as a number — not `calm`.
+#   derived from the RATE: `calm` only when the rate parsed over a sufficient
+#   window and is below threshold; otherwise `unknown` with the reason named
+#   (`no syspolicyd signal` / `window unknown` / `window too short to judge`).
 #
 #   Injector for the self-test live path (and only for that): set
 #     ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>,wall_s=<f>
@@ -84,7 +89,8 @@ EXIT_INCONCLUSIVE=4
 # Load is printed on the host stamp for operators but is NOT an independent
 # trigger (F-C). The BEFORE-load band on this board straddles ambient
 # dispatch activity (measured BEFORE values 4.01–12.95); the suite's own
-# mid-run contribution was never a BEFORE baseline. Kept for stamp display.
+# mid-run contribution was never a BEFORE baseline. Kept for stamp display;
+# when it clears this mark the summary annotates the load field (M-4).
 LOAD_DEGRADED_THRESHOLD=8.0
 # syspolicyd CPU seconds per wall second of the sampled window.
 # Ambient (two independent 60 s idle windows, 2026-08-06): 0.0737–0.0753 s/s.
@@ -96,6 +102,13 @@ LOAD_DEGRADED_THRESHOLD=8.0
 # 1.50 is ~2.5× the measured workspace rate, above the scoped peak (0.96),
 # and well below the historical thrash rate.
 SYSPOLICYD_RATE_DEGRADED=1.50
+# orgasmic:TASK-STWVB.1.1.1
+# Minimum wall seconds before the rate may gate. Integer `date +%s` walls of
+# 1–3 s would otherwise judge the host on a handful of bursty samples
+# (reviewer: wall_s=1 cpu=2.0 → rate 2.0 DEGRADED). 10 s is the floor of the
+# 10–30 s band: long enough to refuse those probes, short enough that a
+# scoped crate run still judges.
+SYSPOLICYD_RATE_MIN_WALL_S=10
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
 SAMPLE_HOST_ONLY=0
@@ -477,32 +490,37 @@ host_syspolicyd_rate() {
         }'
 }
 
-# True (exit 0) when the primary syspolicyd *rate* clears its threshold.
-# Load is corroborating only — never an independent trigger (F-C).
-# Unknown (`?`) signals do not trip the gate — absence of evidence is not
-# evidence of thrash.
+# True (exit 0) when the primary syspolicyd *rate* clears its threshold over a
+# sufficient window. Load is corroborating only — never an independent trigger
+# (F-C). Unknown (`?`) signals and short windows do not trip the gate —
+# absence of evidence is not evidence of thrash.
 host_is_degraded() {
-    local sample="$1" rate
+    local sample="$1" rate wall
     rate=$(host_syspolicyd_rate "$sample")
-    awk -v rate="$rate" -v rate_lim="$SYSPOLICYD_RATE_DEGRADED" '
+    wall=$(host_field_or_unknown "$sample" wall_s)
+    awk -v rate="$rate" -v rate_lim="$SYSPOLICYD_RATE_DEGRADED" \
+        -v wall="$wall" -v wall_min="$SYSPOLICYD_RATE_MIN_WALL_S" '
         function num(x) { return (x != "" && x != "?" && x + 0 == x) }
         BEGIN {
-            if (num(rate) && rate + 0 >= rate_lim + 0) exit 0
+            if (num(wall) && wall + 0 >= wall_min + 0 \
+                && num(rate) && rate + 0 >= rate_lim + 0) exit 0
             exit 1
         }'
 }
 
-# True when any judgment field parsed as a number (measured something).
-host_judgment_measured() {
-    local sample="$1" load cpu wall
-    load=$(host_field_or_unknown "$sample" load)
+# Print why the rate cannot judge the host, or nothing when it can.
+# The summary word is derived from the RATE (M-2), not from any-field parse:
+# calm only when this prints empty and host_is_degraded is false.
+host_rate_unknown_reason() {
+    local sample="$1" cpu wall
     cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
     wall=$(host_field_or_unknown "$sample" wall_s)
-    awk -v load="$load" -v cpu="$cpu" -v wall="$wall" '
+    awk -v cpu="$cpu" -v wall="$wall" -v wall_min="$SYSPOLICYD_RATE_MIN_WALL_S" '
         function num(x) { return (x != "" && x != "?" && x + 0 == x) }
         BEGIN {
-            if (num(load) || num(cpu) || num(wall)) exit 0
-            exit 1
+            if (!num(wall) || wall + 0 <= 0) { print "window unknown"; exit }
+            if (wall + 0 < wall_min + 0) { print "window too short to judge"; exit }
+            if (!num(cpu)) { print "no syspolicyd signal"; exit }
         }'
 }
 
@@ -632,10 +650,9 @@ else
     SUITE_EXIT=$?
     HOST_AFTER=$(sample_host_snapshot_live)
     local_wall1=$(date +%s)
+    # Do not clamp sub-second windows up to 1: a 0.3 s delta divided by 1
+    # under-reports the rate. Short/zero walls are unknown (M-3), not judged.
     local_wall=$((local_wall1 - local_wall0))
-    if [ "$local_wall" -lt 1 ]; then
-        local_wall=1
-    fi
     HOST_JUDGMENT=$(host_judgment_from_snapshots "$HOST_BEFORE" "$HOST_AFTER" "$local_wall")
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
@@ -976,24 +993,37 @@ else
     printf '  environ  : INCOMPLETE — %s test(s) gated out by absent tooling\n' "$SKIPPED_TESTS"
 fi
 # Host-state stamp: always printed so a green on a thrashing host cannot look
-# like a trusted clean run. Judgment uses syspolicyd rate (CPU s / wall s);
-# load is corroborating display only. Summary word is unknown when nothing
-# parsed as a number — not calm (F-E).
-HOST_RATE=$(host_syspolicyd_rate "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}")
+# like a trusted clean run. Judgment uses syspolicyd rate (CPU s / wall s)
+# over a sufficient window; load is corroborating display only. Summary word
+# is derived from the RATE (M-2): calm only when the rate parsed below
+# threshold; unknown otherwise with the reason named.
+HOST_SAMPLE="${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"
+HOST_RATE=$(host_syspolicyd_rate "$HOST_SAMPLE")
+HOST_LOAD=$(host_field_or_unknown "$HOST_SAMPLE" load)
+LOAD_CLAUSE="load corroborating only"
+if awk -v load="$HOST_LOAD" -v lim="$LOAD_DEGRADED_THRESHOLD" '
+    function num(x) { return (x != "" && x != "?" && x + 0 == x) }
+    BEGIN { if (num(load) && load + 0 >= lim + 0) exit 0; exit 1 }
+'; then
+    LOAD_CLAUSE="load=${HOST_LOAD} elevated (>=${LOAD_DEGRADED_THRESHOLD}), corroborating only"
+fi
 if [ "$HOST_UNKNOWN" -eq 1 ]; then
     printf '  host     : unknown (reclassify with no host stamp in log; LOAD-SENSITIVE unavailable)\n'
 elif [ "$HOST_DEGRADED" -eq 1 ]; then
-    printf '  host     : DEGRADED (threshold syspolicyd_rate>=%s; load corroborating only, display>=%s)\n' \
-        "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_DEGRADED_THRESHOLD"
-elif host_judgment_measured "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"; then
-    printf '  host     : calm (threshold syspolicyd_rate>=%s; load corroborating only, display>=%s)\n' \
-        "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_DEGRADED_THRESHOLD"
+    printf '  host     : DEGRADED (threshold syspolicyd_rate>=%s; %s)\n' \
+        "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_CLAUSE"
 else
-    printf '  host     : unknown (no numeric host signal; LOAD-SENSITIVE unavailable)\n'
+    HOST_UNKNOWN_REASON=$(host_rate_unknown_reason "$HOST_SAMPLE")
+    if [ -z "$HOST_UNKNOWN_REASON" ]; then
+        printf '  host     : calm (threshold syspolicyd_rate>=%s; %s)\n' \
+            "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_CLAUSE"
+    else
+        printf '  host     : unknown (%s)\n' "$HOST_UNKNOWN_REASON"
+    fi
 fi
 printf '             before  %s\n' "$HOST_BEFORE"
 printf '             after   %s\n' "${HOST_AFTER:-$HOST_BEFORE}"
-printf '             delta   %s\n' "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"
+printf '             delta   %s\n' "$HOST_SAMPLE"
 printf '             rate    %s\n' "$HOST_RATE"
 
 if [ -n "$SKIPPED_TOOLS" ]; then
@@ -1045,10 +1075,13 @@ elif [ "$LOAD_COUNT" -gt 0 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
     printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
         "$LOAD_COUNT"
     STATUS=$EXIT_REAL
-elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
-    # B2: a non-zero cargo exit with no per-test failure list is a code fact
-    # (crashed binary, etc.). Do not report it as "suite looked green" under
-    # HOST_DEGRADED — the same one-line move F4 made for REAL_COUNT.
+elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+    # B2 + TASK-STWVB.1.1.1 / M-1: a non-zero cargo exit with no per-test
+    # failure list is a code fact (crashed binary, etc.). Keep B2's position
+    # above HOST_DEGRADED, but restore the FAIL_COUNT guard the message
+    # states — cargo exits 101 whenever any test fails, so without the guard
+    # a registered flake reddens the live gate while --classify on the same
+    # log stays GREEN-modulo-flake.
     printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
         "$SUITE_EXIT" "$SUITE_LOG"
     STATUS=$EXIT_REAL

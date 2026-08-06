@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-STWVB.1.1.1`.
+#
+# Pins M-1: a registered isolation-green flake on the live path must return
+# GREEN-modulo-flake / exit 0. Under the injection the FAIL_COUNT guard is
+# removed and the FIRST failing selftest assertion is that live-path case.
+scripts/run-tests-selftest.sh
