@@ -17891,3 +17891,272 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1
 :SHA:          deffb1ecdbd7cca04d7c57113b0a32bba36f09f0
 :END:
+
+* TX 2026-08-06 Thu 21:32:04 task.edited TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5082
+:TIME:         [2026-08-06 Thu 21:32:04]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB.1.1.1
+:NODE_ID:      TASK-STWVB.1.1.1
+:END:
+
+* TX 2026-08-06 Thu 21:32:47 task.state_transitioned TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5083
+:TIME:         [2026-08-06 Thu 21:32:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-STWVB.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 21:32:48 manager.dispatch_started TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5084
+:TIME:         [2026-08-06 Thu 21:32:48]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1-review
+:BRANCH:       task-stwvb.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb-1-1-1-review/task-stwvb-1-1-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 21:32:48]
+:LIVENESS:     9495091a79ea45995351d74eedc0bfc7efbcf552
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-5079
+:REASON_INITIAL: Round 4 post-merge review of 1add6fd. Told explicitly not to manufacture a reject to match the pattern, and asked to answer directly whether the chain is closed. Crux is claim 1 (the one remaining live vs --classify disagreement) and claim 2 (the 10s floor sits one second under the most common invocation).
+:END:
+
+* TX 2026-08-06 Thu 21:32:48 run.created TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5085
+:TIME:         [2026-08-06 Thu 21:32:48]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-STWVB.1.1.1-reviewer-20260806T213248.jsonl
+:REASON:       Round 4 post-merge review of 1add6fd. Told explicitly not to manufacture a reject to match the pattern, and asked to answer directly whether the chain is closed. Crux is claim 1 (the one remaining live vs --classify disagreement) and claim 2 (the 10s floor sits one second under the most common invocation).
+:RUN_ID:       run-20260806T213248-417c202acedf4e89a2959f5df0996977
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb-1-1-1-review/task-stwvb-1-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-stwvb-1-1-1-review/task-stwvb-1-1-1-review-6051adce073e460cb80373fd78ad14f5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-stwvb-1-1-1-review/task-stwvb-1-1-1-review-6051adce073e460cb80373fd78ad14f5-stdout.log
+:DISPATCH_ATTEMPT: 6051adce073e460cb80373fd78ad14f5
+:DISPATCH_TX:  tx-20260806-orgasmic-5084
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 21:41:31 reviewer.finding TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5086
+:TIME:         [2026-08-06 Thu 21:41:31]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       R-1 HIGH BLOCK SHIP scripts/run-tests.sh:1078 — the restored FAIL_COUNT guard makes the crashed-binary arm dead on the live path whenever any failure is classified: a SIGABRT'd test binary alongside one registered flake yields 'GREEN modulo 1 registered flake', exit 0, while cargo's log says 'error: 2 targets failed' + '(signal: 6, SIGABRT)'. Reproduced with verbatim cargo output. Fix: detect the crash from the LOG (unaccounted 'error: test failed, to rerun pass' target / 'process didn't exit successfully') independently of SUITE_EXIT and FAIL_COUNT — do NOT re-drop the guard, that recreates M-1.
+:severity:     HIGH
+:kind:         bug
+:blocks_ship:  true
+:file:         scripts/run-tests.sh:1078
+:END:
+
+* TX 2026-08-06 Thu 21:41:44 reviewer.finding TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5087
+:TIME:         [2026-08-06 Thu 21:41:44]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       R-2 HIGH BLOCK SHIP scripts/run-tests.sh:1078 vs :651 — acceptance criterion '--classify and the live path return the SAME verdict for the same log' is UNMET. Reproduced: crashed-binary log gives live RED exit 1, --classify GREEN exit 0 on the byte-identical log (log contains 'error: 2 targets failed'). Same root cause as R-1: the crash signal lives only in SUITE_EXIT, which is never written to the log. Fix: stamp the suite exit into the log exactly as write_host_stamp already stamps host state, and read it back under --classify.
+:severity:     HIGH
+:kind:         correctness
+:blocks_ship:  true
+:file:         scripts/run-tests.sh:1078
+:END:
+
+* TX 2026-08-06 Thu 21:41:44 reviewer.finding TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5088
+:TIME:         [2026-08-06 Thu 21:41:44]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       R-3 LOW .orgasmic/project.org:23 — the contract clause added by this commit overstates coverage: 'a non-zero cargo exit *with* a failure list is classified as usual (REAL/FLAKE/LOAD-SENSITIVE), on the live path and under --classify alike'. A crashed target contributes no entry to classify, so it is dropped (R-1); and the preceding clause ('no per-test failure list is also a code fact') is false under --classify (R-2). Fix with R-1/R-2, or qualify the sentence.
+:severity:     LOW
+:kind:         docs
+:blocks_ship:  false
+:file:         .orgasmic/project.org:23
+:END:
+
+* TX 2026-08-06 Thu 21:41:54 reviewer.finding TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5089
+:TIME:         [2026-08-06 Thu 21:41:54]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       R-4 LOW scripts/run-tests.sh:111 + measured — the 10 s floor is directionally right but leaves the common developer invocation entirely unjudged: a warm-cache 'run-tests.sh -p orgasmic-core --lib' on this host measured wall_s=3, printing 'host : unknown (window too short to judge)'. Not a false green (the reason is named, LOAD-SENSITIVE is correctly suppressed, exit stays 0) but the host machinery is inert for scoped runs. If host judgment on scoped runs is wanted, widen the MEASUREMENT window (sample syspolicyd over a fixed >=10 s window around the run) rather than lower the floor. No change requested this round.
+:severity:     LOW
+:kind:         design
+:blocks_ship:  false
+:file:         scripts/run-tests.sh:111
+:END:
+
+* TX 2026-08-06 Thu 21:41:54 reviewer.finding TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5090
+:TIME:         [2026-08-06 Thu 21:41:54]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       R-5 LOW scripts/run-tests-selftest.sh:770,795 — the two '--classify agrees' companion cases sit behind 'if [ -f $live_log ]'; if the live run ever fails to write suite.log the case silently does not run and nothing fails. Nothing asserts the expected total (44). Fix: assert the log exists (fail if not) or pin the case count.
+:severity:     LOW
+:kind:         test
+:blocks_ship:  false
+:file:         scripts/run-tests-selftest.sh:770
+:END:
+
+* TX 2026-08-06 Thu 21:44:20 reviewer.reported TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5091
+:TIME:         [2026-08-06 Thu 21:44:20]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:RUN_ID:       run-20260806T213248-417c202acedf4e89a2959f5df0996977
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:END:
+
+* TX 2026-08-06 Thu 21:45:23 reviewer.done TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5092
+:TIME:         [2026-08-06 Thu 21:45:23]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       One root cause in two forms. R-1: FAIL_COUNT counts only LISTED per-test failures and a crashed binary contributes none, so the restored guard suppresses the crash arm whenever anything else classifies — the normal case on a board with seven registered flakes. Reviewer reproduced GREEN modulo 1 registered flake at exit 0 over verbatim cargo output containing SIGABRT and 'error: 2 targets failed'. Manager confirmed: BUILD_BROKE matches only compile errors, and the script has ZERO crash-signal detection. R-2: same verdict for the same log is a real invariant and --classify violates it in the dangerous direction; the fix is to stamp the suite exit exactly as host state is already stamped. Reviewer correctly classifies R-1 as PRE-EXISTING rather than a regression: at 4788e1f the arm sat below FAIL_COUNT and was equally unreachable. All four of this round's fixes are correct and correctly pinned — do not re-open them, and do NOT re-drop the guard.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260806-orgasmic-5084
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 21:45:23 task.state_transitioned TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5093
+:TIME:         [2026-08-06 Thu 21:45:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 21:45:24 implementer.done TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5094
+:TIME:         [2026-08-06 Thu 21:45:24]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:REASON:       Round 4 merged at 1add6fd; reviewed REJECT (tx-20260806-orgasmic-5084). M-1..M-4 all correct and pinned; the crashed-binary population carries to TASK-STWVB.1.1.1.1.
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    1add6fdd48141095e57f34cfef8c4cadbfcf8184
+:BRANCH:       task-stwvb.1.1.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-5079
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 21:45:25 task.state_transitioned TASK-STWVB.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5095
+:TIME:         [2026-08-06 Thu 21:45:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-STWVB.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 21:46:33 task.created TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5096
+:TIME:         [2026-08-06 Thu 21:46:33]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round 5: fix round for the TASK-STWVB.1.1.1 review (tx-20260806-orgasmic-5084). One root cause in two forms — a crashed test binary is swallowed whenever any failure classifies, a demonstrated FALSE GREEN on the live path that CI would merge. Manager confirmed the script has zero crash-signal detection and BUILD_BROKE matches compile errors only.
+:END:
+
+* TX 2026-08-06 Thu 21:46:33 task.property_updated TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5097
+:TIME:         [2026-08-06 Thu 21:46:33]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-STWVB.1.1.1.1
+:FIX_SUBTASK:  t
+:END:
