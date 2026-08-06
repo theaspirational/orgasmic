@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-G64ZH.1`.
+#
+# Pins the production boot-open path: under LogMirror::None, a failed durable
+# open must keep durable_path so reopen backoff and record_drop remain
+# reachable. Under the injection the path is discarded with the handle and the
+# FIRST failing assertion is durable_path.is_some().
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact logging::tests::boot_open_failure_with_mirror_suppressed_keeps_path_counts_drops_and_retries

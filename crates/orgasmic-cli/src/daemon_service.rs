@@ -842,8 +842,8 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
 <plist version=\"1.0\">\n\
 <dict>\n\
   <key>Label</key>\n  <string>{label}</string>\n\
-  <key>ProgramArguments</key>\n  <array>\n    <string>{exe}</string>\n    <string>serve</string>\n    <string>--no-log-mirror</string>\n  </array>\n\
-  <key>EnvironmentVariables</key>\n  <dict>\n    <key>ORGASMIC_HOME</key>\n    <string>{home}</string>\n    <key>PATH</key>\n    <string>{path}</string>\n  </dict>\n\
+  <key>ProgramArguments</key>\n  <array>\n    <string>{exe}</string>\n    <string>serve</string>\n  </array>\n\
+  <key>EnvironmentVariables</key>\n  <dict>\n    <key>ORGASMIC_HOME</key>\n    <string>{home}</string>\n    <key>PATH</key>\n    <string>{path}</string>\n    <key>{mirror_env}</key>\n    <string>off</string>\n  </dict>\n\
   <key>WorkingDirectory</key>\n  <string>{cwd}</string>\n\
   <key>StandardOutPath</key>\n  <string>{stdout}</string>\n\
   <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
@@ -859,6 +859,7 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
         exe = xml_escape_path(&spec.exe),
         home = xml_escape_path(&spec.home),
         path = xml_escape(&spec.path),
+        mirror_env = orgasmic_daemon::LOG_MIRROR_ENV,
         cwd = xml_escape_path(&spec.cwd),
         stdout = xml_escape_path(&spec.stdout),
         stderr = xml_escape_path(&spec.stderr),
@@ -928,8 +929,9 @@ After=network.target\n\
 \n\
 [Service]\n\
 Type=simple\n\
-ExecStart={} serve --no-log-mirror\n\
+ExecStart={} serve\n\
 WorkingDirectory={}\n\
+Environment={}\n\
 Environment={}\n\
 Environment={}\n\
 StandardOutput=append:{}\n\
@@ -943,6 +945,9 @@ WantedBy=default.target\n",
         path_text(&spec.cwd),
         systemd_quote_env("ORGASMIC_HOME", &path_text(&spec.home)),
         systemd_quote_env("PATH", &spec.path),
+        // orgasmic:TASK-G64ZH.1 — env form so a runtime rollback cannot hand an
+        // older binary an unknown --no-log-mirror under Restart=on-failure.
+        systemd_quote_env(orgasmic_daemon::LOG_MIRROR_ENV, "off"),
         path_text(&spec.stdout),
         path_text(&spec.stderr),
     )
@@ -968,14 +973,16 @@ fn render_windows_wrapper(spec: &ServiceSpec) -> String {
         "@echo off\r\n\
 set \"PATH={}\"\r\n\
 set \"ORGASMIC_HOME={}\"\r\n\
+set \"{mirror_env}=off\"\r\n\
 cd /d \"{}\"\r\n\
-\"{}\" serve --no-log-mirror >> \"{}\" 2>> \"{}\"\r\n",
+\"{}\" serve >> \"{}\" 2>> \"{}\"\r\n",
         cmd_escape(&spec.path),
         cmd_escape(&path_text(&spec.home)),
         cmd_escape(&path_text(&spec.cwd)),
         cmd_escape(&path_text(&spec.exe)),
         cmd_escape(&path_text(&spec.stdout)),
         cmd_escape(&path_text(&spec.stderr)),
+        mirror_env = orgasmic_daemon::LOG_MIRROR_ENV,
     )
 }
 
@@ -1170,8 +1177,17 @@ mod tests {
             "plist must launch serve: {plist}"
         );
         assert!(
-            plist.contains("<string>--no-log-mirror</string>"),
-            "plist must suppress the stdout mirror by construction (TASK-G64ZH): {plist}"
+            !plist.contains("--no-log-mirror"),
+            "plist must not embed --no-log-mirror (rollback crash loop; TASK-G64ZH.1): {plist}"
+        );
+        assert!(
+            plist.contains(&format!("<key>{}</key>", orgasmic_daemon::LOG_MIRROR_ENV)),
+            "plist must suppress the stdout mirror via env (TASK-G64ZH.1): {plist}"
+        );
+        assert!(
+            plist.contains("<string>off</string>"),
+            "plist must set {env}=off: {plist}",
+            env = orgasmic_daemon::LOG_MIRROR_ENV
         );
         assert!(
             plist.contains("daemon.stdout.log"),
@@ -1519,10 +1535,16 @@ mod tests {
     fn linux_systemd_unit_definition_is_user_service() {
         let unit = render_linux_systemd_unit(&spec());
         assert!(unit.contains("[Service]"));
-        assert!(unit.contains(
-            "ExecStart=\"/Applications/Orgasmic & Tools/orgasmic\" serve --no-log-mirror"
-        ));
+        assert!(unit.contains("ExecStart=\"/Applications/Orgasmic & Tools/orgasmic\" serve\n"));
+        assert!(
+            !unit.contains("--no-log-mirror"),
+            "unit must not embed --no-log-mirror (rollback crash loop; TASK-G64ZH.1): {unit}"
+        );
         assert!(unit.contains("Environment=\"ORGASMIC_HOME=/Users/tester/Orgasmic Home\""));
+        assert!(unit.contains(&format!(
+            "Environment=\"{}=off\"",
+            orgasmic_daemon::LOG_MIRROR_ENV
+        )));
         assert!(unit.contains("Environment=\"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
         assert!(unit.contains("WantedBy=default.target"));
         assert!(unit.contains("Restart=on-failure"));
@@ -1557,8 +1579,66 @@ mod tests {
         let wrapper = render_windows_wrapper(&spec());
         assert!(wrapper.contains("set \"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
         assert!(wrapper.contains("set \"ORGASMIC_HOME=/Users/tester/Orgasmic Home\""));
-        assert!(wrapper.contains("orgasmic\" serve --no-log-mirror >>"));
+        assert!(
+            !wrapper.contains("--no-log-mirror"),
+            "wrapper must not embed --no-log-mirror (TASK-G64ZH.1): {wrapper}"
+        );
+        assert!(wrapper.contains(&format!("set \"{}=off\"", orgasmic_daemon::LOG_MIRROR_ENV)));
+        assert!(wrapper.contains("orgasmic\" serve >>"));
         assert!(wrapper.contains("daemon.err.log"));
+    }
+
+    /// orgasmic:TASK-G64ZH.1 — the env form service defs embed must be the
+    /// same name `env_log_mirror_off` reads, and `--no-log-mirror` must remain
+    /// a real clap flag for interactive use. Renaming either without the other
+    /// stays green only if nothing cross-checks.
+    #[test]
+    fn service_mirror_env_matches_parser_and_clap_still_accepts_flag() {
+        use clap::{CommandFactory, FromArgMatches};
+
+        assert_eq!(orgasmic_daemon::LOG_MIRROR_ENV, "ORGASMIC_LOG_MIRROR");
+        // Accepted value set used by service defs.
+        let saved = std::env::var_os(orgasmic_daemon::LOG_MIRROR_ENV);
+        std::env::set_var(orgasmic_daemon::LOG_MIRROR_ENV, "off");
+        let off = orgasmic_daemon::env_log_mirror_off();
+        match &saved {
+            Some(v) => std::env::set_var(orgasmic_daemon::LOG_MIRROR_ENV, v),
+            None => std::env::remove_var(orgasmic_daemon::LOG_MIRROR_ENV),
+        }
+        assert!(
+            off,
+            "LOG_MIRROR_ENV=off must be accepted by env_log_mirror_off"
+        );
+
+        for rendered in [
+            render_macos_launch_agent(&spec()),
+            render_linux_systemd_unit(&spec()),
+            render_windows_wrapper(&spec()),
+        ] {
+            assert!(
+                rendered.contains(orgasmic_daemon::LOG_MIRROR_ENV),
+                "service def must embed {}: {rendered}",
+                orgasmic_daemon::LOG_MIRROR_ENV
+            );
+            assert!(
+                !rendered.contains("--no-log-mirror"),
+                "service def must not embed the CLI flag: {rendered}"
+            );
+        }
+
+        // Cross-check the interactive flag against the real clap parser so the
+        // literal and the flag cannot drift apart.
+        let command = crate::Cli::command();
+        let matches = command
+            .try_get_matches_from(["orgasmic", "serve", "--no-log-mirror"])
+            .expect("clap must accept serve --no-log-mirror");
+        let cli = crate::Cli::from_arg_matches(&matches).expect("build Cli from matches");
+        match cli.cmd {
+            crate::Cmd::Serve { no_log_mirror, .. } => {
+                assert!(no_log_mirror, "parsed serve must carry no_log_mirror=true")
+            }
+            other => panic!("expected Serve, got {other:?}"),
+        }
     }
 
     #[test]

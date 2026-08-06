@@ -1,0 +1,12 @@
+# Pinned from the injected red run of 2026-08-06 (worker implementer for
+# TASK-G64ZH.1). With resolve_durable_open collapsing to None on a failed boot
+# open, durable_path is absent under LogMirror::None — the total-silence chain.
+#
+# The FIRST failing assertion is the durable_path keep below — not the later
+# dropped_log_writes or reopen-recovery checks.
+
+exit: 101
+
+contains: boot-time open failure must keep durable_path so reopen backoff and record_drop remain reachable (TASK-G64ZH.1 F-A)
+
+contains: test result: FAILED. 0 passed; 1 failed
