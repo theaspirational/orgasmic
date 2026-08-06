@@ -13709,3 +13709,542 @@
 :REASON:       edited task node TASK-RQ270
 :NODE_ID:      TASK-RQ270
 :END:
+
+* TX 2026-08-06 Thu 11:56:33 task.created TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4827
+:TIME:         [2026-08-06 Thu 11:56:33]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       measured on the live daemon: 13MB log, ~50% exact duplication because LogMirror::Stdout resolves to the same file launchd points StandardOutPath at; and nothing rotates it
+:END:
+
+* TX 2026-08-06 Thu 11:57:04 task.state_transitioned TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4828
+:TIME:         [2026-08-06 Thu 11:57:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZBYH3 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 11:57:05 manager.dispatch_started TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4829
+:TIME:         [2026-08-06 Thu 11:57:05]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3
+:BRANCH:       task-zbyh3-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3/task-zbyh3-brief.md
+:STARTED_AT:   [2026-08-06 Thu 11:57:05]
+:LIVENESS:     9eea11f02d5e054fc18dc5291dc63a4cd9f4436b
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: daemon.out.log double-write + rotation; measured 13MB with ~50% duplication on the live daemon
+:END:
+
+* TX 2026-08-06 Thu 11:57:05 run.created TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4830
+:TIME:         [2026-08-06 Thu 11:57:05]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZBYH3-implementer-20260806T115705.jsonl
+:REASON:       daemon.out.log double-write + rotation; measured 13MB with ~50% duplication on the live daemon
+:RUN_ID:       run-20260806T115705-943a2f3182a74cad8d9c66c584a2f2bb
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3/task-zbyh3-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zbyh3/task-zbyh3-216541e280d84a55a4bd1a8205bb9da7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zbyh3/task-zbyh3-216541e280d84a55a4bd1a8205bb9da7-stdout.log
+:DISPATCH_ATTEMPT: 216541e280d84a55a4bd1a8205bb9da7
+:DISPATCH_TX:  tx-20260806-orgasmic-4829
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 12:11:00 implementer.reported TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4831
+:TIME:         [2026-08-06 Thu 12:11:00]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:RUN_ID:       run-20260806T115705-943a2f3182a74cad8d9c66c584a2f2bb
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3
+:SHA:          5bbf17765570cfd07b845c81fd0bf535d224cf60
+:END:
+
+* TX 2026-08-06 Thu 12:12:26 task.state_transitioned TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4832
+:TIME:         [2026-08-06 Thu 12:12:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZBYH3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 12:12:27 manager.dispatch_started TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4833
+:TIME:         [2026-08-06 Thu 12:12:27]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3-review
+:BRANCH:       task-zbyh3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-review/task-zbyh3-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 12:12:27]
+:LIVENESS:     145fb892cb5f784a22c32732f6234d10046f9a43
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-4829
+:REASON_INITIAL: review the daemon log double-write fix and rotation
+:END:
+
+* TX 2026-08-06 Thu 12:12:28 run.created TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4834
+:TIME:         [2026-08-06 Thu 12:12:28]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZBYH3-reviewer-20260806T121227.jsonl
+:REASON:       review the daemon log double-write fix and rotation
+:RUN_ID:       run-20260806T121227-a19298bb1f4f49c8a8253cef29db64a6
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-review/task-zbyh3-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zbyh3-review/task-zbyh3-review-59e885c3d4444e6b8ec2d40ea2a55d65-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zbyh3-review/task-zbyh3-review-59e885c3d4444e6b8ec2d40ea2a55d65-stdout.log
+:DISPATCH_ATTEMPT: 59e885c3d4444e6b8ec2d40ea2a55d65
+:DISPATCH_TX:  tx-20260806-orgasmic-4833
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 12:22:29 reviewer.reported TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4835
+:TIME:         [2026-08-06 Thu 12:22:29]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:RUN_ID:       run-20260806T121227-a19298bb1f4f49c8a8253cef29db64a6
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3-review
+:END:
+
+* TX 2026-08-06 Thu 12:23:18 reviewer.done TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4836
+:TIME:         [2026-08-06 Thu 12:23:18]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:REASON:       REJECT, 1 BLOCK SHIP. Rulings A and B CONFLICT rather than compose, and the manager's own task body asserted they compose -- that framing is the defect's origin. B suppresses the mirror only when fd 1 and the durable path share device+inode; A moves StandardOutPath to a DIFFERENT inode. So after the next daemon start / reinstall rewrites the plist, stdout_same_as_path returns false, LogMirror::Stdout survives, and the full tracing stream is written to BOTH daemon.out.log (rotated) and daemon.stdout.log (rotated by nothing, pruned by nothing, read by nothing, named in no error message) -- roughly 300MB/year. Total write volume and disk growth are UNCHANGED from the pre-fix defect; only the distribution moved. Worse on Windows, where same_file_as_path is cfg(not(unix)) -> false so B can never fire. Both mandated answers came back clean and probe-verified: interactive serve still prints to a tty, and NO programmatic reader of daemon.out.log exists, so no boot diagnostic goes quiet. Recommended fix is to gate the mirror on is_terminal ONLY when a durable sink exists -- which subsumes B and survives A. F3 is the other one that matters: a failed reopen after a SUCCESSFUL roll silences the durable log permanently with no retry AND stops record_drop moving, so the degradation is invisible through the very counter designated for it.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 9eea11f..145fb89
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260806-orgasmic-4833
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 12:23:18 task.state_transitioned TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4837
+:TIME:         [2026-08-06 Thu 12:23:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZBYH3 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 12:24:03 task.created TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4838
+:TIME:         [2026-08-06 Thu 12:24:03]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for the TASK-ZBYH3 BLOCK SHIP: B's discriminator is inode equality and A breaks inode equality, so the defect is relocated to an unrotated file rather than fixed
+:END:
+
+* TX 2026-08-06 Thu 12:24:04 task.property_updated TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4839
+:TIME:         [2026-08-06 Thu 12:24:04]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for the TASK-ZBYH3 BLOCK SHIP
+:FIX_SUBTASK:  true
+:END:
+
+* TX 2026-08-06 Thu 12:24:42 task.state_transitioned TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4840
+:TIME:         [2026-08-06 Thu 12:24:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZBYH3.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 12:24:43 manager.dispatch_started TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4841
+:TIME:         [2026-08-06 Thu 12:24:43]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1
+:BRANCH:       task-zbyh3.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-1/task-zbyh3-1-brief.md
+:STARTED_AT:   [2026-08-06 Thu 12:24:43]
+:LIVENESS:     145fb892cb5f784a22c32732f6234d10046f9a43
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: fix round for the TASK-ZBYH3 BLOCK SHIP: gate the mirror on a terminal rather than inode identity, plus the four silent-degradation findings
+:END:
+
+* TX 2026-08-06 Thu 12:24:43 run.created TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4842
+:TIME:         [2026-08-06 Thu 12:24:43]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZBYH3.1-implementer-20260806T122443.jsonl
+:REASON:       fix round for the TASK-ZBYH3 BLOCK SHIP: gate the mirror on a terminal rather than inode identity, plus the four silent-degradation findings
+:RUN_ID:       run-20260806T122443-142a877457a146c79f2a3db6da80a746
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-1/task-zbyh3-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zbyh3-1/task-zbyh3-1-b6020600f32040779e5b00165b071028-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zbyh3-1/task-zbyh3-1-b6020600f32040779e5b00165b071028-stdout.log
+:DISPATCH_ATTEMPT: b6020600f32040779e5b00165b071028
+:DISPATCH_TX:  tx-20260806-orgasmic-4841
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 12:42:27 implementer.reported TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4843
+:TIME:         [2026-08-06 Thu 12:42:27]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:RUN_ID:       run-20260806T122443-142a877457a146c79f2a3db6da80a746
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1
+:SHA:          d383ab4d171d657d0f37a69bcbc0c1afd1dea185
+:END:
+
+* TX 2026-08-06 Thu 12:44:01 task.state_transitioned TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4844
+:TIME:         [2026-08-06 Thu 12:44:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZBYH3.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 12:44:02 manager.dispatch_started TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4845
+:TIME:         [2026-08-06 Thu 12:44:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1-review
+:BRANCH:       task-zbyh3.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-1-review/task-zbyh3-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 12:44:02]
+:LIVENESS:     25327d00575e32f61c79e0481cbbc73543fb3489
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-4841
+:REASON_INITIAL: fresh review of the fix round for the TASK-ZBYH3 BLOCK SHIP
+:END:
+
+* TX 2026-08-06 Thu 12:44:02 run.created TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4846
+:TIME:         [2026-08-06 Thu 12:44:02]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZBYH3.1-reviewer-20260806T124402.jsonl
+:REASON:       fresh review of the fix round for the TASK-ZBYH3 BLOCK SHIP
+:RUN_ID:       run-20260806T124402-6f1d20a77f7d4f63b88ae09e966d749e
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zbyh3-1-review/task-zbyh3-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zbyh3-1-review/task-zbyh3-1-review-6e1e74fda1684def9155d3f51b6c37c7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zbyh3-1-review/task-zbyh3-1-review-6e1e74fda1684def9155d3f51b6c37c7-stdout.log
+:DISPATCH_ATTEMPT: 6e1e74fda1684def9155d3f51b6c37c7
+:DISPATCH_TX:  tx-20260806-orgasmic-4845
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 12:54:11 reviewer.reported TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4847
+:TIME:         [2026-08-06 Thu 12:54:11]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:RUN_ID:       run-20260806T124402-6f1d20a77f7d4f63b88ae09e966d749e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zbyh3.1-review
+:END:
+
+* TX 2026-08-06 Thu 12:55:15 reviewer.done TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4848
+:TIME:         [2026-08-06 Thu 12:55:15]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:REASON:       APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. The relocated double-write is fixed and proven on the PRODUCTION discriminator for the first time in this chain. Both mandated answers came back confirming the manager's suspicions with numbers. (1) is_terminal is still a PROXY -- it answers 'is fd 1 a tty', not 'will this land somewhere nothing rotates'. Much better than inode equality (correct for all three shipped service definitions plus the detached fallback, and works on Windows where the inode check was hardcoded false), but it fails both ways: a pty-backed capture (script/unbuffer/docker -t) RESTORES the defect class, and 'orgasmic serve | tee' now silently drops stdout tracing -- a live behaviour change from main, though both in-repo consumers are safe because the startup banner bypasses the tracing sink. (2) The F3 retry is UNBOUNDED and worse than a bare per-line open: in the stuck state each log line costs ~2 open + ~2 create_dir_all + up to 31 stats + 1 rename + 3 stderr writes, all under the sink mutex, with 4x record_drop inflation -- reproduced 1:1 from the project's own test stderr. That is the same unbounded-unrotated-growth shape this chain exists to remove, at ~3x the rate, into daemon.err.log which nothing rotates. Filed as the next round.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 145fb89..25327d0
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260806-orgasmic-4845
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 12:55:15 task.state_transitioned TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4849
+:TIME:         [2026-08-06 Thu 12:55:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZBYH3.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 12:55:19 implementer.done TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4850
+:TIME:         [2026-08-06 Thu 12:55:19]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:REASON:       fix round merged and passed a fresh review; manager independently replayed verify (production discriminator, combined two-file count) and 9 logging tests
+:MODEL:        cursor-grok-4.5-high-fast
+:WORKER_COMMIT: d383ab4d171d657d0f37a69bcbc0c1afd1dea185
+:MERGE_SHA:    25327d00575e32f61c79e0481cbbc73543fb3489
+:BRANCH:       task-zbyh3.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4841
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 12:55:19 task.state_transitioned TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4851
+:TIME:         [2026-08-06 Thu 12:55:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZBYH3.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 12:55:23 implementer.done TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4852
+:TIME:         [2026-08-06 Thu 12:55:23]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:REASON:       merged at 145fb89; reviewed REJECT on one BLOCK SHIP whose fix round TASK-ZBYH3.1 landed at 25327d0 and passed a fresh review
+:MODEL:        cursor-grok-4.5-high-fast
+:WORKER_COMMIT: 5bbf17765570cfd07b845c81fd0bf535d224cf60
+:MERGE_SHA:    145fb892cb5f784a22c32732f6234d10046f9a43
+:BRANCH:       task-zbyh3-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4829
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 12:55:23 task.state_transitioned TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4853
+:TIME:         [2026-08-06 Thu 12:55:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZBYH3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 12:55:59 task.state_transitioned TASK-ZBYH3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4854
+:TIME:         [2026-08-06 Thu 12:55:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged at 25327d0 and passed a fresh review (approve-with-follow-ups); F-1/F-2/F-3 filed as a follow-up
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 12:56:00 task.state_transitioned TASK-ZBYH3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4855
+:TIME:         [2026-08-06 Thu 12:56:00]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZBYH3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged at 145fb89; its BLOCK SHIP was fixed by TASK-ZBYH3.1, which landed and passed a fresh review
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 12:56:00 task.created TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4856
+:TIME:         [2026-08-06 Thu 12:56:00]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       filed from the TASK-ZBYH3.1 review: the F3 fix trades a silent freeze for ~3 stderr writes per log line into an unrotated file, which is the same growth shape this chain exists to remove
+:END:

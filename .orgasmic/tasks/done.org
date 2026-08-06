@@ -25252,3 +25252,238 @@ No data was lost: =architecture.org= was byte-identical throughout and
 *a live-daemon experiment is a write to operator state, not a read*, and this one
 was run against a daemon that could not answer the question anyway.
 
+* DONE TASK-ZBYH3.1 Rulings A and B conflict — the tracing stream is still double-written after a plist rewrite :daemon:ops:
+:PROPERTIES:
+:ID: TASK-ZBYH3.1
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:FIX_SUBTASK: true
+:END:
+
+** Description
+Fix round for the BLOCK SHIP that rejected TASK-ZBYH3.
+
+*The origin of this defect is the parent task's own wording, and that should be
+said plainly.* TASK-ZBYH3's body told the implementer that rulings A and B
+"compose". *They conflict.* The implementer took both, exactly as instructed, and
+the result relocates the defect instead of fixing it. This is a manager framing
+error, not an implementer miss.
+
+** Why they conflict
+- *B* suppresses the stdout mirror only when fd 1 and the durable path share
+  *device+inode* (=logging.rs:162= =stdout_same_as_path=, =:181= =resolve_mirror=).
+- *A* moves =StandardOutPath= to =logs/daemon.stdout.log= (=daemon_service.rs:372=)
+  — deliberately a *different inode*.
+
+B's discriminator is inode equality. A's whole purpose is to break inode
+equality. So on any daemon started from a rewritten service definition,
+=stdout_same_as_path= returns *false*, =LogMirror::Stdout= survives, and every
+tracing line is written twice again:
+
+| file | contents | rotated | pruned | read by |
+| =daemon.out.log= | full tracing stream (durable sink) | yes, ~10MiB x 3 | — | operator |
+| =daemon.stdout.log= | full tracing stream (mirror, via launchd) | *no* | *no* | *nothing* |
+
+*Total write volume and total disk growth are UNCHANGED from the pre-fix defect.*
+Only the distribution moved — into a file that no rotation, no pruning, no
+=doctor= check and no error message mentions. ~300MB/year at the measured rate.
+
+Worse on Windows: =same_file_as_path= is =#[cfg(not(unix))] -> false=
+unconditionally, so B can never fire there at all. Same for the systemd unit
+(=daemon_service.rs:946=) and the Windows wrapper (=:977=).
+
+It looks correct on the operator's box *today* only because the installed plist
+has not been rewritten yet and still points at =daemon.out.log=, so B fires.
+
+** The ruling — gate the mirror on a terminal, not on inode identity
+Replace the inode discriminator with =std::io::stdout().is_terminal()=. launchd's
+stdout is never a tty, so this suppresses the mirror under any service manager
+regardless of which file =StandardOutPath= names — it subsumes B *and* survives
+A, and it works on Windows where the inode check cannot.
+
+*The caveat that must not be missed:* =init_tracing= (=logging.rs:107=), used by
+every non-=serve= CLI command (=main.rs:1347=), passes =LogMirror::Stdout= with
+=durable_log = None=. Gating there would silence CLI tracing whenever output is
+piped or redirected. *The tty gate must apply ONLY when a durable sink is
+present* — exactly where =resolve_mirror= already short-circuits on
+=durable_path == None= (=logging.rs:182-184=).
+
+Keeping A (the separate =daemon.stdout.log=) is fine and preferable once the
+mirror is correctly gated, because it also keeps stray =println!=/panic output
+off the durable inode. If you keep it, the four =bail!= strings in
+=daemon_lifecycle.rs= (=:780,:792,:807,:823=) should name it alongside
+=daemon.out.log= and =daemon.err.log=. The plist-string test at
+=daemon_service.rs:1169-1175= moves with whatever you choose.
+
+** F3 — MEDIUM, and the second thing that must be fixed here
+*A failed reopen after a SUCCESSFUL roll silences the durable log permanently,
+invisibly.* On the =None= arm of the post-rename reopen (=logging.rs:403=) the
+code sets =durable = None= and =bytes_written = 0=. Thereafter:
+
+- =write_all_best_effort= (=logging.rs:283=) is
+  =if let Some(file) = state.durable.as_mut()= — with =None= it writes nothing
+  *and never calls =record_drop()==. So =dropped_log_writes= stops moving and the
+  degradation is invisible *through the very mechanism this task designated for
+  it*.
+- =maybe_rotate= never runs its body again (=bytes_written= frozen at 0), so
+  nothing ever retries the open.
+
+A transient =EMFILE= or =ENOSPC= at the moment of a roll turns the durable log
+off until the next restart, silently. Pre-fix that state was only reachable at
+startup, where =open_durable_log= at least emits one stderr note; rotation makes
+it reachable at runtime, indefinitely, and quietly.
+
+Fix: =record_drop()= in the =durable == None= branch, and make the reopen
+retryable — cheapest is to keep counting into =bytes_written= even when the write
+is dropped, so =maybe_rotate= fires again and retries =open_durable_log=.
+
+** F4 — silent loss of a retained generation
+=logging.rs:372='s =Err(_) => {}= is not a no-op. If =.1 -> .2= fails, the loop
+swallows it and the following =current -> .1= rename *overwrites =.1==, so the
+generation that should have become =.2= is gone and the effective keep count
+silently drops to 1. The final rename already gets both =record_drop()= and an
+stderr note (=:379-385=); the intermediate ones need the same two lines.
+
+** F5 — the rotation test would pass on a broken roll
+=logging.rs:549= asserts disjunctively —
+=rolled_blob.contains("second-content") || rolled_blob.contains("early-content")=
+and =current.contains("third") || rolled1.contains("third")=. Swapping the roll
+order so =current -> .1= runs BEFORE =.1 -> .2= destroys the newest rolled
+generation on every roll, and both assertions still pass. The end state is fully
+deterministic — =.1 = third=, =.2 = second=, current empty, =early= evicted at
+=keep=2=. *Assert the exact three-file end state.*
+
+** F6 — unvalidated config
+=config.rs:39,44=: =log.keep= and =log.max_bytes= are unvalidated.
+=logging.rs:366= performs =keep - 1= =rename(2)= calls on EVERY roll regardless of
+how many rolled files exist, *while holding the sink mutex every tracing line
+needs*. A typo'd =log.keep: 100000= turns each roll into 100k syscalls under the
+logging lock. Clamp =keep= to a small maximum, surface out-of-range values
+through the existing startup-warning path, and break the loop once a source path
+is =NotFound=.
+
+** F7 — the production suppression path is untested
+Both the unit test (=logging.rs:481=) and the shipped verify artifact exercise
+=LogMirror::Writer= -> =same_file_as_path=. The path that actually decides this in
+production is =LogMirror::Stdout= -> =stdout_same_as_path= (=logging.rs:162=).
+Whatever discriminator you land on, *test the production path*.
+
+** Acceptance
+- Under a launchd-shaped launch (stdout redirected to a file, ANY file), a line
+  logged once appears *once* across =daemon.out.log= and =daemon.stdout.log=
+  combined. Assert the combined count — that is the claim the previous round
+  failed.
+- Interactive =orgasmic serve= on a tty still prints to the terminal.
+- Non-=serve= CLI commands still trace when piped or redirected (the
+  =durable_log = None= caveat).
+- A failed reopen after a roll moves =dropped_log_writes= and is retried.
+- A failed intermediate rename is counted and noted.
+- The rotation test pins the exact end state of all three files.
+- =keep= is clamped; an out-of-range value is surfaced, not silently obeyed.
+
+** The bar
+The previous round's proof pinned =LogMirror::Writer=, which is not what runs in
+production — that is why a fix that relocated the defect still passed its own
+gate. *Pin the production discriminator this time*, and prove the combined
+two-file count, not the single-file count.
+
+* DONE TASK-ZBYH3 daemon.out.log is double-written and never rotates :daemon:ops:
+:PROPERTIES:
+:ID: TASK-ZBYH3
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:END:
+
+** Description
+=$ORGASMIC_HOME/logs/daemon.out.log= grows without bound AND every line is
+written to it twice. Measured on the operator's live daemon 2026-08-06: 13 MB,
+of which roughly half is exact duplication. Truncated manually to 0; it will
+grow back.
+
+The two problems are coupled — rotation is not well-defined while two
+descriptors own the same file — so they are one task.
+
+** Defect 1 — every tracing line lands in the file twice
+=lib.rs:898= installs the subscriber as:
+
+: init_tracing_to(&cfg.log_level, Some(&daemon_log), LogMirror::Stdout)
+
+so tracing writes to the durable sink AND mirrors to stdout. Under the
+LaunchAgent, *stdout IS that same file*: the generated plist sets
+=StandardOutPath= to =logs/daemon.out.log= (=daemon_service.rs:370=, emitted at
+=:846= and =:896=). So the daemon holds two descriptors on one inode and writes
+identical content through both.
+
+Measured (=lsof=, pid 41745): *fd 1u and fd 10w, same device, same inode
+439742072*.
+
+: last 400 lines -> 400 total, 201 unique
+: last 2000 lines -> 995 adjacent identical pairs
+
+Evidence file:
+=<scratchpad>/daemon-log-dup-evidence.txt= (captured before truncation).
+
+The mirror is correct and wanted for interactive =orgasmic serve= in a terminal.
+It is pure waste under launchd.
+
+** Defect 2 — no rotation
+Nothing rotates the durable log. =logging.rs= opens it =create(true).append(true)=
+(=:92=) and never rolls. 13 MB accumulated since roughly 2026-07-29.
+
+** Two candidate rulings — pick one and say why
+*** A. Separate the launchd capture file from the daemon's durable log
+Point =StandardOutPath= at =logs/daemon.stdout.log= (and keep
+=StandardErrorPath= as is), leaving =daemon.out.log= owned solely by the daemon's
+own sink. Then the mirror is harmless, and the daemon can rotate its own file
+without launchd holding a renamed inode. *Requires a plist change, so it only
+takes effect after the LaunchAgent is rewritten* — note that
+=orgasmic daemon start= rewrites the plist, and see the warning below.
+
+*** B. Suppress the mirror when it resolves to the durable file
+At startup, =stat= fd 1 and the durable path; if device+inode match, install
+=LogMirror::None=. Self-healing, no plist change, works on already-installed
+LaunchAgents. Leaves =StandardOutPath= pointing at the same file, so stray
+=println!=/panic output still lands there and would survive a rotation on the
+old inode.
+
+B is the smaller, self-correcting fix and needs no reinstall to take effect.
+A is the cleaner end state. *They compose* — B alone is sufficient to make
+rotation coherent; A additionally keeps non-tracing stdout out of the durable
+log. If you take both, say so.
+
+** Rotation requirements
+- Size-triggered roll on the durable sink: when the file exceeds a threshold,
+  rename to =daemon.out.log.1= (rolling =.1= -> =.2= ... up to a small keep
+  count) and reopen. Threshold and keep count should have sane defaults and be
+  overridable from =config.yaml= (=DaemonConfig=, =config.rs=), consistent with
+  how other daemon settings are read.
+- *Never let a rotation failure kill the daemon or fail a request.* The whole
+  point of this module (TASK-FZF2D, see its header comment) is that a dead log
+  sink is survivable. A failed rename must degrade to "keep writing the current
+  file", counted through the existing =record_drop= / =dropped_log_writes=
+  mechanism.
+- The sink is behind =Arc<Mutex<SinkState>>=; the roll happens under that lock.
+  Keep the hot path cheap — do not =stat= on every line; track bytes written in
+  the sink and check against the threshold.
+
+** Acceptance
+- A test proving a line logged once appears *once* in the durable file when the
+  mirror resolves to that same file. This is the defect that measured 2x.
+- A test proving the file rolls at the threshold, that the rolled file retains
+  the earlier content, and that the keep count is honoured.
+- A test proving a rotation failure does not propagate — the daemon keeps
+  logging and the drop counter moves.
+- =crates/orgasmic-cli/tests/logging_sink.rs= still passes; it asserts the sink
+  survives a closed pipe and keeps writing the durable file.
+
+** Notes and traps
+- *Do NOT run =orgasmic daemon start= to test a plist change.* It rewrites the
+  one real per-user LaunchAgent. Assert on the GENERATED plist STRING
+  (=daemon_service.rs:846,:896= already render it) rather than installing it.
+- The operator's log was truncated in place and that was safe *because both
+  descriptors are =O_APPEND=*. If any future writer drops =append(true)=,
+  in-place truncation starts leaving sparse gaps.
+- 13 MB is not itself an outage. This is filed as a real defect because the
+  double-write means half of every log read, grep and incident capture is
+  redundant, and because unbounded growth on the operator's home is a slow leak.
+
