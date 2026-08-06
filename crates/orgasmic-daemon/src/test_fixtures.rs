@@ -5,11 +5,55 @@
 //! parallel test turns a small idle cost into long process-start queues. Keep
 //! all spawn-based unit-test behavior behind this one pre-warmed file and pass
 //! per-test variation through argv or adjacent data files.
+//!
+//! Prefer, in order (measured 2026-07-26, see `.orgasmic/gotchas.org`):
+//! 1. invoke a fresh script through a signed interpreter (`/bin/sh script`)
+//! 2. reuse [`shared_test_executable`] with per-test argv
+//! 3. [`link_shared_test_executable`] (inode is the cache key; a copy re-pays)
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+
+// orgasmic:TASK-STWVB
+/// Distinct newly-created executables that paid a first-exec evaluation.
+/// Test-only; dumped at process exit for the TASK-STWVB before/after report.
+static FRESH_FIRST_EXECS: AtomicU64 = AtomicU64::new(0);
+/// Hard-links of the shared fixture (warm path; no new inode scan).
+static SHARED_LINK_REUSES: AtomicU64 = AtomicU64::new(0);
+static STATS_HOOK: OnceLock<()> = OnceLock::new();
+
+fn ensure_stats_dump_hook() {
+    STATS_HOOK.get_or_init(|| {
+        // Safety: registering an atexit handler that only reads atomics and
+        // writes stderr is sound for this test binary.
+        extern "C" fn dump() {
+            let fresh = FRESH_FIRST_EXECS.load(Ordering::Relaxed);
+            let links = SHARED_LINK_REUSES.load(Ordering::Relaxed);
+            eprintln!(
+                "orgasmic-fixture-exec-stats: fresh_first_execs={fresh} shared_link_reuses={links}"
+            );
+        }
+        unsafe {
+            libc::atexit(dump);
+        }
+    });
+}
+
+/// Test-only counters for TASK-STWVB part A (read by measurement probes).
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn fresh_executable_first_exec_count() -> u64 {
+    FRESH_FIRST_EXECS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn shared_link_reuse_count() -> u64 {
+    SHARED_LINK_REUSES.load(Ordering::Relaxed)
+}
 
 const FIXTURE_SCRIPT: &str = r#"#!/bin/bash
 mode=$1
@@ -56,10 +100,29 @@ case "$mode" in
     ;;
 esac
 
+# Per-link behavior when production argv cannot carry a fixture mode (mux
+# probes pass `-V`, resume passes provider flags). Adjacent files keep the
+# inode shared; only the data files vary per test.
 fixture_mode_file="$0.orgasmic-mode"
 if [ -f "$fixture_mode_file" ]; then
   fixture_mode=$(/bin/cat "$fixture_mode_file")
   case "$fixture_mode" in
+    hanging-mux)
+      version=$(/bin/cat "$0.mux-version")
+      armed=$(/bin/cat "$0.mux-armed")
+      pidfile=$(/bin/cat "$0.mux-pidfile")
+      for a in "$@"; do
+        [ "$a" = -V ] && { echo "rmux $version"; exit 0; }
+      done
+      [ -f "$armed" ] || exit 0
+      echo $$ > "$pidfile"
+      exec /bin/sleep 120
+      ;;
+    malicious-claude)
+      log=$(/bin/cat "$0.malicious-log")
+      printf '%s\n' "$0 $*" > "$log"
+      exec /bin/true
+      ;;
     claude-capture)
       trusted_log=$(/bin/cat "$0.trusted-log")
       projects_dir=$(/bin/cat "$0.projects-dir")
@@ -107,18 +170,37 @@ if [ -f "$fixture_mode_file" ]; then
   esac
 fi
 
+# Pinned-exec wrapper link: a production regression that stops passing the
+# sentinel argv must fail loudly (exit 97), not fall through to exit 0.
+if [ -f "$0.orgasmic-pinned-wrapper" ]; then
+  [ "$1" = __exec-pinned ] || exit 97
+  shift
+  target=$1
+  shift
+  shift 3
+  exec "$target" "$@"
+fi
+
 # The simple trusted-Claude fixture only needs to be executable.
 exit 0
 "#;
 
 static SHARED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 
+fn fixture_content_tag() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    FIXTURE_SCRIPT.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 /// Return the one executable fixture for this daemon unit-test binary.
 ///
-/// The script lives beside the hashed test binary, so recompilation naturally
-/// gives changed fixture contents a new path. `persist_noclobber` makes setup
-/// safe if the same test binary is started concurrently.
+/// The on-disk name includes a content hash of [`FIXTURE_SCRIPT`], so editing
+/// the script cannot leave a stale file at the old path. A leftover file at
+/// this path with the wrong contents is overwritten.
 pub(crate) fn shared_test_executable() -> &'static Path {
+    ensure_stats_dump_hook();
     SHARED_EXECUTABLE
         .get_or_init(|| {
             let test_binary = std::env::current_exe().expect("resolve daemon test binary");
@@ -126,9 +208,14 @@ pub(crate) fn shared_test_executable() -> &'static Path {
                 .file_name()
                 .expect("daemon test binary has a file name")
                 .to_string_lossy();
-            let path = test_binary.with_file_name(format!("{file_name}.fixture.sh"));
+            let tag = fixture_content_tag();
+            let path = test_binary.with_file_name(format!("{file_name}.fixture-{tag}.sh"));
 
-            if !path.exists() {
+            let needs_write = match std::fs::read_to_string(&path) {
+                Ok(existing) => existing != FIXTURE_SCRIPT,
+                Err(_) => true,
+            };
+            if needs_write {
                 let parent = path.parent().expect("daemon test binary has a parent");
                 let mut pending =
                     tempfile::NamedTempFile::new_in(parent).expect("create shared test fixture");
@@ -144,10 +231,24 @@ pub(crate) fn shared_test_executable() -> &'static Path {
                     )
                     .expect("make shared test fixture executable");
                 }
-                match pending.persist_noclobber(&path) {
-                    Ok(_) => {}
-                    Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                    Err(error) => panic!("publish shared test fixture: {}", error.error),
+                // Replace atomically when possible; fall back to write-in-place
+                // if another test binary raced us to the same content-hashed path.
+                match pending.persist(&path) {
+                    Ok(_) => {
+                        FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error) => {
+                        std::fs::write(&path, FIXTURE_SCRIPT.as_bytes())
+                            .expect("overwrite shared test fixture");
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt as _;
+                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                                .expect("chmod shared test fixture");
+                        }
+                        let _ = error;
+                        FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
 
@@ -172,6 +273,7 @@ pub(crate) fn shared_test_executable() -> &'static Path {
 /// Put the shared executable at a production-shaped test path without creating
 /// a new file (and therefore without another first-exec evaluation).
 pub(crate) fn link_shared_test_executable(path: &Path) {
+    ensure_stats_dump_hook();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).expect("create shared fixture link parent");
     }
@@ -184,6 +286,29 @@ pub(crate) fn link_shared_test_executable(path: &Path) {
     });
     std::fs::rename(&staged, path)
         .unwrap_or_else(|error| panic!("link shared test fixture at {}: {error}", path.display()));
+    SHARED_LINK_REUSES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// Write a brand-new executable and count it as a first-exec cost.
+///
+/// Prefer [`link_shared_test_executable`] or a signed interpreter. This exists
+/// so remaining sites stay visible in the TASK-STWVB fixture-exec stats.
+#[cfg(test)]
+pub(crate) fn create_fresh_test_executable(path: &Path, contents: &str) {
+    ensure_stats_dump_hook();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create fresh fixture parent");
+    }
+    std::fs::write(path, contents)
+        .unwrap_or_else(|error| panic!("write fresh test executable {}: {error}", path.display()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap_or_else(
+            |error| panic!("chmod fresh test executable {}: {error}", path.display()),
+        );
+    }
+    FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Write one per-test value next to a linked executable. Recovery tests cannot
@@ -209,6 +334,18 @@ pub(crate) fn write_linked_fixture_text(path: &Path, name: &str, value: &str) {
             path.display()
         )
     });
+}
+
+/// Install the shared fixture as a hanging mux binary for stall-probe tests.
+///
+/// Per-test paths live in adjacent files so every arm reuses one warmed inode.
+#[cfg(test)]
+pub(crate) fn link_hanging_mux_shim(path: &Path, version: &str, armed: &Path, pidfile: &Path) {
+    link_shared_test_executable(path);
+    write_linked_fixture_text(path, "orgasmic-mode", "hanging-mux");
+    write_linked_fixture_text(path, "mux-version", version);
+    write_linked_fixture_value(path, "mux-armed", armed);
+    write_linked_fixture_value(path, "mux-pidfile", pidfile);
 }
 
 // orgasmic:task_BCYMM
