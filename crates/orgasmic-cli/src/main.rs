@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.5, arch_PCSQE.1, arch_QFQTD.1, arch_QFQTD.3
 // orgasmic:arch_WZFAX, arch_QFQTD, arch_C87Z9
 //! orgasmic CLI binary.
 //!
@@ -10,7 +9,6 @@
 //! `restart`, `tx`, and `auth` to real implementations that talk to the
 //! local daemon. Later tasks promote other groups as their owners land.
 
-mod architecture_drift;
 mod artifact;
 mod content_lifecycle;
 mod daemon_client;
@@ -749,12 +747,6 @@ enum ArchitectureCmd {
         /// above the current directory.
         #[arg(long)]
         project: Option<String>,
-    },
-    /// Report architecture/source marker drift for the current repo.
-    Drift {
-        /// Emit machine-readable JSON for CI.
-        #[arg(long)]
-        json: bool,
     },
     /// Print one canonical architecture node showing its property vocabulary
     /// (no daemon needed) — the pattern `artifact blocks` establishes for
@@ -3087,20 +3079,6 @@ fn print_decision_detail(value: &serde_json::Value) -> Result<()> {
 }
 
 fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
-    if let ArchitectureCmd::Drift { json } = cmd {
-        let cwd = std::env::current_dir().context("read current directory")?;
-        let root = architecture_drift::repo_root_from(&cwd)?;
-        let report = architecture_drift::run(&root)?;
-        if json {
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else {
-            architecture_drift::print_human(&report);
-        }
-        if report.has_drift() {
-            std::process::exit(1);
-        }
-        return Ok(());
-    }
     if let ArchitectureCmd::Schema = cmd {
         return print_node_schema(
             orgasmic_core::schema_examples::architecture_schema_example(),
@@ -3135,7 +3113,6 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                     ))
                     .await?
             }
-            ArchitectureCmd::Drift { .. } => unreachable!("handled before daemon client"),
             ArchitectureCmd::Schema => unreachable!("handled before daemon client"),
         };
         print_json(&value)

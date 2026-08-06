@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.4, arch_MPAQT.1, arch_MPAQT.2, arch_PCSQE.2, arch_QFQTD.2, arch_R3EPE.2
 // orgasmic:arch_C87Z9, dec_YYMSK
 //! In-memory materialized projection of board, projects, tasks, and tx.
 //!

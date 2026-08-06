@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.3
 // orgasmic:arch_C87Z9, dec_YYMSK
 //! `notify`-based filesystem watcher with daemon-side debounce (dec_022).
 //!

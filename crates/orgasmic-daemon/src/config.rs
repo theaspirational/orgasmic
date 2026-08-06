@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.1
 // orgasmic:arch_C87Z9, dec_N17XX, TASK-AYXPB, dec_WDR5K
 //! Daemon runtime configuration.
 //!

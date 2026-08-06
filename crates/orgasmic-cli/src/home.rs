@@ -1,4 +1,3 @@
-// arch: arch_WZFAX.1
 // orgasmic:arch_WZFAX, arch_C87Z9, dec_XSV21, dec_N17XX
 //! Re-export for the shared `Home` layout lifted into orgasmic-core.
 //!

@@ -1,4 +1,3 @@
-// arch: arch_QXS5W.2, arch_WZFAX.1
 // orgasmic:arch_WZFAX, arch_C87Z9, arch_QXS5W, dec_XSV21, dec_N17XX
 //! Two-layer `$ORGASMIC_HOME` layout per arch_001 / dec_002.
 //!

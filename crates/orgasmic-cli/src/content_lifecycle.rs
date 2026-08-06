@@ -1,4 +1,3 @@
-// arch: arch_WZFAX.2
 // orgasmic:arch_WZFAX, arch_QXS5W, dec_GRDFB
 //! Optional shipped content and hub install lifecycle.
 //!

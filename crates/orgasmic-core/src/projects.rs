@@ -1,4 +1,3 @@
-// arch: arch_QFQTD.1
 // orgasmic:arch_QFQTD
 //! Project scaffolding and global board registration.
 //!

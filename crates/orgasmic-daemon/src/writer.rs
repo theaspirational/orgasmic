@@ -1,4 +1,3 @@
-// arch: arch_BVH7M.2, arch_BVH7M.3, arch_QFQTD.3
 // orgasmic:arch_BVH7M, arch_C87Z9, dec_WH9PD, dec_R75SW, task_C2PQ3
 //! Single serialized writer for tx files, session JSONLs, and direct-edit
 //! Org files.

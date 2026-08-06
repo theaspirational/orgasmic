@@ -1,4 +1,3 @@
-// arch: arch_A53QX.2
 // orgasmic:arch_A53QX, dec_ASB1A
 //! orgasmic-drivers — fixed mode drivers composed with fixed harness adapters.
 //!

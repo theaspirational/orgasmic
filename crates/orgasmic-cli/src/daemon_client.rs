@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.5, arch_Z3Z3V.2
 // orgasmic:arch_C87Z9, dec_XV9AK, dec_N17XX
 //! Thin HTTP client the CLI uses to talk to the local daemon.
 //!

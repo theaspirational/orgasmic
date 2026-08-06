@@ -1,4 +1,3 @@
-// arch: arch_A53QX.2
 // orgasmic:dec_WDR5K, task_JQARS
 //! Manager-facing transport catalog.
 //!

@@ -1,4 +1,3 @@
-// arch: arch_Z3Z3V.1
 // orgasmic:arch_Z3Z3V
 //! Daemon runtime identity per arch_010 / dec_024.
 //!

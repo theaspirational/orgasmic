@@ -1,4 +1,3 @@
-// arch: arch_BVH7M.1, arch_MPAQT.1, arch_MPAQT.2, arch_QFQTD.2, arch_QXS5W.1
 // orgasmic:arch_QFQTD, arch_QXS5W
 //! Typed views on top of the [`crate::org`] parser.
 //!

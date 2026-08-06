@@ -1,4 +1,3 @@
-// arch: arch_A53QX.3
 pub mod claude;
 pub mod codex;
 pub mod cursor;

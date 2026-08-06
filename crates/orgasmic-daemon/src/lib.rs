@@ -1,4 +1,3 @@
-// arch: arch_C87Z9.3, arch_Z3Z3V.1
 // orgasmic:arch_BVH7M, arch_C87Z9, arch_Z3Z3V
 //! orgasmic daemon — HTTP/WS server, serialized writer, watcher, and the
 //! materialized read index over project + home state.

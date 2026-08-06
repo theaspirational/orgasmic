@@ -1,4 +1,3 @@
-// arch: arch_A53QX.4
 // orgasmic:arch_A53QX, dec_ASB1A
 //! Stdio mode: the harness runs as a child process and the two speak over
 //! its stdin/stdout.

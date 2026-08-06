@@ -1,4 +1,3 @@
-// arch: arch_A53QX.2
 // orgasmic:arch_A53QX, dec_ASB1A
 //! `WorkerDriver` trait — one typed execution surface for every runtime kind
 //! orgasmic supports (claude-stream-json, codex-appserver, hermes, tmux-tui).
