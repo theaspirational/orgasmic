@@ -1,0 +1,12 @@
+# Pinned from the injected red run of 2026-08-06 (worker implementer for
+# TASK-G64ZH). With the backoff gate forced open, 40 lines under a persistent
+# open failure each call try_open_durable — open_attempts == 40.
+#
+# The FIRST failing assertion is the open_attempts bound below — not the
+# lines_dropped or rotate_attempts checks that follow it.
+
+exit: 101
+
+contains: 40 lines inside the initial 1s backoff window must cost one reopen attempt, not one per line (got 40)
+
+contains: test result: FAILED. 0 passed; 1 failed

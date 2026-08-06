@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-daemon/src/logging.rs b/crates/orgasmic-daemon/src/logging.rs
+--- a/crates/orgasmic-daemon/src/logging.rs
++++ b/crates/orgasmic-daemon/src/logging.rs
+@@ -393,7 +393,9 @@
+         if self.durable_path.is_none() {
+             return false;
+         }
+-        if Instant::now() < self.next_reopen_attempt {
++        // INJECTED (TASK-G64ZH): skip the backoff gate so every line retries
++        // open — restores the unbounded per-line reopen cost.
++        if false && Instant::now() < self.next_reopen_attempt {
+             return false;
+         }
+         if self.try_open_durable() {

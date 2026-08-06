@@ -1,20 +1,28 @@
 //! Best-effort tracing sinks so a dead stdout/stderr pipe never kills the
 //! daemon or fails an HTTP request (TASK-FZF2D).
 //!
-//! Size-triggered rotation: TASK-ZBYH3. Stdout mirror gated on a terminal when
-//! a durable sink is present (TASK-ZBYH3.1) — inode equality conflicts with a
-//! separate `StandardOutPath`.
+//! Size-triggered rotation: TASK-ZBYH3. Stdout mirror: explicit
+//! `--no-log-mirror` / `ORGASMIC_LOG_MIRROR=off` by construction in service
+//! definitions orgasmic writes, with `is_terminal()` as the fallback for
+//! supervisors it did not write (TASK-ZBYH3.1, TASK-G64ZH). Reopen after a
+//! failed durable open is backoff-bounded (TASK-G64ZH).
 //!
-//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1
+//! orgasmic:TASK-FZF2D,TASK-ZBYH3,TASK-ZBYH3.1,TASK-G64ZH
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::EnvFilter;
+
+/// Initial wait before retrying a failed durable reopen (TASK-G64ZH F1).
+const REOPEN_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
+/// Cap for the reopen backoff (TASK-G64ZH F1).
+const REOPEN_BACKOFF_CAP: Duration = Duration::from_secs(60);
 
 /// Default durable daemon log under `$ORGASMIC_HOME/logs/`.
 pub const DAEMON_OUT_LOG: &str = "daemon.out.log";
@@ -81,14 +89,43 @@ impl Default for LogRotation {
     }
 }
 
+/// Resolve the mirror request before install.
+///
+/// Precedence (TASK-G64ZH F2):
+/// 1. `no_log_mirror` CLI flag (`serve --no-log-mirror`) → [`LogMirror::None`]
+/// 2. else `ORGASMIC_LOG_MIRROR=off` (also `0` / `false`, case-insensitive) →
+///    [`LogMirror::None`]
+/// 3. else [`LogMirror::Stdout`], and [`resolve_mirror`] applies the
+///    `is_terminal()` fallback when a durable sink is present
+///
+/// Explicit off always wins over a tty. An old LaunchAgent plist without the
+/// flag still suppresses under launchd because stdout is not a terminal.
+pub fn requested_log_mirror(no_log_mirror: bool) -> LogMirror {
+    if no_log_mirror || env_log_mirror_off() {
+        LogMirror::None
+    } else {
+        LogMirror::Stdout
+    }
+}
+
+fn env_log_mirror_off() -> bool {
+    match std::env::var("ORGASMIC_LOG_MIRROR") {
+        Ok(value) => {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("off") || value == "0" || value.eq_ignore_ascii_case("false")
+        }
+        Err(_) => false,
+    }
+}
+
 /// Install the global tracing subscriber once. Later calls are no-ops.
 ///
 /// When `durable_log` is set, logs append to that path (created if needed, never
 /// truncated). `mirror` is best-effort: failures are counted and swallowed so
 /// they cannot propagate into request handling. When a durable sink is present,
-/// a [`LogMirror::Stdout`] mirror is kept only if stdout is a terminal — so
-/// launchd/systemd/service redirects never double-write, regardless of which
-/// file `StandardOutPath` names. Without a durable sink (non-`serve` CLI), the
+/// a [`LogMirror::Stdout`] mirror is kept only if stdout is a terminal — unless
+/// the caller already passed [`LogMirror::None`] (explicit `--no-log-mirror` /
+/// `ORGASMIC_LOG_MIRROR=off`). Without a durable sink (non-`serve` CLI), the
 /// stdout mirror is left alone so piped/redirected CLI tracing still works.
 ///
 /// Returns `true` when this call installed the subscriber.
@@ -125,7 +162,6 @@ pub fn init_tracing(default_filter: &str) -> bool {
 fn open_durable_log(path: &Path) -> Option<File> {
     if let Some(parent) = path.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
-            record_drop();
             let _ = writeln!(
                 io::stderr(),
                 "orgasmic: failed to create log dir {}: {err}",
@@ -137,7 +173,6 @@ fn open_durable_log(path: &Path) -> Option<File> {
     match OpenOptions::new().create(true).append(true).open(path) {
         Ok(file) => Some(file),
         Err(err) => {
-            record_drop();
             let _ = writeln!(
                 io::stderr(),
                 "orgasmic: failed to open log file {}: {err}",
@@ -169,19 +204,25 @@ fn same_file_as_path(_file: &File, _path: &Path) -> bool {
 
 /// Resolve a requested mirror when a durable sink is present.
 ///
-/// Production (`LogMirror::Stdout`): keep the mirror only on a real terminal.
-/// Service managers redirect stdout to a file that is never a tty, so this
-/// suppresses the double-write under any `StandardOutPath` (and on Windows,
-/// where inode equality cannot be checked). When `durable_path` is `None`
-/// (non-`serve` CLI via [`init_tracing`]), the mirror is returned unchanged so
-/// piped/redirected CLI tracing still works — orgasmic:TASK-ZBYH3.1.
-fn resolve_mirror(mirror: LogMirror, durable_path: Option<&Path>) -> LogMirror {
+/// Production (`LogMirror::Stdout`): keep the mirror only when
+/// `stdout_is_terminal` is true. Service managers orgasmic writes pass
+/// `--no-log-mirror` so the caller supplies [`LogMirror::None`] already;
+/// `is_terminal()` remains the fallback for supervisors orgasmic did not
+/// write (and for already-installed plists that lack the flag). When
+/// `durable_path` is `None` (non-`serve` CLI via [`init_tracing`]), the mirror
+/// is returned unchanged so piped/redirected CLI tracing still works —
+/// orgasmic:TASK-ZBYH3.1,TASK-G64ZH.
+fn resolve_mirror(
+    mirror: LogMirror,
+    durable_path: Option<&Path>,
+    stdout_is_terminal: bool,
+) -> LogMirror {
     let Some(path) = durable_path else {
         return mirror;
     };
     match mirror {
         LogMirror::Stdout => {
-            if io::stdout().is_terminal() {
+            if stdout_is_terminal {
                 LogMirror::Stdout
             } else {
                 LogMirror::None
@@ -209,9 +250,24 @@ struct SinkState {
     bytes_written: u64,
     rotation: LogRotation,
     mirror: MirrorState,
+    /// Earliest Instant at which a failed durable reopen may be retried.
+    /// orgasmic:TASK-G64ZH
+    next_reopen_attempt: Instant,
+    /// Current reopen backoff; doubles after each failed attempt up to
+    /// [`REOPEN_BACKOFF_CAP`].
+    reopen_backoff: Duration,
     /// Test-only: simulate EMFILE/ENOSPC on durable reopen (TASK-ZBYH3.1 F3).
     #[cfg(test)]
     reject_durable_open: bool,
+    /// Test-only: count reopen attempts (TASK-G64ZH F1 bound).
+    #[cfg(test)]
+    open_attempts: u64,
+    /// Test-only: count `maybe_rotate` entries (TASK-G64ZH F1).
+    #[cfg(test)]
+    rotate_attempts: u64,
+    /// Test-only: lines that never landed in the durable file (TASK-G64ZH F1).
+    #[cfg(test)]
+    lines_dropped: u64,
 }
 
 enum MirrorState {
@@ -222,8 +278,19 @@ enum MirrorState {
 
 impl BestEffortMakeWriter {
     fn new(durable: Option<(PathBuf, File)>, mirror: LogMirror, rotation: LogRotation) -> Self {
+        Self::new_with_terminal_gate(durable, mirror, rotation, io::stdout().is_terminal())
+    }
+
+    /// Like [`Self::new`], but with an injectable terminal predicate so both
+    /// mirror-gate branches can be asserted (TASK-G64ZH F3).
+    fn new_with_terminal_gate(
+        durable: Option<(PathBuf, File)>,
+        mirror: LogMirror,
+        rotation: LogRotation,
+        stdout_is_terminal: bool,
+    ) -> Self {
         let durable_path = durable.as_ref().map(|(path, _)| path.clone());
-        let mirror = resolve_mirror(mirror, durable_path.as_deref());
+        let mirror = resolve_mirror(mirror, durable_path.as_deref(), stdout_is_terminal);
         let mirror = match mirror {
             LogMirror::Stdout => MirrorState::Stdout,
             LogMirror::Writer(file) => MirrorState::File(file),
@@ -243,8 +310,16 @@ impl BestEffortMakeWriter {
                 bytes_written,
                 rotation,
                 mirror,
+                next_reopen_attempt: Instant::now(),
+                reopen_backoff: REOPEN_BACKOFF_INITIAL,
                 #[cfg(test)]
                 reject_durable_open: false,
+                #[cfg(test)]
+                open_attempts: 0,
+                #[cfg(test)]
+                rotate_attempts: 0,
+                #[cfg(test)]
+                lines_dropped: 0,
             })),
         }
     }
@@ -257,10 +332,15 @@ impl BestEffortMakeWriter {
             inner: Arc::new(Mutex::new(SinkState {
                 durable: None,
                 durable_path: Some(path),
-                bytes_written: rotation.max_bytes.saturating_add(1),
+                bytes_written: 0,
                 rotation,
                 mirror: MirrorState::None,
+                next_reopen_attempt: Instant::now(),
+                reopen_backoff: REOPEN_BACKOFF_INITIAL,
                 reject_durable_open: true,
+                open_attempts: 0,
+                rotate_attempts: 0,
+                lines_dropped: 0,
             })),
         }
     }
@@ -272,8 +352,11 @@ impl SinkState {
             return false;
         };
         #[cfg(test)]
+        {
+            self.open_attempts = self.open_attempts.saturating_add(1);
+        }
+        #[cfg(test)]
         if self.reject_durable_open {
-            record_drop();
             let _ = writeln!(
                 io::stderr(),
                 "orgasmic: failed to open log file {}: injected open failure",
@@ -285,9 +368,39 @@ impl SinkState {
             Some(file) => {
                 self.bytes_written = file.metadata().map(|m| m.len()).unwrap_or(0);
                 self.durable = Some(file);
+                self.reopen_backoff = REOPEN_BACKOFF_INITIAL;
+                self.next_reopen_attempt = Instant::now();
                 true
             }
             None => false,
+        }
+    }
+
+    fn schedule_reopen_retry(&mut self) {
+        self.next_reopen_attempt = Instant::now() + self.reopen_backoff;
+        self.reopen_backoff = self
+            .reopen_backoff
+            .saturating_mul(2)
+            .min(REOPEN_BACKOFF_CAP);
+    }
+
+    /// Attempt a durable reopen only when the backoff window allows it.
+    /// Returns true when a handle is present afterwards.
+    fn maybe_reopen_durable(&mut self) -> bool {
+        if self.durable.is_some() {
+            return true;
+        }
+        if self.durable_path.is_none() {
+            return false;
+        }
+        if Instant::now() < self.next_reopen_attempt {
+            return false;
+        }
+        if self.try_open_durable() {
+            true
+        } else {
+            self.schedule_reopen_retry();
+            false
         }
     }
 }
@@ -324,11 +437,9 @@ fn write_all_best_effort(inner: &Mutex<SinkState>, buf: &[u8]) {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if state.durable.is_none() && state.durable_path.is_some() {
-        // Retry a failed post-roll reopen before giving up on this line
-        // (TASK-ZBYH3.1 F3).
-        let _ = state.try_open_durable();
-    }
+    // Reopen owns the retry behind a backoff; maybe_rotate does not run while
+    // the handle is missing (TASK-G64ZH F1).
+    let _ = state.maybe_reopen_durable();
     if let Some(file) = state.durable.as_mut() {
         if file.write_all(buf).is_err() {
             record_drop();
@@ -336,10 +447,13 @@ fn write_all_best_effort(inner: &Mutex<SinkState>, buf: &[u8]) {
             state.bytes_written = state.bytes_written.saturating_add(buf.len() as u64);
         }
     } else if state.durable_path.is_some() {
-        // Still no handle. Count the drop (so `dropped_log_writes` keeps
-        // moving) and advance the byte counter so `maybe_rotate` retries.
+        // One drop per line that never landed in the durable file — not one
+        // per syscall on the reopen/rotate paths (TASK-G64ZH F1).
         record_drop();
-        state.bytes_written = state.bytes_written.saturating_add(buf.len() as u64);
+        #[cfg(test)]
+        {
+            state.lines_dropped = state.lines_dropped.saturating_add(1);
+        }
     }
     match &mut state.mirror {
         MirrorState::Stdout => {
@@ -354,7 +468,9 @@ fn write_all_best_effort(inner: &Mutex<SinkState>, buf: &[u8]) {
         }
         MirrorState::None => {}
     }
-    maybe_rotate(&mut state);
+    if state.durable.is_some() {
+        maybe_rotate(&mut state);
+    }
 }
 
 fn flush_best_effort(inner: &Mutex<SinkState>) {
@@ -384,7 +500,16 @@ fn flush_best_effort(inner: &Mutex<SinkState>) {
 
 /// Roll the durable file when the tracked byte count exceeds the threshold.
 /// Failures never propagate — keep writing the current handle and count a drop.
+/// Must not be called while `state.durable` is `None` (the write path owns
+/// reopen retries via [`SinkState::maybe_reopen_durable`]).
 fn maybe_rotate(state: &mut SinkState) {
+    #[cfg(test)]
+    {
+        state.rotate_attempts = state.rotate_attempts.saturating_add(1);
+    }
+    if state.durable.is_none() {
+        return;
+    }
     if state.rotation.max_bytes == 0 {
         return;
     }
@@ -406,7 +531,7 @@ fn maybe_rotate(state: &mut SinkState) {
             if err.kind() != io::ErrorKind::NotFound {
                 record_drop();
                 if !state.try_open_durable() {
-                    state.bytes_written = state.rotation.max_bytes.saturating_add(1);
+                    state.schedule_reopen_retry();
                 }
                 return;
             }
@@ -450,10 +575,10 @@ fn maybe_rotate(state: &mut SinkState) {
                 "orgasmic: log rotation rename failed for {}: {err}",
                 path.display()
             );
-            // Keep writing the current file when it still exists; if reopen
-            // fails, stay past the threshold so a later write retries (F3).
+            // Keep writing the current file when reopen succeeds; otherwise the
+            // write-path backoff owns the retry (TASK-G64ZH F1).
             if !state.try_open_durable() {
-                state.bytes_written = state.rotation.max_bytes.saturating_add(1);
+                state.schedule_reopen_retry();
             }
             return;
         }
@@ -462,8 +587,9 @@ fn maybe_rotate(state: &mut SinkState) {
     if state.try_open_durable() {
         state.bytes_written = 0;
     } else {
-        // Stay past the rotation threshold so the next write retries (F3).
-        state.bytes_written = state.rotation.max_bytes.saturating_add(1);
+        // Write-path backoff owns the retry; do not park past the rotation
+        // threshold so maybe_rotate re-enters on every subsequent line.
+        state.schedule_reopen_retry();
     }
 }
 
@@ -737,8 +863,9 @@ mod tests {
         );
     }
 
-    /// orgasmic:TASK-ZBYH3.1 F3 — a failed reopen after a successful roll must
-    /// move `dropped_log_writes` and retry on a later write.
+    /// orgasmic:TASK-ZBYH3.1 F3 / TASK-G64ZH F1 — a failed reopen after a
+    /// successful roll must move `dropped_log_writes` once per dropped line
+    /// and retry only behind the backoff (not per line).
     #[test]
     fn failed_reopen_after_roll_counts_drops_and_retries() {
         let dir = tempfile::tempdir().unwrap();
@@ -762,6 +889,26 @@ mod tests {
             mid > before,
             "failed reopen must move dropped_log_writes ({before} -> {mid})"
         );
+        {
+            let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+            assert_eq!(
+                state.lines_dropped, 2,
+                "each dropped line must count once (got {})",
+                state.lines_dropped
+            );
+            assert_eq!(
+                state.open_attempts, 1,
+                "two rapid writes must share one reopen attempt inside the \
+                 backoff window (got {})",
+                state.open_attempts
+            );
+            assert_eq!(
+                state.rotate_attempts, 0,
+                "maybe_rotate must not run while the durable handle is missing \
+                 (got {})",
+                state.rotate_attempts
+            );
+        }
         assert!(
             !path.exists(),
             "open was rejected; durable path must not have been created yet"
@@ -771,6 +918,8 @@ mod tests {
         {
             let mut state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
             state.reject_durable_open = false;
+            // Expire the backoff so the next write retries immediately.
+            state.next_reopen_attempt = Instant::now();
         }
         {
             let mut writer = sink.make_writer();
@@ -781,6 +930,149 @@ mod tests {
         assert!(
             contents.contains("recovered-after-reopen"),
             "reopen must be retried once opens succeed again: {contents:?}"
+        );
+    }
+
+    /// orgasmic:TASK-G64ZH F1 — a persistent open failure costs a bounded
+    /// number of reopen attempts per unit time, not one per log line. With
+    /// rotation armed (the compound path the heading names), maybe_rotate
+    /// must not re-enter while the handle is missing.
+    #[test]
+    fn persistent_open_failure_bounds_reopen_attempts_not_per_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.out.log");
+        let rotation = LogRotation {
+            max_bytes: 16,
+            keep: 32,
+        };
+        let sink = BestEffortMakeWriter::with_missing_durable(path.clone(), rotation);
+        let before = dropped_log_writes();
+        const LINES: u64 = 40;
+        {
+            let mut writer = sink.make_writer();
+            for i in 0..LINES {
+                writer
+                    .write_all(format!("stuck-line-{i:02}\n").as_bytes())
+                    .unwrap();
+            }
+        }
+        let after = dropped_log_writes();
+        assert!(
+            after > before,
+            "persistent open failure must move dropped_log_writes ({before} -> {after})"
+        );
+        let state = sink.inner.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(
+            state.lines_dropped, LINES,
+            "dropped lines must count once each, not ~4x (got {})",
+            state.lines_dropped
+        );
+        assert_eq!(
+            state.open_attempts, 1,
+            "40 lines inside the initial 1s backoff window must cost one reopen \
+             attempt, not one per line (got {})",
+            state.open_attempts
+        );
+        assert_eq!(
+            state.rotate_attempts, 0,
+            "maybe_rotate must not run while durable is missing (got {})",
+            state.rotate_attempts
+        );
+    }
+
+    /// orgasmic:TASK-G64ZH F3 — both branches of the production mirror gate.
+    /// A refactor that gated purely on `durable_path.is_some()` would silence
+    /// the tty branch and keep every non-tty test green.
+    #[test]
+    fn mirror_gate_keeps_stdout_on_terminal_and_suppresses_off_terminal() {
+        let path = PathBuf::from("/tmp/orgasmic-g64zh-unused.log");
+        assert!(
+            matches!(
+                resolve_mirror(LogMirror::Stdout, Some(&path), true),
+                LogMirror::Stdout
+            ),
+            "tty branch must keep LogMirror::Stdout when durable is present"
+        );
+        assert!(
+            matches!(
+                resolve_mirror(LogMirror::Stdout, Some(&path), false),
+                LogMirror::None
+            ),
+            "non-tty branch must suppress LogMirror::Stdout when durable is present"
+        );
+        // Without a durable sink the mirror is unchanged either way (CLI path).
+        assert!(matches!(
+            resolve_mirror(LogMirror::Stdout, None, false),
+            LogMirror::Stdout
+        ));
+    }
+
+    /// orgasmic:TASK-G64ZH F3 — end-to-end: an injected terminal gate keeps the
+    /// Stdout mirror alive even when fd 1 is redirected to a file. Inverting
+    /// the predicate (or gating only on durable_path) makes this go red.
+    #[test]
+    fn interactive_terminal_gate_keeps_stdout_mirror_under_redirect() {
+        use std::os::unix::io::AsRawFd;
+
+        let _lock = STDOUT_REDIRECT_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let durable_path = dir.path().join("daemon.out.log");
+        let stdout_path = dir.path().join("daemon.stdout.log");
+        let stdout_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&stdout_path)
+            .unwrap();
+        let durable = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&durable_path)
+            .unwrap();
+
+        let saved_fd = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        assert!(saved_fd >= 0, "dup stdout");
+        assert!(
+            unsafe { libc::dup2(stdout_file.as_raw_fd(), libc::STDOUT_FILENO) } >= 0,
+            "dup2 stdout -> daemon.stdout.log"
+        );
+        drop(stdout_file);
+
+        struct RestoreStdout(i32);
+        impl Drop for RestoreStdout {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::dup2(self.0, libc::STDOUT_FILENO);
+                    libc::close(self.0);
+                }
+            }
+        }
+        let _restore = RestoreStdout(saved_fd);
+
+        // Inject terminal=true: the production interactive-serve branch.
+        let sink = BestEffortMakeWriter::new_with_terminal_gate(
+            Some((durable_path.clone(), durable)),
+            LogMirror::Stdout,
+            LogRotation::default(),
+            true,
+        );
+        {
+            let mut writer = sink.make_writer();
+            writer.write_all(b"interactive-mirror-g64zh\n").unwrap();
+            writer.flush().unwrap();
+        }
+        let _ = io::stdout().flush();
+
+        let durable_contents = std::fs::read_to_string(&durable_path).unwrap();
+        let stdout_contents = std::fs::read_to_string(&stdout_path).unwrap();
+        assert!(
+            durable_contents.contains("interactive-mirror-g64zh"),
+            "durable must receive the line: {durable_contents:?}"
+        );
+        assert!(
+            stdout_contents.contains("interactive-mirror-g64zh"),
+            "tty-gated mirror must still write to stdout: {stdout_contents:?}"
         );
     }
 

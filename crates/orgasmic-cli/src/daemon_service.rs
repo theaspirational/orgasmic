@@ -842,7 +842,7 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
 <plist version=\"1.0\">\n\
 <dict>\n\
   <key>Label</key>\n  <string>{label}</string>\n\
-  <key>ProgramArguments</key>\n  <array>\n    <string>{exe}</string>\n    <string>serve</string>\n  </array>\n\
+  <key>ProgramArguments</key>\n  <array>\n    <string>{exe}</string>\n    <string>serve</string>\n    <string>--no-log-mirror</string>\n  </array>\n\
   <key>EnvironmentVariables</key>\n  <dict>\n    <key>ORGASMIC_HOME</key>\n    <string>{home}</string>\n    <key>PATH</key>\n    <string>{path}</string>\n  </dict>\n\
   <key>WorkingDirectory</key>\n  <string>{cwd}</string>\n\
   <key>StandardOutPath</key>\n  <string>{stdout}</string>\n\
@@ -928,7 +928,7 @@ After=network.target\n\
 \n\
 [Service]\n\
 Type=simple\n\
-ExecStart={} serve\n\
+ExecStart={} serve --no-log-mirror\n\
 WorkingDirectory={}\n\
 Environment={}\n\
 Environment={}\n\
@@ -969,7 +969,7 @@ fn render_windows_wrapper(spec: &ServiceSpec) -> String {
 set \"PATH={}\"\r\n\
 set \"ORGASMIC_HOME={}\"\r\n\
 cd /d \"{}\"\r\n\
-\"{}\" serve >> \"{}\" 2>> \"{}\"\r\n",
+\"{}\" serve --no-log-mirror >> \"{}\" 2>> \"{}\"\r\n",
         cmd_escape(&spec.path),
         cmd_escape(&path_text(&spec.home)),
         cmd_escape(&path_text(&spec.cwd)),
@@ -1165,6 +1165,14 @@ mod tests {
         assert!(plist.contains("/Users/tester/.local/bin"));
         assert!(plist.contains("/Users/tester/.npm-global/bin"));
         assert!(plist.contains("/Users/tester/Orgasmic Home"));
+        assert!(
+            plist.contains("<string>serve</string>"),
+            "plist must launch serve: {plist}"
+        );
+        assert!(
+            plist.contains("<string>--no-log-mirror</string>"),
+            "plist must suppress the stdout mirror by construction (TASK-G64ZH): {plist}"
+        );
         assert!(
             plist.contains("daemon.stdout.log"),
             "StandardOutPath must be the launchd capture file, not the durable sink: {plist}"
@@ -1511,7 +1519,9 @@ mod tests {
     fn linux_systemd_unit_definition_is_user_service() {
         let unit = render_linux_systemd_unit(&spec());
         assert!(unit.contains("[Service]"));
-        assert!(unit.contains("ExecStart=\"/Applications/Orgasmic & Tools/orgasmic\" serve"));
+        assert!(unit.contains(
+            "ExecStart=\"/Applications/Orgasmic & Tools/orgasmic\" serve --no-log-mirror"
+        ));
         assert!(unit.contains("Environment=\"ORGASMIC_HOME=/Users/tester/Orgasmic Home\""));
         assert!(unit.contains("Environment=\"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
         assert!(unit.contains("WantedBy=default.target"));
@@ -1547,7 +1557,7 @@ mod tests {
         let wrapper = render_windows_wrapper(&spec());
         assert!(wrapper.contains("set \"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
         assert!(wrapper.contains("set \"ORGASMIC_HOME=/Users/tester/Orgasmic Home\""));
-        assert!(wrapper.contains("orgasmic\" serve >>"));
+        assert!(wrapper.contains("orgasmic\" serve --no-log-mirror >>"));
         assert!(wrapper.contains("daemon.err.log"));
     }
 
