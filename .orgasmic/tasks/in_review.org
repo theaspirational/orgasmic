@@ -158,3 +158,41 @@ Evidence gathered per =rescue-policy= before choosing, rather than re-dispatchin
 Judgment from the policy's menu: *abandon and re-dispatch under a fresh lease.* Reattach is impossible, resume/fork needs a trustworthy native session identity that does not exist here, and fresh recovery is pointless when the attempt produced nothing.
 
 Closed =--status aborted= so the ledger records an orphan rather than a completion. The hard rule the policy states — never treat a failed release as silent success — is the reason this got a tx entry of its own instead of a quiet re-dispatch.
+** Root cause of three orphans — codex workspace out of credits
+Three consecutive reviewer dispatches orphaned. *Root cause is quota exhaustion, not transport.*
+
+*The diagnostic*: dispatch, then =tmux capture-pane= within 30 seconds instead of waiting for the stall detector. The pane showed:
+
+: ■ Your workspace is out of credits. Ask your workspace owner to refill in order to continue.
+:   Usage limit reached
+:   Request a limit increase from your owner to continue using codex. Request increase?
+:   1. Yes (y)
+: › 2. No (default) (n)
+
+*The full chain, which is worth recording because every link looked like something else:*
+
+1. Codex launches, hits the workspace quota, and blocks on an INTERACTIVE prompt.
+2. It consumes no CPU and writes nothing — =last.txt= and the stdout log stay 0 bytes.
+3. After 600s the stall detector releases: =stall_timeout_exceeded: no work
+   evidence for 600s; 6 process(es) under pid 60457 at 0.0% cpu=.
+4. The release kills the pane. That was the tmux server's only session, so *the
+   server exits*.
+5. =tmux ls= then reports =no server running=, which reads exactly like a
+   transport failure — and that is what the first two orphans were misdiagnosed
+   as.
+
+*Two hypotheses were tested and killed before the right one*, both worth naming
+so they are not re-tested: the manager's earlier =daemon restart= did NOT break
+the environment (the running daemon has the correct =PATH=, =ORGASMIC_HOME=,
+=USER=, =HOME=, =LOGNAME=), and tmux itself is healthy (a plain detached session
+created from a shell survived 45s while orgasmic's died).
+
+*The instrument that mattered*: capture the pane EARLY. The release tombstone
+says "0.0% cpu, no work evidence", which is true and tells you nothing about
+why. The pane says exactly why. For any future silent-hang orphan, capture before
+the stall clock expires.
+
+*Consequence*: every codex dispatch will orphan identically until the workspace
+is refilled. The board's reviewers and implementers have both been codex today.
+Claude remains available as a harness. Refilling is an operator action; the
+manager cannot resolve it.

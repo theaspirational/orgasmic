@@ -12495,3 +12495,168 @@
 :REASON:       edited task node TASK-RQ270.3.2.1
 :NODE_ID:      TASK-RQ270.3.2.1
 :END:
+
+* TX 2026-08-06 Thu 06:44:00 manager.dispatch_started TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4759
+:TIME:         [2026-08-06 Thu 06:44:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRANCH:       task-rq270.3.2.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 06:44:00]
+:LIVENESS:     855940218a34ec179041d79662546a780c16468a
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch after the first reviewer orphaned when the tmux server exited; this review decides whether stage D can run
+:END:
+
+* TX 2026-08-06 Thu 06:44:01 run.created TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4760
+:TIME:         [2026-08-06 Thu 06:44:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.2.1-reviewer-20260806T064400.jsonl
+:REASON:       re-dispatch after the first reviewer orphaned when the tmux server exited; this review decides whether stage D can run
+:RUN_ID:       run-20260806T064400-1c0d5b2e4763446b8ea7e2f14b838c4b
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-d19eb1d2d9c5432cba8400966f85ebb9-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-d19eb1d2d9c5432cba8400966f85ebb9-stdout.log
+:DISPATCH_ATTEMPT: d19eb1d2d9c5432cba8400966f85ebb9
+:DISPATCH_TX:  tx-20260806-orgasmic-4759
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 06:54:01 manager.dispatch_orphaned TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4761
+:TIME:         [2026-08-06 Thu 06:54:01]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.2.1-reviewer-20260806T064400.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260806T064400-1c0d5b2e4763446b8ea7e2f14b838c4b
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 06:58:05 manager.dispatch_aborted TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4762
+:TIME:         [2026-08-06 Thu 06:58:05]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:       ORPHANED, second consecutive. Release tombstone: stall_timeout_exceeded — no work evidence for 600s, 6 processes under pid 60457 at 0.0% cpu. The worker STARTED and hung producing nothing; the pane kill on release is what left the tmux server with no sessions. Not a transport failure
+:CLOSED_TX:    tx-20260806-orgasmic-4759
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 06:58:06 manager.dispatch_started TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4763
+:TIME:         [2026-08-06 Thu 06:58:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRANCH:       task-rq270.3.2.1-review3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 06:58:06]
+:LIVENESS:     855940218a34ec179041d79662546a780c16468a
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: diagnostic re-dispatch: capture the pane to see why codex hangs at 0 percent cpu
+:END:
+
+* TX 2026-08-06 Thu 06:58:06 run.created TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4764
+:TIME:         [2026-08-06 Thu 06:58:06]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.2.1-reviewer-20260806T065806.jsonl
+:REASON:       diagnostic re-dispatch: capture the pane to see why codex hangs at 0 percent cpu
+:RUN_ID:       run-20260806T065806-badc50dfcecf4dd3bf8be932dda7ac17
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-b40f7d9414774a69984e409a71a9570e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-b40f7d9414774a69984e409a71a9570e-stdout.log
+:DISPATCH_ATTEMPT: b40f7d9414774a69984e409a71a9570e
+:DISPATCH_TX:  tx-20260806-orgasmic-4763
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 06:58:59 manager.dispatch_aborted TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4765
+:TIME:         [2026-08-06 Thu 06:58:59]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:       DIAGNOSTIC DISPATCH — root cause found and it is not a transport fault. Pane capture shows: 'Your workspace is out of credits... Usage limit reached... Request a limit increase from your owner to continue using codex.' Codex launches, hits the quota wall, and blocks on an interactive prompt at 0% cpu until the 600s stall detector releases it. Every codex dispatch will now orphan the same way. Requires an operator refill or a harness switch
+:CLOSED_TX:    tx-20260806-orgasmic-4763
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 06:59:20 task.edited TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4766
+:TIME:         [2026-08-06 Thu 06:59:20]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-RQ270.3.2.1
+:NODE_ID:      TASK-RQ270.3.2.1
+:END:
