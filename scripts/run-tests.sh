@@ -29,34 +29,35 @@
 # Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry
 # rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
 #
-# Host state (TASK-STWVB / TASK-STWVB.1):
-#   On a live suite run: load is sampled BEFORE the suite (state not caused by
-#   this run), and syspolicyd cumulative CPU-time is sampled before and after
-#   so the gate sees a delta across the run — the instrument that previously
-#   produced +281 s with a scan storm / +32 s without. Point-sampled %CPU is
-#   not used: it is a short-window decaying average, and a post-suite sample
-#   cannot observe a burst that collapses within seconds.
+# Host state (TASK-STWVB / TASK-STWVB.1 / TASK-STWVB.1.1):
+#   On a live suite run: load is sampled BEFORE the suite, and syspolicyd
+#   cumulative CPU-time is sampled before and after so the gate sees a delta
+#   across the run — the instrument that previously produced +281 s with a
+#   scan storm / +32 s without. Point-sampled %CPU is not used: it is a
+#   short-window decaying average, and a post-suite sample cannot observe a
+#   burst that collapses within seconds.
 #
 #   On --classify: host state is UNKNOWN unless the suite log carries an
 #   `# orgasmic-host-state:` stamp written by the live run that produced it.
 #   Reclassify-time sampling is never used — it has no relationship to the run
 #   under review and must not mint a LOAD-SENSITIVE excuse.
 #
-#   Thresholds (TASK-STWVB.1):
-#     LOAD_DEGRADED_THRESHOLD — applies to the BEFORE load only. Justified
-#       against a measured calm-host mid-run load of the suite's own
-#       contribution (see constant comment); a quiet Mac BEFORE is ~4–6.5, a
-#       worker-busy BEFORE was 12.95.
-#     SYSPOLICYD_CPU_DEGRADED — cumulative CPU-time delta in seconds across the
-#       run. Sits between the historical +32 s calm / +281 s thrash readings.
+#   Thresholds (TASK-STWVB.1.1):
+#     SYSPOLICYD_RATE_DEGRADED — syspolicyd CPU seconds per wall second of the
+#       sampled window. An absolute CPU-seconds bound is a bound on run
+#       duration (ambient alone reaches 100 s in ~22 min). Load is
+#       corroborating only: it is printed on the stamp but does not trip the
+#       gate alone (and on Linux there is no Gatekeeper scan storm to excuse).
 #
 #   A missing signal is ignored, never fatal: unknown fields become `?`, never
-#   a measured `0.0` or a blank. Linux has no syspolicyd.
+#   a measured `0.0` or a blank. Linux has no syspolicyd. The summary word is
+#   `unknown` when no signal parsed as a number — not `calm`.
 #
 #   Injector for the self-test live path (and only for that): set
-#     ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>
+#     ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>,wall_s=<f>
 #   to force the judgment sample (load = BEFORE load, syspolicyd_cpu = delta
-#   seconds). Omit a key to leave it unknown. Ignored under --classify.
+#   seconds, wall_s = wall seconds of the window; rate = cpu/wall_s). Omit a
+#   key to leave it unknown. Ignored under --classify.
 
 set -uo pipefail
 
@@ -79,20 +80,18 @@ EXIT_REGISTRY=2
 EXIT_MISUSE=3
 EXIT_INCONCLUSIVE=4
 
-# orgasmic:TASK-STWVB.1
-# LOAD: BEFORE sample only. Calm-host suite contribution measured 2026-08-06
-# on this 10-core Mac during already-built `orgasmic-daemon --lib`:
-#   mid-run 1-min load ~7.35 (BEFORE was already 8.94 from other workers)
-#   post-run after calm BEFORE 4.13 → 7.87
-# So the suite's own load sits near 7–8; that is why during/after load must
-# not trip the gate. Threshold stays above a quiet BEFORE (~4–6.5) and below
-# the worker-busy BEFORE (12.95) that must still yield INCONCLUSIVE.
+# orgasmic:TASK-STWVB.1.1
+# Load is printed on the host stamp for operators but is NOT an independent
+# trigger (F-C). The BEFORE-load band on this board straddles ambient
+# dispatch activity (measured BEFORE values 4.01–12.95); the suite's own
+# mid-run contribution was never a BEFORE baseline. Kept for stamp display.
 LOAD_DEGRADED_THRESHOLD=8.0
-# syspolicyd cumulative CPU-time delta (seconds) across the suite run.
-# Historical TASK-STWVB readings: +32 s calm / +281 s under scan storm.
-# F9 probe on this host (2026-08-06): +53.9 s consolidated / +49.3 s with
-# link kill-switch (second run; cache-warmed — see finalize summary).
-SYSPOLICYD_CPU_DEGRADED=100.0
+# syspolicyd CPU seconds per wall second of the sampled window.
+# Ambient (two independent 60 s idle windows, 2026-08-06): 0.0737–0.0753 s/s.
+# Scoped in-run on this Mac: 0.35–0.96 s/s. Historical +32/+281 pair is the
+# same quantity re-expressed over its wall. Workspace calibration and the
+# chosen number are recorded in the constant comment below after measurement.
+SYSPOLICYD_RATE_DEGRADED=1.50
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
 SAMPLE_HOST_ONLY=0
@@ -414,10 +413,10 @@ sample_host_snapshot_live() {
     printf 'load=%s syspolicyd_time=%s' "$(sample_load_live)" "$(sample_syspolicyd_time_live)"
 }
 
-# Judgment sample from before/after snapshots:
-# `load=<BEFORE load> syspolicyd_cpu=<delta seconds|?>`
+# Judgment sample from before/after snapshots + wall seconds:
+# `load=<BEFORE load> syspolicyd_cpu=<delta seconds|?> wall_s=<wall|?>`
 host_judgment_from_snapshots() {
-    local before="$1" after="$2"
+    local before="$1" after="$2" wall_s="${3:-?}"
     local load t0 t1 d0 d1 delta
     load=$(host_field_or_unknown "$before" load)
     t0=$(host_field_or_unknown "$before" syspolicyd_time)
@@ -433,13 +432,14 @@ host_judgment_from_snapshots() {
     else
         delta="?"
     fi
-    printf 'load=%s syspolicyd_cpu=%s' "$load" "$delta"
+    printf 'load=%s syspolicyd_cpu=%s wall_s=%s' "$load" "$delta" "$wall_s"
 }
 
-# Parse ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f> (comma or space).
-# Values are the judgment sample: BEFORE load + cumulative delta seconds.
+# Parse ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>,wall_s=<f>
+# (comma or space). Values are the judgment sample: BEFORE load + cumulative
+# delta seconds + wall seconds of the window.
 sample_host_state_injected() {
-    local raw="${ORGASMIC_HOST_STATE_SAMPLE-}" load="?" cpu="?" part key val
+    local raw="${ORGASMIC_HOST_STATE_SAMPLE-}" load="?" cpu="?" wall="?" part key val
     raw=$(printf '%s' "$raw" | tr ',' ' ')
     for part in $raw; do
         key=${part%%=*}
@@ -447,27 +447,57 @@ sample_host_state_injected() {
         case "$key" in
             load) load=$val ;;
             syspolicyd_cpu) cpu=$val ;;
+            wall_s) wall=$val ;;
         esac
     done
     [ -n "$load" ] || load="?"
     [ -n "$cpu" ] || cpu="?"
-    printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu"
+    [ -n "$wall" ] || wall="?"
+    printf 'load=%s syspolicyd_cpu=%s wall_s=%s' "$load" "$cpu" "$wall"
 }
 
-# True (exit 0) when either measured signal clears its degraded threshold.
+# Rate (CPU s / wall s) from a judgment sample, or `?` when either side is
+# unknown / non-numeric / wall_s <= 0.
+host_syspolicyd_rate() {
+    local sample="$1" cpu wall
+    cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
+    wall=$(host_field_or_unknown "$sample" wall_s)
+    awk -v cpu="$cpu" -v wall="$wall" '
+        function num(x) { return (x != "" && x != "?" && x + 0 == x) }
+        BEGIN {
+            if (num(cpu) && num(wall) && wall + 0 > 0) {
+                printf "%.4f", cpu / wall
+            } else {
+                print "?"
+            }
+        }'
+}
+
+# True (exit 0) when the primary syspolicyd *rate* clears its threshold.
+# Load is corroborating only — never an independent trigger (F-C).
 # Unknown (`?`) signals do not trip the gate — absence of evidence is not
 # evidence of thrash.
 host_is_degraded() {
-    local sample="$1" load cpu
-    load=$(host_field_or_unknown "$sample" load)
-    cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
-    awk -v load="$load" -v cpu="$cpu" \
-        -v load_lim="$LOAD_DEGRADED_THRESHOLD" \
-        -v cpu_lim="$SYSPOLICYD_CPU_DEGRADED" '
+    local sample="$1" rate
+    rate=$(host_syspolicyd_rate "$sample")
+    awk -v rate="$rate" -v rate_lim="$SYSPOLICYD_RATE_DEGRADED" '
         function num(x) { return (x != "" && x != "?" && x + 0 == x) }
         BEGIN {
-            if (num(load) && load + 0 >= load_lim + 0) exit 0
-            if (num(cpu)  && cpu  + 0 >= cpu_lim  + 0) exit 0
+            if (num(rate) && rate + 0 >= rate_lim + 0) exit 0
+            exit 1
+        }'
+}
+
+# True when any judgment field parsed as a number (measured something).
+host_judgment_measured() {
+    local sample="$1" load cpu wall
+    load=$(host_field_or_unknown "$sample" load)
+    cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
+    wall=$(host_field_or_unknown "$sample" wall_s)
+    awk -v load="$load" -v cpu="$cpu" -v wall="$wall" '
+        function num(x) { return (x != "" && x != "?" && x + 0 == x) }
+        BEGIN {
+            if (num(load) || num(cpu) || num(wall)) exit 0
             exit 1
         }'
 }
@@ -588,6 +618,7 @@ else
     # known flake. Output goes to a file, never a pipe: a test that leaves a
     # descendant holding the write end makes a pipe hang forever after the
     # suite has already passed (.orgasmic/gotchas.org).
+    local_wall0=$(date +%s)
     HOST_BEFORE=$(sample_host_snapshot_live)
     SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
     printf 'run-tests: %s\n' "$SUITE_CMD"
@@ -596,7 +627,12 @@ else
         -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
     SUITE_EXIT=$?
     HOST_AFTER=$(sample_host_snapshot_live)
-    HOST_JUDGMENT=$(host_judgment_from_snapshots "$HOST_BEFORE" "$HOST_AFTER")
+    local_wall1=$(date +%s)
+    local_wall=$((local_wall1 - local_wall0))
+    if [ "$local_wall" -lt 1 ]; then
+        local_wall=1
+    fi
+    HOST_JUDGMENT=$(host_judgment_from_snapshots "$HOST_BEFORE" "$HOST_AFTER" "$local_wall")
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
         HOST_DEGRADED=1
@@ -936,19 +972,25 @@ else
     printf '  environ  : INCOMPLETE — %s test(s) gated out by absent tooling\n' "$SKIPPED_TESTS"
 fi
 # Host-state stamp: always printed so a green on a thrashing host cannot look
-# like a trusted clean run. Judgment uses BEFORE load + syspolicyd CPU delta.
+# like a trusted clean run. Judgment uses syspolicyd rate (CPU s / wall s);
+# load is corroborating display only. Summary word is unknown when nothing
+# parsed as a number — not calm (F-E).
+HOST_RATE=$(host_syspolicyd_rate "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}")
 if [ "$HOST_UNKNOWN" -eq 1 ]; then
     printf '  host     : unknown (reclassify with no host stamp in log; LOAD-SENSITIVE unavailable)\n'
 elif [ "$HOST_DEGRADED" -eq 1 ]; then
-    printf '  host     : DEGRADED (thresholds before_load>=%s syspolicyd_cpu_delta_s>=%s)\n' \
-        "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
+    printf '  host     : DEGRADED (threshold syspolicyd_rate>=%s; load corroborating only, display>=%s)\n' \
+        "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_DEGRADED_THRESHOLD"
+elif host_judgment_measured "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"; then
+    printf '  host     : calm (threshold syspolicyd_rate>=%s; load corroborating only, display>=%s)\n' \
+        "$SYSPOLICYD_RATE_DEGRADED" "$LOAD_DEGRADED_THRESHOLD"
 else
-    printf '  host     : calm (thresholds before_load>=%s syspolicyd_cpu_delta_s>=%s)\n' \
-        "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
+    printf '  host     : unknown (no numeric host signal; LOAD-SENSITIVE unavailable)\n'
 fi
 printf '             before  %s\n' "$HOST_BEFORE"
 printf '             after   %s\n' "${HOST_AFTER:-$HOST_BEFORE}"
-printf '             delta   %s\n' "${HOST_JUDGMENT:-load=? syspolicyd_cpu=?}"
+printf '             delta   %s\n' "${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"
+printf '             rate    %s\n' "$HOST_RATE"
 
 if [ -n "$SKIPPED_TOOLS" ]; then
     printf '\nNOT RUN (%s) — tooling absent, and %s said that was acceptable.\n' \
@@ -999,6 +1041,13 @@ elif [ "$LOAD_COUNT" -gt 0 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
     printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
         "$LOAD_COUNT"
     STATUS=$EXIT_REAL
+elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+    # B2: a non-zero cargo exit with no per-test failure list is a code fact
+    # (crashed binary, etc.). Do not report it as "suite looked green" under
+    # HOST_DEGRADED — the same one-line move F4 made for REAL_COUNT.
+    printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
+        "$SUITE_EXIT" "$SUITE_LOG"
+    STATUS=$EXIT_REAL
 elif [ "$HOST_DEGRADED" -eq 1 ]; then
     # Degraded host without an alone-red REAL: green / flake / load-sensitive
     # are all untrusted. Re-run when calm.
@@ -1013,10 +1062,6 @@ elif [ "$HOST_DEGRADED" -eq 1 ]; then
     STATUS=$EXIT_INCONCLUSIVE
 elif [ "$FAIL_COUNT" -gt 0 ]; then
     printf '\nverdict: GREEN modulo %s registered flake(s). No unexplained red.\n' "$FLAKE_COUNT"
-elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
-    printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
-        "$SUITE_EXIT" "$SUITE_LOG"
-    STATUS=$EXIT_REAL
 else
     printf '\nverdict: GREEN — no failures.\n'
 fi

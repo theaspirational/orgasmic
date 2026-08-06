@@ -1,0 +1,27 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh	2026-08-06 23:49:33
++++ b/scripts/run-tests.sh	2026-08-06 23:49:46
+@@ -473,17 +473,17 @@
+         }'
+ }
+ 
+-# True (exit 0) when the primary syspolicyd *rate* clears its threshold.
+-# Load is corroborating only — never an independent trigger (F-C).
++# INJECTED (TASK-STWVB.1.1): restore the absolute syspolicyd_cpu bound that
++# makes a long ambient accrual look DEGRADED on a calm host.
+ # Unknown (`?`) signals do not trip the gate — absence of evidence is not
+ # evidence of thrash.
+ host_is_degraded() {
+-    local sample="$1" rate
+-    rate=$(host_syspolicyd_rate "$sample")
+-    awk -v rate="$rate" -v rate_lim="$SYSPOLICYD_RATE_DEGRADED" '
++    local sample="$1" cpu
++    cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
++    awk -v cpu="$cpu" -v cpu_lim="100.0" '
+         function num(x) { return (x != "" && x != "?" && x + 0 == x) }
+         BEGIN {
+-            if (num(rate) && rate + 0 >= rate_lim + 0) exit 0
++            if (num(cpu) && cpu + 0 >= cpu_lim + 0) exit 0
+             exit 1
+         }'
+ }

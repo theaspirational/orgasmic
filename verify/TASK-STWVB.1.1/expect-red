@@ -1,0 +1,13 @@
+# Pinned from the pre-fix red of 2026-08-06 (worker implementer for
+# TASK-STWVB.1.1). With the absolute syspolicyd_cpu threshold restored, a
+# calm-host sample of long ambient accrual (105.0 s over 1400 s wall) reports
+# DEGRADED / exit 4 instead of calm / exit 0.
+#
+# The FIRST failing assertion is the rate case — not a later ladder or
+# registry case.
+
+exit: 1
+
+contains: FAIL long ambient syspolicyd accrual is calm as a rate (absolute would trip)
+
+contains: exit 4, wanted 0
