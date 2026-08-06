@@ -82,3 +82,60 @@ report can be read AFTER a close, because today the honest answer is "nowhere".
 EXTRACT EVERY FINDING BEFORE CLOSING, and write a close =REASON= detailed enough
 to file tasks from — with =file:line= anchors, not just prose. The reasons written
 on 2026-08-06 are the only thing that kept F-1 through F-5 recoverable at all.
+** Evidence
+*Implementer* =implementer-cursor-agent-tmux= — tmux / cursor-agent /
+cursor-grok-4.5-high-fast. Run
+=run-20260806T151244-7572bac5ee574bd6956fcf560376cf4f=, started_tx
+=tx-20260806-orgasmic-4939=, merged =0e8ba1e=.
+
+*THE SHAPE.* Close promotes =last.txt= + =stdout.log= out of gitignored
+=.orgasmic/tmp/dispatch/= into TRACKED
+=.orgasmic/dispatch-records/<started_tx>/=, keyed by the dispatch GENERATION so a
+chain of six dispatches keeps six records. The close tx and the worker's
+=*.reported= tx carry =:REPORT_PATH:=. Not =.org=, so the indexer ignores it —
+confirmed, and =parse_errors= stayed 0.
+
+*THE SAFETY PROPERTIES, checked by the manager rather than taken from the report.*
+Promotion is fd-anchored: =copy_validated_artifact_to= reads via =read_at= off the
+already-validated =File=, never re-resolving a pathname, and
+=unlink_validated_attempt_pair= runs ONLY after BOTH copies succeed — so a partial
+failure DUPLICATES rather than loses. On promote failure the close records
+=CLEANUP_ERROR= and does NOT fall back to deleting; the files stay in =tmp=.
+=started_tx: None= (failed-dispatch rollback) still prunes, deliberately. The
+worktree salvage path — the one the brief forbade touching, because TASK-2BPWM
+and TASK-D0GA3 exist from it destroying worker output twice — is untouched.
+
+*Gates, replayed by the manager on the MERGED tree:* fmt clean; 12 core =paths=
+tests; 64 cli =dispatch= tests (9 ignored); 4 shipped-convention tests; 8
+=dispatch_close= units; clippy =-D warnings= clean.
+
+*Proof.* =verify/TASK-QGWK7/= replays green, red log carries EXACTLY ONE panic,
+and it is the pinned claim: "after close the report must still be readable from
+the path the tx names".
+
+*INERT UNTIL THE RUNTIME IS REBUILT, and that is not academic here.* The CLI that
+runs =dispatch-close= is the INSTALLED one, so this dispatch's own report — and
+its reviewer's — will still be deleted at close. The implementer's report was
+copied out to the session scratchpad before integration for exactly that reason.
+The change cannot protect its own dispatch.
+
+*Carried to the reviewer, both the manager's own findings.* (1) The fix may
+reproduce its own defect shape one layer out: retention is "keep forever", the
+destination is TRACKED, and =stdout.log= is promoted too — the largest on this
+project is 478,920 bytes (others at 91KB, 56KB). On tmux they are 0 bytes today
+because pane content is never persisted, so the cost is invisible in this
+session, but it is transport-dependent and COMMITTED BYTES ARE PERMANENT in a way
+a log file's are not. That is the same unbounded-unrotated-growth shape
+TASK-ZBYH3 -> TASK-G64ZH spent three rounds removing from =daemon.err.log=. The
+implementer's stated reason for including =stdout.log= is good — it can FALSIFY a
+curated close reason — so this is a cost/benefit ruling, not a dismissal.
+(2) Durability still depends on a MANUAL step: the convention says "commit the
+promoted directory", and nothing enforces it. The fix trades "the manager must
+transcribe" for "the manager must commit" — strictly better, mechanical rather
+than interpretive, and a missed commit leaves the file rather than destroying it
+— but still a manual link in a durability chain, in a task that exists BECAUSE
+durability depended on a manual step.
+
+*A scope note that is the MANAGER'S error:* =WRITE_SCOPE= says
+=crates/**,shipped/**= but the brief demanded a =verify/TASK-QGWK7/= artifact.
+The =verify/= writes are authorised; the task drawer was not updated to match.
