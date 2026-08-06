@@ -1,0 +1,10 @@
+diff --git a/crates/orgasmic-daemon/src/index.rs b/crates/orgasmic-daemon/src/index.rs
+--- a/crates/orgasmic-daemon/src/index.rs
++++ b/crates/orgasmic-daemon/src/index.rs
+@@ -1084,5 +1084,6 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
+         // decision or term surfaces too (VJXXC reviewer MEDIUM). Retired
+         // `arch_` ids are historical tokens, not resolvable graph targets.
+         if !edge.to.starts_with("TASK-")
++            && !edge.to.starts_with("arch_")
+             && !edge.to.starts_with("dec_")
+             && !edge.to.starts_with("term_")

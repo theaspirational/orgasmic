@@ -4,7 +4,7 @@
 //! The clap surface mirrors the inventory in `arch_006` (init, doctor,
 //! update, serve, status, restart, project, board, tasks, task, run,
 //! worker, prompt, skills, manager, tx, recovery, auth, question,
-//! optional, hub, glossary, graph, decision, architecture, adr, snapshot, grill,
+//! optional, hub, glossary, graph, decision, adr, snapshot, grill,
 //! plan, reconcile). TASK-005 promotes `serve`, `status`,
 //! `restart`, `tx`, and `auth` to real implementations that talk to the
 //! local daemon. Later tasks promote other groups as their owners land.
@@ -295,11 +295,6 @@ Examples:
     Decision {
         #[command(subcommand)]
         cmd: DecisionCmd,
-    },
-    /// Architecture graph.
-    Architecture {
-        #[command(subcommand)]
-        cmd: ArchitectureCmd,
     },
     /// Graph edge queries.
     Graph {
@@ -724,33 +719,6 @@ enum DecisionCmd {
     /// Print one canonical decision node showing its property vocabulary
     /// (no daemon needed) — the pattern `artifact blocks` establishes for
     /// the block registry, extended to decision nodes.
-    Schema,
-}
-
-#[derive(Subcommand, Debug)]
-enum ArchitectureCmd {
-    /// List architecture nodes for a project.
-    List {
-        /// Project id; omitted → resolved from the `.orgasmic/project.org`
-        /// above the current directory.
-        #[arg(long)]
-        project: Option<String>,
-        /// Print only architecture node ids, one per line, nothing else.
-        #[arg(long)]
-        ids: bool,
-    },
-    /// Show one architecture node.
-    Get {
-        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
-        id: String,
-        /// Project id; omitted → resolved from the `.orgasmic/project.org`
-        /// above the current directory.
-        #[arg(long)]
-        project: Option<String>,
-    },
-    /// Print one canonical architecture node showing its property vocabulary
-    /// (no daemon needed) — the pattern `artifact blocks` establishes for
-    /// the block registry, extended to architecture nodes.
     Schema,
 }
 
@@ -1448,7 +1416,6 @@ fn main() -> Result<()> {
         Cmd::Id { cmd } => cmd_id(cmd),
         Cmd::Glossary { cmd } => cmd_glossary(&home, cmd),
         Cmd::Decision { cmd } => cmd_decision(&home, cmd),
-        Cmd::Architecture { cmd } => cmd_architecture(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
         Cmd::Node { cmd } => cmd_node(&home, cmd),
         Cmd::Verify(args) => cmd_verify(args),
@@ -3078,47 +3045,6 @@ fn print_decision_detail(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
-    if let ArchitectureCmd::Schema = cmd {
-        return print_node_schema(
-            orgasmic_core::schema_examples::architecture_schema_example(),
-            orgasmic_core::schema_examples::architecture_schema_legend(),
-        );
-    }
-    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-    runtime.block_on(async move {
-        let client = DaemonClient::from_home_autostart_async(home).await?;
-        if let ArchitectureCmd::List { project, ids } = cmd {
-            let value: serde_json::Value = client
-                .get(&path_with_project_query("/architecture", project))
-                .await?;
-            return if ids {
-                print_ids_only(&value, "architecture nodes")
-            } else {
-                print_list_or_empty(
-                    &value,
-                    "architecture nodes",
-                    "the architecture layer is retired (dec_HBK6A) and read-only; \
-                     record rationale with `orgasmic decision create`",
-                )
-            };
-        }
-        let value: serde_json::Value = match cmd {
-            ArchitectureCmd::List { .. } => unreachable!("handled above"),
-            ArchitectureCmd::Get { id, project } => {
-                client
-                    .get(&path_with_project_query(
-                        &format!("/architecture/{id}"),
-                        project,
-                    ))
-                    .await?
-            }
-            ArchitectureCmd::Schema => unreachable!("handled before daemon client"),
-        };
-        print_json(&value)
-    })
-}
-
 fn cmd_graph(home: &Home, cmd: GraphCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
@@ -3222,7 +3148,7 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// Shared renderer for `architecture|decision|glossary schema` (TASK-SPBTA):
+/// Shared renderer for `decision|glossary schema` (TASK-SPBTA):
 /// a parseable canonical node followed by its property legend. Both pieces
 /// come from `orgasmic_core::schema_examples`, which parity-tests them
 /// against the real schema structs, so this function only formats.

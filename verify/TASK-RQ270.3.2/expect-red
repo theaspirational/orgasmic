@@ -1,0 +1,7 @@
+# Pinned from /tmp/TASK-RQ270.3.2-pre-fix-red.log on 2026-08-06. The assertion
+# below was the first failing assertion: the task edge existed, then the old
+# structured-prefix lint emitted the exact dangling-target parse error.
+exit: 101
+contains: retired architecture target must not emit a dangling-edge parse error
+contains: test index::tests::retired_architecture_implements_target_does_not_surface_parse_error ... FAILED
+contains: test result: FAILED. 0 passed; 1 failed
