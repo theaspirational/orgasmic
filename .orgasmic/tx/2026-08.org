@@ -13217,3 +13217,465 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5
 :SHA:          faf8149f462622d98bc66cb17734c036bec64342
 :END:
+
+* TX 2026-08-06 Thu 10:35:39 task.state_transitioned TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4799
+:TIME:         [2026-08-06 Thu 10:35:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.5 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 10:35:41 manager.dispatch_started TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4800
+:TIME:         [2026-08-06 Thu 10:35:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5-review
+:BRANCH:       task-rq270.5-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-review/task-rq270-5-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 10:35:41]
+:LIVENESS:     4eb174b74f022b78be29eaa382ff970846d2b0bc
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-4795
+:REASON_INITIAL: review excision stage E on the merged tree; the last stage of dec_HBK6A
+:END:
+
+* TX 2026-08-06 Thu 10:35:41 run.created TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4801
+:TIME:         [2026-08-06 Thu 10:35:41]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.5-reviewer-20260806T103541.jsonl
+:REASON:       review excision stage E on the merged tree; the last stage of dec_HBK6A
+:RUN_ID:       run-20260806T103541-8feffd2d86a348029f7434e52ee9aa8e
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-review/task-rq270-5-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-5-review/task-rq270-5-review-fe670d954d53487c8bcd1c56b81aaa3d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-5-review/task-rq270-5-review-fe670d954d53487c8bcd1c56b81aaa3d-stdout.log
+:DISPATCH_ATTEMPT: fe670d954d53487c8bcd1c56b81aaa3d
+:DISPATCH_TX:  tx-20260806-orgasmic-4800
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 10:48:47 reviewer.reported TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4802
+:TIME:         [2026-08-06 Thu 10:48:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:RUN_ID:       run-20260806T103541-8feffd2d86a348029f7434e52ee9aa8e
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:END:
+
+* TX 2026-08-06 Thu 10:50:09 reviewer.done TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4803
+:TIME:         [2026-08-06 Thu 10:50:09]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:REASON:       REJECT, 1 BLOCK SHIP. The doctrine rewrite is correct and more complete than the manager's inventory, but the widened gate is ALREADY partly vacuous today, not merely able to become so: possible_values_for_flag only matches clap's COMPACT one-line layout, so every long-help option returns None and is skipped as 'free-string'. Across 141 shipped invocations the gate compares exactly 5 values, and the highest-traffic site -- manager dispatch --kind -- is skipped right now. Proved by mutation: shipped prose saying '--kind architector', the kind this excision removed, passes green. F2: only 3 of 141 invocations carry parsed enum values; two ordinary prose edits (--class=architecture equals-form, or an org verbatim span wrapped across a line) erase them without tripping the invocation floor. F3: node-references.org:12 still names arch_XXXXX a MINTED class -- inventory incomplete a third time. F5: the installed runtime predates stage D (built d803d49, before merge 85f5eec), so the operator's machine still mints arch_ and still seeds infer-architecture; a second reinstall is the outstanding delivery step. dec_32ZHT upheld with stronger evidence than it claims: PRIMARY_LEAF has ZERO occurrences in crates/ and ui/src, so it is unread, not merely unvalidated.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: d155798..4eb174b
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260806-orgasmic-4800
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 10:50:10 task.state_transitioned TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4804
+:TIME:         [2026-08-06 Thu 10:50:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.5 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 10:51:00 task.created TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4805
+:TIME:         [2026-08-06 Thu 10:51:00]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for the BLOCK SHIP that rejected TASK-RQ270.5: the widened cli_parity gate compares only 5 of the corpus's values and passes green on --kind architector
+:END:
+
+* TX 2026-08-06 Thu 10:51:00 task.property_updated TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4806
+:TIME:         [2026-08-06 Thu 10:51:00]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round for the TASK-RQ270.5 BLOCK SHIP
+:FIX_SUBTASK:  true
+:END:
+
+* TX 2026-08-06 Thu 10:51:33 task.state_transitioned TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4807
+:TIME:         [2026-08-06 Thu 10:51:33]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.5.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 10:51:34 manager.dispatch_started TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4808
+:TIME:         [2026-08-06 Thu 10:51:34]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1
+:BRANCH:       task-rq270.5.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-1/task-rq270-5-1-brief.md
+:STARTED_AT:   [2026-08-06 Thu 10:51:34]
+:LIVENESS:     4eb174b74f022b78be29eaa382ff970846d2b0bc
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: fix round for the stage E BLOCK SHIP: the widened value-enum gate is already vacuous for long-help options
+:END:
+
+* TX 2026-08-06 Thu 10:51:34 run.created TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4809
+:TIME:         [2026-08-06 Thu 10:51:34]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.5.1-implementer-20260806T105134.jsonl
+:REASON:       fix round for the stage E BLOCK SHIP: the widened value-enum gate is already vacuous for long-help options
+:RUN_ID:       run-20260806T105134-ab779bac80484cbcac77d8fcad2b540d
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-1/task-rq270-5-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-5-1/task-rq270-5-1-0dfd732c0f874db6aa8db8f45bbdf7e5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-5-1/task-rq270-5-1-0dfd732c0f874db6aa8db8f45bbdf7e5-stdout.log
+:DISPATCH_ATTEMPT: 0dfd732c0f874db6aa8db8f45bbdf7e5
+:DISPATCH_TX:  tx-20260806-orgasmic-4808
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 11:03:06 implementer.reported TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4810
+:TIME:         [2026-08-06 Thu 11:03:06]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:RUN_ID:       run-20260806T105134-ab779bac80484cbcac77d8fcad2b540d
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1
+:SHA:          596be2233d983c6151849d7777d2da792f66ffd5
+:END:
+
+* TX 2026-08-06 Thu 11:06:30 task.state_transitioned TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4811
+:TIME:         [2026-08-06 Thu 11:06:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.5.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 11:06:32 manager.dispatch_started TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4812
+:TIME:         [2026-08-06 Thu 11:06:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1-review
+:BRANCH:       task-rq270.5.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-1-review/task-rq270-5-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 11:06:32]
+:LIVENESS:     b4eb7f6200d0008610729d629f4735556eccc841
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-4808
+:REASON_INITIAL: fresh review of the fix round for the stage E BLOCK SHIP; the goal requires a BLOCK SHIP's fix round to pass a fresh review before closing
+:END:
+
+* TX 2026-08-06 Thu 11:06:32 run.created TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4813
+:TIME:         [2026-08-06 Thu 11:06:32]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.5.1-reviewer-20260806T110631.jsonl
+:REASON:       fresh review of the fix round for the stage E BLOCK SHIP; the goal requires a BLOCK SHIP's fix round to pass a fresh review before closing
+:RUN_ID:       run-20260806T110631-04d5373dd47c47e9ac1504a9af1f04f8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-5-1-review/task-rq270-5-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-5-1-review/task-rq270-5-1-review-e4766cdf1b074903996a771de0578436-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-5-1-review/task-rq270-5-1-review-e4766cdf1b074903996a771de0578436-stdout.log
+:DISPATCH_ATTEMPT: e4766cdf1b074903996a771de0578436
+:DISPATCH_TX:  tx-20260806-orgasmic-4812
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 11:15:27 reviewer.reported TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4814
+:TIME:         [2026-08-06 Thu 11:15:27]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:RUN_ID:       run-20260806T110631-04d5373dd47c47e9ac1504a9af1f04f8
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rq270.5.1-review
+:END:
+
+* TX 2026-08-06 Thu 11:16:28 reviewer.done TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4815
+:TIME:         [2026-08-06 Thu 11:16:28]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:REASON:       APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. The layout defect is genuinely dead: the acceptance mutation goes red, Absent fires 0 times across 141 invocations (surveyed all 88 leaves x 4 flags; no global args), and split_help_entry reuse is strictly read-only so the neighbouring test is unchanged. Answer to the question asked: the gate is MERELY LESS VACUOUS, not protective -- 6 values over 3 of 9 real enum sites; the reviewer poisoned the other 6 SIMULTANEOUSLY and the suite stayed green. Two surviving classes, and the larger was named by nobody: the fragment class (4 sites), where prose names a flag and value without respelling the whole command, so invocations_in_span never emits it. --status is checked at 0 of 4 sites and --kind reviewer at 0 of 2 -- the other half of the very enum this task is about. Filed as a follow-up, not a blocker, because it is a different defect in a different function.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 4eb174b..b4eb7f6
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260806-orgasmic-4812
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 11:16:29 task.state_transitioned TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4816
+:TIME:         [2026-08-06 Thu 11:16:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.5.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 11:16:31 implementer.done TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4817
+:TIME:         [2026-08-06 Thu 11:16:31]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:REASON:       fix round merged and passed a fresh review (approve-with-follow-ups). Manager independently confirmed the control: the same injection is GREEN on the pre-fix tree and RED post-fix.
+:MODEL:        cursor-grok-4.5-high-fast
+:WORKER_COMMIT: 596be2233d983c6151849d7777d2da792f66ffd5
+:MERGE_SHA:    b4eb7f6200d0008610729d629f4735556eccc841
+:BRANCH:       task-rq270.5.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4808
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 11:16:32 task.state_transitioned TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4818
+:TIME:         [2026-08-06 Thu 11:16:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.5.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 11:16:46 implementer.done TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4819
+:TIME:         [2026-08-06 Thu 11:16:46]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:REASON:       stage E merged at 4eb174b; reviewed REJECT on one BLOCK SHIP, whose fix round TASK-RQ270.5.1 has since landed at b4eb7f6 and passed a fresh review (approve-with-follow-ups).
+:MODEL:        cursor-grok-4.5-high-fast
+:WORKER_COMMIT: faf8149f462622d98bc66cb17734c036bec64342
+:MERGE_SHA:    4eb174b74f022b78be29eaa382ff970846d2b0bc
+:BRANCH:       task-rq270.5-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4795
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 11:16:47 task.state_transitioned TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4820
+:TIME:         [2026-08-06 Thu 11:16:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RQ270.5 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 11:17:00 task.state_transitioned TASK-RQ270.5.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4821
+:TIME:         [2026-08-06 Thu 11:17:00]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       fix round merged at b4eb7f6 and passed a fresh review (approve-with-follow-ups, no BLOCK SHIP); manager confirmed the pre-fix/post-fix control independently
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 11:17:01 task.state_transitioned TASK-RQ270.5
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4822
+:TIME:         [2026-08-06 Thu 11:17:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       stage E merged at 4eb174b; its one BLOCK SHIP was fixed by TASK-RQ270.5.1, which landed and passed a fresh review
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 11:17:36 task.created TASK-RQ270.6
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4823
+:TIME:         [2026-08-06 Thu 11:17:36]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       filed from the TASK-RQ270.5.1 review: the fix closed the help-side hole, but 6 of 9 prose sites remain invisible and were poisoned simultaneously without turning the suite red
+:END:
+
+* TX 2026-08-06 Thu 11:19:12 task.edited TASK-RQ270
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4824
+:TIME:         [2026-08-06 Thu 11:19:12]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-RQ270
+:NODE_ID:      TASK-RQ270
+:END:

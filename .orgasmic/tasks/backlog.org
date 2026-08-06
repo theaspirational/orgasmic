@@ -3042,6 +3042,60 @@ The third is the sharpest: TASK-M47E5.3 gated the verb off rather than deleting 
 The ~311-parse-error interval never happened, because the daemon had the carve-outs before the file disappeared.
 
 *Stages A-D are done. Stage E is TASK-RQ270.5* and should land before the NEXT reinstall so the shipped corpus and the binary that matches it arrive together — currently the shipped doctrine instructs =orgasmic id mint --class architecture=, which this newly-installed binary rejects.
+=== STAGES A-E ARE ALL DONE [2026-08-06]
+The excision decided in dec_HBK6A is complete on main. Five stages, plus three
+fix rounds, every one independently reviewed to a verdict.
+
+*Stage D* (=85f5eec=) retired the =arch_= node class and deleted
+=.orgasmic/architecture.org=. Reviewed APPROVE WITH FOLLOW-UPS; all 5 findings
+actioned. Merged only AFTER the runtime reinstall, so the board never went red.
+
+*Stage E* (=4eb174b=) rewrote the shipped doctrine. Reviewed *REJECT* on one
+BLOCK SHIP: the =cli_parity= gate it shipped to make the rewrite durable was
+already vacuous. Fix round *TASK-RQ270.5.1* (=b4eb7f6=) landed and passed a fresh
+review.
+
+=== The finding worth carrying out of this task
+Stage E widened =cli_parity= to validate shipped prose's flag VALUES against
+clap's =possible_values= — the durable fix for the drift class that caused stage
+E. The reviewer proved the new gate *already reported green on the exact drift it
+was built to catch*: =possible_values_for_flag= only matched clap's COMPACT
+one-line layout, so every long-help option returned =None=, =None= meant
+"free-string, skip", and the gate compared 5 values across a 141-invocation
+corpus. Shipped prose saying =--kind architector= — the worker kind this excision
+removed — passed it green.
+
+The fix round closed the help-side hole and the manager confirmed the control
+independently (same injection GREEN pre-fix, RED post-fix). But the SECOND review
+answered "is the gate protective, or merely less vacuous?" with *merely less
+vacuous*: 6 values over 3 of the 9 real sites, and it poisoned the other 6
+SIMULTANEOUSLY without turning the suite red. That is *TASK-RQ270.6*.
+
+*A gate that can silently stop working is worse than no gate, because it is
+trusted.* Both reviews found what they found by compiling the test file's own
+extractor functions verbatim into a standalone probe and mutating the corpus.
+Reading the code is how the hole survived its first review, and how the second
+class survived its second.
+
+=== The inventory was incomplete THREE times
+Manager measured 18 files where the prior review named 5. The implementer found 2
+more (=graph_authoring_policy.org=, =projects.rs=). The reviewer found a third
+(=node-references.org=, still calling =arch_= a MINTED class). Counting files is
+not auditing claims — and the same file can hold a historical reference that must
+survive next to a live claim that must die (=schema/tx.org=: keep =:108=/=:145=,
+fix =:277=).
+
+=== Still outstanding — the SECOND reinstall
+*The excision is on main but NOT on the operator's machine.* The reinstall was
+built from =d803d49=, which PREDATES the stage-D merge — deliberately, so the
+daemon had the carve-outs before the file vanished. Measured consequence:
+=~/.orgasmic/bin/orgasmic id mint --class architecture= still mints (it produced
+=arch_TVD03=), =project init= would still seed =infer-architecture=, and
+=~/.claude/skills/orgasmic/SKILL.md:38= is stale. A second reinstall delivers
+stage D's binary and stage E's corpus together. Operator authorization required.
+
+TASK-ZFNE1 (the README hero PNG) remains deferred by the operator; the reviewer
+verified its five now-false claims are accurate and complete.
 
 ** Description
 Execute the excision decided in dec_HBK6A. The measuring is already done — do
@@ -3809,3 +3863,106 @@ The =is_retired_architecture_id= comment scope question (finding 2 of that
 review) is *already resolved*: the manager ruled the carve-out stays
 unconditional and corrected the comment in =604efd7=.
 
+* BACKLOG TASK-RQ270.6 The shipped value-enum gate reaches 3 of 9 sites — the fragment class is unreachable    :cli:tests:
+:PROPERTIES:
+:ID: TASK-RQ270.6
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:END:
+
+** Description
+The shipped value-enum gate defends the one site it was pointed at. It does not
+defend the corpus. Filed from the TASK-RQ270.5.1 review, which answered the
+question "is this gate protective, or merely less vacuous?" with *merely less
+vacuous* and proved it.
+
+TASK-RQ270.5.1 fixed the HELP-side parser (clap's long-help layout). The
+PROSE-side extractor is now the binding constraint, and that is a different
+defect in a different function.
+
+** The measurement
+*6 values compared, across 3 of the 9 value-enum sites that actually exist in
+=shipped/=.* The reviewer poisoned the other *6 simultaneously* and the suite
+stayed green with 0 failures.
+
+| # | site | value | markup | seen |
+| 1 | =manager-dispatch.org:374= | =--class task\|decision\|term\|artifact= | org verbatim, closes on line | YES (4) |
+| 2 | =manager-dispatch.org:273= | =--kind implementer= | =#+begin_src= | YES (1) |
+| 3 | =skills/orgasmic/references/init.md:81= | =--kind handoff= | md backtick | YES (1) |
+| 4 | =manager-dispatch.org:307= | =--status done= | org verbatim WRAPPED 306-308 | no |
+| 5 | =manager-dispatch.org:353= | =--status done= | org verbatim WRAPPED 353-354 | no |
+| 6 | =manager-dispatch.org:66= | =--kind reviewer= | backtick FRAGMENT | no |
+| 7 | =manager-dispatch.org:333= | =--kind reviewer= | verbatim FRAGMENT | no |
+| 8 | =prompt-specs/base_worker.org:60= | =--status blocked= | backtick FRAGMENT | no |
+| 9 | =schema/state-machine.org:37= | =--status done= | verbatim FRAGMENT | no |
+
+*=--status= is checked at 0 of its 4 sites. =--kind reviewer= is checked at 0 of
+its 2* — the other half of the very enum the excision was about.
+
+** Two surviving classes, and the bigger one was named by nobody
+1. *Wrapped verbatim* (2 sites). =code_spans= rule (3) requires an org
+   ==verbatim== span to close on the same line.
+2. *FRAGMENT* (4 sites). =invocations_in_span= only emits an invocation for a
+   span containing the literal token =orgasmic=. Prose that names a flag and a
+   value without respelling the whole command — which is how conventions
+   normally reference a flag — is structurally unreachable. The stage-E
+   implementer named class 1 as residual risk; *nobody named class 2*, and it is
+   twice the size.
+
+** Scope
+*** F1 — reach the invisible sites (the main item)
+- Fragment class: when a span names a =VALUE_ENUM_FLAGS= flag with a concrete
+  value but no =orgasmic= token, still check it — either resolve against the
+  nearest preceding =orgasmic= invocation in the file, or check the value against
+  the UNION of that flag's =possible_values= over all leaves declaring it. A union
+  check still catches =architector= and =BOGUSKIND=.
+- Wrapped class: let rule (3) join a line to the next when the delimiter does not
+  close and the span already contains =orgasmic=.
+
+*** F2 — the floor's message misdiagnoses its most likely trip
+=MINIMUM_ENUM_VALUE_COMPARISONS = 6= against exactly 6 compared, and the message
+says "the extractor or help-entry parser is broken, *not the prose*". Measured:
+a legitimate prose reword at =init.md:81= drops the count to 5 and trips the
+floor — where that diagnosis is flatly wrong. An engineer who trusts it hunts in
+the parser, finds nothing, and lowers the constant. *That is exactly how this
+gate gets re-vacuumed.* Keep the floor; fix the message to name both causes and
+PRINT the sites still compared, so the two are distinguishable in one read.
+Landing F1 also buys real headroom.
+
+*** F3 — =--flag=value= does not survive org verbatim
+=enum_values_in_tokens= handles =--flag=value= correctly (proven in a
+=#+begin_src= block), but =code_spans= rule (3) splits org verbatim spans on
+===, so the equals form in the corpus's DOMINANT markup is truncated before the
+new code sees it. Measured: ==orgasmic id mint --class=architecture== yields 0
+value failures — =architecture= is the RETIRED class — and the run only goes red
+on the count floor, with F2's misleading message.
+
+*** F4 — =--verdict= is a real clap enum and is not in =VALUE_ENUM_FLAGS=
+=manager dispatch-close --verdict= renders
+=[possible values: approve, approve-with-follow-ups, reject]=, and shipped prose
+discusses verdict values at =manager-dispatch.org:336,343=. A =--verdict approvedd=
+typo inside a real invocation yields 0 failures. This is the measured cost of
+leaving =VALUE_ENUM_FLAGS= hand-maintained, and the argument for deriving it from
+the binary's own help — any flag whose entry renders a bracket.
+
+*** F5 — assertion order hides real regressions
+The count assertion (=:296=) fires before the value assertion (=:302=). An edit
+that both drops a site and introduces a bad value shows only "the extractor is
+broken"; the real retired-value regression stays hidden until the count is fixed.
+Assert =failures.is_empty()= first, or report both in one panic.
+
+** Acceptance
+- The gate compares values at *all 9 sites*, or every still-unreachable site is
+  enumerated with a stated reason.
+- Poisoning any single site — and all of them at once — goes red.
+- The floor message distinguishes "extractor broke" from "prose edit removed a
+  site" and prints the surviving sites.
+- =--verdict= is covered, or =VALUE_ENUM_FLAGS= is derived from the binary.
+- =--flag=value= works in org verbatim, not just in src blocks.
+
+** The bar
+*Do not infer coverage from reading the code — mutate the corpus and measure.*
+Both reviews in this chain found what they found by compiling the test file's own
+extractor functions verbatim into a standalone probe and running them against
+mutated copies. Reading the code is how the original hole survived its first
+review, and how this second class survived its second.

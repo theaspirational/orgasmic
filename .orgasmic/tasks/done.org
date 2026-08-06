@@ -24694,3 +24694,258 @@ the INSTALLED runtime (=0.0.15-dev.1= from =05e1813=, predating both carve-outs)
 produces ~311 =dangling advisory marker= parse errors. That is a faithful preview
 of the interval between this merge and the runtime reinstall, and the parent
 records both orderings. The merge decision is the operator's.
+
+* DONE TASK-RQ270.5.1 Stage E's value-enum gate is already vacuous — long-help options are silently skipped :cli:tests:
+:PROPERTIES:
+:ID: TASK-RQ270.5.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: true
+:END:
+
+** Description
+Fix round for the BLOCK SHIP that rejected TASK-RQ270.5. Stage E's doctrine
+rewrite is correct and landed; the GATE it shipped to make that rewrite durable
+reports green on the exact drift it was built to catch.
+
+** The defect — the gate is already vacuous, not merely able to become so
+=possible_values_for_flag= (=crates/orgasmic-cli/tests/cli_parity.rs:246=, with
+=:682=) only finds =[possible values: ...]= when the bracket sits on a line that
+also contains the flag name. That is clap's *compact* option layout. When an
+option's help text is long, clap switches to the *two-line* layout — flag on one
+line, description plus the bracket on the next — and the function returns =None=.
+=None= is then treated as "free-string flag, skip".
+
+Measured by the reviewer against the built binary, driving the test file's own
+functions verbatim:
+
+: possible_values_for_flag(id-mint help,          "--class")  = Some([task, decision, term, artifact])
+: possible_values_for_flag(node-body-set help,    "--kind")   = Some([decision, ..., handoff])
+: possible_values_for_flag(manager-dispatch help, "--kind")   = None   <-- HAS [possible values: implementer, reviewer]
+: possible_values_for_flag(dispatch-close help,   "--status") = None   <-- HAS [possible values: done, aborted]
+: possible_values_for_flag(dispatch-close help,   "--verdict")= None   <-- HAS [possible values: approve, ...]
+
+*Across the whole 141-invocation shipped corpus the gate compares exactly 5
+values*, all from =id mint= and =node body set= — the two commands whose help
+happens to be short enough for the compact layout.
+
+** The proof that it is live, not theoretical
+Replaying the test's exact loop over a copy of =shipped/= with one token changed:
+
+: ############ BASELINE ############
+: SKIPPED (possible_values=None): manager-dispatch.org: `orgasmic manager dispatch ... --kind implementer ...` flag --kind
+: VALUES ACTUALLY COMPARED: 5
+: FAILURES: 0
+:
+: ############ MUTATION: --kind architector ############
+: SKIPPED (possible_values=None): manager-dispatch.org: `orgasmic manager dispatch ... --kind architector ...` flag --kind
+: VALUES ACTUALLY COMPARED: 5
+: FAILURES: 0
+
+=architector= is the worker kind THIS EXCISION REMOVED. Shipped prose telling
+every manager to dispatch with =--kind architector= ships green through the gate
+written to stop precisely that.
+
+** The ruling
+=None= currently conflates three cases: (a) a genuinely free-string flag, (b)
+clap's multi-line layout, (c) a help-format change. Case (b) is the common one in
+this CLI and is live today. *Separate them.*
+
+- Parse =--help= as option ENTRIES rather than lines: on seeing an option line,
+  accumulate following lines until the next entry at the same indent, then look
+  for the bracket in the whole entry. =split_help_entry= (=cli_parity.rs:366=)
+  already does this shape of work for
+  =every_flag_and_argument_has_a_description= — reuse it rather than writing a
+  second parser.
+- Make *"flag not found in the help at all"* a FAILURE, distinct from "flag found,
+  no bracket" (= genuine free-string).
+
+The reviewer offered an acceptable alternative if entry parsing is judged too
+fragile: invert the default — fail on "flag not found", and maintain a small
+explicit allow-list of free-string flags. *Either is fine. Silently skipping is
+not.*
+
+** Also in scope
+*** F2 — the anti-vacuum floor counts the wrong thing (NON-BLOCKING, fix here)
+=MINIMUM_SHIPPED_INVOCATIONS= (=cli_parity.rs:25=) guards the INVOCATION count,
+but only *3 of 141* invocations carry parsed enum values. Two ordinary prose
+edits erase them without tripping the floor, both measured:
+
+| mutation to =manager-dispatch.org:374=   | invocations | enum sites |
+| baseline                                 |         141 |          3 |
+| =--class=architecture= (equals form)     |         141 |          2 |
+| org verbatim wrapped across a line break |         140 |          2 |
+
+=long_flag()= rejects =--class=architecture= because of the =research=; =code_spans=
+rule (3) drops org =verbatim= spans that do not close on the same line. Both are
+silent. *The corpus already contains such a casualty*:
+=manager-dispatch.org:353-354='s =dispatch-close ... --status done= wraps a line
+and is never seen by the extractor.
+
+Add =MINIMUM_ENUM_VALUE_COMPARISONS=, asserted against the count of values
+ACTUALLY COMPARED — not sites found — so an extractor that stops matching goes
+red instead of quiet. Handle =--flag=value= in =enum_values_in_tokens=.
+
+*** F3 — a third inventory miss (NON-BLOCKING, fix here)
+=shipped/prompt-studio/conventions/node-references.org:12= still names
+=arch_XXXXX= a MINTED id class and omits =ART-XXXXX=. It directly contradicts
+=manager-dispatch.org:376-380=, which stage E rewrote to say the architecture
+class is no longer mintable. =:20= holds up =arch_QXS5W= as the model form.
+
+This file was in neither the manager's 18-file inventory nor the implementer's
+two additions. *The inventory has now been incomplete three times.* Note the
+distinction that governs the fix: =minted= is wrong, =referenced= is right —
+legacy =arch_= ids remain valid as references.
+
+** Not in scope
+- The README hero PNG. TASK-ZFNE1 owns it; the operator deferred the redraw. The
+  reviewer verified the five false claims are accurate and complete and found no
+  sixth.
+- The second runtime reinstall (review F5). That is a delivery step needing
+  operator authorization, tracked on TASK-RQ270.5's Sequencing paragraph, not a
+  code change.
+- =VALUE_ENUM_FLAGS= (=cli_parity.rs:407=) staying hand-maintained. Deriving it
+  from the binary's own help would remove a maintenance edge; if the fix for F1
+  makes that natural, take it, otherwise leave it and say so.
+
+** Acceptance
+- A test that FAILS when shipped prose names a value clap does not accept, *for a
+  long-help option* — specifically =orgasmic manager dispatch --kind architector=.
+  That exact mutation is the one that passes green today.
+- The count of values actually compared is asserted against a floor, so a broken
+  extractor is red, not quiet.
+- =--flag=value= is extracted.
+- =node-references.org= no longer calls =arch_= mintable.
+- =cli_parity= passes, and the other shipped gates stay green.
+
+** The audit bar
+The gate is the deliverable here, not the prose. A gate that can silently stop
+working is worse than no gate, because it is trusted. Before calling this done,
+*mutate the corpus and prove the gate goes red* — do not infer it from reading
+the code. The reviewer's harness is the model: compile the test file's own
+extractor functions verbatim into a standalone probe and run them against
+mutated copies.
+
+* DONE TASK-RQ270.5 Excision stage E — rewrite the shipped doctrine that still instructs a retired architecture layer :shipped:cli:docs:
+:PROPERTIES:
+:ID: TASK-RQ270.5
+:PRIORITY: P1
+:WRITE_SCOPE: shipped/**,crates/**,.orgasmic/**,README.md
+:END:
+
+=== Manager re-measured the inventory [2026-08-06] — it is 18 files, not 5
+The stage-D review named 5 files. A tree-wide sweep of =shipped/= finds *33 hits across 18 files* (excluding =architector.reported= event-name rows). Verified per-file counts:
+
+| 5 | =project-scaffold/tasks/backlog.org= |
+| 4 | =prompt-studio/prompt-specs/planner.org= |
+| 3 | =prompt-studio/prompt-specs/manager.org= (=:12=, =:46=, =:126=) |
+| 3 | =prompt-studio/conventions/manager-dispatch.org= (incl. =:374= =--class architecture=) |
+| 2 | =skills/orgasmic/references/init.md= |
+| 2 | =prompt-studio/prompt-specs/griller.org= |
+| 2 | =project-scaffold/tasks/goal.org= |
+| 2 | =entry/router.org= (=:78= AND =:125=, not just =:78=) |
+| 1 each | =skills/orgasmic/references/recall-resume.md=, =skills/orgasmic/SKILL.md=, =schema/tx.org=, =prompt-specs/implementer.org=, =prompt-specs/general_worker.org=, =prompt-specs/base_worker.org=, =prompt-parts/planning_policy.org=, =prompt-parts/grill_domain_policy.org=, =conventions/tx-scannable-bodies.org=, =project-scaffold/decisions.org= |
+
+*=schema/tx.org= needs a SPLIT decision, and the review's "keep tx.org" would have gotten it wrong.* It carries both kinds of hit:
+- =:108= and =:145= name the =architector.reported= EVENT TYPE. *Keep* — tx TYPE is a free string and history must stay readable.
+- =:277= lists =.orgasmic/architecture.org= among the project's live state files. *Fix* — that claim is now false.
+
+The lesson this excision has paid for seven times over applies to its own last stage: the same file can hold both a historical reference that must survive and a live claim that must die. Counting files is not the same as auditing claims.
+
+*Also stale, and outside =shipped/=:* the INSTALLED skill copy at =~/.claude/skills/orgasmic/SKILL.md:38= carries the same =audit= description. It is materialized from =shipped/= by the installer, so fixing the source is necessary but not sufficient — the operator's installed skill needs re-syncing after this lands.
+
+** Description
+Stage E of dec_HBK6A: rewrite the shipped doctrine so the runtime stops
+instructing agents to use an architecture layer that no longer exists. Stages
+A-D are done and reviewed. This is the last stage.
+
+Stage E existed only as prose inside TASK-RQ270's body until now. The stage-D
+review pointed out that the tracking gap acquired teeth the moment stage D
+landed, because stage D converted a documentation lag into a *live CLI error*.
+
+** Why this is now urgent rather than tidy
+=shipped/= is copied verbatim into the runtime package
+(=scripts/package-runtime.sh:166=), so the erroring instruction and the erroring
+binary ship in the SAME artifact. An agent that follows shipped conventions hits
+a hard failure.
+
+Measured against built code by the stage-D reviewer:
+
+: $ orgasmic id mint --class architecture
+: error: invalid value 'architecture' for '--class <CLASS>'
+:   [possible values: task, decision, term, artifact]
+
+while =shipped/prompt-studio/conventions/manager-dispatch.org:374= still says
+"Mint with =orgasmic id mint --class task|decision|architecture|term=".
+
+** The inventory, measured
+- =shipped/prompt-studio/conventions/manager-dispatch.org:374= — instructs the
+  now-invalid =--class architecture=. Hard error.
+- =shipped/entry/router.org:78= — still lists =architecture.org= as a source of
+  truth. HIGHEST TRAFFIC: every dispatched worker is told to run
+  =orgasmic entry=.
+- =shipped/prompt-studio/prompt-specs/manager.org:46= — same claim in the
+  manager spec.
+- =shipped/skills/orgasmic/SKILL.md:38= — describes =audit= as comparing
+  =architecture.org= claims against shipped code.
+- =shipped/project-scaffold/tasks/backlog.org:126-147= — every NEWLY SCAFFOLDED
+  project still gets bootstrap task =TASK-C9V29.3 infer-architecture= with
+  =:WRITE_SCOPE: .orgasmic/architecture.org=, instructing an agent to author a
+  file class the runtime retired. **This one is pinned green** by
+  =crates/orgasmic-core/tests/fixtures.rs:326=
+  (=shipped_scaffold_seeds_bootstrap_task_tree=, asserting the write scope
+  contains =architecture.org= at =:361=), so it keeps shipping until that test
+  changes with it.
+- The parent's stage-E list also names =tx.org= (architector rows become a
+  historical note), the planner/griller/base/general/implementer specs, and
+  =conventions.org=.
+
+** The gate that should have caught this
+=cli_parity= DOES scan the whole shipped corpus
+(=crates/orgasmic-cli/tests/cli_parity.rs:21=, with a
+=MINIMUM_SHIPPED_INVOCATIONS = 100= guard against a silently-empty extractor) —
+but it validates **verb paths only**. =orgasmic id mint= resolves, so the test
+passes and the =--class= value-enum drift is invisible to it. cli_parity was
+green on the stage-D branch and told us nothing about this.
+
+*Widen it*: validate =--class= / =--kind= / other value-enum arguments in
+shipped prose against clap's =possible_values=. That is the durable fix; the
+text edits above are the immediate one.
+
+** Also carried into this stage
+- **TASK-ZFNE1** — =README.md:6='s hero graphic labels =architect= as an LLM
+  agent role and =README.md:10= states the loop as "Grilling -> Decisions+Glossary
+  -> Architecture -> Tasks -> Code -> Repeat". Deferred through stages A-D
+  deliberately, because redrawing before the true picture was known guaranteed a
+  second redraw. The picture is now known. Operator deferred once already
+  ("we'll redraw later") — confirm before spending on art.
+- **The =glossarist= dispatchability check**, never done: it is shown as an agent
+  role in the same hero image. Verify it is actually dispatchable before the
+  image asserts it again.
+- **Settle the 4 glossary =:PRIMARY_LEAF: arch_*= refs deliberately**
+  (=glossary.org:355,366,377,388=). Stage D left them, and both the stage-D
+  implementer and reviewer independently judged that correct: =PRIMARY_LEAF= is
+  not in =REFERENCE_PROPERTY_KEYS=, nothing validates it, and singling out 4
+  pointers while 231 structurally identical =:IMPLEMENTS: arch_= edges in
+  =done.org= stay is less coherent than leaving all of them. dec_HBK6A's own
+  Consequences call them "inert references, cleaned opportunistically".
+  *Record the decision either way* — an indefinitely deferred cleanup is how a
+  loose end becomes folklore.
+
+** Acceptance
+- No shipped instruction names a verb, flag value, worker kind or state file the
+  runtime no longer has.
+- =cli_parity= passes, and is widened to catch value-enum drift (or a follow-up
+  is filed saying explicitly why not).
+- =shipped_scaffold_seeds_bootstrap_task_tree= is updated with the seed it
+  guards, not deleted.
+- A newly scaffolded project contains no architecture bootstrap task.
+- Historical references stay: =shipped/schema/tx.org:108,145='s
+  =architector.reported= rows are CORRECT and must not be removed — tx TYPE is a
+  free string and history must stay readable.
+
+** Sequencing
+The stage-D merge already forces a runtime reinstall. This stage should land
+BEFORE that reinstall, so the new =shipped/= corpus and the new binary reach the
+operator's machine together rather than one release apart.
+
