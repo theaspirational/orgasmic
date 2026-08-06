@@ -483,7 +483,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dst.join("decisions.org"),
-            "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n#+scope: project\n\n* dec_001 Bootstrap orgasmic project state :bootstrap:\n:PROPERTIES:\n:ID:            dec_001\n:GLOSSARY_REFS:\n:DECIDED_AT:\n:SOURCE:        scaffold\n:END:\n** Context\nA freshly initialized project has only scaffold files. Agents need one explicit starting decision so they do not treat empty project memory as authoritative.\n** Decision\nBootstrap `.orgasmic/` from repository evidence and operator answers before relying on project, decision, glossary, or architecture records for downstream work.\n** Consequences\nTASK-001 is the first work item. Later workers should treat scaffold prose as incomplete until TASK-001 and its subtasks replace it with repo-specific state.\n",
+            "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n#+scope: project\n\n* dec_001 Bootstrap orgasmic project state :bootstrap:\n:PROPERTIES:\n:ID:            dec_001\n:GLOSSARY_REFS:\n:DECIDED_AT:\n:SOURCE:        scaffold\n:END:\n** Context\nA freshly initialized project has only scaffold files. Agents need one explicit starting decision so they do not treat empty project memory as authoritative.\n** Decision\nBootstrap `.orgasmic/` from repository evidence and operator answers before relying on project, decision, or glossary records for downstream work.\n** Consequences\nTASK-001 is the first work item. Later workers should treat scaffold prose as incomplete until TASK-001 and its subtasks replace it with repo-specific state.\n",
         )
         .unwrap();
         let tasks_dst = dst.join("tasks");

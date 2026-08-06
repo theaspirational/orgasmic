@@ -20,8 +20,8 @@ Implement {{task.id}} without widening the task.
 :PROPERTIES:
 :MERGE:              append
 :END:
-- Do not create architecture, glossary, or decision records unless the brief
-  explicitly asks for those files.
+- Do not create glossary or decision records unless the brief explicitly asks
+  for those files.
 - If the brief is impossible as written, stop with the smallest useful blocker
   report.
 - Do not perform review, landing, or housekeeping work unless this dispatch

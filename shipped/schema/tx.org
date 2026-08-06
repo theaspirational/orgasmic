@@ -274,4 +274,4 @@ Properties for =artifact.regenerated= (reserved; no write path yet):
 
 ** Property registry (per type)
 [Filled out during v0.0.1 implementation from `.orgasmic/decisions.org`,
-`.orgasmic/architecture.org`, and `.orgasmic/tasks/<state>.org`.]
+`.orgasmic/glossary.org`, and `.orgasmic/tasks/<state>.org`.]

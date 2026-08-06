@@ -20,9 +20,9 @@ outcome (=TASK-ENXWA reviewer pass closed.=, =Dispatched implementer for
 TASK-Q9144.=), then add detail.
 
 ** Reference every node by its canonical id
-=TASK-HCFBT=, =TASK-HCFBT.1=, =dec_QVSM0=, =arch_MK2Q2.5=. The UI auto-links these
-tokens so a reader can click through to the task/decision/architecture node. A
-body that says "the reviewer subtask" instead of =TASK-HCFBT.1= loses that link.
+=TASK-HCFBT=, =TASK-HCFBT.1=, =dec_QVSM0=, =term_H29TQ=. The UI auto-links these
+tokens so a reader can click through to the task/decision/glossary node. A body
+that says "the reviewer subtask" instead of =TASK-HCFBT.1= loses that link.
 
 ** Plain prose only — no org emphasis markup
 Do not wrap text in =/slashes/=, =*asterisks*=, or ===equals===; the feed
@@ -32,7 +32,7 @@ are left untouched.
 
 ** Lean on the auto-decoration instead
 The UI auto-formats three token forms in plain prose, so just write them
-naturally: node ids (=TASK-HCFBT.1=, =dec_QVSM0=, =arch_MK2Q2.5=) become links;
+naturally: node ids (=TASK-HCFBT.1=, =dec_QVSM0=, =term_H29TQ=) become links;
 config/property keys written in org-property form =:STALL_TIMEOUT_SECS:= render
 as inline code; and canonical glossary terms link to their definition. Prefer
 the =:KEY:= colon form when naming a config key, and use a term's canonical

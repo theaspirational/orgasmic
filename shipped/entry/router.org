@@ -75,7 +75,6 @@ done plainly enough that the user can reverse it.
 - `tasks/goal.org`: manager focus only.
 - `tasks/handoff.org`: manager continuity only.
 - `decisions.org`: durable rationale.
-- `architecture.org`: architecture graph, source paths, node tests.
 - `glossary.org`: domain language.
 - `gotchas.org`: repeated traps; read before source edits.
 - `conventions/`: repo-local working agreements.
@@ -122,7 +121,7 @@ have outlived several releases, and its age is not evidence that it is live.
   gitignored `tmp/local_instructions.org`.
 - Record durable rationale in `decisions.org`; do not create stray decision
   docs.
-- While the project is greenfield, treat decisions and architecture as a living
+- While the project is greenfield, treat decisions and glossary as a living
   model: create genuinely new rationale through the CLI, and revise existing
   nodes through `orgasmic node body set|append` or `orgasmic node prop set`.
 - If something about the project surprises you, add or ask for a `gotchas.org`

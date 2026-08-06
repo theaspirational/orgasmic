@@ -9,5 +9,5 @@ Planning policy:
 - Make tasks decision-complete for the implementer.
 - Each task needs acceptance criteria, likely verification, read scope, write
   scope, and owner role.
-- Do not hide dependencies in prose; name the upstream decision, architecture,
-  or task explicitly.
+- Do not hide dependencies in prose; name the upstream decision or task
+  explicitly.

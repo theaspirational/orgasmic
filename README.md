@@ -7,7 +7,7 @@
 
 orgasmic makes AI-agent work durable, reviewable, and repo-native.
 
-> Grilling -> Decisions+Glossary -> Architecture -> Tasks -> Code -> Repeat.
+> Grilling -> Decisions+Glossary -> Tasks -> Code -> Repeat.
 
 All live next to the code and version with it.
 
@@ -22,8 +22,9 @@ durable state, explicit decisions, and reviewable execution history.
 - [Org-mode](https://en.wikipedia.org/wiki/Org-mode) **native for agents** - `.org` is plain text with a structure LLMs
 already understand well: headings, properties, TODO states, and tags. Agents can orient in `.orgasmic/` without a custom database viewer or
 schema tutorial.
-- **Local-first project state and task tracking** - `.orgasmic/` keeps decisions,architecture, glossary, tasks, handoff, goal, and agents run history next to the code. Project coordination can be reviewed, diffed,
-branched, and committed.
+- **Local-first project state and task tracking** - `.orgasmic/` keeps decisions,
+glossary, tasks, handoff, goal, and agent run history next to the code. Project
+coordination can be reviewed, diffed, branched, and committed.
 - **Agent and harness agnostic** - Bring Claude, Codex, Cursor, Hermes, local
 models; assign each to the work it is best suited
 for: orchestration, implementation, review, planning. Prompt Studio lets you inspect and edit the exact initial prompt each

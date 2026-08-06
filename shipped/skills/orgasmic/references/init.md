@@ -92,10 +92,10 @@ pickup command is:
 ## If the operator starts now
 
 The scaffold's `tasks/backlog.org` ships the bootstrap task tree —
-`TASK-C9V29` with subtasks `TASK-C9V29.1`–`TASK-C9V29.4` (infer-project,
-infer-decisions, infer-architecture, migrate-instructions) — that turns the
-empty templates into real, repo-specific records through the daemon. Start
-`TASK-C9V29.1` only after the operator chooses this path:
+`TASK-C9V29` with subtasks `TASK-C9V29.1`–`TASK-C9V29.3` (infer-project,
+infer-decisions, migrate-instructions) — that turns the empty templates into
+real, repo-specific records through the daemon. Start `TASK-C9V29.1` only after
+the operator chooses this path:
 
 - **Audit** the repo for concrete evidence: READMEs, build manifests,
   directory layout, entry points, test/lint/build commands.
@@ -104,8 +104,8 @@ empty templates into real, repo-specific records through the daemon. Start
   questions separate.
 - **Write** confirmed answers via `orgasmic node body set` on
   `.orgasmic/project.org`, then continue in order through `TASK-C9V29.2`
-  (decisions), `TASK-C9V29.3` (architecture), and `TASK-C9V29.4` (migrate
-  instructions), each per its Description/Acceptance in `backlog.org`.
+  (decisions) and `TASK-C9V29.3` (migrate instructions), each per its
+  Description/Acceptance in `backlog.org`.
 - **Record** activity via `orgasmic tx record` after each subtask.
 
 This grilling is interactive and naturally pauses for the user.

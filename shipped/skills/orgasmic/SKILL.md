@@ -35,7 +35,7 @@ work from on-disk state alone in a fresh-context session.
 - `status` — terse one-paragraph checkin (goal + handoff + sprint + in-flight), no full briefing.
 - `handoff` — refresh `tasks/handoff.org`; optionally export an `archive/<date>_manager-handoff/handoff.md` for human readers.
 - `dispatch` — shorthand for the worktree + brief + codex + pre-flight-tx sequence.
-- `audit` — conformance pass comparing `architecture.org` claims against shipped code.
+- `audit` — conformance pass comparing decision and glossary claims against shipped code.
 
 When a not-yet-implemented subcommand is invoked, say it is on the roadmap and
 offer the closest implemented alternative.

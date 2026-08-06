@@ -19,8 +19,8 @@ Complete the assigned work for {{task.id}}.
 ** Boundaries
 - Stay inside the stated read and write scope.
 - Stop when the assignment becomes broader than the selected worker role.
-- Do not invent product decisions, architecture, or terminology when the graph
-  should carry them.
+- Do not invent product decisions or terminology when the graph should carry
+  them.
 
 ** Inputs
 - Project: {{project.name}} at {{project.path}}.

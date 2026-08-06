@@ -16,10 +16,10 @@
 ** Description
 Umbrella task that turns a freshly scaffolded `.orgasmic/` into real project
 state by auditing this repository and grilling the operator. It owns no file of
-its own; it completes when its four subtasks are DONE.
+its own; it completes when its three subtasks are DONE.
 
-Run the subtasks in order — TASK-C9V29.1 -> TASK-C9V29.2 -> TASK-C9V29.3 ->
-TASK-C9V29.4. Each one:
+Run the subtasks in order — TASK-C9V29.1 -> TASK-C9V29.2 -> TASK-C9V29.3. Each
+one:
 1. Audits the codebase for concrete evidence (READMEs, manifests, source layout,
    tests, config) instead of guessing.
 2. Grills the operator in small batches of high-value questions to confirm
@@ -34,8 +34,8 @@ start`). Bootstrap `.orgasmic/` writes use `orgasmic node body set|append`,
 Replace this task with your own once bootstrap is complete.
 
 ** Acceptance Criteria
-- [ ] TASK-C9V29.1, TASK-C9V29.2, TASK-C9V29.3, and TASK-C9V29.4 are all DONE.
-- [ ] `project.org`, `decisions.org`, and `architecture.org` hold real,
+- [ ] TASK-C9V29.1, TASK-C9V29.2, and TASK-C9V29.3 are all DONE.
+- [ ] `project.org`, `decisions.org`, and `glossary.org` hold real,
       repo-specific records beyond the scaffolded `dec_K1DR7` bootstrap decision
       (no `[Replace ...]` placeholders remain).
 - [ ] `.orgasmic/tx/` has at least one activity record from this bootstrap.
@@ -123,52 +123,15 @@ new domain terms you rely on into `.orgasmic/glossary.org`.
 
 ** Worklog
 
-* BACKLOG TASK-C9V29.3 infer-architecture: audit code, then write architecture.org :bootstrap:
+* BACKLOG TASK-C9V29.3 migrate-instructions: relocate tacit knowledge into .orgasmic :bootstrap:
 :PROPERTIES:
 :ID:               TASK-C9V29.3
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WRITE_SCOPE:      .orgasmic/architecture.org .orgasmic/tx/**
-:READ_SCOPE:       .orgasmic/decisions.org .orgasmic/project.org .orgasmic/glossary.org src/** crates/** lib/** docs/**
-:DEPENDS_ON:       TASK-C9V29.2
-:BLOCKED_BY:
-:LAST_UPDATED:
-:END:
-
-** Description
-Materialize the architecture graph from the real code, linked back to the
-decisions confirmed in TASK-C9V29.2.
-
-Audit: identify subsystems and their functional leaf components. Each leaf is
-verb-namable, maps to 1–10 source paths, and describes a mechanism — not a
-feature and not a cross-cutting concern.
-
-Write: author `.orgasmic/architecture.org` as top-level subsystems with nested
-leaf nodes carrying `:SOURCE_PATHS:` and typed edges (READS / WRITES /
-EXPOSES_REST / EXPOSES_WS / SUBSCRIBES_TO / SPAWNS / CALLS, with DEPENDS_ON as
-the escape hatch). Link nodes to the decision records they implement via their
-minted `dec_XXXXX` ids. Prefer a
-faithful map of what exists over an aspirational one.
-
-** Acceptance Criteria
-- [ ] Subsystems and functional leaf components reflect the actual code layout.
-- [ ] Each leaf has `:SOURCE_PATHS:` pointing at real files and a typed edge
-      wherever one applies.
-- [ ] Nodes reference the decisions they implement.
-- [ ] No placeholder nodes remain.
-
-** Worklog
-
-* BACKLOG TASK-C9V29.4 migrate-instructions: relocate tacit knowledge into .orgasmic :bootstrap:
-:PROPERTIES:
-:ID:               TASK-C9V29.4
-:STATE:            backlog
-:PARENT_TASK:      TASK-C9V29
-:PRIORITY:         P1
 :WRITE_SCOPE:      .orgasmic/project.org .orgasmic/decisions.org .orgasmic/gotchas.org .orgasmic/conventions/** .orgasmic/tmp/local_instructions.org CLAUDE.md AGENTS.md .orgasmic/tx/**
 :READ_SCOPE:       CLAUDE.md AGENTS.md .cursorrules .cursor/** .github/copilot-instructions.md CONTRIBUTING.md docs/** .orgasmic/**
-:DEPENDS_ON:       TASK-C9V29.3
+:DEPENDS_ON:       TASK-C9V29.2
 :BLOCKED_BY:
 :LAST_UPDATED:
 :END:
