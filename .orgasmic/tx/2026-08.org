@@ -15847,3 +15847,170 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-06 Thu 15:45:58 task.created TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4957
+:TIME:         [2026-08-06 Thu 15:45:58]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-QGWK7 reviewed APPROVE WITH FOLLOW-UPS with nine findings; as merged the change does not meet its own acceptance criterion 2 (readable from a fresh clone)
+:END:
+
+* TX 2026-08-06 Thu 15:45:59 task.property_updated TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4958
+:TIME:         [2026-08-06 Thu 15:45:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-QGWK7.1
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-06 Thu 15:45:59 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4959
+:TIME:         [2026-08-06 Thu 15:45:59]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:00 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4960
+:TIME:         [2026-08-06 Thu 15:46:00]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:00 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4961
+:TIME:         [2026-08-06 Thu 15:46:00]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:01 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4962
+:TIME:         [2026-08-06 Thu 15:46:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:01 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4963
+:TIME:         [2026-08-06 Thu 15:46:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:02 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4964
+:TIME:         [2026-08-06 Thu 15:46:02]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:02 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4965
+:TIME:         [2026-08-06 Thu 15:46:02]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:03 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4966
+:TIME:         [2026-08-06 Thu 15:46:03]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:03 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4967
+:TIME:         [2026-08-06 Thu 15:46:03]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 15:46:04 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4968
+:TIME:         [2026-08-06 Thu 15:46:04]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
