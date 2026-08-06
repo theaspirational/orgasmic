@@ -29,27 +29,34 @@
 # Exit codes: 0 clean or all-flake · 1 REAL failure present · 2 registry
 # rejected · 3 wrapper misuse · 4 INCONCLUSIVE (host degraded — re-run when calm).
 #
-# Host state (TASK-STWVB):
-#   Sampled before / during / after the suite run (or once for --classify).
-#   Signals on macOS: 1-minute load average, and syspolicyd %CPU when that
-#   process exists. Either signal past its threshold marks the host degraded.
+# Host state (TASK-STWVB / TASK-STWVB.1):
+#   On a live suite run: load is sampled BEFORE the suite (state not caused by
+#   this run), and syspolicyd cumulative CPU-time is sampled before and after
+#   so the gate sees a delta across the run — the instrument that previously
+#   produced +281 s with a scan storm / +32 s without. Point-sampled %CPU is
+#   not used: it is a short-window decaying average, and a post-suite sample
+#   cannot observe a burst that collapses within seconds.
 #
-#   Thresholds, justified by the 2026-08-02 measurement on TASK-STWVB
-#   (syspolicyd at 586% CPU, load average 11.41, suite 8–15× slower than the
-#   42.9–85.9 s calm baseline; every failure green alone in 8 s against the
-#   same binary):
-#     LOAD_DEGRADED_THRESHOLD=8.0        # below the 11.41 thrash reading, well
-#                                        # above a quiet developer Mac (<4)
-#     SYSPOLICYD_CPU_DEGRADED=200.0      # well below the 586% peak; the gotcha
-#                                        # kill-guard uses ~400% sustained
+#   On --classify: host state is UNKNOWN unless the suite log carries an
+#   `# orgasmic-host-state:` stamp written by the live run that produced it.
+#   Reclassify-time sampling is never used — it has no relationship to the run
+#   under review and must not mint a LOAD-SENSITIVE excuse.
 #
-#   A missing signal is ignored, never fatal: Linux has no syspolicyd, and a
-#   sampler that cannot read load must not turn a clean run red.
+#   Thresholds (TASK-STWVB.1):
+#     LOAD_DEGRADED_THRESHOLD — applies to the BEFORE load only. Justified
+#       against a measured calm-host mid-run load of the suite's own
+#       contribution (see constant comment); a quiet Mac BEFORE is ~4–6.5, a
+#       worker-busy BEFORE was 12.95.
+#     SYSPOLICYD_CPU_DEGRADED — cumulative CPU-time delta in seconds across the
+#       run. Sits between the historical +32 s calm / +281 s thrash readings.
 #
-#   Injector for the self-test (and only for that): set
+#   A missing signal is ignored, never fatal: unknown fields become `?`, never
+#   a measured `0.0` or a blank. Linux has no syspolicyd.
+#
+#   Injector for the self-test live path (and only for that): set
 #     ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>
-#   to force the sample the classifier sees. Omit a key to leave it unknown.
-#   Without the env override the live sampler runs.
+#   to force the judgment sample (load = BEFORE load, syspolicyd_cpu = delta
+#   seconds). Omit a key to leave it unknown. Ignored under --classify.
 
 set -uo pipefail
 
@@ -72,11 +79,23 @@ EXIT_REGISTRY=2
 EXIT_MISUSE=3
 EXIT_INCONCLUSIVE=4
 
-# orgasmic:TASK-STWVB
-# See header for the measured justification of these two numbers.
+# orgasmic:TASK-STWVB.1
+# LOAD: BEFORE sample only. Calm-host suite contribution measured 2026-08-06
+# on this 10-core Mac during already-built `orgasmic-daemon --lib`:
+#   mid-run 1-min load ~7.35 (BEFORE was already 8.94 from other workers)
+#   post-run after calm BEFORE 4.13 → 7.87
+# So the suite's own load sits near 7–8; that is why during/after load must
+# not trip the gate. Threshold stays above a quiet BEFORE (~4–6.5) and below
+# the worker-busy BEFORE (12.95) that must still yield INCONCLUSIVE.
 LOAD_DEGRADED_THRESHOLD=8.0
-SYSPOLICYD_CPU_DEGRADED=200.0
+# syspolicyd cumulative CPU-time delta (seconds) across the suite run.
+# Historical TASK-STWVB readings: +32 s calm / +281 s under scan storm.
+# F9 probe on this host (2026-08-06): +53.9 s consolidated / +49.3 s with
+# link kill-switch (second run; cache-warmed — see finalize summary).
+SYSPOLICYD_CPU_DEGRADED=100.0
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
+HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
+SAMPLE_HOST_ONLY=0
 
 die() {
     printf 'run-tests: %s\n' "$1" >&2
@@ -126,6 +145,12 @@ while [ $# -gt 0 ]; do
             [ $# -ge 2 ] || die "--work-dir needs a path"
             WORK="$2"
             shift 2
+            ;;
+        --sample-host)
+            # Live sampler probe for the self-test: print one snapshot and exit.
+            # Does not run cargo and does not consult ORGASMIC_HOST_STATE_SAMPLE.
+            SAMPLE_HOST_ONLY=1
+            shift
             ;;
         *) break ;;
     esac
@@ -291,41 +316,128 @@ registry_check() {
     return $ok
 }
 
-if ! registry_check; then
-    printf 'registry: REJECTED (%s)\n' "$REGISTRY" >&2
-    exit "$EXIT_REGISTRY"
-fi
-REGISTRY_COUNT=$(wc -l < "$REGISTRY_TSV" | tr -d ' ')
-if [ "$CHECK_ONLY" -eq 1 ]; then
-    printf 'registry: OK — %s entries in %s, every owner open\n' \
-        "$REGISTRY_COUNT" "${REGISTRY#$REPO/}"
-    exit 0
+# --sample-host skips registry work; everything else needs a clean registry.
+if [ "$SAMPLE_HOST_ONLY" -eq 0 ]; then
+    if ! registry_check; then
+        printf 'registry: REJECTED (%s)\n' "$REGISTRY" >&2
+        exit "$EXIT_REGISTRY"
+    fi
+    REGISTRY_COUNT=$(wc -l < "$REGISTRY_TSV" | tr -d ' ')
+    if [ "$CHECK_ONLY" -eq 1 ]; then
+        printf 'registry: OK — %s entries in %s, every owner open\n' \
+            "$REGISTRY_COUNT" "${REGISTRY#$REPO/}"
+        exit 0
+    fi
 fi
 
 # ---------------------------------------------------------------------------
-# host state (TASK-STWVB)
+# host state (TASK-STWVB / TASK-STWVB.1)
 # ---------------------------------------------------------------------------
 
-# One sample: prints `load=<f|?> syspolicyd_cpu=<f|?>` on stdout.
-# Degrades gracefully: unknown fields become `?`, never abort the run.
-sample_host_state_live() {
-    local load="?" cpu="?"
+# Field extractors: empty becomes `?` so a blank can never look measured.
+host_field() {
+    local sample="$1" key="$2"
+    printf '%s' "$sample" | awk -v key="$key" '{
+        for (i = 1; i <= NF; i++) {
+            if ($i ~ ("^" key "=")) {
+                sub("^" key "=", "", $i)
+                print $i
+                exit
+            }
+        }
+    }'
+}
+
+host_field_or_unknown() {
+    local v
+    v=$(host_field "$1" "$2")
+    if [ -n "$v" ]; then
+        printf '%s' "$v"
+    else
+        printf '?'
+    fi
+}
+
+# macOS `ps -o time=` is [H:]MM:SS[.ss] with minutes allowed to exceed 59.
+syspolicyd_time_to_seconds() {
+    local t="$1"
+    awk -v t="$t" 'BEGIN {
+        if (t == "" || t == "?") { print "?"; exit }
+        n = split(t, a, /:/)
+        if (n == 1 && a[1] + 0 == a[1]) { printf "%.2f", a[1] + 0; exit }
+        if (n == 2 && a[1] + 0 == a[1] && a[2] + 0 == a[2]) {
+            printf "%.2f", a[1] * 60 + a[2]; exit
+        }
+        if (n == 3 && a[1] + 0 == a[1] && a[2] + 0 == a[2] && a[3] + 0 == a[3]) {
+            printf "%.2f", a[1] * 3600 + a[2] * 60 + a[3]; exit
+        }
+        print "?"
+    }'
+}
+
+sample_load_live() {
+    local load=""
     if [ -r /proc/loadavg ]; then
-        load=$(awk '{ print $1 }' /proc/loadavg 2>/dev/null) || load="?"
+        load=$(awk '{ print $1 }' /proc/loadavg 2>/dev/null) || load=""
     elif command -v sysctl >/dev/null 2>&1; then
-        load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }') || load="?"
+        load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }') || load=""
     fi
-    # macOS only: syspolicyd is the Gatekeeper evaluator. Absent elsewhere.
-    if command -v ps >/dev/null 2>&1; then
-        cpu=$(ps -axo comm=,pcpu= 2>/dev/null |
-            awk '/(^|\/)syspolicyd$/ { s += $NF } END { if (NR || s > 0) printf "%.1f", s; }') ||
-            cpu=""
-        [ -n "$cpu" ] || cpu="?"
+    if [ -n "$load" ] && [ "$load" != "?" ]; then
+        printf '%s' "$load"
+    else
+        printf '?'
     fi
-    printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu"
+}
+
+# Cumulative CPU-time string for syspolicyd (pid via pgrep -x), or `?`.
+sample_syspolicyd_time_live() {
+    local pid="" t=""
+    if ! command -v pgrep >/dev/null 2>&1 || ! command -v ps >/dev/null 2>&1; then
+        printf '?'
+        return
+    fi
+    pid=$(pgrep -x syspolicyd 2>/dev/null | head -n1) || pid=""
+    if [ -z "$pid" ]; then
+        printf '?'
+        return
+    fi
+    t=$(ps -o time= -p "$pid" 2>/dev/null | tr -d '[:space:]') || t=""
+    if [ -n "$t" ]; then
+        printf '%s' "$t"
+    else
+        printf '?'
+    fi
+}
+
+# Snapshot: `load=<f|?> syspolicyd_time=<t|?>`
+sample_host_snapshot_live() {
+    printf 'load=%s syspolicyd_time=%s' "$(sample_load_live)" "$(sample_syspolicyd_time_live)"
+}
+
+# Judgment sample from before/after snapshots:
+# `load=<BEFORE load> syspolicyd_cpu=<delta seconds|?>`
+host_judgment_from_snapshots() {
+    local before="$1" after="$2"
+    local load t0 t1 d0 d1 delta
+    load=$(host_field_or_unknown "$before" load)
+    t0=$(host_field_or_unknown "$before" syspolicyd_time)
+    t1=$(host_field_or_unknown "$after" syspolicyd_time)
+    d0=$(syspolicyd_time_to_seconds "$t0")
+    d1=$(syspolicyd_time_to_seconds "$t1")
+    if [ "$d0" != "?" ] && [ "$d1" != "?" ]; then
+        delta=$(awk -v a="$d0" -v b="$d1" 'BEGIN {
+            d = b - a
+            if (d < 0) d = 0
+            printf "%.1f", d
+        }')
+    else
+        delta="?"
+    fi
+    printf 'load=%s syspolicyd_cpu=%s' "$load" "$delta"
 }
 
 # Parse ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f> (comma or space).
+# Values are the judgment sample: BEFORE load + cumulative delta seconds.
 sample_host_state_injected() {
     local raw="${ORGASMIC_HOST_STATE_SAMPLE-}" load="?" cpu="?" part key val
     raw=$(printf '%s' "$raw" | tr ',' ' ')
@@ -337,15 +449,9 @@ sample_host_state_injected() {
             syspolicyd_cpu) cpu=$val ;;
         esac
     done
+    [ -n "$load" ] || load="?"
+    [ -n "$cpu" ] || cpu="?"
     printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu"
-}
-
-sample_host_state() {
-    if [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
-        sample_host_state_injected
-    else
-        sample_host_state_live
-    fi
 }
 
 # True (exit 0) when either measured signal clears its degraded threshold.
@@ -353,8 +459,8 @@ sample_host_state() {
 # evidence of thrash.
 host_is_degraded() {
     local sample="$1" load cpu
-    load=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
-    cpu=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
+    load=$(host_field_or_unknown "$sample" load)
+    cpu=$(host_field_or_unknown "$sample" syspolicyd_cpu)
     awk -v load="$load" -v cpu="$cpu" \
         -v load_lim="$LOAD_DEGRADED_THRESHOLD" \
         -v cpu_lim="$SYSPOLICYD_CPU_DEGRADED" '
@@ -366,40 +472,72 @@ host_is_degraded() {
         }'
 }
 
-# Peak across before/during/after for the verdict stamp.
-HOST_BEFORE=""
-HOST_DURING=""
-HOST_AFTER=""
-HOST_PEAK=""
-HOST_DEGRADED=0
-
-record_host_peak() {
-    local sample="$1" load cpu pload pcpu
-    load=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
-    cpu=$(printf '%s' "$sample" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
-    pload=$(printf '%s' "$HOST_PEAK" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^load=/) { sub(/^load=/, "", $i); print $i } }')
-    pcpu=$(printf '%s' "$HOST_PEAK" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^syspolicyd_cpu=/) { sub(/^syspolicyd_cpu=/, "", $i); print $i } }')
-    [ -n "$pload" ] || pload="?"
-    [ -n "$pcpu" ] || pcpu="?"
-    load=$(awk -v a="$load" -v b="$pload" 'BEGIN {
-        an = (a != "" && a != "?" && a + 0 == a); bn = (b != "" && b != "?" && b + 0 == b)
-        if (an && bn) { print (a+0 > b+0) ? a : b; exit }
-        if (an) { print a; exit }
-        if (bn) { print b; exit }
-        print "?"
-    }')
-    cpu=$(awk -v a="$cpu" -v b="$pcpu" 'BEGIN {
-        an = (a != "" && a != "?" && a + 0 == a); bn = (b != "" && b != "?" && b + 0 == b)
-        if (an && bn) { print (a+0 > b+0) ? a : b; exit }
-        if (an) { print a; exit }
-        if (bn) { print b; exit }
-        print "?"
-    }')
-    HOST_PEAK=$(printf 'load=%s syspolicyd_cpu=%s' "$load" "$cpu")
-    if host_is_degraded "$HOST_PEAK"; then
-        HOST_DEGRADED=1
-    fi
+write_host_stamp() {
+    local log="$1" before="$2" after="$3" judgment="$4"
+    printf '%s before=%s | after=%s | delta=%s\n' \
+        "$HOST_STATE_STAMP_PREFIX" "$before" "$after" "$judgment" >> "$log"
 }
+
+# Read `# orgasmic-host-state:` from a suite log. Prints the delta= judgment
+# sample, or empty when absent.
+read_host_stamp_judgment() {
+    local log="$1" line
+    line=$(grep -E "^${HOST_STATE_STAMP_PREFIX}" "$log" 2>/dev/null | tail -n1) || line=""
+    [ -n "$line" ] || return 1
+    printf '%s' "$line" | awk '{
+        for (i = 1; i <= NF; i++) {
+            if ($i ~ /^delta=/) {
+                sub(/^delta=/, "", $i)
+                # delta=load=X syspolicyd_cpu=Y — rest of fields follow
+                out = $i
+                for (j = i + 1; j <= NF; j++) {
+                    if ($j ~ /^(before=|after=|delta=)/) break
+                    if ($j ~ /^\|/) break
+                    out = out " " $j
+                }
+                print out
+                exit
+            }
+        }
+        exit 1
+    }'
+}
+
+read_host_stamp_field() {
+    local log="$1" which="$2" # before|after
+    local line
+    line=$(grep -E "^${HOST_STATE_STAMP_PREFIX}" "$log" 2>/dev/null | tail -n1) || line=""
+    [ -n "$line" ] || return 1
+    printf '%s' "$line" | awk -v which="$which" '{
+        key = which "="
+        for (i = 1; i <= NF; i++) {
+            if (index($i, key) == 1) {
+                sub("^" key, "", $i)
+                out = $i
+                for (j = i + 1; j <= NF; j++) {
+                    if ($j ~ /^(before=|after=|delta=)/) break
+                    if ($j ~ /^\|/) break
+                    out = out " " $j
+                }
+                print out
+                exit
+            }
+        }
+        exit 1
+    }'
+}
+
+if [ "$SAMPLE_HOST_ONLY" -eq 1 ]; then
+    sample_host_snapshot_live
+    printf '\n'
+    exit 0
+fi
+
+HOST_BEFORE=""
+HOST_AFTER=""
+HOST_JUDGMENT=""
+HOST_DEGRADED=0
+HOST_UNKNOWN=0
 
 # ---------------------------------------------------------------------------
 # run
@@ -407,32 +545,62 @@ record_host_peak() {
 
 SUITE_LOG="$WORK/suite.log"
 
-HOST_BEFORE=$(sample_host_state)
-record_host_peak "$HOST_BEFORE"
-
 if [ -n "$CLASSIFY_LOG" ]; then
     [ -f "$CLASSIFY_LOG" ] || die "no such log: $CLASSIFY_LOG"
     cp "$CLASSIFY_LOG" "$SUITE_LOG" || die "cannot copy $CLASSIFY_LOG"
     SUITE_CMD="(reclassified from $CLASSIFY_LOG)"
     SUITE_EXIT="?"
-    HOST_DURING=$HOST_BEFORE
+    # F3: reclassify-time sampling is unrelated to the run that produced the
+    # log. Prefer a stamp written by the live run; otherwise host is unknown
+    # and LOAD-SENSITIVE is unavailable (unknown must not mint an excuse).
+    if HOST_JUDGMENT=$(read_host_stamp_judgment "$SUITE_LOG"); then
+        HOST_BEFORE=$(read_host_stamp_field "$SUITE_LOG" before) || HOST_BEFORE="load=? syspolicyd_time=?"
+        HOST_AFTER=$(read_host_stamp_field "$SUITE_LOG" after) || HOST_AFTER="load=? syspolicyd_time=?"
+        if host_is_degraded "$HOST_JUDGMENT"; then
+            HOST_DEGRADED=1
+        fi
+    else
+        HOST_UNKNOWN=1
+        HOST_DEGRADED=0
+        HOST_BEFORE="load=? syspolicyd_time=?"
+        HOST_AFTER="load=? syspolicyd_time=?"
+        HOST_JUDGMENT="load=? syspolicyd_cpu=?"
+    fi
+elif [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
+    # Self-test injector on the live path: force the judgment sample.
+    HOST_JUDGMENT=$(sample_host_state_injected)
+    HOST_BEFORE=$(printf 'load=%s syspolicyd_time=injected' "$(host_field_or_unknown "$HOST_JUDGMENT" load)")
     HOST_AFTER=$HOST_BEFORE
+    SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
+    printf 'run-tests: %s\n' "$SUITE_CMD"
+    printf 'run-tests: log %s\n' "$SUITE_LOG"
+    printf 'run-tests: host sample injected via %s\n' "$HOST_STATE_ENV"
+    "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
+        -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
+    SUITE_EXIT=$?
+    write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
+    if host_is_degraded "$HOST_JUDGMENT"; then
+        HOST_DEGRADED=1
+    fi
 else
     # `--no-fail-fast` because a classification needs the WHOLE failure list;
     # stopping at the first red binary is how a real failure hides behind a
     # known flake. Output goes to a file, never a pipe: a test that leaves a
     # descendant holding the write end makes a pipe hang forever after the
     # suite has already passed (.orgasmic/gotchas.org).
+    HOST_BEFORE=$(sample_host_snapshot_live)
     SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
     printf 'run-tests: %s\n' "$SUITE_CMD"
     printf 'run-tests: log %s\n' "$SUITE_LOG"
     "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
         -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
     SUITE_EXIT=$?
-    HOST_DURING=$(sample_host_state)
-    record_host_peak "$HOST_DURING"
-    HOST_AFTER=$(sample_host_state)
-    record_host_peak "$HOST_AFTER"
+    HOST_AFTER=$(sample_host_snapshot_live)
+    HOST_JUDGMENT=$(host_judgment_from_snapshots "$HOST_BEFORE" "$HOST_AFTER")
+    write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
+    if host_is_degraded "$HOST_JUDGMENT"; then
+        HOST_DEGRADED=1
+    fi
 fi
 
 # The skip is a default, not a promise. Assert it held.
@@ -768,18 +936,19 @@ else
     printf '  environ  : INCOMPLETE — %s test(s) gated out by absent tooling\n' "$SKIPPED_TESTS"
 fi
 # Host-state stamp: always printed so a green on a thrashing host cannot look
-# like a trusted clean run.
-if [ "$HOST_DEGRADED" -eq 1 ]; then
-    printf '  host     : DEGRADED (thresholds load>=%s syspolicyd_cpu>=%s)\n' \
+# like a trusted clean run. Judgment uses BEFORE load + syspolicyd CPU delta.
+if [ "$HOST_UNKNOWN" -eq 1 ]; then
+    printf '  host     : unknown (reclassify with no host stamp in log; LOAD-SENSITIVE unavailable)\n'
+elif [ "$HOST_DEGRADED" -eq 1 ]; then
+    printf '  host     : DEGRADED (thresholds before_load>=%s syspolicyd_cpu_delta_s>=%s)\n' \
         "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
 else
-    printf '  host     : calm (thresholds load>=%s syspolicyd_cpu>=%s)\n' \
+    printf '  host     : calm (thresholds before_load>=%s syspolicyd_cpu_delta_s>=%s)\n' \
         "$LOAD_DEGRADED_THRESHOLD" "$SYSPOLICYD_CPU_DEGRADED"
 fi
 printf '             before  %s\n' "$HOST_BEFORE"
-printf '             during  %s\n' "${HOST_DURING:-$HOST_BEFORE}"
 printf '             after   %s\n' "${HOST_AFTER:-$HOST_BEFORE}"
-printf '             peak    %s\n' "$HOST_PEAK"
+printf '             delta   %s\n' "${HOST_JUDGMENT:-load=? syspolicyd_cpu=?}"
 
 if [ -n "$SKIPPED_TOOLS" ]; then
     printf '\nNOT RUN (%s) — tooling absent, and %s said that was acceptable.\n' \
@@ -819,13 +988,22 @@ if [ "$BILLED_RAN" -eq 1 ]; then
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
     STATUS=$EXIT_REAL
+elif [ "$REAL_COUNT" -gt 0 ]; then
+    # F4: an alone-red failure is a code fact whatever the host was doing.
+    # The host stamp above is reported alongside this verdict, not instead of it.
+    printf '\nverdict: RED — %s real failure(s). This red means something.\n' "$REAL_COUNT"
+    STATUS=$EXIT_REAL
+elif [ "$LOAD_COUNT" -gt 0 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
+    # Unreachable when the C interlock holds: LOAD-SENSITIVE requires a
+    # degraded host. If this fires, the host-state gate was bypassed.
+    printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
+        "$LOAD_COUNT"
+    STATUS=$EXIT_REAL
 elif [ "$HOST_DEGRADED" -eq 1 ]; then
-    # B: a degraded host makes the whole run inconclusive — green or red.
-    # A green on a thrashing host is not evidence; a red is not a code fact.
+    # Degraded host without an alone-red REAL: green / flake / load-sensitive
+    # are all untrusted. Re-run when calm.
     printf '\nverdict: INCONCLUSIVE — re-run when calm. Host was degraded'
-    if [ "$REAL_COUNT" -gt 0 ]; then
-        printf ' (%s alone-red failure(s) also seen; do not trust either way).\n' "$REAL_COUNT"
-    elif [ "$LOAD_COUNT" -gt 0 ]; then
+    if [ "$LOAD_COUNT" -gt 0 ]; then
         printf ' (%s load-sensitive failure(s); not a registry excuse).\n' "$LOAD_COUNT"
     elif [ "$FAIL_COUNT" -gt 0 ]; then
         printf ' (failures were registered flakes; still not a trusted green).\n'
@@ -833,15 +1011,6 @@ elif [ "$HOST_DEGRADED" -eq 1 ]; then
         printf ' (suite looked green; that green is not trusted).\n'
     fi
     STATUS=$EXIT_INCONCLUSIVE
-elif [ "$LOAD_COUNT" -gt 0 ]; then
-    # Unreachable when the C interlock holds: LOAD-SENSITIVE requires a
-    # degraded host. If this fires, the host-state gate was bypassed.
-    printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
-        "$LOAD_COUNT"
-    STATUS=$EXIT_REAL
-elif [ "$REAL_COUNT" -gt 0 ]; then
-    printf '\nverdict: RED — %s real failure(s). This red means something.\n' "$REAL_COUNT"
-    STATUS=$EXIT_REAL
 elif [ "$FAIL_COUNT" -gt 0 ]; then
     printf '\nverdict: GREEN modulo %s registered flake(s). No unexplained red.\n' "$FLAKE_COUNT"
 elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then

@@ -1,0 +1,12 @@
+# Pinned from the pre-fix red of 2026-08-06 (worker implementer for
+# TASK-STWVB.1). With the HOST_DEGRADED branch restored ahead of REAL_COUNT,
+# a degraded-host alone-red failure returns exit 4 instead of exit 1.
+#
+# The FIRST failing assertion is the alone-red case — not a later registry or
+# billed-test case.
+
+exit: 1
+
+contains: FAIL degraded host + fails alone too -> REAL exit 1, host stamp alongside
+
+contains: exit 4, wanted 1

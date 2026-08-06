@@ -102,12 +102,35 @@ registry() {
     printf '%s\n' "$@" > "$TMP/registry.toml"
 }
 
-# Default every case onto a calm injected host so a thrashing Mac cannot flip
-# the self-test. Cases that exercise the degraded path set the override
-# themselves for the duration of `run`.
+# Append a live-run host stamp to the synthetic suite log. --classify reads
+# this instead of sampling at reclassify time (TASK-STWVB.1 / F3).
+stamp_host() {
+    local before_load="$1" before_time="$2" after_load="$3" after_time="$4"
+    local delta_load="$5" delta_cpu="$6"
+    printf '# orgasmic-host-state: before=load=%s syspolicyd_time=%s | after=load=%s syspolicyd_time=%s | delta=load=%s syspolicyd_cpu=%s\n' \
+        "$before_load" "$before_time" "$after_load" "$after_time" \
+        "$delta_load" "$delta_cpu" >> "$TMP/suite.log"
+}
+
+stamp_host_calm() {
+    stamp_host 0.5 10:00.00 1.2 10:05.00 0.5 5.0
+}
+
+stamp_host_degraded_load() {
+    # BEFORE load above threshold; delta calm — judgment uses BEFORE load.
+    stamp_host 11.41 10:00.00 22.0 10:05.00 11.41 5.0
+}
+
+stamp_host_degraded_syspolicy() {
+    # BEFORE load calm; syspolicyd cumulative delta above threshold.
+    stamp_host 0.5 10:00.00 1.0 12:00.00 0.5 120.0
+}
+
+# Default --classify cases leave host state to the stamp (or unknown). The
+# ORGASMIC_HOST_STATE_SAMPLE injector is for the live path only and is ignored
+# under --classify.
 run() {
-    ORGASMIC_HOST_STATE_SAMPLE="${ORGASMIC_HOST_STATE_SAMPLE:-load=0.5,syspolicyd_cpu=1.0}" \
-        "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" "$@" \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" "$@" \
         > "$TMP/out.txt" 2>&1
     RUN_EXIT=$?
     rm -rf "$TMP/work"
@@ -347,7 +370,43 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "environ  : complete — no tool requirement was waived" \
     "ignored  : 2 test(s) carrying #[ignore]"
 
-# -- host state and load-sensitivity (TASK-STWVB) ----------------------------
+# -- host state and load-sensitivity (TASK-STWVB / TASK-STWVB.1) -------------
+
+# Live sampler path (not --classify): snapshot prints ? for a missing signal,
+# never a measured 0.0 or a blank load field.
+start "live sampler path: snapshot uses ? for missing fields, never blank/0.0"
+sample=$("$RUNNER" --sample-host)
+printf '%s\n' "$sample" > "$TMP/sample.txt"
+bad=""
+printf '%s' "$sample" | grep -Eq '^load=' || bad="$bad; missing load="
+printf '%s' "$sample" | grep -Eq 'syspolicyd_time=' || bad="$bad; missing syspolicyd_time="
+printf '%s' "$sample" | grep -Eq 'load=($| )' && bad="$bad; blank load"
+printf '%s' "$sample" | grep -Eq 'syspolicyd_cpu=0\.0' && bad="$bad; measured 0.0 cpu"
+# A miss must be `?`, not empty after the equals.
+load_val=${sample#load=}; load_val=${load_val%% *}
+time_val=${sample#*syspolicyd_time=}
+[ -n "$load_val" ] || bad="$bad; empty load value"
+[ -n "$time_val" ] || bad="$bad; empty syspolicyd_time value"
+if [ -z "$bad" ]; then
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+else
+    printf 'FAIL %s: %s\n' "$CASE" "${bad#; }"
+    printf -- '---- sample ----\n%s\n----------------\n' "$sample"
+    FAILED=$((FAILED + 1))
+fi
+
+# --classify without a stamp: host unknown, LOAD-SENSITIVE unavailable.
+start "--classify without host stamp -> host unknown, LOAD-SENSITIVE unavailable"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
+run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "REAL (1)" \
+    "NOT IN THE REGISTRY" \
+    "host     : unknown" \
+    "LOAD-SENSITIVE unavailable" \
+    "verdict: RED"
 
 # The load-bearing interlock: on a calm host an unregistered isolation-green
 # failure is still REAL. Removing that gate would let a thrashing-host excuse
@@ -355,7 +414,8 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
 start "calm host + unregistered isolation-green -> REAL, exit 1 (C interlock)"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
-ORGASMIC_HOST_STATE_SAMPLE="load=0.5,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+stamp_host_calm
+run --classify "$TMP/suite.log"
 check 1 "$RUN_EXIT" "$TMP/out.txt" \
     "REAL (1)" \
     "NOT IN THE REGISTRY" \
@@ -366,13 +426,24 @@ check 1 "$RUN_EXIT" "$TMP/out.txt" \
 start "degraded host + unregistered isolation-green -> LOAD-SENSITIVE, exit 4"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
-ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=586.0" run --classify "$TMP/suite.log"
+stamp_host_degraded_load
+run --classify "$TMP/suite.log"
 check 4 "$RUN_EXIT" "$TMP/out.txt" \
     "LOAD-SENSITIVE (1)" \
     "host was degraded" \
     "host     : DEGRADED" \
     "verdict: INCONCLUSIVE — re-run when calm" \
     "load-sensitive failure"
+
+start "degraded host via syspolicyd delta + isolation-green -> LOAD-SENSITIVE, exit 4"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::nobody_has_ever_seen_this_one" "some brand new panic"
+stamp_host_degraded_syspolicy
+run --classify "$TMP/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "LOAD-SENSITIVE (1)" \
+    "host     : DEGRADED" \
+    "verdict: INCONCLUSIVE — re-run when calm"
 
 start "degraded host + clean suite -> INCONCLUSIVE (green is not trusted)"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
@@ -385,7 +456,8 @@ test tests::unrelated_b ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
 EOF
-ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+stamp_host_degraded_load
+run --classify "$TMP/suite.log"
 check 4 "$RUN_EXIT" "$TMP/out.txt" \
     "host     : DEGRADED" \
     "verdict: INCONCLUSIVE — re-run when calm" \
@@ -394,27 +466,32 @@ check 4 "$RUN_EXIT" "$TMP/out.txt" \
 start "degraded host + registered flake -> INCONCLUSIVE, not a trusted green"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
-ORGASMIC_HOST_STATE_SAMPLE="load=0.1,syspolicyd_cpu=250.0" run --classify "$TMP/suite.log"
+stamp_host_degraded_syspolicy
+run --classify "$TMP/suite.log"
 check 4 "$RUN_EXIT" "$TMP/out.txt" \
     "FLAKE (1)" \
     "verdict: INCONCLUSIVE — re-run when calm" \
     "registered flakes; still not a trusted green"
 
-start "degraded host + fails alone too -> INCONCLUSIVE, alone-red still named"
+# F4 overturn: alone-red keeps exit 1; host stamp is alongside, not instead.
+# verify/TASK-STWVB.1 pins this case.
+start "degraded host + fails alone too -> REAL exit 1, host stamp alongside"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/red" "tests::nobody_has_ever_seen_this_one" "hard failure under load"
-ORGASMIC_HOST_STATE_SAMPLE="load=11.41,syspolicyd_cpu=586.0" run --classify "$TMP/suite.log"
-check 4 "$RUN_EXIT" "$TMP/out.txt" \
+stamp_host_degraded_load
+run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
     "REAL (1)" \
     "NOT IN THE REGISTRY" \
     "isolation: FAILED (exit 101)" \
-    "verdict: INCONCLUSIVE — re-run when calm" \
-    "alone-red failure"
+    "host     : DEGRADED" \
+    "verdict: RED — 1 real failure(s). This red means something"
 
 start "calm host + registered flake still GREEN modulo flake, exit 0"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
-ORGASMIC_HOST_STATE_SAMPLE="load=0.5,syspolicyd_cpu=1.0" run --classify "$TMP/suite.log"
+stamp_host_calm
+run --classify "$TMP/suite.log"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "FLAKE (1)" \
     "host     : calm" \
