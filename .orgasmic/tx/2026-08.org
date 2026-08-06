@@ -14352,3 +14352,93 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-06 Thu 13:25:09 task.state_transitioned TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4865
+:TIME:         [2026-08-06 Thu 13:25:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-G64ZH to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 13:25:10 manager.dispatch_started TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4866
+:TIME:         [2026-08-06 Thu 13:25:10]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh
+:BRANCH:       task-g64zh-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-g64zh/task-g64zh-brief.md
+:STARTED_AT:   [2026-08-06 Thu 13:25:10]
+:LIVENESS:     fb82610d405ffd6fbf0204aa4d79fbbb525522e9
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: bound the unbounded log-sink reopen retry, answer the mirror gate by construction in the three service definitions orgasmic writes, and pin the untested tty branch — the ZBYH3.1 review's three follow-ups
+:END:
+
+* TX 2026-08-06 Thu 13:25:10 run.created TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4867
+:TIME:         [2026-08-06 Thu 13:25:10]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-G64ZH-implementer-20260806T132510.jsonl
+:REASON:       bound the unbounded log-sink reopen retry, answer the mirror gate by construction in the three service definitions orgasmic writes, and pin the untested tty branch — the ZBYH3.1 review's three follow-ups
+:RUN_ID:       run-20260806T132510-d29306f2346c4f87b663e8648e7b18f7
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-g64zh/task-g64zh-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-g64zh/task-g64zh-a4c32ea974ed4705b79fe71c20c121f3-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-g64zh/task-g64zh-a4c32ea974ed4705b79fe71c20c121f3-stdout.log
+:DISPATCH_ATTEMPT: a4c32ea974ed4705b79fe71c20c121f3
+:DISPATCH_TX:  tx-20260806-orgasmic-4866
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 13:27:22 task.created TASK-VD0VB
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4868
+:TIME:         [2026-08-06 Thu 13:27:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VD0VB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       observed live dispatching TASK-G64ZH: both prompts hit and both were cleared by hand; unattended each is a dead worker, and cursor-agent is the implementer harness of record while codex has no credits
+:END:
+
+* TX 2026-08-06 Thu 13:27:48 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4869
+:TIME:         [2026-08-06 Thu 13:27:48]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

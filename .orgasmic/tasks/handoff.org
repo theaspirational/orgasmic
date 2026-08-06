@@ -202,19 +202,42 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-NOTHING IS IN FLIGHT, and this was checked four ways rather than assumed:
-=orgasmic manager dispatch-status= prints no open dispatch, =in_progress= and
-=in_review= are both EMPTY, =git worktree list= shows only the main checkout at
-=/Users/aspirational/Documents/code/tools/orgasmic=, and =git status --short= is
-clean at =9d1c7c9=.
+ONE DISPATCH RUNNING: TASK-G64ZH (P2) implementer,
+=implementer-cursor-agent-tmux= (tmux / cursor-agent / cursor-grok-4.5-high-fast),
+run =run-20260806T132510-d29306f2346c4f87b663e8648e7b18f7=, started_tx
+=tx-20260806-orgasmic-4866=, base =fb82610=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-g64zh= on =task-g64zh-impl=. Report lands at
+=.orgasmic/tmp/dispatch/task-g64zh/task-g64zh-a4c32ea974ed4705b79fe71c20c121f3-last.txt=.
+If that file is non-empty, integrate it; if the tmux session is gone and it is
+EMPTY, treat the run as orphaned and read =rescue-policy= before assuming anything
+completed.
 
-A NOTE ON MONITORING A TMUX DISPATCH, paid for across two sessions:
+WHAT IT IS FIXING, so you do not re-derive it: the three follow-ups from the
+TASK-ZBYH3.1 review. F1 (HIGH) the reopen retry is unbounded and both the reopen
+path and =maybe_rotate= retry independently — bound it and skip rotation entirely
+while =state.durable.is_none()=. F2 answer the mirror question BY CONSTRUCTION in
+the three service definitions orgasmic writes for itself, keeping =is_terminal()=
+as the fallback that still has to be correct on its own, because an
+already-installed plist does not carry the new flag until it is rewritten. F3 pin
+BOTH branches of the gate; all four existing tests drive the non-tty side. The
+brief also requires a =verify/TASK-G64ZH/= artifact pinning F1's bound on the
+PRODUCTION path.
+
+IT TOOK TWO MANUAL INTERVENTIONS TO START, and that is now TASK-VD0VB (P1).
+=tmux/cursor-agent= parks twice before executing anything — workspace trust, then
+the command allowlist on its first =orgasmic entry= — each at 0% CPU with no pane
+output, so =pane_activity= never fires and the 600s stall release would have
+killed it. Cleared by hand with =tmux send-keys -t <session> a= and then =BTab=
+("Run Everything"). CAPTURE THE PANE WITHIN THE FIRST MINUTE OF ANY
+cursor-agent DISPATCH until VD0VB lands.
+
+A NOTE ON MONITORING A TMUX DISPATCH, paid for across three sessions:
 =dispatch-status= prints =[pid-gone]= for EVERY tmux dispatch, always, because
 =WORKER_PID=-= — the manager never tracks the pane pid. It is NOT a death signal
 and a monitor keyed on it fires instantly and falsely. The real signals are
-=[run-gone]=, the tmux session disappearing, and a non-empty =last.txt=. And when
-a pane DOES die, capture it early: on 2026-08-06 three "transport deaths" were a
-codex quota prompt (lead item 4).
+=[run-gone]=, the tmux session disappearing, and a non-empty =last.txt=. And a
+pane that looks dead is usually parked: three "transport deaths" on 08-06 were a
+codex quota prompt, and both of this dispatch's stalls were cursor prompts.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions

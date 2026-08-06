@@ -3705,101 +3705,75 @@ extractor functions verbatim into a standalone probe and running them against
 mutated copies. Reading the code is how the original hole survived its first
 review, and how this second class survived its second.
 
-* BACKLOG TASK-G64ZH The log-sink reopen retry is unbounded, and the mirror gate is still a proxy    :daemon:ops:
+* BACKLOG TASK-VD0VB tmux/cursor-agent parks on two interactive prompts before first execution, so an unattended dispatch dies at the 600s stall release    :drivers:cursor:dispatch:hardening:
 :PROPERTIES:
-:ID: TASK-G64ZH
-:PRIORITY: P2
-:WRITE_SCOPE: crates/**,verify/**
+:ID: TASK-VD0VB
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,.orgasmic/gotchas.org,shipped/**
 :END:
 
 ** Description
-Filed from the TASK-ZBYH3.1 review. The relocated double-write is fixed, but the
-F3 retry that fixed the silent-freeze introduced a new unbounded-growth path, and
-the discriminator is still a proxy with concrete failing cases both directions.
+Every =tmux/cursor-agent= dispatch parks TWICE before it executes anything, each
+time at 0% CPU with a full-screen TUI that is indistinguishable from a hung
+transport:
 
-** F1 — HIGH — the reopen retry is unbounded, and worse than a bare per-line open
-=logging.rs:327-331= calls =try_open_durable()= whenever
-=durable == None && durable_path == Some=, with nothing damping it. The failure
-path additionally parks =bytes_written= at =max_bytes + 1= (=:466=, =:456=,
-=:409=) so =maybe_rotate= re-enters on the next line too. Per-line cost in the
-stuck state, all under the sink mutex every tracing line contends:
+1. =⚠ Workspace Trust Required= — "Do you trust the contents of this directory?"
+   =[a] Trust this workspace= / =[q] Quit=. Cursor stores trust PER DIRECTORY, and
+   since TASK-M47E5 every dispatch gets a fresh worktree path
+   (=~/.orgasmic/worktrees/<project-id>/<task-stem>=), so this fires on EVERY
+   dispatch and can never warm up.
+2. =Not in allowlist: orgasmic= — "Run this command?" on the worker's first
+   =orgasmic entry=, with =Run (once)= / =Add Shell(orgasmic) to allowlist= /
+   =Run Everything= / =Skip=.
 
-| step | syscalls | stderr |
-| =try_open_durable= in the write path (=:330=) | =create_dir_all= + =open= | 1 |
-| =maybe_rotate= -> =highest= scan (=:419-425=) | up to =keep-1= = 31 =stat= | — |
-| =maybe_rotate= -> =rename= fails ENOENT (=:446=) | =rename= | 1 |
-| =maybe_rotate= -> =try_open_durable= again (=:455=/=:462=) | =create_dir_all= + =open= | 1 |
+Observed live on 2026-08-06 dispatching TASK-G64ZH: both prompts hit, both were
+cleared by hand (=tmux send-keys a=, then =BTab= for "Run Everything"), and the
+worker then ran clean. UNATTENDED, EACH ONE IS A DEAD WORKER: the pane emits no
+output, so =pane_activity= never fires, and the 600s stall release kills the run —
+which then presents as =[run-gone]= and reads like an infrastructure failure. This
+is the same misdiagnosis shape that cost three orphans to codex's quota prompt the
+same day.
 
-Plus *four* =record_drop()= per line, so =dropped_log_writes= inflates ~4x and
-stops being comparable across incidents.
+The knowledge already exists on this board and has never been actioned: recorded
+as a "Harness note" on TASK-RQ270.4's evidence, and a HIGH review finding on
+TASK-AFE5Q ("fresh Cursor TUI worktrees block at workspace trust with no startup
+handler; add a startup-only trust transition") that was addressed for the
+cursor-acp path and not for =tmux/cursor-agent=. A fact that lives only in a
+closed task's evidence is invisible to the next manager.
 
-*Reproduced 1:1 from the project's own test stderr* — =failed_reopen_after_roll_counts_drops_and_retries=
-(2 writes -> 2 open attempts) and =rotation_failure_does_not_propagate_and_counts_a_drop=
-(2 writes -> 2 rename attempts). Neither test enables rotation AND a missing
-handle together, which is why neither surfaces the compound 3-writes-per-line cost.
+** Why this is not just a gotcha entry
+=cursor-agent= is currently the implementer harness of record on this host, because
+codex is out of credits. So today every implementer dispatch needs a human at the
+keyboard within ten minutes of launch, which silently removes the "unattended"
+property that =orgasmic manager drivers= claims for the =tmux + cursor-agent= pair.
 
-*Why this matters and is not a nit:* on persistent =EMFILE=, or
-=daemon.out.log= replaced by a directory, or =EACCES= on the logs dir, the daemon
-writes ~3 error lines to =daemon.err.log= for every tracing line. =daemon.err.log=
-is rotated by nothing, pruned by nothing, and checked by no =doctor= probe. *That
-is the exact unbounded-unrotated-growth shape TASK-ZBYH3 and TASK-ZBYH3.1 exist to
-remove, at ~3x the original rate.* The pre-fix permanent silent freeze was also
-wrong; this trades one bad failure mode for another.
+** Direction — decide, then implement
+Options in rough order of preference; the decision is part of the task:
+1. A startup-only prompt handler for the =tmux/cursor-agent= driver that answers
+   both known prompts by pattern before first execution — the same shape
+   TASK-AFE5Q built for cursor-acp. Startup-only, so it cannot be mistaken for a
+   general capture-and-respond channel.
+2. Pass whatever CLI flag or config cursor-agent offers to pre-trust the workspace
+   and pre-allow the harness (investigate: a trust file under the worktree, or a
+   =--force=/=--yolo=-style flag). Cheapest if it exists; verify it does before
+   choosing it.
+3. If neither: make =orgasmic manager drivers= stop calling this pair
+   =unattended=, and say in the dispatch output that a human must clear two
+   prompts. Honest, but it is the fallback, not the goal.
 
-Fix: add =next_reopen_attempt: Instant= (or an attempt count with exponential
-backoff, 1s -> 60s cap) to =SinkState=; emit the stderr note once per backoff
-window, not per line; and *skip =maybe_rotate= entirely while
-=state.durable.is_none()=* so the reopen path owns the retry instead of both
-paths retrying independently.
-
-** F2 — MEDIUM — =is_terminal()= is a proxy; answer it by construction instead
-It answers "is fd 1 a tty", not "will this write land somewhere nothing rotates".
-It is correct for every shipped launch path — launchd =StandardOutPath=
-(=daemon_service.rs:372=, rendered =:848=), systemd =StandardOutput=append:=
-(=:935=), the Windows wrapper =serve >> "..."= (=:972=, where it WORKS and the old
-inode check was =cfg(not(unix)) -> false=), and the detached fallback
-(=daemon_lifecycle.rs:435-461=) — but it fails both directions:
-
-- *False positive, restores the defect class:* any pty-backed capture —
-  =script -q typescript orgasmic serve=, =unbuffer=, or =docker run -t= with the
-  default unrotated =json-file= driver. fd 1 is a tty, the mirror lives, every
-  line double-written into something nothing rotates. Not reachable in this repo
-  today (=scripts/publish-runtime.sh:301= runs docker without =-t= and never runs
-  =serve=), but it is the honest answer to "is this a proxy".
-- *False negative, a live silent behaviour change from main:*
-  =orgasmic serve | tee=, =serve > file=, or CI capturing serve through a pipe.
-  On main the pipe's inode != the durable inode so the mirror survived and the
-  operator saw tracing; now it is suppressed with no message saying where the
-  output went. Both in-repo consumers are safe (=scripts/soak.sh:451-473= and
-  =crates/orgasmic-cli/tests/daemon_lifecycle.rs:29-47=) because the startup
-  banner uses =writeln!(io::stdout(), ...)= at =main.rs:2245-2256= and bypasses
-  the tracing sink — so piping =serve= now yields the banner and nothing else.
-  Operator-ergonomics regression, not a broken gate.
-
-*The exact answer exists at the call site, because orgasmic writes its own
-service definitions.* Pass it explicitly — =serve --no-log-mirror= (or
-=ORGASMIC_LOG_MIRROR=off=) in the launchd =ProgramArguments=, the systemd
-=ExecStart=, and the Windows wrapper — and keep =is_terminal()= only as the
-fallback heuristic for supervisors orgasmic did not write. That converts the three
-shipped paths from "answered by proxy" to "answered by construction".
-
-** F3 — MEDIUM — the tty branch is untested
-All four new tests drive the NON-tty side (=logging.rs:576= and =:697= both dup2
-fd 1 to a file). Inverting the condition at =logging.rs:184=, or a refactor that
-gated purely on =durable_path.is_some()=, would silence interactive
-=orgasmic serve= and keep all 9 tests green. The "interactive serve still prints"
-acceptance bullet has no automated evidence. Same shape as the parent ruling's F7
-— one half of the production discriminator is still unpinned.
-
-Fix: make the predicate injectable (a =fn() -> bool= in =SinkState=/=resolve_mirror=,
-or a =MirrorGate= enum) and assert both branches; or =openpty(3)= and dup the slave
-onto fd 1 inside the existing =STDOUT_REDIRECT_LOCK= (=logging.rs:569=).
+Whichever lands, the third bullet of Acceptance is not optional: a parked
+interactive prompt must be DISTINGUISHABLE from a hung transport in the manager's
+own read, because that misdiagnosis has now cost workers twice in one day for two
+different harnesses.
 
 ** Acceptance
-- A persistent open failure costs a BOUNDED number of syscalls and stderr writes
-  per unit time, not per log line. Assert the bound.
-- =dropped_log_writes= increments once per dropped line, not ~4x.
-- =maybe_rotate= does not run while the durable handle is missing.
-- The three service definitions orgasmic writes suppress the mirror BY
-  CONSTRUCTION, with =is_terminal()= retained only as the fallback.
-- Both branches of the mirror gate are asserted, including the tty side.
+- A =tmux/cursor-agent= implementer dispatch reaches its first tool call with no
+  human at the keyboard, from a worktree path never seen before.
+- A regression pins it: the trust and allowlist prompt strings are asserted
+  somewhere that goes red if cursor-agent changes them, rather than being handled
+  by a pattern nobody would notice rotting.
+- The manager can tell a parked prompt from a dead transport WITHOUT attaching to
+  the pane — a driver event, a dispatch-status line, or a documented one-command
+  capture in the dispatch convention.
+- =.orgasmic/gotchas.org= carries the two prompts and the manual clearing keys, so
+  the fact stops living only in closed-task evidence.
