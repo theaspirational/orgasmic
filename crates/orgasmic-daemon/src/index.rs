@@ -2779,6 +2779,114 @@ The following criteria must hold before close.
     }
 
     #[tokio::test]
+    async fn retired_architecture_marker_stays_indexed_without_dangling_parse_error() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let marker_file = PathBuf::from("src/lib.rs");
+        write(
+            &project_root.join(&marker_file),
+            "// orgasmic:arch_GONE99\n",
+        );
+        assert!(
+            !project_root.join(".orgasmic/architecture.org").exists(),
+            "production-shaped fixture must exercise the post-excision state"
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let project = snap.project("proj-x").unwrap();
+
+        assert_eq!(
+            project.markers.get("arch_GONE99"),
+            Some(&vec![marker_file]),
+            "retired architecture marker must remain indexed"
+        );
+        assert!(
+            snap.parse_errors
+                .iter()
+                .all(|error| !error.message.contains("arch_GONE99")),
+            "retired architecture marker must not emit a dangling advisory parse error: {:?}",
+            snap.parse_errors
+        );
+    }
+
+    #[tokio::test]
+    async fn retired_architecture_reference_token_does_not_surface_parse_error() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/glossary.org"),
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       arch_GONE99\n:END:\n",
+        );
+        assert!(
+            !project_root.join(".orgasmic/architecture.org").exists(),
+            "production-shaped fixture must exercise the post-excision state"
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let project = snap.project("proj-x").unwrap();
+        let term = project
+            .graph
+            .glossary
+            .iter()
+            .find(|term| term.id == "term_A")
+            .expect("reference-bearing glossary term must remain indexed");
+
+        assert_eq!(
+            term.relates_to,
+            vec!["arch_GONE99"],
+            "retired architecture reference token must remain parsed"
+        );
+        assert!(
+            snap.parse_errors
+                .iter()
+                .all(|error| !error.message.contains("arch_GONE99")),
+            "retired architecture reference token must not emit a dangling parse error: {:?}",
+            snap.parse_errors
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_non_architecture_markers_still_surface_parse_errors() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join("src/lib.rs"),
+            "// orgasmic:dec_GONE99,TASK-GONE99,term_GONE99\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let project = snap.project("proj-x").unwrap();
+
+        for marker_id in ["dec_GONE99", "TASK-GONE99", "term_GONE99"] {
+            assert!(
+                project.markers.contains_key(marker_id),
+                "{marker_id} marker must remain indexed"
+            );
+            assert!(
+                snap.parse_errors.iter().any(|error| {
+                    error
+                        .message
+                        .contains(&format!("dangling advisory marker `{marker_id}`"))
+                }),
+                "unresolved {marker_id} marker must still surface a parse error: {:?}",
+                snap.parse_errors
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn rebuild_strips_marker_option_suffix() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");

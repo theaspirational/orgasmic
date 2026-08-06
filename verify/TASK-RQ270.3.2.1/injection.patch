@@ -1,0 +1,35 @@
+diff --git a/crates/orgasmic-core/src/identity_lint.rs b/crates/orgasmic-core/src/identity_lint.rs
+--- a/crates/orgasmic-core/src/identity_lint.rs
++++ b/crates/orgasmic-core/src/identity_lint.rs
+@@ -345,7 +345,7 @@ pub fn lint_dangling_references(
+ ) -> Vec<IdentityLintFinding> {
+     let mut findings = Vec::new();
+     for (token, path, line, context) in references {
+-        if known_ids.contains(token) || is_retired_architecture_id(token) {
++        if known_ids.contains(token) {
+             continue;
+         }
+         findings.push(IdentityLintFinding {
+@@ -356,7 +356,7 @@ pub fn lint_dangling_references(
+         });
+     }
+     for (marker_id, files) in marker_ids {
+-        if known_ids.contains(marker_id) || is_retired_architecture_id(marker_id) {
++        if known_ids.contains(marker_id) {
+             continue;
+         }
+         for file in files {
+@@ -374,12 +374,6 @@ pub fn lint_dangling_references(
+     findings
+ }
+-
+-fn is_retired_architecture_id(id: &str) -> bool {
+-    // Index-time history carve-out only. `unresolved_reference_tokens` stays
+-    // prefix-agnostic so write-time guards still reject newly added arch_ refs.
+-    id.starts_with("arch_")
+-}
+-
++
+ fn project_relative_or_abs(path: &Path) -> PathBuf {
+     path.to_path_buf()
+ }

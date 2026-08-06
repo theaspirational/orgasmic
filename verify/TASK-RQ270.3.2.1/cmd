@@ -1,0 +1,4 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RQ270.3.2.1`.
+# The focused production-shaped index test omits architecture.org and proves
+# the retired marker survives indexing without becoming a parse error.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib retired_architecture_marker_stays_indexed_without_dangling_parse_error
