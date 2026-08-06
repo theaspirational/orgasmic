@@ -56,6 +56,19 @@ pub(crate) fn shared_link_reuse_count() -> u64 {
 }
 
 const FIXTURE_SCRIPT: &str = r#"#!/bin/bash
+# Pinned-exec wrapper link: a production regression that stops passing the
+# sentinel argv must fail loudly (exit 97), not fall through to a prelude arm
+# (e.g. `config` -> /bin/sleep 30). Check BEFORE the argv prelude so every
+# argv value is covered (TASK-STWVB.1 / F7).
+if [ -f "$0.orgasmic-pinned-wrapper" ]; then
+  [ "$1" = __exec-pinned ] || exit 97
+  shift
+  target=$1
+  shift
+  shift 3
+  exec "$target" "$@"
+fi
+
 mode=$1
 case "$mode" in
   warm)
@@ -121,7 +134,7 @@ if [ -f "$fixture_mode_file" ]; then
     malicious-claude)
       log=$(/bin/cat "$0.malicious-log")
       printf '%s\n' "$0 $*" > "$log"
-      exec /bin/true
+      exec /usr/bin/true
       ;;
     claude-capture)
       trusted_log=$(/bin/cat "$0.trusted-log")
@@ -168,17 +181,6 @@ if [ -f "$fixture_mode_file" ]; then
       exit 42
       ;;
   esac
-fi
-
-# Pinned-exec wrapper link: a production regression that stops passing the
-# sentinel argv must fail loudly (exit 97), not fall through to exit 0.
-if [ -f "$0.orgasmic-pinned-wrapper" ]; then
-  [ "$1" = __exec-pinned ] || exit 97
-  shift
-  target=$1
-  shift
-  shift 3
-  exec "$target" "$@"
 fi
 
 # The simple trusted-Claude fixture only needs to be executable.
@@ -231,22 +233,35 @@ pub(crate) fn shared_test_executable() -> &'static Path {
                     )
                     .expect("make shared test fixture executable");
                 }
-                // Replace atomically when possible; fall back to write-in-place
-                // if another test binary raced us to the same content-hashed path.
+                // Replace atomically when possible. On persist race, rewrite via
+                // a fresh temp file + rename — never truncate the shared inode
+                // in place (every converted site hard-links it; TASK-STWVB.1/F8).
                 match pending.persist(&path) {
                     Ok(_) => {
                         FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
                     }
                     Err(error) => {
-                        std::fs::write(&path, FIXTURE_SCRIPT.as_bytes())
-                            .expect("overwrite shared test fixture");
+                        let mut retry = tempfile::NamedTempFile::new_in(parent)
+                            .expect("retry shared test fixture temp");
+                        retry
+                            .write_all(FIXTURE_SCRIPT.as_bytes())
+                            .expect("write retry shared test fixture");
                         #[cfg(unix)]
                         {
                             use std::os::unix::fs::PermissionsExt as _;
-                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                                .expect("chmod shared test fixture");
+                            std::fs::set_permissions(
+                                retry.path(),
+                                std::fs::Permissions::from_mode(0o755),
+                            )
+                            .expect("chmod retry shared test fixture");
                         }
-                        let _ = error;
+                        retry.persist(&path).unwrap_or_else(|persist_error| {
+                            panic!(
+                                "overwrite shared test fixture at {}: persist failed ({error}); \
+                                 retry rename failed ({persist_error})",
+                                path.display()
+                            )
+                        });
                         FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -272,8 +287,40 @@ pub(crate) fn shared_test_executable() -> &'static Path {
 
 /// Put the shared executable at a production-shaped test path without creating
 /// a new file (and therefore without another first-exec evaluation).
+///
+/// Set `ORGASMIC_DISABLE_SHARED_FIXTURE_LINKS=1` to force a fresh byte-identical
+/// copy instead (TASK-STWVB.1 / F9 settling probe). Test-only kill switch.
 pub(crate) fn link_shared_test_executable(path: &Path) {
     ensure_stats_dump_hook();
+    if std::env::var_os("ORGASMIC_DISABLE_SHARED_FIXTURE_LINKS").is_some() {
+        // Byte-identical copy: pays a first-exec scan. Same contents as the
+        // shared fixture so behavior is unchanged; only the inode differs.
+        let contents = std::fs::read(shared_test_executable())
+            .expect("read shared fixture for kill-switch copy");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create kill-switch fixture parent");
+        }
+        std::fs::write(path, contents).unwrap_or_else(|error| {
+            panic!(
+                "write kill-switch fresh fixture at {}: {error}",
+                path.display()
+            )
+        });
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap_or_else(
+                |error| {
+                    panic!(
+                        "chmod kill-switch fresh fixture at {}: {error}",
+                        path.display()
+                    )
+                },
+            );
+        }
+        FRESH_FIRST_EXECS.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).expect("create shared fixture link parent");
     }
@@ -440,6 +487,60 @@ mod tests {
             })
             .map(ToOwned::to_owned)
             .collect()
+    }
+
+    // orgasmic:TASK-STWVB.1
+    /// Positive control for the malicious-claude arm: exec the linked shim and
+    /// assert the side-channel log appears. Without this, the only consumer
+    /// asserts the shim never runs, and `/bin/true` vs `/usr/bin/true` can rot
+    /// into vacuity again (F6).
+    #[test]
+    fn malicious_claude_shim_writes_log_and_exits_cleanly() {
+        let tmp = tempfile::tempdir().expect("malicious shim tempdir");
+        let shim = tmp.path().join("claude");
+        let log = tmp.path().join("malicious-argv.log");
+        link_shared_test_executable(&shim);
+        write_linked_fixture_text(&shim, "orgasmic-mode", "malicious-claude");
+        write_linked_fixture_value(&shim, "malicious-log", &log);
+        let status = Command::new(&shim)
+            .args(["--resume", "sess-1", "-p", "hello"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("exec malicious shim");
+        assert!(
+            status.success(),
+            "malicious-claude arm must exec cleanly (exit 0), got {status}"
+        );
+        let body = std::fs::read_to_string(&log).expect("malicious log must exist");
+        assert!(
+            body.contains("--resume"),
+            "malicious log must capture argv: {body}"
+        );
+    }
+
+    // orgasmic:TASK-STWVB.1
+    /// The exit-97 sentinel must fire for prelude argv values, not only for
+    /// unknown ones. `config` is the hang-risk shape (would otherwise sleep 30).
+    #[test]
+    fn pinned_wrapper_sentinel_fires_for_prelude_argv() {
+        let tmp = tempfile::tempdir().expect("pinned wrapper tempdir");
+        let wrapper = tmp.path().join("orgasmic");
+        link_shared_test_executable(&wrapper);
+        write_linked_fixture_text(&wrapper, "orgasmic-pinned-wrapper", "1");
+        let status = Command::new(&wrapper)
+            .arg("config")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("exec pinned wrapper with prelude argv");
+        assert_eq!(
+            status.code(),
+            Some(97),
+            "pinned-wrapper sentinel must exit 97 for prelude argv, got {status}"
+        );
     }
 
     // orgasmic:task_BCYMM

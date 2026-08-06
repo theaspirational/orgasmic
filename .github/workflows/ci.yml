@@ -198,6 +198,12 @@ jobs:
             > "${RUNNER_TEMP}/verdict.txt" 2>&1
           status=$?
           cat "${RUNNER_TEMP}/verdict.txt"
+          # TASK-STWVB.1 / F5: exit 4 (INCONCLUSIVE) fails this lane deliberately.
+          # After the F4 fix, exit 4 means host state not attributable to this run
+          # was already degraded (BEFORE load) or syspolicyd cumulative CPU delta
+          # cleared its threshold — not "the suite tripped itself via after-load".
+          # An untrusted result must not merge as green. Read the `host :` stamp
+          # in the step summary when this fires.
           exit $status
 
       # The verdict block is the deliverable of this lane, including its

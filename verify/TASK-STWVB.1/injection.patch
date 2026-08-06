@@ -1,0 +1,42 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -984,6 +984,19 @@
+ elif [ "$BUILD_BROKE" -eq 1 ]; then
+     printf '\nverdict: RED — build failure.\n'
+     STATUS=$EXIT_REAL
++elif [ "$HOST_DEGRADED" -eq 1 ]; then
++    # INJECTED (TASK-STWVB.1): restore INCONCLUSIVE ahead of REAL.
++    printf '\nverdict: INCONCLUSIVE — re-run when calm. Host was degraded'
++    if [ "$REAL_COUNT" -gt 0 ]; then
++        printf ' (%s alone-red failure(s) also seen; do not trust either way).\n' "$REAL_COUNT"
++    elif [ "$LOAD_COUNT" -gt 0 ]; then
++        printf ' (%s load-sensitive failure(s); not a registry excuse).\n' "$LOAD_COUNT"
++    elif [ "$FAIL_COUNT" -gt 0 ]; then
++        printf ' (failures were registered flakes; still not a trusted green).\n'
++    else
++        printf ' (suite looked green; that green is not trusted).\n'
++    fi
++    STATUS=$EXIT_INCONCLUSIVE
+ elif [ "$REAL_COUNT" -gt 0 ]; then
+     # F4: an alone-red failure is a code fact whatever the host was doing.
+     # The host stamp above is reported alongside this verdict, not instead of it.
+@@ -995,18 +1008,6 @@
+     printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
+         "$LOAD_COUNT"
+     STATUS=$EXIT_REAL
+-elif [ "$HOST_DEGRADED" -eq 1 ]; then
+-    # Degraded host without an alone-red REAL: green / flake / load-sensitive
+-    # are all untrusted. Re-run when calm.
+-    printf '\nverdict: INCONCLUSIVE — re-run when calm. Host was degraded'
+-    if [ "$LOAD_COUNT" -gt 0 ]; then
+-        printf ' (%s load-sensitive failure(s); not a registry excuse).\n' "$LOAD_COUNT"
+-    elif [ "$FAIL_COUNT" -gt 0 ]; then
+-        printf ' (failures were registered flakes; still not a trusted green).\n'
+-    else
+-        printf ' (suite looked green; that green is not trusted).\n'
+-    fi
+-    STATUS=$EXIT_INCONCLUSIVE
+ elif [ "$FAIL_COUNT" -gt 0 ]; then
+     printf '\nverdict: GREEN modulo %s registered flake(s). No unexplained red.\n' "$FLAKE_COUNT"
+ elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then

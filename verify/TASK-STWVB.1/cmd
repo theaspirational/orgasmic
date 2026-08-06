@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-STWVB.1`.
+#
+# Pins F4: an alone-red failure keeps exit 1 even when the host stamp is
+# degraded. Under the injection INCONCLUSIVE sits ahead of REAL and the FIRST
+# failing selftest assertion is the alone-red case below.
+scripts/run-tests-selftest.sh
