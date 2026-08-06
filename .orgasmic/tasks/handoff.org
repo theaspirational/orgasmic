@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         7b4cba3
+:LIVENESS:         44c7b14
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -187,37 +187,43 @@ from that chain. Serializing implementer dispatches one at a time is a deliberat
 throughput sacrifice and it held all session.
 
 ** In flight
-ONE IMPLEMENTER IS LIVE: TASK-STWVB.1.1, =tx-20260806-orgasmic-5045=, run
-=run-20260806T204306-...=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1= on =task-stwvb.1.1-impl=. Round 3
-of the STWVB chain. Both interactive prompts were cleared. If you are picking
-this up cold: read =last.txt= in
-=.orgasmic/tmp/dispatch/task-stwvb-1-1-impl/= BEFORE closing, and check
-=dispatch-status= rather than any watcher.
+NOTHING IS IN FLIGHT. Both TASK-QGWK7.1.1 dispatches are closed
+=manager.dispatch_aborted=; =dispatch-status= is empty and the tree is clean.
 
-THE EVIDENCE PROBLEM IS NOW FIXED IN CODE AND STILL NOT LIVE. =955c8d6= makes
-=dispatch-close= promote AND STAGE the record automatically — but the INSTALLED
-CLI predates =da88c19= by about four hours (binary built 2026-08-06T11:39Z,
-=da88c19= committed 15:30Z), so close STILL DELETES =last.txt=. UNTIL THE RUNTIME
-IS REBUILT: copy =last.txt= out of =.orgasmic/tmp/dispatch/<stem>/= into
-=.orgasmic/dispatch-records/<started_tx>/last.txt= BY HAND BEFORE CLOSING. That
-was done for all six dispatch generations this session and every report is
-preserved.
+*TMUX/CURSOR-AGENT KILLED TWO CONSECUTIVE WORKERS AND I STOPPED RATHER THAN
+DISPATCH A THIRD.* Both on TASK-QGWK7.1.1, same harness and mode:
+- =tx-...-5099=: ran ~20 min, produced *712 insertions across 8 files plus an
+  authored =verify/TASK-QGWK7.1.1/=*, then the tmux server vanished with no
+  report. *WIP PRESERVED as =0273e9f= on branch =task-qgwk7.1.1-impl=*, worktree
+  kept at =~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1=.
+- =tx-...-5106=: fresh worktree/branch, died producing NOTHING.
 
-SIX DURABLE WORKER REPORTS NOW LIVE IN THE REPO, all placed by hand:
-=tx-...-4939= and =-4946= (the QGWK7 pair, from the previous block), then
-=-4975= (STWVB implementer), =-4980= (its review, 28,018 bytes and the best
-single document produced this session), =-5000= (STWVB.1 implementer), =-5005=
-(its review, 19,959 bytes), =-5021= (QGWK7.1 implementer), =-5026= (its review,
-14,200 bytes). The reviews are worth reading before touching either chain; they
-carry measurements and per-site tables that no summary preserves.
+RULED OUT both times, so do not re-derive: reboot (=uptime= 4 days), host load
+(3.91), the =syspolicyd=->=tccd=->WindowServer chain (no DiagnosticReports
+entry), and harness health (=cursor-agent --version= -> =2026.08.04-aaa8809=,
+exit 0, AFTER both deaths). =stdout.log= is 0 bytes both times, which is normal
+for tmux and carries no information.
 
-A REBUILD IS THE HIGHEST-LEVERAGE HOUSEKEEPING AVAILABLE. It would retire the
-hand-copy step, and it is also what makes =955c8d6='s staging real. Recipe and
-its four traps are unchanged (=install.sh= silently skips the unpack if the
-version dir exists; its trailing =orgasmic status= auto-spawns a competing daemon
-— use =ORGASMIC_INSTALL_SKIP_STATUS=1=; you MUST codesign or the binary loses its
-TCC grant). Always verify BEHAVIOURALLY: every build calls itself =0.0.15-dev.1=.
+*THE SALVAGED WIP IS UNVERIFIED AND MUST NOT BE MERGED AS-IS.* No gates were run,
+no summary exists, and it MODIFIES THE PARENT'S ALREADY-PASSING PROOF
+(=verify/TASK-QGWK7.1/expect-red= and =injection.patch=). That may be a
+legitimate re-cut or a proof bent to fit; it needs judging, not inheriting. Read
+it with =git diff main..0273e9f=.
+
+*THE CHEAPEST LEAD IS RECORDED ON TASK-VD0VB (raised to P1).* =cursor-agent=
+prints, verbatim, that =--trust=, =--yolo= or =-f= will pre-trust a directory
+non-interactively — the flag option 2 of that task speculated about EXISTS, and
+orgasmic's driver passes none of them. Prefer =--trust= (it names the property we
+need) over =--yolo=/=-f= (which likely relax more), but VERIFY what each does.
+
+THE OPERATOR DECISION THIS NEEDS: implementers ran =cursor-agent= this session
+only because codex is out of credits. Reviewers ran =tmux/claude/claude-opus-5/
+high= and were *4 for 4 with no transport trouble*. Switching implementers to
+claude would fix reliability but COLLIDES WITH THE ROUTER'S INDEPENDENCE RULE —
+the reviewer must be a different harness family, and with codex out of credits
+and cursor-agent unreliable there is no third option. So the choice is: restore
+codex credits, accept same-family review with a stated reason, or fix
+TASK-VD0VB/the transport first. That is the operator's call, not the manager's.
 
 ** Divergence / Risks
 THE RUNTIME IS BEHIND THE REPO AGAIN — this section's standing item REOPENED on

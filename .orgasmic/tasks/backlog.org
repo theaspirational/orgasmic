@@ -3747,6 +3747,64 @@ codex is out of credits. So today every implementer dispatch needs a human at th
 keyboard within ten minutes of launch, which silently removes the "unattended"
 property that =orgasmic manager drivers= claims for the =tmux + cursor-agent= pair.
 
+=== MEASURED 2026-08-07 — option 2's flag EXISTS, and this is now the cheapest fix
+The direction list above says of option 2: "Pass whatever CLI flag or config
+cursor-agent offers to pre-trust the workspace (investigate: a trust file under
+the worktree, or a =--force=/=--yolo=-style flag). Cheapest if it exists; verify
+it does before choosing it."
+
+*VERIFIED THAT IT EXISTS.* Running =cursor-agent -p "..." --model ...= from an
+untrusted directory prints, verbatim:
+
+#+begin_example
+⚠ Workspace Trust Required
+  Cursor Agent can execute code and access files in this directory.
+  Do you trust the contents of this directory?
+    /private/tmp
+  To proceed, you can either:
+    • Run 'agent' interactively to decide
+    • Pass --trust, --yolo, or -f if you trust this directory
+#+end_example
+
+So the harness DOCUMENTS three non-interactive escapes — =--trust=, =--yolo=,
+=-f= — and orgasmic's =tmux/cursor-agent= driver passes none of them. Probed on
+=cursor-agent 2026.08.04-aaa8809= (=--version= exit 0, so the binary is healthy).
+
+*Prefer =--trust= over =--yolo= / =-f=* unless measurement shows otherwise:
+=--trust= names the property we actually need (this directory is ours; we created
+the worktree), while =--yolo= and =-f= are likely to relax more than workspace
+trust and would silently widen a worker's authority. VERIFY what each actually
+does before choosing — do not assume from the names.
+
+This does NOT by itself close the second prompt (=Not in allowlist: orgasmic=,
+the harness's own command allowlist). Check whether the same flag covers it; if
+not, the task still needs a startup handler or a config entry for that one.
+
+=== 2026-08-07 — two consecutive worker deaths on tmux/cursor-agent, cause undetermined
+Recorded here because this task owns the "a parked prompt must be
+DISTINGUISHABLE from a hung transport" acceptance item, and these two deaths are
+exactly the ambiguity it names.
+
+Both on TASK-QGWK7.1.1, back to back, same harness and mode:
+- attempt 1 (=tx-20260806-orgasmic-5099=): ran ~20 min, produced 712 insertions
+  across 8 files plus an authored verify artifact, then the tmux server vanished
+  with no report. WIP preserved by the manager as =0273e9f=.
+- attempt 2 (=tx-20260806-orgasmic-5106=): fresh worktree and branch, died
+  producing NOTHING — empty worktree, 0-byte =last.txt= and =stdout.log=.
+
+RULED OUT both times: machine reboot (=uptime= 4 days), host load (3.91), the
+=syspolicyd= -> =tccd= -> WindowServer chain (no DiagnosticReports entry), and
+harness health (=cursor-agent --version= exit 0 afterwards). =stdout.log= is
+0 bytes, which is normal for tmux and carries no information — so on a tmux
+dispatch there is NO artifact that survives to say why a worker died.
+
+*That absence is itself the finding.* The acceptance item asks for a parked
+prompt to be distinguishable from a hung transport; today neither is
+distinguishable from a CRASH, because the pane is the only witness and it dies
+with the session. Whatever lands for this task should leave something behind —
+even a last-captured pane snapshot written on stall/exit would have answered this
+in seconds.
+
 ** Direction — decide, then implement
 Options in rough order of preference; the decision is part of the task:
 1. A startup-only prompt handler for the =tmux/cursor-agent= driver that answers
