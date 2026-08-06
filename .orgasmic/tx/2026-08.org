@@ -12383,3 +12383,115 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-06 Thu 06:31:51 task.state_transitioned TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4753
+:TIME:         [2026-08-06 Thu 06:31:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       merged work owes a review; stage D is blocked on it
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 06:31:52 manager.dispatch_started TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4754
+:TIME:         [2026-08-06 Thu 06:31:52]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRANCH:       task-rq270.3.2.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 06:31:52]
+:LIVENESS:     a353d318abc175227b2ab37d35a33fdd7352038a
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: the last carve-out was correct and incomplete; this review decides whether stage D can run
+:END:
+
+* TX 2026-08-06 Thu 06:31:52 run.created TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4755
+:TIME:         [2026-08-06 Thu 06:31:52]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.2.1-reviewer-20260806T063152.jsonl
+:REASON:       the last carve-out was correct and incomplete; this review decides whether stage D can run
+:RUN_ID:       run-20260806T063152-a9f08a47d2c748dd998f223d6702a442
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-2dca97598f144b5b8b8f883da77c278c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-3-2-1-review/task-rq270-3-2-1-review-2dca97598f144b5b8b8f883da77c278c-stdout.log
+:DISPATCH_ATTEMPT: 2dca97598f144b5b8b8f883da77c278c
+:DISPATCH_TX:  tx-20260806-orgasmic-4754
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 06:41:52 manager.dispatch_orphaned TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4756
+:TIME:         [2026-08-06 Thu 06:41:52]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RQ270.3.2.1-reviewer-20260806T063152.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260806T063152-a9f08a47d2c748dd998f223d6702a442
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 06:43:36 manager.dispatch_aborted TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4757
+:TIME:         [2026-08-06 Thu 06:43:36]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:REASON:       ORPHANED, not completed. The tmux SERVER exited entirely (no server running on /private/tmp/tmux-501/default), not just the pane. Evidence per rescue-policy: run released [run-gone] with NO terminal declaration ([unreported], last.txt 0 bytes, stdout log 0 bytes), live_runs 0 so nothing to release, reviewer worktree clean so no work to salvage, task not superseded. Judgment: abandon and re-dispatch under a fresh lease
+:CLOSED_TX:    tx-20260806-orgasmic-4754
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.3.2.1-review/worktree
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 06:43:53 task.edited TASK-RQ270.3.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4758
+:TIME:         [2026-08-06 Thu 06:43:53]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-RQ270.3.2.1
+:NODE_ID:      TASK-RQ270.3.2.1
+:END:
