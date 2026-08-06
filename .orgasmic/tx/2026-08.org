@@ -11293,3 +11293,82 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-06 Thu 02:09:04 task.state_transitioned TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4691
+:TIME:         [2026-08-06 Thu 02:09:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       POLICY, NOT A CORRECTION: FIX_SUBTASK closes land done on the installed runtime, which refuses a reviewer dispatch from done; fixed on main by TASK-4WKNX but inert until the reinstall
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 02:09:04 manager.dispatch_started TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4692
+:TIME:         [2026-08-06 Thu 02:09:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:BRANCH:       task-rq270.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-1-1-review/task-rq270-1-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 02:09:04]
+:LIVENESS:     a109e9a04d93ab5ec8758ef08877da2efd6d3d4b
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review the stage-A doctrine correction; the key question is whether the router token had a reattach consumer the implementer's hunt missed
+:END:
+
+* TX 2026-08-06 Thu 02:09:05 run.created TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4693
+:TIME:         [2026-08-06 Thu 02:09:05]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.1.1-reviewer-20260806T020904.jsonl
+:REASON:       review the stage-A doctrine correction; the key question is whether the router token had a reattach consumer the implementer's hunt missed
+:RUN_ID:       run-20260806T020904-3f0d37f8530044dd8bd27a80ac5dedb2
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-1-1-review/task-rq270-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-1-1-review/task-rq270-1-1-review-f50f29a676c14a11aa0e889aaba5f149-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-1-1-review/task-rq270-1-1-review-f50f29a676c14a11aa0e889aaba5f149-stdout.log
+:DISPATCH_ATTEMPT: f50f29a676c14a11aa0e889aaba5f149
+:DISPATCH_TX:  tx-20260806-orgasmic-4692
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 02:22:17 reviewer.reported TASK-RQ270.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4694
+:TIME:         [2026-08-06 Thu 02:22:17]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.1.1
+:RUN_ID:       run-20260806T020904-3f0d37f8530044dd8bd27a80ac5dedb2
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.1.1-review/worktree
+:END:

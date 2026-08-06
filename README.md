@@ -26,7 +26,7 @@ schema tutorial.
 branched, and committed.
 - **Agent and harness agnostic** - Bring Claude, Codex, Cursor, Hermes, local
 models; assign each to the work it is best suited
-for: orchestration, implementation, review, planning, architecture. Prompt Studio lets you inspect and edit the exact initial prompt each
+for: orchestration, implementation, review, planning. Prompt Studio lets you inspect and edit the exact initial prompt each
 specialized worker receives.
 - **Disciplined spec-to-code framework** — inspired by Matt Pocock's "grilling-with-docs" approach and domain-driven software design principles, a typed pipeline from intent to code: griller agent stress-tests assumptions into `decisions.org` and `glossary.org`, planner agent turns accepted decisions into bounded
 tasks, and implementer agents change code inside declared read/write scope and
