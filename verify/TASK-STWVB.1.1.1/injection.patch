@@ -1,0 +1,21 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -1075,13 +1075,10 @@
+     printf '\nverdict: RED — %s load-sensitive label(s) on a calm host. Interlock broken.\n' \
+         "$LOAD_COUNT"
+     STATUS=$EXIT_REAL
+-elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+-    # B2 + TASK-STWVB.1.1.1 / M-1: a non-zero cargo exit with no per-test
+-    # failure list is a code fact (crashed binary, etc.). Keep B2's position
+-    # above HOST_DEGRADED, but restore the FAIL_COUNT guard the message
+-    # states — cargo exits 101 whenever any test fails, so without the guard
+-    # a registered flake reddens the live gate while --classify on the same
+-    # log stays GREEN-modulo-flake.
++elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
++    # INJECTED (TASK-STWVB.1.1.1): drop the FAIL_COUNT guard so a registered
++    # flake on the live path reddens with the false "no per-test failure list"
++    # sentence — the round-3 defect this artifact pins.
+     printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
+         "$SUITE_EXIT" "$SUITE_LOG"
+     STATUS=$EXIT_REAL

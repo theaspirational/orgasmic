@@ -393,7 +393,10 @@ bad=""
 printf '%s' "$sample" | grep -Eq '^load=' || bad="$bad; missing load="
 printf '%s' "$sample" | grep -Eq 'syspolicyd_time=' || bad="$bad; missing syspolicyd_time="
 printf '%s' "$sample" | grep -Eq 'load=($| )' && bad="$bad; blank load"
+# Reject both a bare decimal phantom zero and the realistic cumulative-ps
+# shape `0:00.00` (F2 re-expressed; M-5).
 printf '%s' "$sample" | grep -Eq 'syspolicyd_time=0(\.0)?($| )' && bad="$bad; measured 0.0 syspolicyd_time"
+printf '%s' "$sample" | grep -Eq 'syspolicyd_time=0:00(\.0+)?($| )' && bad="$bad; measured 0:00 syspolicyd_time"
 # A miss must be `?`, not empty after the equals.
 load_val=${sample#load=}; load_val=${load_val%% *}
 time_val=${sample#*syspolicyd_time=}
@@ -544,6 +547,63 @@ EOF
     chmod +x "$TMP/bin/cargo"
 }
 
+# Live-path flake: cargo exits 101 WITH a per-test failure list whose
+# signature matches the registry, and the binary path is the green fixture
+# so isolation passes. The thirteen --classify flake cases cannot see M-1
+# (SUITE_EXIT="?" short-circuits the crashed-binary arm).
+install_stub_cargo_registered_flake() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<EOF
+#!/bin/sh
+cat <<LOG
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::recovery_inventory_waits_for_atomic_claim_commit ... FAILED
+
+failures:
+
+---- tests::recovery_inventory_waits_for_atomic_claim_commit stdout ----
+thread 'tests::recovery_inventory_waits_for_atomic_claim_commit' panicked at src/lib.rs:1:1:
+assertion failed: waited for the atomic claim commit
+
+failures:
+    tests::recovery_inventory_waits_for_atomic_claim_commit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+LOG
+exit 101
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
+# Live-path load-sensitive shape: unregistered isolation-green failure.
+install_stub_cargo_unregistered_iso_green() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<EOF
+#!/bin/sh
+cat <<LOG
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::nobody_has_ever_seen_this_one ... FAILED
+
+failures:
+
+---- tests::nobody_has_ever_seen_this_one stdout ----
+thread 'tests::nobody_has_ever_seen_this_one' panicked at src/lib.rs:1:1:
+some brand new panic
+
+failures:
+    tests::nobody_has_ever_seen_this_one
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+LOG
+exit 101
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
 # F-C: high BEFORE load alone must not trip the gate.
 start "high BEFORE load alone stays calm (load is corroborating only)"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
@@ -576,7 +636,7 @@ EOF
 stamp_host '?' '?' '?' '?' '?' '?' '?'
 run --classify "$TMP/suite.log"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
-    "host     : unknown (no numeric host signal" \
+    "host     : unknown (window unknown)" \
     "verdict: GREEN — no failures"
 
 start "unparseable judgment prints host unknown, not calm"
@@ -592,7 +652,7 @@ EOF
 stamp_host abc abc abc abc abc xyz qqq
 run --classify "$TMP/suite.log"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
-    "host     : unknown (no numeric host signal" \
+    "host     : unknown (window unknown)" \
     "verdict: GREEN — no failures"
 
 # B2: crashed binary is never "suite looked green", even on a degraded host.
@@ -683,6 +743,158 @@ RUN_EXIT=$?
 rm -rf "$TMP/work"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "host     : calm" \
+    "verdict: GREEN — no failures"
+
+# -- TASK-STWVB.1.1.1 -------------------------------------------------------
+# orgasmic:TASK-STWVB.1.1.1
+#
+# M-1: the crashed-binary arm must not fire when FAIL_COUNT > 0. Round 3
+# dropped that guard; verify/TASK-STWVB.1.1.1 pins this live-path case as the
+# FIRST failure under injection. --classify cases cannot see it.
+
+start "live path: registered flake on calm host -> GREEN modulo flake, exit 0"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_registered_flake
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+live_log="$TMP/work/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "FLAKE (1)" \
+    "host     : calm" \
+    "verdict: GREEN modulo 1 registered flake"
+# Same log through --classify must agree (standing invariant M-1 broke).
+if [ -f "$live_log" ]; then
+    cp "$live_log" "$TMP/suite.log"
+    rm -rf "$TMP/work"
+    start "live path flake log via --classify agrees: GREEN modulo flake, exit 0"
+    run --classify "$TMP/suite.log"
+    check 0 "$RUN_EXIT" "$TMP/out.txt" \
+        "FLAKE (1)" \
+        "verdict: GREEN modulo 1 registered flake"
+else
+    rm -rf "$TMP/work"
+fi
+
+start "live path: registered flake on degraded host -> INCONCLUSIVE, exit 4"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_registered_flake
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=200.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+live_log="$TMP/work/suite.log"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "FLAKE (1)" \
+    "host     : DEGRADED" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "registered flakes; still not a trusted green"
+if [ -f "$live_log" ]; then
+    cp "$live_log" "$TMP/suite.log"
+    rm -rf "$TMP/work"
+    start "live path degraded-flake log via --classify agrees: INCONCLUSIVE, exit 4"
+    run --classify "$TMP/suite.log"
+    check 4 "$RUN_EXIT" "$TMP/out.txt" \
+        "FLAKE (1)" \
+        "verdict: INCONCLUSIVE — re-run when calm"
+else
+    rm -rf "$TMP/work"
+fi
+
+start "live path: degraded host + unregistered iso-green -> INCONCLUSIVE, exit 4"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_unregistered_iso_green
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=200.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "LOAD-SENSITIVE (1)" \
+    "host     : DEGRADED" \
+    "verdict: INCONCLUSIVE — re-run when calm" \
+    "load-sensitive failure"
+
+# M-2: host word from the RATE, not any-field. load alone must not mint calm.
+start "live path: cpu unknown keeps host unknown (no syspolicyd signal)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=?,wall_s=300' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (no syspolicyd signal)" \
+    "verdict: GREEN — no failures"
+
+start "live path: stamp with no wall_s is unknown (pre-b92199a compat)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=250.0' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (window unknown)" \
+    "verdict: GREEN — no failures"
+
+start "live path: wall_s=0 is unknown (window unknown), not calm"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=250.0,wall_s=0' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (window unknown)" \
+    "verdict: GREEN — no failures"
+
+# M-3: short windows neither calm nor DEGRADED.
+start "live path: wall_s=1 rate above threshold is unknown (window too short)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=2.0,wall_s=1' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (window too short to judge)" \
+    "verdict: GREEN — no failures"
+
+start "live path: wall_s=3 rate at threshold is unknown (window too short)"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_ok
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=4.0,syspolicyd_cpu=4.5,wall_s=3' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : unknown (window too short to judge)" \
+    "verdict: GREEN — no failures"
+
+# M-4: LOAD_DEGRADED_THRESHOLD is enforced by annotating elevated load.
+start "elevated BEFORE load is annotated on the host line"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 2 tests
+test tests::unrelated_a ... ok
+test tests::unrelated_b ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+stamp_host_load_only_high
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : calm" \
+    "load=11.41 elevated (>=8.0), corroborating only" \
     "verdict: GREEN — no failures"
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,13 @@
+# Pinned from the pre-fix red of 2026-08-07 (worker implementer for
+# TASK-STWVB.1.1.1). With the FAIL_COUNT guard removed from the crashed-binary
+# arm, a live-path registered flake returns exit 1 and the false
+# "no per-test failure list" verdict instead of GREEN-modulo-flake / exit 0.
+#
+# The FIRST failing assertion is the live-path flake case — not a later
+# host-word or window case.
+
+exit: 1
+
+contains: FAIL live path: registered flake on calm host -> GREEN modulo flake, exit 0
+
+contains: exit 1, wanted 0
