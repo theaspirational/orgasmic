@@ -5205,21 +5205,18 @@ fn remove_worktree_required_with_hook(
     // the dispatch generation, rather than deleting it with the tmp artifacts.
     // Failed-dispatch rollback passes `started_tx: None` and still deletes.
     let (report_path, error) = match started_tx {
-        Some(started_tx) => match promote_and_stage_dispatch_record(
-            &artifacts,
-            project_root,
-            started_tx,
-            path,
-        ) {
-            Ok(outcome) => (outcome.report_path, outcome.error),
-            Err(err) => (
-                None,
-                Some(format!(
-                    "promote dispatch report for {}: {err}",
-                    path.display()
-                )),
-            ),
-        },
+        Some(started_tx) => {
+            match promote_and_stage_dispatch_record(&artifacts, project_root, started_tx, path) {
+                Ok(outcome) => (outcome.report_path, outcome.error),
+                Err(err) => (
+                    None,
+                    Some(format!(
+                        "promote dispatch report for {}: {err}",
+                        path.display()
+                    )),
+                ),
+            }
+        }
         None => (
             None,
             orgasmic_core::prune_validated_dispatch_attempt(&artifacts)

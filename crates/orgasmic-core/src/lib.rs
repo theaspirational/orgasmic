@@ -61,9 +61,9 @@ pub use paths::{
     promote_validated_dispatch_attempt, prune_dispatch_stem_after_worktree,
     prune_validated_dispatch_attempt, task_file_path, task_file_rel,
     validate_dispatch_cleanup_targets, validate_dispatch_promote_targets,
-    verify_dispatch_worktree_identity, DispatchAttemptArtifacts, PromoteOutcome,
-    DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_TAIL_BYTES,
-    TASKS_DIR, TASK_FILE_NAMES,
+    verify_dispatch_worktree_identity, DispatchAttemptArtifacts, PromoteOutcome, DEFAULT_TASK_FILE,
+    DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_TAIL_BYTES, TASKS_DIR,
+    TASK_FILE_NAMES,
 };
 pub use retired::{RetiredContent, RETIRED_CONTENT};
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};

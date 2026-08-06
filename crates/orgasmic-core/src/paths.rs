@@ -175,13 +175,7 @@ pub fn validate_dispatch_cleanup_targets(
         stdout_path.ok_or_else(|| "stdout_path required for dispatch cleanup".to_string())?;
     let worktree_handle = validate_dispatch_worktree(worktree_path)?;
     let (stem_dir, stem) = validate_dispatch_stem_dir(project_root, last)?;
-    validate_dispatch_artifact_pair(
-        &stem_dir,
-        &stem,
-        last,
-        stdout,
-        Some(worktree_handle),
-    )
+    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, Some(worktree_handle))
 }
 
 /// Validate the artifact pair for promotion when the worktree may already be
@@ -422,8 +416,7 @@ fn copy_validated_stdout_tail_to(
         out.sync_all().map_err(|err| err.to_string())?;
         drop(out);
         {
-            let mut bytes_out =
-                std::fs::File::create(&bytes_tmp).map_err(|err| err.to_string())?;
+            let mut bytes_out = std::fs::File::create(&bytes_tmp).map_err(|err| err.to_string())?;
             write!(bytes_out, "{original_len}").map_err(|err| err.to_string())?;
             bytes_out.sync_all().map_err(|err| err.to_string())?;
         }
@@ -817,8 +810,7 @@ mod tests {
             std::fs::read_to_string(&promoted).unwrap(),
             "worker report survives close"
         );
-        let record_dir =
-            project_root.join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916");
+        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916");
         assert_eq!(
             std::fs::read_to_string(record_dir.join("stdout.log")).unwrap(),
             "harness stdout"
@@ -874,7 +866,8 @@ mod tests {
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
         let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-tail-stdout").unwrap();
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-tail-stdout")
+                .unwrap();
         assert_eq!(outcome.error, None);
         let record_dir = project_root.join(".orgasmic/dispatch-records/tx-tail-stdout");
         let promoted = std::fs::read(record_dir.join("stdout.log")).unwrap();
