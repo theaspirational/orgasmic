@@ -377,6 +377,21 @@ pub fn lint_dangling_references(
 fn is_retired_architecture_id(id: &str) -> bool {
     // Index-time history carve-out only. `unresolved_reference_tokens` stays
     // prefix-agnostic so write-time guards still reject newly added arch_ refs.
+    //
+    // orgasmic:TASK-RQ270.3.2.1 — UNCONDITIONAL BY DESIGN, including in a
+    // project that still has `architecture.org`. The cost is that a typo'd
+    // `arch_` marker stops surfacing here; the reason it is acceptable is that
+    // dec_HBK6A dropped `Architecture` from `GraphLayer`, so the daemon can
+    // neither create nor revise an architecture heading and the class cannot
+    // legitimately grow. One canonical rule beats a rule that changes shape
+    // depending on whether a file happens to exist.
+    //
+    // The write-time boundary this comment credits is real but is NOT what
+    // holds the line. `reject_unresolved_reference_token` resolves against
+    // `graph.nodes`, and `arch_` ids never enter it — which is true only
+    // because `looks_like_structured_node_id` KEEPS `arch_`, so a
+    // `:PRODUCES: arch_X` target is not materialized as an artifact node.
+    // Remove `arch_` from that list and this guard silently stops firing.
     id.starts_with("arch_")
 }
 
