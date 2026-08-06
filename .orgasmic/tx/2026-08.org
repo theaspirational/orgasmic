@@ -14670,3 +14670,93 @@
 :REASON:       update properties on TASK-G64ZH.1
 :FIX_SUBTASK:  t
 :END:
+
+* TX 2026-08-06 Thu 13:56:05 task.state_transitioned TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4884
+:TIME:         [2026-08-06 Thu 13:56:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-G64ZH.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 13:56:05 manager.dispatch_started TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4885
+:TIME:         [2026-08-06 Thu 13:56:05]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh.1
+:BRANCH:       task-g64zh.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-g64zh-1/task-g64zh-1-brief.md
+:STARTED_AT:   [2026-08-06 Thu 13:56:05]
+:LIVENESS:     0d27f039ba022bfaba5817e74baf670d5e6dca00
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        cursor-grok-4.5-high-fast
+:REASON_INITIAL: fix round for the TASK-G64ZH REJECT: keep the durable path when the boot open fails (total silence + unreachable backoff), move the mirror suppression to the env form so a rollback degrades instead of crash-looping, plus three test gaps
+:END:
+
+* TX 2026-08-06 Thu 13:56:06 run.created TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4886
+:TIME:         [2026-08-06 Thu 13:56:06]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-G64ZH.1-implementer-20260806T135605.jsonl
+:REASON:       fix round for the TASK-G64ZH REJECT: keep the durable path when the boot open fails (total silence + unreachable backoff), move the mirror suppression to the env form so a rollback degrades instead of crash-looping, plus three test gaps
+:RUN_ID:       run-20260806T135605-e9f0ea7e9295418dacad1d6331a57b5f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-g64zh-1/task-g64zh-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-g64zh-1/task-g64zh-1-6b408ba12bb647afa96711c992da979c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-g64zh-1/task-g64zh-1-6b408ba12bb647afa96711c992da979c-stdout.log
+:DISPATCH_ATTEMPT: 6b408ba12bb647afa96711c992da979c
+:DISPATCH_TX:  tx-20260806-orgasmic-4885
+:MODEL_OVERRIDE: cursor-grok-4.5-high-fast
+:END:
+
+* TX 2026-08-06 Thu 13:57:27 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4887
+:TIME:         [2026-08-06 Thu 13:57:27]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-06 Thu 13:57:28 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4888
+:TIME:         [2026-08-06 Thu 13:57:28]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
