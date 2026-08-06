@@ -24,6 +24,13 @@ const SHIPPED_DIR: &str = "shipped";
 /// a silently-empty guard is the failure mode this whole test exists against.
 const MINIMUM_SHIPPED_INVOCATIONS: usize = 100;
 
+/// Floor on values the value-enum gate actually compared against clap.
+///
+/// orgasmic:TASK-RQ270.5.1 — `MINIMUM_SHIPPED_INVOCATIONS` alone was green while
+/// the gate compared only 5 values (compact-layout help only). Assert against
+/// comparisons, not invocation count, so a broken extractor goes red.
+const MINIMUM_ENUM_VALUE_COMPARISONS: usize = 6;
+
 #[test]
 fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
     assert_sorted(ALLOWED_DEFERRED_LEAVES);
@@ -215,6 +222,10 @@ fn shipped_entry_commands_resolve_against_the_cli() {
 /// orgasmic:TASK-RQ270.5 — stage D retired `--class architecture` while
 /// `manager-dispatch.org` still minted it; verb-path parity could not see the
 /// drift because `orgasmic id mint` itself resolves.
+///
+/// orgasmic:TASK-RQ270.5.1 — long-help options put `[possible values: …]` on a
+/// continuation line; treating that as free-string skipped the highest-traffic
+/// enum sites. Flag-absent is now a failure, distinct from free-string.
 #[test]
 fn shipped_value_enum_arguments_match_clap_possible_values() {
     let invocations = shipped_entry_invocations();
@@ -226,6 +237,7 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
     );
 
     let mut failures = Vec::new();
+    let mut compared = 0usize;
     for invocation in &invocations {
         if invocation.enum_values.is_empty() {
             continue;
@@ -243,31 +255,50 @@ fn shipped_value_enum_arguments_match_clap_possible_values() {
                 }
             };
             for (flag, value_token) in &invocation.enum_values {
-                let Some(allowed) = possible_values_for_flag(&help, flag) else {
-                    // Flag has no clap value-enum (e.g. free-string `--mode`).
-                    continue;
-                };
-                for value in value_token.split('|') {
-                    let value = value.trim();
-                    if value.is_empty() || value.starts_with('<') || value.starts_with('[') {
-                        continue;
-                    }
-                    if !allowed.iter().any(|a| a == value) {
+                match possible_values_for_flag(&help, flag) {
+                    FlagValueEnum::Absent => {
                         failures.push(format!(
-                            "{}: `{} {} {}` is not in clap possible values {:?} for {}",
+                            "{}: `{}` has no {flag} flag in --help (value-enum check \
+                             cannot skip a missing flag)",
                             invocation.source,
-                            format_command_path(&path),
-                            flag,
-                            value,
-                            allowed,
-                            flag
+                            format_command_path(&path)
                         ));
+                    }
+                    FlagValueEnum::FreeString => {
+                        // Genuine free-string flag (e.g. `--mode`): no bracket.
+                    }
+                    FlagValueEnum::Values(allowed) => {
+                        for value in value_token.split('|') {
+                            let value = value.trim();
+                            if value.is_empty() || value.starts_with('<') || value.starts_with('[')
+                            {
+                                continue;
+                            }
+                            compared += 1;
+                            if !allowed.iter().any(|a| a == value) {
+                                failures.push(format!(
+                                    "{}: `{} {} {}` is not in clap possible values {:?} for {}",
+                                    invocation.source,
+                                    format_command_path(&path),
+                                    flag,
+                                    value,
+                                    allowed,
+                                    flag
+                                ));
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
+    assert!(
+        compared >= MINIMUM_ENUM_VALUE_COMPARISONS,
+        "only {compared} value-enum comparisons ran against clap possible_values \
+         (expected at least {MINIMUM_ENUM_VALUE_COMPARISONS}); the extractor or \
+         help-entry parser is broken, not the prose"
+    );
     assert!(
         failures.is_empty(),
         "shipped prose names value-enum arguments the CLI rejects:\n  {}",
@@ -404,7 +435,55 @@ fn split_help_entry(line: &str) -> Option<(usize, &str, &str)> {
 /// `--class architecture` still shipped after stage D retired that class.
 /// Only flags that clap renders with `[possible values: …]` are checked;
 /// free-string flags such as `--mode` (driver catalog) are skipped.
+///
+/// Left hand-maintained (TASK-RQ270.5.1): deriving it from the binary's help
+/// is possible now that entry parsing works, but would widen this fix; the
+/// Absent-vs-FreeString split already stops silent skip on unknown flags.
 const VALUE_ENUM_FLAGS: &[&str] = &["--class", "--kind", "--status", "--mode"];
+
+#[test]
+fn enum_values_in_tokens_accepts_equals_form() {
+    let got = enum_values_in_tokens(&["id", "mint", "--class=architecture"]);
+    assert_eq!(
+        got,
+        vec![("--class".to_string(), "architecture".to_string())]
+    );
+    let spaced = enum_values_in_tokens(&["id", "mint", "--class", "task"]);
+    assert_eq!(spaced, vec![("--class".to_string(), "task".to_string())]);
+}
+
+#[test]
+fn possible_values_for_flag_reads_multiline_help_entries() {
+    // Compact (bracket on the flag line) and long-help (bracket on a
+    // continuation line, possibly after a blank) must both resolve.
+    let compact = "Options:\n      --class <CLASS>  Id class [possible values: task, decision]\n";
+    match possible_values_for_flag(compact, "--class") {
+        FlagValueEnum::Values(v) => assert_eq!(v, vec!["task", "decision"]),
+        other => panic!("compact layout: {other:?}"),
+    }
+
+    let long = concat!(
+        "Options:\n",
+        "      --kind <KIND>\n",
+        "          Worker persona\n",
+        "\n",
+        "          [possible values: implementer, reviewer]\n",
+        "      --mode <MODE>\n",
+        "          Free-string transport mode\n",
+    );
+    match possible_values_for_flag(long, "--kind") {
+        FlagValueEnum::Values(v) => assert_eq!(v, vec!["implementer", "reviewer"]),
+        other => panic!("long-help layout: {other:?}"),
+    }
+    match possible_values_for_flag(long, "--mode") {
+        FlagValueEnum::FreeString => {}
+        other => panic!("free-string should be FreeString, got {other:?}"),
+    }
+    match possible_values_for_flag(long, "--missing") {
+        FlagValueEnum::Absent => {}
+        other => panic!("missing flag should be Absent, got {other:?}"),
+    }
+}
 
 /// One `orgasmic ...` invocation quoted in shipped prose.
 struct EntryInvocation {
@@ -641,6 +720,26 @@ fn enum_values_in_tokens(tokens: &[&str]) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
+        let trimmed =
+            tokens[index].trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ',' | '.' | ';'));
+
+        // `--flag=value` (TASK-RQ270.5.1): long_flag alone rejects `=` in the
+        // name, so fold the equals form here before looking at the next token.
+        if let Some((flag_tok, raw)) = trimmed.split_once('=') {
+            if let Some(flag) = long_flag(flag_tok) {
+                if VALUE_ENUM_FLAGS.contains(&flag.as_str()) {
+                    let value = raw.trim_matches(|c| {
+                        matches!(c, '[' | ']' | '(' | ')' | ',' | '.' | ';' | '=')
+                    });
+                    if looks_like_enum_value(value) {
+                        out.push((flag, value.to_string()));
+                    }
+                }
+                index += 1;
+                continue;
+            }
+        }
+
         let Some(flag) = long_flag(tokens[index]) else {
             index += 1;
             continue;
@@ -652,23 +751,14 @@ fn enum_values_in_tokens(tokens: &[&str]) -> Vec<(String, String)> {
         let Some(raw) = tokens.get(index + 1) else {
             break;
         };
-        // `--flag=value` is already folded by clap help style; prose usually
-        // writes `--flag value` or `--flag a|b|c`.
+        // Prose usually writes `--flag value` or `--flag a|b|c`.
         let value =
             raw.trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ',' | '.' | ';' | '='));
         if value.is_empty() || long_flag(value).is_some() {
             index += 1;
             continue;
         }
-        // A value token is letters/digits/dashes/underscores, or an a|b
-        // alternation of those. Placeholders (`<CLASS>`) fail the char check.
-        let looks_like_value = value.split('|').all(|part| {
-            !part.is_empty()
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        });
-        if looks_like_value {
+        if looks_like_enum_value(value) {
             out.push((flag, value.to_string()));
             index += 2;
         } else {
@@ -678,32 +768,82 @@ fn enum_values_in_tokens(tokens: &[&str]) -> Vec<(String, String)> {
     out
 }
 
+/// A value token is letters/digits/dashes/underscores, or an a|b alternation of
+/// those. Placeholders (`<CLASS>`) fail the char check.
+fn looks_like_enum_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('|').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+}
+
+/// Result of looking up a flag's clap `[possible values: …]` in rendered help.
+///
+/// orgasmic:TASK-RQ270.5.1 — `None` used to conflate "flag absent", "free-string",
+/// and "multi-line help layout". Those are three different outcomes.
+#[derive(Debug)]
+enum FlagValueEnum {
+    /// Flag does not appear as an Options/Arguments entry in this help.
+    Absent,
+    /// Flag is present but clap rendered no `[possible values: …]` bracket.
+    FreeString,
+    Values(Vec<String>),
+}
+
 /// Clap's `[possible values: a, b, c]` list for one flag in a `--help` blob.
-fn possible_values_for_flag(help: &str, flag: &str) -> Option<Vec<String>> {
-    let mut collecting = false;
-    let mut buf = String::new();
-    for line in help.lines() {
+///
+/// Parses help as option *entries* via [`split_help_entry`]: clap's long-help
+/// layout puts the bracket on a continuation line under the flag, so a
+/// same-line-only scan silently treated every long-help enum as free-string.
+fn possible_values_for_flag(help: &str, flag: &str) -> FlagValueEnum {
+    let lines = help.lines().collect::<Vec<_>>();
+    let mut in_section = false;
+    for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if !collecting {
-            if !trimmed.contains(flag) {
-                continue;
-            }
-            if let Some(start) = trimmed.find("[possible values:") {
-                buf.push_str(&trimmed[start..]);
-                if buf.contains(']') {
-                    return parse_possible_values_bracket(&buf);
-                }
-                collecting = true;
-            }
+        if trimmed == "Options:" || trimmed == "Arguments:" {
+            in_section = true;
             continue;
         }
-        buf.push(' ');
-        buf.push_str(trimmed);
-        if buf.contains(']') {
-            return parse_possible_values_bracket(&buf);
+        if !in_section {
+            continue;
         }
+        if !trimmed.is_empty() && !line.starts_with(' ') {
+            in_section = false;
+            continue;
+        }
+        let Some((indent, name, rest)) = split_help_entry(line) else {
+            continue;
+        };
+        if name != flag {
+            continue;
+        }
+        // Whole entry: flag line remainder plus continuation lines until the
+        // next entry at the same indent. Blank lines inside the entry stay
+        // part of it — clap often puts `[possible values: …]` after a blank.
+        let mut entry = rest.to_string();
+        for next in &lines[index + 1..] {
+            if next.trim().is_empty() {
+                continue;
+            }
+            let next_indent = next.len() - next.trim_start().len();
+            if next_indent <= indent {
+                break;
+            }
+            entry.push(' ');
+            entry.push_str(next.trim());
+        }
+        return match entry.find("[possible values:") {
+            Some(start) => match parse_possible_values_bracket(&entry[start..]) {
+                Some(values) => FlagValueEnum::Values(values),
+                None => FlagValueEnum::FreeString,
+            },
+            None => FlagValueEnum::FreeString,
+        };
     }
-    None
+    FlagValueEnum::Absent
 }
 
 fn parse_possible_values_bracket(fragment: &str) -> Option<Vec<String>> {
@@ -736,10 +876,11 @@ fn is_subcommand_word(token: &str) -> bool {
         })
 }
 
-/// `[--model` / `--kind` → `--model` / `--kind`; anything else → `None`.
+/// `[--model` / `--kind` → `--model` / `--kind`; `--flag=value` → `--flag`.
 fn long_flag(token: &str) -> Option<String> {
     let trimmed = token.trim_matches(|c| matches!(c, '[' | ']' | '(' | ')' | ',' | '.' | ';'));
     let name = trimmed.strip_prefix("--")?;
+    let name = name.split_once('=').map(|(n, _)| n).unwrap_or(name);
     if name.is_empty()
         || !name.starts_with(|c: char| c.is_ascii_lowercase())
         || !name
@@ -748,7 +889,7 @@ fn long_flag(token: &str) -> Option<String> {
     {
         return None;
     }
-    Some(trimmed.to_string())
+    Some(format!("--{name}"))
 }
 
 fn help_mentions_flag(help: &str, flag: &str) -> bool {

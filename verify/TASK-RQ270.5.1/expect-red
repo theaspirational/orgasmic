@@ -1,0 +1,9 @@
+# Pinned from /tmp/task-rq270.5.1/post-fix-architector-red.log on 2026-08-06.
+# The pinned message was the FIRST failing assertion: after entry-based help
+# parsing, manager-dispatch.org naming --kind architector is rejected against
+# clap possible_values [implementer, reviewer]. Pre-fix the same mutation
+# passed green (vacuous gate); see /tmp/task-rq270.5.1/pre-fix-architector-mutation.log.
+exit: 101
+contains: `orgasmic manager dispatch --kind architector` is not in clap possible values
+contains: test shipped_value_enum_arguments_match_clap_possible_values ... FAILED
+contains: test result: FAILED. 0 passed; 1 failed

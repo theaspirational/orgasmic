@@ -1,0 +1,13 @@
+diff --git a/shipped/prompt-studio/conventions/manager-dispatch.org b/shipped/prompt-studio/conventions/manager-dispatch.org
+index 4033231..7ecf801 100644
+--- a/shipped/prompt-studio/conventions/manager-dispatch.org
++++ b/shipped/prompt-studio/conventions/manager-dispatch.org
+@@ -270,7 +270,7 @@ check the rest of the invocation too.
+    #+begin_src bash
+    orgasmic manager dispatch \
+      --task TASK-NNN \
+-     --kind implementer \
++     --kind architector \
+      --mode <mode> \
+      --harness <harness> \
+      --model <model> \

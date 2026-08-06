@@ -9,15 +9,17 @@
 :VERSION:    1
 :END:
 
-Minted ids (TASK-XXXXX, dec_XXXXX, arch_XXXXX, term_XXXXX) are deliberately
+Minted ids (TASK-XXXXX, dec_XXXXX, term_XXXXX, ART-XXXXX) are deliberately
 opaque (dec_X72P5): nothing about TASK-YHA6V tells a reader what it names.
 Whenever prose written for a human mentions a node id, pair it with a short
-readable handle on first mention.
+readable handle on first mention. Legacy architecture ids (=arch_XXXXX=) remain
+valid as references; the architecture class is no longer mintable.
 
 ** The form
 `<ID> (<handle>)` — a 2–6 word fragment of the node's title or its essence:
 TASK-YHA6V (codex thin last.txt), dec_WC1PW (auto-spawn watcher removal),
-arch_QXS5W (prompt compiler). Later mentions in the same passage may use the
+ART-A1B2C (prompt compiler). A legacy reference such as arch_QXS5W (prompt
+compiler) uses the same form. Later mentions in the same passage may use the
 bare id.
 
 ** Where it applies
