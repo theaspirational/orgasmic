@@ -311,18 +311,23 @@ check the rest of the invocation too.
 
    *After close, the worker report lives at
    =<project_root>/.orgasmic/dispatch-records/<started_tx>/last.txt=*
-   (TASK-QGWK7). Close *promotes* =last.txt= and =stdout.log= out of gitignored
-   =tmp/= into that tracked directory, keyed by the dispatch GENERATION
-   (=started_tx=), not the task — so a chain of six dispatches keeps six
-   distinct records. The close tx (and the worker's =*.reported= tx) carries
-   =:REPORT_PATH:= naming that =last.txt=. The harness =stdout.log= sits beside
-   it as falsifiable evidence; =:REPORT_PATH:= always points at the summary.
-   Commit the promoted directory with the rest of the change so a fresh clone
-   can read it. *Retention: keep forever.* There is no silent age-out at close.
-   Growth is one directory per dispatch generation: implementer summaries are
-   typically 1–5 KB; reviewer reports ~25 KB; =stdout.log= varies with harness
-   verbosity and is often the larger file. Do not paste the raw report into
-   =done.org= — the node keeps curated Evidence plus this pointer.
+   (TASK-QGWK7, TASK-QGWK7.1). Close *promotes* =last.txt= and a bounded
+   =stdout.log= out of gitignored =tmp/= into that tracked directory, keyed by
+   the dispatch GENERATION (=started_tx=), not the task — so a chain of six
+   dispatches keeps six distinct records. The close tx (and the worker's
+   =*.reported= tx) carries =:REPORT_PATH:= naming that =last.txt=. Close also
+   =git add=s the promoted directory into the index (staging, not committing)
+   so durability does not depend on which =git add= form a later state chore
+   uses; when to commit stays with the manager. The harness =stdout.log= sits
+   beside the summary as falsifiable evidence: empty files are skipped; larger
+   files promote only the last 64 KB, with the original byte count in
+   =stdout.log.bytes= so truncation is visible. =:REPORT_PATH:= always points
+   at the summary. *Retention: keep forever, with measured year-one growth.*
+   At ~5,200–6,500 generations/year on this project: =last.txt= ≈ 24–30 MB/yr
+   (mean ~4.6 KB); =stdout.log= ≈ 0 typical on tmux (empty panes skipped) and
+   ≤ ~400 MB/yr worst case at the 64 KB cap. There is no silent age-out at
+   close. Do not paste the raw report into =done.org= — the node keeps curated
+   Evidence plus this pointer.
 
    *=--started-tx= is mandatory whenever a dispatch is live* (TASK-6AYEJ.1,
    TASK-6AYEJ.2). It is the =TX_ID= of the =manager.dispatch_started= this close

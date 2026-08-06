@@ -1,0 +1,15 @@
+# Pinned from the real red run of 2026-08-06 with the injection applied.
+#
+# The injection makes stage_promoted_dispatch_record a no-op, so close promotes
+# the report onto disk but leaves the directory untracked — the F-1 defect that
+# made the parent miss its own acceptance criterion 2.
+#
+# The FIRST failing assertion is the index claim below.
+
+exit: 101
+
+contains: promoted record must be in the git index after close so durability does not depend on which git add form a manager uses
+
+contains: test result: FAILED. 0 passed; 1 failed
+
+contains: manager::tests::dispatch_close_stages_promoted_record_in_git_index ... FAILED

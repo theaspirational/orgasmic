@@ -382,8 +382,8 @@ fn manager_convention_documents_generation_bound_close() {
     );
 }
 
-/// TASK-QGWK7: after close the report must be findable; the Integrate step
-/// used to point only at a tmp/ path that close then deleted.
+/// TASK-QGWK7 / TASK-QGWK7.1: after close the report must be findable; the
+/// Integrate step used to point only at a tmp/ path that close then deleted.
 #[test]
 fn manager_convention_names_post_close_report_path() {
     let text = manager_dispatch_convention();
@@ -394,6 +394,10 @@ fn manager_convention_names_post_close_report_path() {
     assert!(
         text.contains("Retention: keep forever"),
         "the retention policy must be stated, not a silent delete"
+    );
+    assert!(
+        text.contains("24–30 MB/yr") && text.contains("64 KB"),
+        "year-one growth for last.txt and the stdout.log bound must be stated"
     );
     assert!(
         text.contains(":REPORT_PATH:"),

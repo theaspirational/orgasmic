@@ -1,0 +1,25 @@
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -5567,20 +5567,8 @@
+ /// Staging only — when to commit stays with the manager.
+ // orgasmic:TASK-QGWK7.1
+ fn stage_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+-    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+-    let output = Command::new("git")
+-        .args(["add", "--"])
+-        .arg(&dest_dir)
+-        .current_dir(project_root)
+-        .output()
+-        .map_err(|err| err.to_string())?;
+-    if !output.status.success() {
+-        return Err(format!(
+-            "git add failed: {}{}",
+-            String::from_utf8_lossy(&output.stderr),
+-            String::from_utf8_lossy(&output.stdout)
+-        ));
+-    }
++    // INJECTED (TASK-QGWK7.1): skip staging so the promoted directory stays untracked.
++    let _ = (project_root, started_tx);
+     Ok(())
+ }
+ 
