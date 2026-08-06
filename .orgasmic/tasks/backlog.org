@@ -3001,6 +3001,25 @@ lives on TASK-M47E5.
 :WRITE_SCOPE: crates/**,ui/**,shipped/**,.orgasmic/**
 :END:
 
+=== Stage D is BUILT AND REVIEWED but deliberately NOT on main [2026-08-06]
+Stage D landed as merge =0eee47f= on branch =stage-d-staging= (worker head =4ed239a=, +2 manager follow-up commits), NOT on =main=. Main is untouched and the board reads 0 parse errors.
+
+*Why staging:* merging to main deletes =architecture.org= from the live tree, and the installed runtime =0.0.15-dev.1= (=05e1813=) predates the stage-C carve-outs, so the operator's board would show ~311 parse errors until a reinstall. That sequencing is an operator decision. =dispatch-close= refuses =implementer.done= without a =--merge-sha=, so a staging merge is what let review proceed without forcing the call early.
+
+*Review verdict:* APPROVE WITH FOLLOW-UPS, 5 findings, none BLOCK SHIP.
+
+The reviewer reproduced the 0-parse-errors claim independently — four cells over =git archive= copies (file absent/present x merged/pre-carve-out code), giving 0 / 0 / 309 / 0, where the 309 splits as 231 dangling graph edge + 78 dangling advisory marker. The 78 matches the residual recorded above and the 309 matches the ~311 measured against the installed runtime, so the sequencing warning on this task is confirmed accurate.
+
+It then added a POSITIVE CONTROL the brief did not ask for: merged code, file absent, with =:RELATES_TO: dec_GONE99 TASK-GONE99 term_GONE99= injected — exactly 3 errors, the right 3. That is what makes the zero non-vacuous rather than equally consistent with the lint never running.
+
+*Two structural facts worth keeping:* merged + file PRESENT also gives 0, with =arch_ ids in graph.nodes: []=, while pre-carve-out + present gave 64 arch nodes — the file was already fully inert before deletion, so stage D deleted a file nothing read. And merged + absent still carries 231 graph edges pointing at =arch_= plus 14 indexed marker ids: history stays queryable, it just stops erroring.
+
+*The pin was proved by mechanism, not by assertion text.* Against an injected build with a task carrying =:PRODUCES: arch_RN73Z=: =graph.nodes= 948 -> 949 with =arch_RN73Z= present, and parse errors 0 in BOTH columns. Nothing fails; the write-time guard just goes quiet. The pin is the only thing that catches it.
+
+*Findings, all actioned:* F1 =.orgasmic/conventions/decision-graph.org= instructed =orgasmic architecture create= — an item of stage D's DECLARED scope that the manager's brief dropped when rewriting the stale inventory, a scope-transcription gap; fixed on main =05c7c12=. F2 shipped doctrine still instructs =orgasmic id mint --class architecture=, which the stage-D binary rejects, and both ship in the same runtime package; filed as TASK-RQ270.5. F3 this decision's legacy-ledger-fallback requirement was wrong on both location and risk; dec_HBK6A amended. F4 orphaned =// orgasmic:task_KY80Q= marker; fixed on staging =ebb699d=. F5 =is_valid_greenfield_arch_id= kept without a note; commented on staging — and the review's rationale CORRECTED, because after stage D nothing produces an =arch_= identity occurrence, so the MalformedIdentity failure it described is latent, not live.
+
+*Harness note:* =tmux/cursor-agent= has TWO blocking prompts before first execution (workspace trust, then command allowlist), each parked at 0% CPU and indistinguishable from a hung transport. Unattended, each would have hit the 600s stall release and died looking like an infrastructure failure.
+
 ** Description
 Execute the excision decided in dec_HBK6A. The measuring is already done — do
 NOT re-derive it. TASK-XYYBT produced =archive/TASK-XYYBT-architecture-excision-estimate.md=
