@@ -1,3 +1,244 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-RQ270.2 Excision stage B — retire the drift comparator and the // arch: back-edges
+:PROPERTIES:
+:ID: TASK-RQ270.2
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,scripts/**
+:END:
+
+** Description
+
+Stage B of the dec_HBK6A excision: RETIRE DRIFT AND THE =// arch:= BACK-EDGES.
+Read the TASK-RQ270 parent for the staged plan and the coupling map, and
+=archive/TASK-XYYBT-architecture-excision-estimate.md= for the measured
+inventory. Do not re-derive either. Stage A (TASK-RQ270.1) is DONE and merged
+(=eb2ba3b=).
+
+This stage removes the arch-specific drift comparator and the marker syntax it
+alone reads. It touches no route, no node class, no read model and no UI.
+
+** The manager re-measured, and the estimate was wrong twice
+
+The parent estimates "73 legacy =// arch:= lines, ~75 files". Measured on
+=f60af0a=:
+
+- =// arch:= in =crates/= + =ui/=: *51 total across 47 files.* Of those, *4 are
+  inside =architecture_drift.rs= itself* (its parser at =:265= plus three test
+  fixtures) and go with the file. Of the remaining 47, *45 are LINE 1 header
+  comments* and *2 are interior lines* in =crates/orgasmic-core/src/lib.rs= (=:11=
+  and =:16=), which carry trailing prose (=— see decisions dec_016=).
+- *=# arch:= markers exist in =scripts/= and neither the parent nor the estimate
+  mentions them*: =scripts/publish-runtime.sh:2= and =scripts/publish-apps.sh:2=.
+  =done.org= records the drift scanner being "taught to read shell sources and
+  '# arch:' markers" under dec_B4147, so these are real back-edges of the same
+  kind. *49 lines to strip in total*, not 73.
+
+** THE TRAP — two marker syntaxes, one word
+
+*=// arch:= and =// orgasmic:arch_= are DIFFERENT SYNTAXES WITH DIFFERENT
+READERS, and they sit on ADJACENT LINES OF THE SAME FILES.* Line 1 is
+=// arch: arch_A53QX.2=; line 2 is =// orgasmic:arch_A53QX, dec_ASB1A=.
+
+- =// arch:= is read ONLY by =architecture_drift.rs= (=strip_prefix("// arch:")=
+  at =:265=). It dies with the comparator.
+- =// orgasmic:<ids>= is the GENERIC marker syntax read by
+  =orgasmic-core/src/marker.rs= and served by =/graph/markers/:node_id=. It also
+  carries =dec_=, =TASK-= and =term_= ids. *There are 60 =orgasmic:arch_=
+  markers and every one of them MUST SURVIVE this stage.* The coupling map is
+  explicit that the generic scanner stays.
+
+A grep-and-delete keyed on the word "arch" destroys the second set. Key on the
+exact prefixes.
+
+** In scope
+
+- Delete =crates/orgasmic-cli/src/architecture_drift.rs= (457 LOC, arch-only end
+  to end — the manager confirmed nothing outside =main.rs= references it).
+- Remove =mod architecture_drift;= (=main.rs:13=), the =ArchitectureCmd::Drift=
+  variant (=main.rs:754=), its handler block (=main.rs:3090-3103=) and its
+  =unreachable!= match arm (=main.rs:3138=).
+- Strip the 49 =// arch:= / =# arch:= lines.
+
+** Explicitly NOT in this stage
+
+- =architecture {list,get,schema}=, =GET /architecture*=, the read model and the
+  UI — stage C.
+- The node class, =schema.rs=/=id.rs=, the dangling-edge lint carve-out, and
+  deleting =architecture.org= — stages C and D.
+- The generic marker scanner, =/graph/markers=, and every =orgasmic:arch_=
+  marker.
+
+** A stage-D observation this work surfaced, recorded so it is not re-derived
+
+=index.rs:775= feeds the scanned marker map into
+=lint_project_identity_state=. So the 60 surviving =orgasmic:arch_= markers have
+a LIVE CONSUMER, and after stage D deletes =architecture.org= they name nodes
+that no longer exist. Stage D already plans to remove "the identity-lint arch
+collectors" — this is a note that the plan's coverage is real and load-bearing,
+NOT new work, and NOT stage B's problem.
+
+** Acceptance
+
+- =orgasmic architecture drift= no longer exists as a verb; =architecture
+  --help= does not list it.
+- No =// arch:= or =# arch:= line remains anywhere in the repo outside
+  =.orgasmic/= history and =archive/=.
+- All 60 =orgasmic:arch_= markers survive untouched.
+- =cli_parity= passes — it resolves every =orgasmic ...= invocation in =shipped/=
+  against the real binary, so it is what catches shipped doctrine naming a verb
+  this stage just deleted. (Manager checked: =shipped/= currently names no drift
+  verb, so this should be a no-op — but the gate is the proof, not the grep.)
+** Landed and verified by the manager
+Merged =bb06bc4= (worker =37f28c4=, base =f59ce41=). *49 files, +1/-529.*
+Manager re-verified every inventory claim on the merged tree rather than reading
+the report.
+
+=== The trap was avoided, and proven avoided
+
+The one way to get this stage wrong was to delete =// orgasmic:arch_= markers
+alongside =// arch:= ones — different syntaxes, different readers, ADJACENT LINES
+of the same files. A grep-and-delete on "arch" destroys the wrong set and the
+diff still looks plausible.
+
+The implementer proved the survivors are intact with a normalized sha256 of the
+whole marker inventory, before and after. That is a better instrument than a
+count: a count cannot tell a preserved marker from a mangled one.
+
+*The manager reproduced it independently* across the two commits:
+
+: git grep -h "orgasmic:arch_" f59ce41 -- crates/ ui/ scripts/ | sort | shasum -a 256
+: git grep -h "orgasmic:arch_" bb06bc4 -- crates/ ui/ scripts/ | sort | shasum -a 256
+: 3f3a0438ef6da9752b36c584490fb6a695bee2e1a411d7a1fac54d356a18dae5  (both)
+
+Byte-identical. All 60 survive unchanged.
+
+=== Inventory, re-counted post-merge by the manager
+
+- =^\s*(//|#) arch:= across =crates/=, =ui/=, =scripts/= — *0 remaining*.
+- =orgasmic:arch_= — *60*, unchanged.
+- =architecture_drift= references — *0*.
+- =ArchitectureCmd::Drift= references — *0*.
+- =crates/orgasmic-cli/src/architecture_drift.rs= — *gone* (457 LOC).
+
+The 49-vs-51 accounting reconciles exactly as the task predicted: 51 total
+=// arch:= lines, of which 4 lived INSIDE the deleted comparator (its own parser
+at =:265= and three test fixtures) and went with the file, leaving 47 in
+=crates/= plus the 2 in =scripts/= the parent task never mentioned.
+
+=== The behavioural probe, run by the manager on the real binary
+
+: ./target/debug/orgasmic architecture --help
+:   Commands: list, get, schema, help          <- no `drift`
+: ./target/debug/orgasmic architecture drift
+:   error: unrecognized subcommand 'drift'     <- exit 2
+
+=ArchitectureCmd::{List, Get, Schema}= are untouched, as stage C requires.
+
+=== Gates on the merged tree
+
+- =scripts/run-tests.sh -p orgasmic-cli= — *GREEN, 0 failures*.
+- =cargo test -p orgasmic-cli --test cli_parity= — 3 passed, 0 failed. This is
+  the load-bearing gate for a deletion stage: it resolves every =orgasmic ...=
+  invocation in =shipped/= against the real binary, so shipped doctrine naming a
+  deleted verb would fail here. It passed, confirming the manager's pre-dispatch
+  grep that =shipped/= names no drift verb.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0.
+- =cargo fmt --all --check= — exit 0.
+- =cargo check --workspace= (implementer) — exit 0, which is what catches a
+  reference to the deleted module outside the CLI.
+
+=== No injection proof, deliberately
+
+The implementer considered one and declined, correctly: this stage removes a
+CAPABILITY rather than fixing a defect, so there is no red to pin and no failure
+signature to inject. The Clap probe plus =cli_parity= are the real evidence. That
+reasoning is recorded here so a later reader knows the absence was a decision.
+
+=== One incidental, declared and harmless
+
+=cargo fmt= moved =pub mod home= into alphabetical order once the two separating
+legacy comments were deleted — the single insertion in a diff that is otherwise
+529 deletions. No behavioural change.
+** Review round 1 — REJECT (finding 1 is a manager inventory error)
+Reviewer =reviewer-codex-tmux= (tmux/codex/gpt-5.6-sol/high) on merge =bb06bc4=
+vs base =f59ce41=. REJECT, two BLOCK SHIP. Manager confirmed both.
+
+=== FINDING 1 IS A MANAGER ERROR, and it is the important one
+
+The deleted comparator accepted *FOUR* prefixes, not two
+(=architecture_drift.rs:263-277= at base): =// arch:=, =# arch:=, *=// @arch=*
+and *=# @arch=*. The manager's inventory grepped only =arch:= and reported it as
+"MEASURED, not estimated" with a confident count of 51.
+
+*26 =// @arch= line-1 back-edges survive in =ui/=* — =App.tsx=, =router.tsx=,
+=routes.ts=, =AppShell.tsx=, =ArchitectureView.tsx=, =types.ts= and 20 more.
+Nothing reads them: the surviving generic scanner (=marker.rs:169=) indexes only
+=orgasmic:= payloads. So stage B left dead back-edges of exactly the kind it
+exists to remove, and the task's acceptance grep FALSE-GREENED because it was
+written from the same incomplete measurement.
+
+*The manager had the evidence and did not use it.* When listing markers not on
+line 1, the grep output included
+=architecture_drift.rs:261: // Drift markers carry the leaf id via a `// arch:` / `// @arch` comment.=
+— the comparator naming both forms, in the manager's own terminal, unfollowed.
+
+The lesson is narrower than "measure more": *when a grep's purpose is to
+enumerate what a READER accepts, derive the patterns from the reader's code, not
+from the instances you happen to see.* The comparator's =strip_prefix= chain was
+the authoritative list and it was four lines long.
+
+=== FINDING 2, confirmed
+
+=schema_examples.rs:86= — the =SOURCE_PATHS= legend still reads "repo paths
+=architecture drift= checks against =// orgasmic:<id>= markers". =architecture
+schema= is deliberately still live (stage C owns it), and =print_node_schema=
+emits that legend verbatim, so a supported command now advertises a deleted one.
+
+Doubly wrong, and worth fixing rather than deleting later: it also conflates the
+two marker syntaxes — drift checked =// arch:=/=@arch=, never =orgasmic:=.
+
+=cli_parity= cannot catch this: it extracts invocations from =shipped/= only, not
+from generated schema text. A real gap in an otherwise load-bearing gate.
+
+=== The reviewer settled the weakness the manager flagged in its OWN check
+
+The brief admitted the manager's marker hash was over =git grep -h= and therefore
+blind to which FILE each marker lived in, and asked whether that mattered. The
+reviewer established that it does — =scan_project_markers= maps each id to PATHS
+(=index.rs:1642=) and =/graph/markers/:node_id= returns them (=api.rs:12535=) —
+and then re-ran the comparison *preserving path + marker content*: 60 records
+both sides, SHA-256 =187fb552…=, exact diff empty.
+
+So the property holds and is now properly proven. Raising a doubt about one's own
+instrument and having a better instrument answer it is the outcome to want.
+
+=== Accepted, no action
+
+- Scope audit clean: the diff touches only =crates/**= and =scripts/**=; stage-C/D
+  files changed by line-1 comment deletion alone; no read model, route, node
+  class, lint or UI behaviour moved early.
+- The two interior =orgasmic-core/src/lib.rs= deletions lost only pointer text
+  (=see decisions dec_016/017/019=), and those ids do not resolve to decision
+  nodes in this tree.
+- =pub mod home= is the sole insertion, alphabetical ordering only.
+- Targeted searches of =.github/=, =shipped/=, =src-tauri/=, =verify/=,
+  =scripts/= and every =build.rs= found no drift invocation or source-text
+  scanner. Finding 2 is the only live reference.
+- Agreed that omitting an injection proof was right for a capability deletion:
+  "the problem is coverage breadth, not absence of a synthetic red/green
+  fixture."
+
+=== The manager's ruling on the open question
+
+The reviewer asked whether the 26 removals amend stage B's scope or become a
+gated follow-on. *They amend stage B.* Stage B's objective is to retire the
+marker syntax the comparator alone read; =@arch= IS that syntax in another
+spelling, and the markers are now definitively unreferenced. Deferring them would
+leave dead back-edges on main for an unscheduled interval and would let a stage
+close having not done the thing it names.
+
+=ui/**= enters scope for comment stripping ONLY. Stage C still owns every UI
+behaviour, view and route.
+

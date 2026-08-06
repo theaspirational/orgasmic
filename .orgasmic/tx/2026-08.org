@@ -10573,3 +10573,145 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-06 Thu 01:01:39 manager.dispatch_started TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4651
+:TIME:         [2026-08-06 Thu 01:01:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2-review/worktree
+:BRANCH:       task-rq270.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-review/task-rq270-2-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 01:01:39]
+:LIVENESS:     6a60f550b3360f386b5b23e298126c66f3dc2de5
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review excision stage B: a deletion stage whose main risk is deleting the adjacent marker syntax by mistake
+:END:
+
+* TX 2026-08-06 Thu 01:01:39 run.created TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4652
+:TIME:         [2026-08-06 Thu 01:01:39]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RQ270.2-reviewer-20260806T010139.jsonl
+:REASON:       review excision stage B: a deletion stage whose main risk is deleting the adjacent marker syntax by mistake
+:RUN_ID:       run-20260806T010139-9cd13ed5cebc4f2aa02bbfd20504a5b9
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rq270-2-review/task-rq270-2-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rq270-2-review/task-rq270-2-review-dacb8388b3c845989c0fb3bfa4ce116c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rq270-2-review/task-rq270-2-review-dacb8388b3c845989c0fb3bfa4ce116c-stdout.log
+:DISPATCH_ATTEMPT: dacb8388b3c845989c0fb3bfa4ce116c
+:DISPATCH_TX:  tx-20260806-orgasmic-4651
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 01:11:05 reviewer.reported TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4653
+:TIME:         [2026-08-06 Thu 01:11:05]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:RUN_ID:       run-20260806T010139-9cd13ed5cebc4f2aa02bbfd20504a5b9
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rq270.2-review/worktree
+:END:
+
+* TX 2026-08-06 Thu 01:12:07 reviewer.done TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4654
+:TIME:         [2026-08-06 Thu 01:12:07]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:REASON:       REJECT: 26 // @arch back-edges survive in ui/, a fourth prefix the deleted comparator accepted and the manager's inventory never counted; and architecture schema still emits a legend advertising the deleted drift command. Manager confirmed both
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: f59ce41..bb06bc4
+:VERDICT:      has-issues
+:FINDINGS:     2 BLOCK SHIP; finding 1 is a manager inventory error — the comparator accepted four prefixes and the manager measured two
+:CLOSED_TX:    tx-20260806-orgasmic-4651
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 01:12:07 task.state_transitioned TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4655
+:TIME:         [2026-08-06 Thu 01:12:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RQ270.2 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 01:12:39 task.edited TASK-RQ270.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4656
+:TIME:         [2026-08-06 Thu 01:12:39]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RQ270.2
+:NODE_ID:      TASK-RQ270.2
+:END:
+
+* TX 2026-08-06 Thu 01:13:00 task.created TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4657
+:TIME:         [2026-08-06 Thu 01:13:00]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       the comparator accepted four marker prefixes and the manager's inventory counted two, so 26 // @arch back-edges survive in ui/; and architecture schema still advertises architecture drift
+:END:
+
+* TX 2026-08-06 Thu 01:13:01 task.property_updated TASK-RQ270.2.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4658
+:TIME:         [2026-08-06 Thu 01:13:01]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.2.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       ui/ added for comment stripping only; crates/orgasmic-core for the schema legend
+:FIX_SUBTASK:  t
+:WRITE_SCOPE:  crates/orgasmic-core/,ui/
+:END:
