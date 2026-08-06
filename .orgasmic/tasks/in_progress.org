@@ -1,3 +1,125 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-RQ270.5 Excision stage E — rewrite the shipped doctrine that still instructs a retired architecture layer :shipped:cli:docs:
+:PROPERTIES:
+:ID: TASK-RQ270.5
+:PRIORITY: P1
+:WRITE_SCOPE: shipped/**,crates/**,.orgasmic/**,README.md
+:END:
+
+=== Manager re-measured the inventory [2026-08-06] — it is 18 files, not 5
+The stage-D review named 5 files. A tree-wide sweep of =shipped/= finds *33 hits across 18 files* (excluding =architector.reported= event-name rows). Verified per-file counts:
+
+| 5 | =project-scaffold/tasks/backlog.org= |
+| 4 | =prompt-studio/prompt-specs/planner.org= |
+| 3 | =prompt-studio/prompt-specs/manager.org= (=:12=, =:46=, =:126=) |
+| 3 | =prompt-studio/conventions/manager-dispatch.org= (incl. =:374= =--class architecture=) |
+| 2 | =skills/orgasmic/references/init.md= |
+| 2 | =prompt-studio/prompt-specs/griller.org= |
+| 2 | =project-scaffold/tasks/goal.org= |
+| 2 | =entry/router.org= (=:78= AND =:125=, not just =:78=) |
+| 1 each | =skills/orgasmic/references/recall-resume.md=, =skills/orgasmic/SKILL.md=, =schema/tx.org=, =prompt-specs/implementer.org=, =prompt-specs/general_worker.org=, =prompt-specs/base_worker.org=, =prompt-parts/planning_policy.org=, =prompt-parts/grill_domain_policy.org=, =conventions/tx-scannable-bodies.org=, =project-scaffold/decisions.org= |
+
+*=schema/tx.org= needs a SPLIT decision, and the review's "keep tx.org" would have gotten it wrong.* It carries both kinds of hit:
+- =:108= and =:145= name the =architector.reported= EVENT TYPE. *Keep* — tx TYPE is a free string and history must stay readable.
+- =:277= lists =.orgasmic/architecture.org= among the project's live state files. *Fix* — that claim is now false.
+
+The lesson this excision has paid for seven times over applies to its own last stage: the same file can hold both a historical reference that must survive and a live claim that must die. Counting files is not the same as auditing claims.
+
+*Also stale, and outside =shipped/=:* the INSTALLED skill copy at =~/.claude/skills/orgasmic/SKILL.md:38= carries the same =audit= description. It is materialized from =shipped/= by the installer, so fixing the source is necessary but not sufficient — the operator's installed skill needs re-syncing after this lands.
+
+** Description
+Stage E of dec_HBK6A: rewrite the shipped doctrine so the runtime stops
+instructing agents to use an architecture layer that no longer exists. Stages
+A-D are done and reviewed. This is the last stage.
+
+Stage E existed only as prose inside TASK-RQ270's body until now. The stage-D
+review pointed out that the tracking gap acquired teeth the moment stage D
+landed, because stage D converted a documentation lag into a *live CLI error*.
+
+** Why this is now urgent rather than tidy
+=shipped/= is copied verbatim into the runtime package
+(=scripts/package-runtime.sh:166=), so the erroring instruction and the erroring
+binary ship in the SAME artifact. An agent that follows shipped conventions hits
+a hard failure.
+
+Measured against built code by the stage-D reviewer:
+
+: $ orgasmic id mint --class architecture
+: error: invalid value 'architecture' for '--class <CLASS>'
+:   [possible values: task, decision, term, artifact]
+
+while =shipped/prompt-studio/conventions/manager-dispatch.org:374= still says
+"Mint with =orgasmic id mint --class task|decision|architecture|term=".
+
+** The inventory, measured
+- =shipped/prompt-studio/conventions/manager-dispatch.org:374= — instructs the
+  now-invalid =--class architecture=. Hard error.
+- =shipped/entry/router.org:78= — still lists =architecture.org= as a source of
+  truth. HIGHEST TRAFFIC: every dispatched worker is told to run
+  =orgasmic entry=.
+- =shipped/prompt-studio/prompt-specs/manager.org:46= — same claim in the
+  manager spec.
+- =shipped/skills/orgasmic/SKILL.md:38= — describes =audit= as comparing
+  =architecture.org= claims against shipped code.
+- =shipped/project-scaffold/tasks/backlog.org:126-147= — every NEWLY SCAFFOLDED
+  project still gets bootstrap task =TASK-C9V29.3 infer-architecture= with
+  =:WRITE_SCOPE: .orgasmic/architecture.org=, instructing an agent to author a
+  file class the runtime retired. **This one is pinned green** by
+  =crates/orgasmic-core/tests/fixtures.rs:326=
+  (=shipped_scaffold_seeds_bootstrap_task_tree=, asserting the write scope
+  contains =architecture.org= at =:361=), so it keeps shipping until that test
+  changes with it.
+- The parent's stage-E list also names =tx.org= (architector rows become a
+  historical note), the planner/griller/base/general/implementer specs, and
+  =conventions.org=.
+
+** The gate that should have caught this
+=cli_parity= DOES scan the whole shipped corpus
+(=crates/orgasmic-cli/tests/cli_parity.rs:21=, with a
+=MINIMUM_SHIPPED_INVOCATIONS = 100= guard against a silently-empty extractor) —
+but it validates **verb paths only**. =orgasmic id mint= resolves, so the test
+passes and the =--class= value-enum drift is invisible to it. cli_parity was
+green on the stage-D branch and told us nothing about this.
+
+*Widen it*: validate =--class= / =--kind= / other value-enum arguments in
+shipped prose against clap's =possible_values=. That is the durable fix; the
+text edits above are the immediate one.
+
+** Also carried into this stage
+- **TASK-ZFNE1** — =README.md:6='s hero graphic labels =architect= as an LLM
+  agent role and =README.md:10= states the loop as "Grilling -> Decisions+Glossary
+  -> Architecture -> Tasks -> Code -> Repeat". Deferred through stages A-D
+  deliberately, because redrawing before the true picture was known guaranteed a
+  second redraw. The picture is now known. Operator deferred once already
+  ("we'll redraw later") — confirm before spending on art.
+- **The =glossarist= dispatchability check**, never done: it is shown as an agent
+  role in the same hero image. Verify it is actually dispatchable before the
+  image asserts it again.
+- **Settle the 4 glossary =:PRIMARY_LEAF: arch_*= refs deliberately**
+  (=glossary.org:355,366,377,388=). Stage D left them, and both the stage-D
+  implementer and reviewer independently judged that correct: =PRIMARY_LEAF= is
+  not in =REFERENCE_PROPERTY_KEYS=, nothing validates it, and singling out 4
+  pointers while 231 structurally identical =:IMPLEMENTS: arch_= edges in
+  =done.org= stay is less coherent than leaving all of them. dec_HBK6A's own
+  Consequences call them "inert references, cleaned opportunistically".
+  *Record the decision either way* — an indefinitely deferred cleanup is how a
+  loose end becomes folklore.
+
+** Acceptance
+- No shipped instruction names a verb, flag value, worker kind or state file the
+  runtime no longer has.
+- =cli_parity= passes, and is widened to catch value-enum drift (or a follow-up
+  is filed saying explicitly why not).
+- =shipped_scaffold_seeds_bootstrap_task_tree= is updated with the seed it
+  guards, not deleted.
+- A newly scaffolded project contains no architecture bootstrap task.
+- Historical references stay: =shipped/schema/tx.org:108,145='s
+  =architector.reported= rows are CORRECT and must not be removed — tx TYPE is a
+  free string and history must stay readable.
+
+** Sequencing
+The stage-D merge already forces a runtime reinstall. This stage should land
+BEFORE that reinstall, so the new =shipped/= corpus and the new binary reach the
+operator's machine together rather than one release apart.
