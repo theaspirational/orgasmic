@@ -202,42 +202,56 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-ONE DISPATCH RUNNING: TASK-G64ZH (P2) implementer,
-=implementer-cursor-agent-tmux= (tmux / cursor-agent / cursor-grok-4.5-high-fast),
-run =run-20260806T132510-d29306f2346c4f87b663e8648e7b18f7=, started_tx
-=tx-20260806-orgasmic-4866=, base =fb82610=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-g64zh= on =task-g64zh-impl=. Report lands at
-=.orgasmic/tmp/dispatch/task-g64zh/task-g64zh-a4c32ea974ed4705b79fe71c20c121f3-last.txt=.
-If that file is non-empty, integrate it; if the tmux session is gone and it is
-EMPTY, treat the run as orphaned and read =rescue-policy= before assuming anything
-completed.
+ONE DISPATCH RUNNING: TASK-G64ZH REVIEWER, =reviewer-claude-tmux= (tmux / claude
+/ claude-opus-5 / high), run
+=run-20260806T134255-249bcf3f561d49d5be4fc57b5beccc6d=, started_tx
+=tx-20260806-orgasmic-4873=. Verdict lands at
+=.orgasmic/tmp/dispatch/task-g64zh-review/task-g64zh-review-ea83c59c279e426c9c5590e0cae316b7-last.txt=.
 
-WHAT IT IS FIXING, so you do not re-derive it: the three follow-ups from the
-TASK-ZBYH3.1 review. F1 (HIGH) the reopen retry is unbounded and both the reopen
-path and =maybe_rotate= retry independently — bound it and skip rotation entirely
-while =state.durable.is_none()=. F2 answer the mirror question BY CONSTRUCTION in
-the three service definitions orgasmic writes for itself, keeping =is_terminal()=
-as the fallback that still has to be correct on its own, because an
-already-installed plist does not carry the new flag until it is rewritten. F3 pin
-BOTH branches of the gate; all four existing tests drive the non-tty side. The
-brief also requires a =verify/TASK-G64ZH/= artifact pinning F1's bound on the
-PRODUCTION path.
+ITS IMPLEMENTER IS MERGED BUT NOT CLOSED, AND THAT IS THE GATE WORKING, NOT A
+MISTAKE. TASK-G64ZH merged at =eaa88da= (worker commit =2a4aa8a=, implementer
+=implementer-cursor-agent-tmux=, tmux / cursor-agent /
+cursor-grok-4.5-high-fast, started_tx =tx-20260806-orgasmic-4866=). The close
+with =--merge-sha eaa88da= was REFUSED by the default-branch review gate: no
+reviewer verdict existed for that generation. So the sequence is
+1. read the reviewer's verdict,
+2. =dispatch-close --task TASK-G64ZH --started-tx tx-20260806-orgasmic-4873
+   --status done --verdict <approve|approve-with-follow-ups|reject>=,
+3. THEN re-run =dispatch-close --task TASK-G64ZH --started-tx
+   tx-20260806-orgasmic-4866 --status done --merge-sha eaa88da
+   --worktree-remove --branch-delete=.
+The implementer worktree =~/.orgasmic/worktrees/orgasmic/task-g64zh= and branch
+=task-g64zh-impl= are still present because step 3 has not run. Do not remove
+them by hand — that close is the salvaging path.
 
-IT TOOK TWO MANUAL INTERVENTIONS TO START, and that is now TASK-VD0VB (P1).
-=tmux/cursor-agent= parks twice before executing anything — workspace trust, then
-the command allowlist on its first =orgasmic entry= — each at 0% CPU with no pane
-output, so =pane_activity= never fires and the 600s stall release would have
-killed it. Cleared by hand with =tmux send-keys -t <session> a= and then =BTab=
-("Run Everything"). CAPTURE THE PANE WITHIN THE FIRST MINUTE OF ANY
-cursor-agent DISPATCH until VD0VB lands.
+WHAT THE REVIEW IS BEING ASKED, so you can weigh its answer: two claims the
+manager found reading the diff and did NOT fix, named explicitly in the brief.
+(1) The rename-failure branch is still per-line: when =rename(daemon.out.log ->
+.1)= fails persistently but =try_open_durable()= succeeds, =bytes_written= comes
+back above the threshold, so =maybe_rotate= re-enters every line — up to 31
+=exists()= calls, a failing rename, a =record_drop()= and a stderr write each
+time. The implementer declared it a residual on the grounds that F1's acceptance
+names a persistent OPEN failure. The existing tests exercise that scenario but
+assert only that it does not propagate. (2) =--no-log-mirror= in the generated
+launchd plist / systemd unit / Windows wrapper makes a runtime ROLLBACK a startup
+failure rather than a degradation — an older binary rejects the unknown flag and
+does not start. The env form =ORGASMIC_LOG_MIRROR=off= would be ignored
+harmlessly by an old binary, and both surfaces are already implemented.
+
+PANE-CAPTURE DISCIPLINE IS NOW PAYING FOR ITSELF EVERY DISPATCH. The
+cursor-agent implementer needed TWO manual clears to reach its first tool call
+(workspace trust, then the command allowlist) — that is TASK-VD0VB (P1), filed
+this session. The claude reviewer started clean with no prompt, which is what
+scopes VD0VB to cursor-agent rather than to tmux. CAPTURE THE PANE WITHIN THE
+FIRST MINUTE OF ANY cursor-agent DISPATCH until VD0VB lands.
 
 A NOTE ON MONITORING A TMUX DISPATCH, paid for across three sessions:
 =dispatch-status= prints =[pid-gone]= for EVERY tmux dispatch, always, because
 =WORKER_PID=-= — the manager never tracks the pane pid. It is NOT a death signal
 and a monitor keyed on it fires instantly and falsely. The real signals are
-=[run-gone]=, the tmux session disappearing, and a non-empty =last.txt=. And a
-pane that looks dead is usually parked: three "transport deaths" on 08-06 were a
-codex quota prompt, and both of this dispatch's stalls were cursor prompts.
+=[run-gone]=, the tmux session disappearing, and a non-empty =last.txt=. A pane
+that looks dead is usually parked: three "transport deaths" on 08-06 were a codex
+quota prompt, and both of the implementer's stalls were cursor prompts.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions
