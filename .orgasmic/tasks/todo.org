@@ -752,4 +752,45 @@ alone" and "failed both ways". Today both land in REAL when unregistered. A
 distinct third verdict for "failed only under parallelism, unregistered" would
 separate the load population from genuine red WITHOUT weakening the registry
 rule, and would have made both of today's daemon gates readable at a glance.
+** Third measurement — a stable 14-test core with a rotating fringe
+A THIRD run, 2026-08-05, while gating TASK-M47E5.1.1.1.1 at merge =8e3b317=.
+Same host, same wrapper, and the change under test was TEST-ONLY inside
+=#[cfg(test)]= — so production daemon code was identical to runs 1 and 2.
+
+| | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| header failure count | 20 | 19 | 18 |
+| failing names extracted | 19 | 19 | 18 |
+| isolation-green | 19/19 | 19/19 | *18/18* |
+
+- Common to ALL THREE runs: *14*.
+- Unique to run 3: =api::tests::boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run=.
+- Present in runs 1 AND 2 but PASSING in run 3:
+  =api::tests::boot_reattach_respawns_plan_stage_completion_watcher=,
+  =api::tests::recovery_reattaches_tmux_session_when_handle_exists=,
+  =supervisor::tests::direct_child_pid_finds_wrapper_child_process=.
+
+*Three runs, three different failure sets, 100% isolation-green every time.* Two
+runs could be coincidence; three with a stable 14-test core and a rotating
+fringe is a population, not an accident. There is a persistent set that fails
+under parallelism and a fringe whose membership is decided by scheduling.
+
+*The shape this suggests for the fix*, offered as input rather than as the
+design: the 14-test core and the rotating fringe may not be one problem. A core
+that fails on almost every parallel run is a candidate for registration or a real
+isolation fix with an owner each; a fringe that appears once in three runs is
+what an "unregistered AND isolation-green under parallelism" verdict would
+absorb without weakening the registry rule. Sizing the core is now cheap — it is
+the 14.
+
+*Also measured here*: the suite exceeded a 10-minute foreground budget on this
+host and had to be backgrounded. Whatever this task builds should assume the
+daemon suite is not something a manager runs casually between gates; that cost is
+part of why its red gets waved through rather than read.
+
+*And the control worked.* The round-5 test added by TASK-M47E5.1.1.1.1
+(=dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path=) does NOT
+appear in run 3's failures, so a genuinely new test lands green inside a red
+suite — further evidence the red is environmental rather than a property of the
+tree.
 

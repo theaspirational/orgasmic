@@ -22161,3 +22161,140 @@ The reviewer's second open question — a close-time next-action line or a =disp
 
 A board-hygiene sweep the same day found TASK-M47E5.1 merged at 18:09 and never reviewed, stalled in exactly this shape. So the reviewer reasoned FORWARD from a design change and the sweep reasoned BACKWARD from a real miss, and both landed on the same gap. It is a review the goal requires going missing silently, not polish.
 
+* DONE TASK-M47E5.1.1.1.1 Cover the daemon's last_path to artifact-dir derivation with a mutation-proof test
+:PROPERTIES:
+:ID: TASK-M47E5.1.1.1.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-daemon/
+:END:
+
+** Description
+
+Fix round for the BLOCK SHIP on TASK-M47E5.1.1.1's review. *Test-only: the
+production fix is confirmed correct by that review.* The finding is on that task
+under "Review round 1 — REJECT (test-only; production confirmed correct)". Read
+it there.
+
+In one line: the daemon test computes =last_path.parent()= itself and asserts
+against =last_path.parent()=, so the production derivation at =api.rs:4770= is
+covered by nothing.
+
+** The mutation that must fail, and today does not
+
+Replace =req.last_path.and_then(FsPath::parent)= at =api.rs:4770= with a
+GRANDPARENT derivation. That yields the DISPATCH ROOT, which restores the
+cross-stem finalize grant this whole chain exists to close — and every test in
+the workspace stays green.
+
+** Why this is the third round to fail the same way
+
+Round 3's daemon test proved only that an already-correct value was serialized.
+Round 4's brief demanded "a test that derives the config from a =last_path=,
+rather than passing an expected directory straight to the config helper". Round 4
+moved the =.parent()= call into the test body and passed the result straight to
+the helper — the criterion's letter, not its substance.
+
+So the criterion is being restated as *mutation-shaped* rather than
+value-shaped, because naming the value a test should assert has now failed twice:
+
+*The regression test MUST FAIL if the production derivation is changed to any of:
+the grandparent, the =last_path= file itself, or =None=.*
+
+State in the report that you performed those three mutations and observed the
+test go red for each. That is the acceptance, not a suggested exercise.
+
+** Two routes; either is acceptable
+
+1. *Exercise =spawn_worker_run== with a capture or stub driver and assert the
+   =dispatch_artifact_dir= in the config it actually builds. Strongest, because
+   it covers the real call edge.
+2. *Extract the derivation into a named helper* that =spawn_worker_run= calls and
+   the test exercises through the same config-construction path. Weaker — a
+   regression that stops calling the helper still passes — so if you choose this,
+   say so plainly and describe what it does not cover.
+
+Prefer 1 if it is reachable without disproportionate scaffolding. Do not build a
+large harness for a small property; if 1 needs one, take 2 and be honest.
+
+** Acceptance
+
+- The three mutations above each turn the test red, verified by running them.
+- No production behaviour change. This round is not licensed to alter the grant,
+  the stem validation, or the derivation itself — only to cover them.
+- Existing tests and all four proofs in this chain stay green:
+  =TASK-M47E5.1=, =TASK-M47E5.1.1=, =TASK-M47E5.1.1.1=.
+
+** Not in scope
+
+Everything else. The review confirmed the production fix, the no-widening
+comparison against =103ed7e=, the =resolve_policy_path= soundness, the =Option=
+propagation, the CLI refusal ordering, and the transcript-probe fix. Do not
+revisit them.
+** Landed and verified by the manager
+Merged =8e3b317= (worker =3732f37=, base =e0b31f3=, +63/-24 in one file).
+*Test-only, confirmed by the manager rather than taken on report:* every changed
+hunk is at line 26026+, inside a test module beginning at =api.rs:18052=, and
+=req.last_path.and_then(FsPath::parent)= is intact at =:4770=.
+
+=== Route 1, the real edge
+
+The implementer exercised =spawn_worker_run= with the in-process stub driver and
+read =run_meta.driver_config.dispatch_artifact_dir= as actually persisted for
+launch — not the helper in isolation.
+
+The detail that matters, and that the two previous rounds got backwards: the test
+declares =expected_artifact_dir= FIRST and derives =last_path= FROM it. The
+expectation is never computed by the path under test. That is what makes the
+assertion non-tautological.
+
+Declared limitation, accepted: the test stops at the stub/supervisor boundary, so
+it does not launch a real external adapter or re-test the downstream finalize
+predicate. The chain's own proofs cover that predicate. An accurate statement of
+what a test does not cover is worth more than a stronger-sounding claim, which is
+the lesson of this whole chain.
+
+=== The manager verified the acceptance criterion independently
+
+The acceptance was mutation-shaped, so it was checked by mutation rather than by
+reading the report. The dangerous one, applied to =api.rs:4770= by hand:
+
+: -        req.last_path.and_then(FsPath::parent),
+: +        req.last_path.and_then(FsPath::parent).and_then(FsPath::parent),
+
+Result: *exit 101*, and the assertion reads
+
+: assertion `left == right` failed: spawn_worker_run must derive the driver artifact directory from last_path
+:   left: ".../project/.orgasmic/tmp/dispatch"
+:  right: ".../project/.orgasmic/tmp/dispatch/task-attempt-7"
+
+*Left is the dispatch root* — precisely the value that restores the cross-stem
+finalize grant. The test catches it. Tree reverted, =git status= clean.
+
+The implementer reported all three required mutations red with their left/right
+values; the manager reproduced the one that matters.
+
+=== A false green the manager caught in its own gate, worth recording
+
+The first attempt to run the new test returned *exit 0 with "0 passed; 710
+filtered out"* — =--exact= had been given a bare function name instead of
+=api::tests::<name>=. Exit 0, nothing run. Re-run with the module path: 1 passed.
+
+That is the same failure shape this entire chain has been about: a check that
+succeeds while proving nothing. It is recorded here because it happened on the
+MANAGER's side of the gate, and reading "exit 0" without reading "0 passed" would
+have entered a fabricated pass into the ledger.
+
+=== Gates on the merged tree =8e3b317=
+
+- Targeted: =api::tests::dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path=
+  — 1 passed (after the false green above was corrected).
+- Grandparent mutation — RED, as required, with the dispatch root as the left value.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0.
+- =cargo fmt --all --check= — exit 0.
+- =orgasmic verify TASK-M47E5.1=, =TASK-M47E5.1.1=, =TASK-M47E5.1.1.1= — all PASS.
+- =scripts/run-tests.sh -p orgasmic-daemon= — RED, 18 failures, *18/18
+  isolation-green*, and NOT attributable: this was the third run of a controlled
+  series. Three runs on effectively identical production code gave three
+  different failure sets (19/19/18 names, 14 common to all three). The new test
+  does NOT appear among the failures. Full series on TASK-STWVB.
