@@ -24949,3 +24949,265 @@ The stage-D merge already forces a runtime reinstall. This stage should land
 BEFORE that reinstall, so the new =shipped/= corpus and the new binary reach the
 operator's machine together rather than one release apart.
 
+* DONE TASK-RQ270 Excise the architecture layer from orgasmic and the UI (dec_HBK6A, staged A-E) :daemon:cli:ui:shipped:
+:PROPERTIES:
+:ID: TASK-RQ270
+:MOTIVATED_BY: dec_HBK6A
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,ui/**,shipped/**,.orgasmic/**
+:END:
+
+=== Stage D is BUILT AND REVIEWED but deliberately NOT on main [2026-08-06]
+Stage D landed as merge =0eee47f= on branch =stage-d-staging= (worker head =4ed239a=, +2 manager follow-up commits), NOT on =main=. Main is untouched and the board reads 0 parse errors.
+
+*Why staging:* merging to main deletes =architecture.org= from the live tree, and the installed runtime =0.0.15-dev.1= (=05e1813=) predates the stage-C carve-outs, so the operator's board would show ~311 parse errors until a reinstall. That sequencing is an operator decision. =dispatch-close= refuses =implementer.done= without a =--merge-sha=, so a staging merge is what let review proceed without forcing the call early.
+
+*Review verdict:* APPROVE WITH FOLLOW-UPS, 5 findings, none BLOCK SHIP.
+
+The reviewer reproduced the 0-parse-errors claim independently — four cells over =git archive= copies (file absent/present x merged/pre-carve-out code), giving 0 / 0 / 309 / 0, where the 309 splits as 231 dangling graph edge + 78 dangling advisory marker. The 78 matches the residual recorded above and the 309 matches the ~311 measured against the installed runtime, so the sequencing warning on this task is confirmed accurate.
+
+It then added a POSITIVE CONTROL the brief did not ask for: merged code, file absent, with =:RELATES_TO: dec_GONE99 TASK-GONE99 term_GONE99= injected — exactly 3 errors, the right 3. That is what makes the zero non-vacuous rather than equally consistent with the lint never running.
+
+*Two structural facts worth keeping:* merged + file PRESENT also gives 0, with =arch_ ids in graph.nodes: []=, while pre-carve-out + present gave 64 arch nodes — the file was already fully inert before deletion, so stage D deleted a file nothing read. And merged + absent still carries 231 graph edges pointing at =arch_= plus 14 indexed marker ids: history stays queryable, it just stops erroring.
+
+*The pin was proved by mechanism, not by assertion text.* Against an injected build with a task carrying =:PRODUCES: arch_RN73Z=: =graph.nodes= 948 -> 949 with =arch_RN73Z= present, and parse errors 0 in BOTH columns. Nothing fails; the write-time guard just goes quiet. The pin is the only thing that catches it.
+
+*Findings, all actioned:* F1 =.orgasmic/conventions/decision-graph.org= instructed =orgasmic architecture create= — an item of stage D's DECLARED scope that the manager's brief dropped when rewriting the stale inventory, a scope-transcription gap; fixed on main =05c7c12=. F2 shipped doctrine still instructs =orgasmic id mint --class architecture=, which the stage-D binary rejects, and both ship in the same runtime package; filed as TASK-RQ270.5. F3 this decision's legacy-ledger-fallback requirement was wrong on both location and risk; dec_HBK6A amended. F4 orphaned =// orgasmic:task_KY80Q= marker; fixed on staging =ebb699d=. F5 =is_valid_greenfield_arch_id= kept without a note; commented on staging — and the review's rationale CORRECTED, because after stage D nothing produces an =arch_= identity occurrence, so the MalformedIdentity failure it described is latent, not live.
+
+*Harness note:* =tmux/cursor-agent= has TWO blocking prompts before first execution (workspace trust, then command allowlist), each parked at 0% CPU and indistinguishable from a hung transport. Unattended, each would have hit the 600s stall release and died looking like an infrastructure failure.
+=== Stage D IS ON MAIN, and the reinstall came first [2026-08-06]
+Operator chose: reinstall the runtime first, then merge. The board never went red.
+
+*Runtime reinstall.* Built from main =d803d49= (carries both stage-C carve-outs, NOT stage D), codesigned =orgasmic dev codesign=, release build 2m52s. Drain 1s, daemon answering 3s after bootstrap, new pid 71325. Rollback dir =~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260806a= (the =05e1813= build it replaced). This finally makes the SEVEN merged-but-inert changes live: TASK-XCJYC's transport rename, TASK-YN5FJ.1's =--verdict=, TASK-M47E5's worktree relocation and its =worktree-prune= gate, and the two stage-C carve-outs.
+
+*The swap was proved behaviourally, because it cannot be proved any other way* — both builds call themselves =0.0.15-dev.1= and =install.sh= silently skips the unpack when the version dir exists. Four pre-states captured before, all flipped after:
+
+| probe | before (=05e1813=) | after (=d803d49=) |
+| =dispatch-close --verdict= | unexpected argument | accepted (reached tx lookup) |
+| transport mode names | =acp-stdio= / =acp-ws= | =stdio= / =ws= |
+| =manager worktree-prune= | unrecognized subcommand | present and REFUSING by construction |
+| =bin/orgasmic= inode | 521369262 | 526812347 |
+
+The third is the sharpest: TASK-M47E5.3 gated the verb off rather than deleting it, so "absent" and "present but refuses" are distinguishable states. The inode check ruled out the launchd-restarted-the-old-binary no-op — the running daemon's =txt= inode matches the on-disk binary.
+
+*Then the merge.* =85f5eec=, =.orgasmic/architecture.org= deleted. Measured on the LIVE daemon, which is the instrument that was lying before the reinstall:
+- *parse_errors: 0*, 6 projects, no unindexed projects, zero permission errors in =daemon.err.log= (TCC intact).
+- *231 graph edges still touch =arch_=* out of 1129 total — exactly the count the stage-D reviewer measured in its probe. History is fully queryable with the file gone.
+- =orgasmic verify TASK-RQ270.4= replays PASS on main: red exit 101 with the pinned signature, tree byte-identical after revert, green exit 0.
+
+The ~311-parse-error interval never happened, because the daemon had the carve-outs before the file disappeared.
+
+*Stages A-D are done. Stage E is TASK-RQ270.5* and should land before the NEXT reinstall so the shipped corpus and the binary that matches it arrive together — currently the shipped doctrine instructs =orgasmic id mint --class architecture=, which this newly-installed binary rejects.
+=== STAGES A-E ARE ALL DONE [2026-08-06]
+The excision decided in dec_HBK6A is complete on main. Five stages, plus three
+fix rounds, every one independently reviewed to a verdict.
+
+*Stage D* (=85f5eec=) retired the =arch_= node class and deleted
+=.orgasmic/architecture.org=. Reviewed APPROVE WITH FOLLOW-UPS; all 5 findings
+actioned. Merged only AFTER the runtime reinstall, so the board never went red.
+
+*Stage E* (=4eb174b=) rewrote the shipped doctrine. Reviewed *REJECT* on one
+BLOCK SHIP: the =cli_parity= gate it shipped to make the rewrite durable was
+already vacuous. Fix round *TASK-RQ270.5.1* (=b4eb7f6=) landed and passed a fresh
+review.
+
+=== The finding worth carrying out of this task
+Stage E widened =cli_parity= to validate shipped prose's flag VALUES against
+clap's =possible_values= — the durable fix for the drift class that caused stage
+E. The reviewer proved the new gate *already reported green on the exact drift it
+was built to catch*: =possible_values_for_flag= only matched clap's COMPACT
+one-line layout, so every long-help option returned =None=, =None= meant
+"free-string, skip", and the gate compared 5 values across a 141-invocation
+corpus. Shipped prose saying =--kind architector= — the worker kind this excision
+removed — passed it green.
+
+The fix round closed the help-side hole and the manager confirmed the control
+independently (same injection GREEN pre-fix, RED post-fix). But the SECOND review
+answered "is the gate protective, or merely less vacuous?" with *merely less
+vacuous*: 6 values over 3 of the 9 real sites, and it poisoned the other 6
+SIMULTANEOUSLY without turning the suite red. That is *TASK-RQ270.6*.
+
+*A gate that can silently stop working is worse than no gate, because it is
+trusted.* Both reviews found what they found by compiling the test file's own
+extractor functions verbatim into a standalone probe and mutating the corpus.
+Reading the code is how the hole survived its first review, and how the second
+class survived its second.
+
+=== The inventory was incomplete THREE times
+Manager measured 18 files where the prior review named 5. The implementer found 2
+more (=graph_authoring_policy.org=, =projects.rs=). The reviewer found a third
+(=node-references.org=, still calling =arch_= a MINTED class). Counting files is
+not auditing claims — and the same file can hold a historical reference that must
+survive next to a live claim that must die (=schema/tx.org=: keep =:108=/=:145=,
+fix =:277=).
+
+=== Still outstanding — the SECOND reinstall
+*The excision is on main but NOT on the operator's machine.* The reinstall was
+built from =d803d49=, which PREDATES the stage-D merge — deliberately, so the
+daemon had the carve-outs before the file vanished. Measured consequence:
+=~/.orgasmic/bin/orgasmic id mint --class architecture= still mints (it produced
+=arch_TVD03=), =project init= would still seed =infer-architecture=, and
+=~/.claude/skills/orgasmic/SKILL.md:38= is stale. A second reinstall delivers
+stage D's binary and stage E's corpus together. Operator authorization required.
+
+TASK-ZFNE1 (the README hero PNG) remains deferred by the operator; the reviewer
+verified its five now-false claims are accurate and complete.
+
+** Description
+Execute the excision decided in dec_HBK6A. The measuring is already done — do
+NOT re-derive it. TASK-XYYBT produced =archive/TASK-XYYBT-architecture-excision-estimate.md=
+(merged 84892aa), which carries the inventory actuals, answers to seven scoping
+questions, the coupling map, and the staged plan with per-stage LOC and round
+estimates. Read that report before touching anything; this task is the go.
+
+Operator gate: PASSED [2026-08-03]. The report's own framing left excision
+"not started; awaiting operator go/no-go". The operator gave the go, naming both
+halves explicitly: remove it from orgasmic AND from the UI.
+
+** The five stages, in order
+Each lands independently with suites green and no dead routes. Expect one
+implementer dispatch per stage; mint =TASK-<this>.N= subtasks per round the way
+the FZB6T chain did.
+
+A. STOP PRODUCING (~-450 LOC, ~14 files, reversible, 1 round)
+   Retire =POST /architect=, =stage_spec("architect")=, =orgasmic architect=,
+   the =architecture create= verb and its POST routes, and
+   =DispatchEndpointKind::Architector=. Delete the architector prompt spec, its
+   context pack, and the decomposition convention. KEEP "architector" PARSEABLE
+   for ledger history.
+
+B. RETIRE DRIFT AND THE =// arch:= BACK-EDGES (~-550 LOC, ~75 files, 1 round)
+   Delete =crates/orgasmic-cli/src/architecture_drift.rs= (457 LOC, arch-only
+   end to end) and the =Drift= verb; strip the 73 legacy =// arch:= lines. Can
+   fold into A.
+
+C. REMOVE READ MODEL, CLI READS AND UI (~-1,500 LOC, ~30 files, 1-2 rounds)
+   =GET /architecture*=, the index projections and =load_architecture=,
+   =architecture {list,get,schema}=, the =node.rs= arms, =schema_examples.rs=.
+   UI: =ArchitectureView.tsx= (273 LOC), the NodeModal arch views, router/nav
+   entries, =descriptor.ts=, api/types, capabilities — 14 files.
+   *** ALSO LANDS THE LINT CARVE-OUT, and this is the ordering constraint that
+   matters: =done.org='s 231 =:IMPLEMENTS: arch= tokens become dangling graph
+   edges (=index.rs:729= -> =1188= -> lint at =1256=). Drop =arch_= from the
+   structured prefix lists (~4 lines + 2 test updates). This MUST be on main
+   BEFORE stage D deletes the file.
+
+D. RETIRE THE NODE CLASS AND THE FILE (~-800 LOC, ~15 files + state, 1-2 rounds)
+   =ArchitectureNode= / =parse_arch_edges= (=schema.rs:361-660=),
+   =NodeIdClass::Architecture= + =is_arch_id= (=id.rs=), the identity-lint arch
+   collectors, the =node_kind= variant, and full =WorkerKind::Architector=
+   removal WITH a legacy-ledger parse fallback. State edits go through daemon
+   verbs or git, never by hand: delete =.orgasmic/architecture.org=, repoint the
+   two live task drawers (below), optionally the 4 glossary =:PRIMARY_LEAF:=
+   refs, and the conventions/decision-graph wording.
+
+E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
+   =router.org=, =SKILL.md=, =recall-resume.md=, =init.md=, =tx.org=
+   (architector rows become a historical note), the manager/planner/griller/
+   base/general/implementer specs, =conventions.org=, =manager-dispatch.org=,
+   and the project-scaffold seeds. Foldable into A+D.
+
+** What must NOT be removed — the coupling map
+- *The shared graph substrate stays.* =GraphLayer= / =NodeLayer= / =NodeKind= /
+  =NodeIdClass= and the create/mutate/lint plumbing serve decisions and glossary
+  too. Excision removes VARIANTS AND THEIR MATCH ARMS, never the enum
+  machinery, =read_or_seed_graph_file=, writer authority, tx append, or the org
+  substrate. =org.rs='s 33 =arch_= hits are sample ids in its own tests, not
+  coupling; likewise =session.rs='s 8 prose comments.
+- *The generic marker scanner stays* (=marker.rs=, =scan_project_markers=,
+  =/graph/markers=) — it serves dec_/TASK-/term markers. Only the arch-specific
+  drift comparator goes.
+- *=GraphEdgeSummary= and task =implements= edges stay.* =:IMPLEMENTS:= remains
+  a legal task drawer key; only the LINT's arch-prefix handling changes.
+- *History parse paths stay untouched*: tx TYPE is free-string (=tx.rs:432=), so
+  history parses forever; done.org indexing is unchanged.
+- *Enum-variant retirement is ordered.* =WorkerKind::Architector= and the
+  dispatch-kind strings are parsed from persisted ledger records
+  (=manager.rs:3805-3817= maps historical "architector" rows). This is THE ONE
+  PLACE naive deletion breaks history.
+
+** Live fallout, already enumerated
+- TASK-CQM2X and TASK-VBSG2 carry =:IMPLEMENTS: arch_RN73Z= (=backlog.org:38,:54=);
+  repoint to =:MOTIVATED_BY: dec_PC6T2 dec_WDR5K=.
+- 4 glossary =:PRIMARY_LEAF:= refs are unvalidated and inert.
+- Load-bearing content: fold ~3 nodes, drop ~23, park 0.
+
+** Acceptance
+- No route, verb, worker kind, node class, UI surface or shipped instruction
+  offers the architecture layer.
+- Historical =arch_= references in tx, =done.org= and =decisions.org= still
+  parse and still resolve; the dangling-edge lint does not fire on them.
+- A dispatch ledger row recorded as "architector" still parses after stage D.
+- =.orgasmic/architecture.org= is gone and nothing reads it.
+- =cli_parity= passes — it resolves every =orgasmic ...= invocation and named
+  flag in =shipped/= against the real binary, so it is what catches a doctrine
+  rewrite that names a verb the excision just deleted.
+** Stage C inventory addition — ui/src/lib/api.ts postStage
+Found by the TASK-RQ270.1.1 review, recorded here so stage C cannot miss it.
+
+=ui/src/lib/api.ts:370= — =postStage(stage: 'grill' | 'architect' | 'plan', ...)= still ACCEPTS ='architect'= and constructs a live =POST /architect= request. It has *no callsite* in =ui/src= and the daemon rejects the stage via =stage_spec_for=, so it cannot launch a producer — but it is an inert client WRITE surface, not read-only historical recognition, and the stage-A doctrine round classified it wrongly on that point.
+
+The parent stage C description says "api/types" among its 14 UI files, which is too vague to guarantee this line gets removed. Naming it explicitly: *stage C must drop ='architect'= from =postStage='s union.*
+** Stage E addition — the hero image and the loop line
+TASK-ZFNE1: =README.md:6='s hero graphic labels =architect= as an LLM agent role, and =README.md:10= states the loop as "Grilling -> Decisions+Glossary -> Architecture -> Tasks -> Code -> Repeat".
+
+Filed rather than fixed during stage A's doctrine round because the graphic depicts the WHOLE loop and most of it is still true — =architecture.org= exists until stage D. Redrawing before stages C and D land guarantees a second redraw.
+
+*Do it once, in stage E or immediately after stage D*, when the true picture is known: which agent roles exist, whether architecture remains a pipeline stage, and what =.orgasmic/= contains. Also verify whether =glossarist= — shown as an agent role in the same image — is dispatchable; that was never checked.
+** Stage D warning — the live board goes red until the runtime is reinstalled
+*Stage D will visibly break the operator's live board until the runtime is
+reinstalled.* Measured, not predicted.
+
+=== What was measured
+
+While gating TASK-RQ270.3.2.1, the manager moved =.orgasmic/architecture.org=
+aside, reindexed, and counted parse errors. Result: *311 parse errors*, all of
+the form =dangling advisory marker `arch_XXXXX` in <file>=. Restoring the file
+and restarting the daemon returned the count to 0.
+
+=== The experiment was INVALID for the question it was asked
+
+It was run to answer "is stage D safe now that the carve-outs have landed". *It
+cannot answer that*, and the manager should have seen it before running it: the
+daemon that indexes this repository is the INSTALLED runtime =0.0.15-dev.1= built
+from =05e1813=, which predates BOTH carve-outs — the graph-edge one
+(TASK-RQ270.3.2) and the identity-lint one (TASK-RQ270.3.2.1). It measured the
+OLD policy.
+
+Whether main's carve-outs are sufficient is established by the tests and the two
+injection proofs, which run against BUILT code. Not by probing the live daemon.
+
+=== But it accidentally measured something worth having
+
+Reframed correctly, 311 is a faithful preview of *what stage D does to the
+installed runtime*. After stage D deletes =architecture.org=, the operator's
+running daemon — until it is reinstalled — will index a repository whose 59
+=orgasmic:arch_= markers name ids nothing defines, and report roughly 311 parse
+errors across the working tree.
+
+=== The sequencing consequence
+
+*Stage D should be paired with the runtime reinstall*, or the operator should
+expect a red board in the interval. The two orderings:
+
+1. *Reinstall first, then stage D.* The daemon has the carve-outs before the file
+   disappears; the board never goes red. Requires the reinstall, which is an
+   operator-authorization item (zero-worker window, codesign-or-lose-TCC).
+2. *Stage D first.* Correct on main, but the live board shows ~311 parse errors
+   until the reinstall, and every =status= reads red in the meantime.
+
+This is a real cost of the excision that the staged plan does not mention, and it
+is now six merged changes deep into being inert.
+
+=== Incident note, recorded because it cost something
+
+Moving the file put the daemon's index into a state where restoring the file did
+NOT restore the count — it settled at 78 rather than 0, and neither a =touch= nor
+=reindex= cleared it. =orgasmic daemon restart= via the INSTALLED binary fixed it
+(0 parse errors, LaunchAgent intact, pid 33500).
+
+No data was lost: =architecture.org= was byte-identical throughout and
+=git status= stayed clean the whole time. But the lesson is real —
+*a live-daemon experiment is a write to operator state, not a read*, and this one
+was run against a daemon that could not answer the question anyway.
+

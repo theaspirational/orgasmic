@@ -13679,3 +13679,18 @@
 :REASON:       edited task node TASK-RQ270
 :NODE_ID:      TASK-RQ270
 :END:
+
+* TX 2026-08-06 Thu 11:19:41 task.state_transitioned TASK-RQ270
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4825
+:TIME:         [2026-08-06 Thu 11:19:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       stages A-E all landed and reviewed; the architecture layer is excised from orgasmic and the UI. Residual work is tracked separately: TASK-RQ270.6 (gate coverage), TASK-ZFNE1 (hero image, operator-deferred), and the second runtime reinstall to deliver stage D's binary and stage E's corpus
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
