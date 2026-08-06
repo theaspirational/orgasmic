@@ -17,11 +17,10 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
-    iter_task_file_paths, lint_arch_heading_id_token, lint_decision_heading_id_token,
-    lint_project_identities, lint_task_heading_id_token, marker_node_ids_in_line,
-    should_skip_marker_path, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
-    LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
-    SandboxAllowlist, TaskHeading,
+    iter_task_file_paths, lint_decision_heading_id_token, lint_project_identities,
+    lint_task_heading_id_token, marker_node_ids_in_line, should_skip_marker_path,
+    validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home, LifecycleStage, NodeIdClass,
+    OrgError, OrgFile, ParentTreeError, ParentTreeNode, SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
 use tokio::io::AsyncReadExt;
@@ -733,17 +732,6 @@ impl Index {
         apply_superseded_flags(&mut project.graph, &all_superseded);
         build_decision_tree_index(&mut project.graph, &board_entry.path, snap);
 
-        let architecture = orgasmic_dir.join("architecture.org");
-        if architecture.exists() {
-            match read_org(&architecture) {
-                // Stage D removes this file and its heading-token lint. Until
-                // then the lint remains deliberately independent of the
-                // retired read model.
-                Ok(file) => lint_arch_heading_id_tokens(&file, &architecture, snap),
-                Err(err) => push_parse_error(snap, architecture, err),
-            }
-        }
-
         let glossary = orgasmic_dir.join("glossary.org");
         if glossary.exists() {
             match read_org(&glossary) {
@@ -1107,10 +1095,16 @@ fn lint_dangling_graph_edges(project: &ProjectIndex, snap: &mut IndexSnapshot) {
 }
 
 fn looks_like_structured_node_id(value: &str) -> bool {
+    // orgasmic:TASK-RQ270.4 — LOAD-BEARING after architecture.org is gone.
+    //
     // This helper controls whether a task :PRODUCES: target is materialized as
-    // a generic artifact node. Keep `arch_` here: dropping it would make a
-    // retired architecture id resolvable again as an artifact, the opposite
-    // of the lint carve-out above.
+    // a generic artifact node. Keep `arch_` here: it is the sole reason a
+    // retired architecture id never enters `graph.nodes`, and
+    // `arch_` staying out of `graph.nodes` is what actually holds the
+    // write-time rejection boundary (identity_lint.rs documents the same
+    // invariant in prose). Dropping this entry would silently switch off
+    // rejection on all four write handlers — nothing fails, the guard just
+    // goes quiet. See `retired_architecture_prefix_stays_structured_node_id`.
     value.starts_with("TASK-")
         || value.starts_with("arch_")
         || value.starts_with("dec_")
@@ -1255,25 +1249,6 @@ fn lint_decision_heading_id_tokens(file: &OrgFile, path: &Path, snap: &mut Index
     for heading in &file.headings {
         if let Some(message) = lint_decision_heading_id_token(heading) {
             push_parse_error(snap, path.to_path_buf(), message);
-        }
-    }
-}
-
-// orgasmic:task_KY80Q
-fn lint_arch_heading_id_tokens(file: &OrgFile, path: &Path, snap: &mut IndexSnapshot) {
-    for heading in &file.headings {
-        if !heading.title.starts_with("arch_") {
-            continue;
-        }
-        if let Some(message) = lint_arch_heading_id_token(heading) {
-            push_parse_error(snap, path.to_path_buf(), message);
-        }
-        for child in &heading.sections {
-            if child.title.starts_with("arch_") {
-                if let Some(message) = lint_arch_heading_id_token(child) {
-                    push_parse_error(snap, path.to_path_buf(), message);
-                }
-            }
         }
     }
 }
@@ -2776,6 +2751,22 @@ The following criteria must hold before close.
             project.markers.get("dec_004").unwrap(),
             &vec![PathBuf::from("crates/orgasmic-core/src/org.rs")]
         );
+    }
+
+    /// Stage D pin: after architecture.org is gone, `arch_` remaining in
+    /// `looks_like_structured_node_id` is the only thing stopping a retired id
+    /// from materializing into `graph.nodes` and silently disarming write-time
+    /// rejection. Do not delete the `arch_` arm as "leftover class cleanup".
+    #[test]
+    fn retired_architecture_prefix_stays_structured_node_id() {
+        assert!(
+            looks_like_structured_node_id("arch_X"),
+            "looks_like_structured_node_id must keep arch_: it is the sole reason \
+             a :PRODUCES: arch_X target stays out of graph.nodes and write-time \
+             rejection keeps firing (TASK-RQ270.4 / identity_lint.rs)"
+        );
+        assert!(looks_like_structured_node_id("arch_GONE99"));
+        assert!(looks_like_structured_node_id("arch_RN73Z.1"));
     }
 
     #[tokio::test]

@@ -47,8 +47,6 @@ fn node_class_for_id(id: &str) -> Option<NodeIdClass> {
         Some(NodeIdClass::Task)
     } else if id.starts_with("dec_") {
         Some(NodeIdClass::Decision)
-    } else if id.starts_with("arch_") {
-        Some(NodeIdClass::Architecture)
     } else if id.starts_with("term_") {
         Some(NodeIdClass::Term)
     } else {

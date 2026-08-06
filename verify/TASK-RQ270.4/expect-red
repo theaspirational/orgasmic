@@ -1,0 +1,8 @@
+# Pinned from /tmp/TASK-RQ270.4-pre-fix-red.log on 2026-08-06. The pinned
+# message was the FIRST failing assertion: removing arch_ from
+# looks_like_structured_node_id trips the stage-D load-bearing pin before any
+# other assertion in the test.
+exit: 101
+contains: looks_like_structured_node_id must keep arch_: it is the sole reason
+contains: test index::tests::retired_architecture_prefix_stays_structured_node_id ... FAILED
+contains: test result: FAILED. 0 passed; 1 failed

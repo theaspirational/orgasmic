@@ -11,7 +11,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
     Decision,
-    Architecture,
     Glossary,
     Project,
     Task,
@@ -21,9 +20,8 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// Every accepted kind, in the order shown in `--help`.
-    pub const ALL: [NodeKind; 7] = [
+    pub const ALL: [NodeKind; 6] = [
         NodeKind::Decision,
-        NodeKind::Architecture,
         NodeKind::Glossary,
         NodeKind::Project,
         NodeKind::Task,
@@ -34,7 +32,6 @@ impl NodeKind {
     pub fn as_str(self) -> &'static str {
         match self {
             NodeKind::Decision => "decision",
-            NodeKind::Architecture => "architecture",
             NodeKind::Glossary => "glossary",
             NodeKind::Project => "project",
             NodeKind::Task => "task",

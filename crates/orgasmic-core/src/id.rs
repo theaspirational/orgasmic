@@ -18,7 +18,6 @@ const STEM_LEN: usize = 5;
 pub enum NodeIdClass {
     Task,
     Decision,
-    Architecture,
     Term,
     Artifact,
 }
@@ -28,7 +27,6 @@ impl NodeIdClass {
         match self {
             Self::Task => "TASK-",
             Self::Decision => "dec_",
-            Self::Architecture => "arch_",
             Self::Term => "term_",
             Self::Artifact => "ART-",
         }
@@ -38,7 +36,6 @@ impl NodeIdClass {
         match self {
             Self::Task => id.starts_with("TASK-"),
             Self::Decision => id.starts_with("dec_"),
-            Self::Architecture => id.starts_with("arch_"),
             Self::Term => id.starts_with("term_") || id.starts_with("term:"),
             Self::Artifact => id.starts_with("ART-"),
         }
@@ -53,8 +50,6 @@ pub fn node_id_class_by_prefix(id: &str) -> Option<NodeIdClass> {
         Some(NodeIdClass::Task)
     } else if id.starts_with("dec_") {
         Some(NodeIdClass::Decision)
-    } else if id.starts_with("arch_") {
-        Some(NodeIdClass::Architecture)
     } else if id.starts_with("term_") || id.starts_with("term:") {
         Some(NodeIdClass::Term)
     } else if id.starts_with("ART-") {
@@ -350,36 +345,6 @@ pub fn is_valid_task_path_id(value: &str) -> bool {
     true
 }
 
-fn arch_stem_valid(stem: &str) -> bool {
-    if is_minted_stem(stem) {
-        return true;
-    }
-    stem.len() == 3 && stem.chars().all(|c| c.is_ascii_digit())
-}
-
-/// Validate an architecture node id (`arch_<stem>` or `arch_<stem>.<n>`).
-pub fn is_arch_id(value: &str) -> bool {
-    let Some(rest) = value.strip_prefix("arch_") else {
-        return false;
-    };
-    let mut parts = rest.split('.');
-    let Some(first) = parts.next() else {
-        return false;
-    };
-    if !arch_stem_valid(first) {
-        return false;
-    }
-    if let Some(part) = parts.next() {
-        if part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()) {
-            return false;
-        }
-        if parts.next().is_some() {
-            return false;
-        }
-    }
-    true
-}
-
 fn dec_stem_valid(stem: &str) -> bool {
     is_minted_stem(stem) || (!stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit()))
 }
@@ -402,11 +367,6 @@ pub fn is_legacy_sequential_create_id(class: NodeIdClass, id: &str) -> bool {
         }
         NodeIdClass::Decision => {
             id.starts_with("dec_") && id[4..].chars().all(|c| c.is_ascii_digit())
-        }
-        NodeIdClass::Architecture => {
-            id.starts_with("arch_")
-                && !id.contains('.')
-                && id[5..].chars().all(|c| c.is_ascii_digit())
         }
         NodeIdClass::Term => false,
         NodeIdClass::Artifact => false,
@@ -447,6 +407,25 @@ pub fn is_valid_greenfield_dec_id(value: &str) -> bool {
 }
 
 /// Post-migration architecture identity: minted stem with optional `.N` sub-id.
+///
+/// KEPT DELIBERATELY after dec_HBK6A stage D retired the `arch_` class; it is
+/// not an oversight that its sibling `is_arch_id` was deleted while this
+/// survives.
+///
+/// It stays reachable from `is_valid_greenfield_identity`, whose only consumer
+/// is `identity_lint::lint_identity_occurrences`: an id that fails it becomes a
+/// `MalformedIdentity` finding. Dropping the `arch_` arm would therefore turn
+/// any `arch_` identity occurrence into a parse error.
+///
+/// Be precise about the risk, because the stage-D review overstated it: after
+/// this stage `collect_identity_occurrences` reads task files, `decisions.org`
+/// and `glossary.org` only, so **no `arch_` heading id has a producer any more**
+/// and the failure is latent rather than live. The arm is retained because it
+/// costs nothing and this is an exported general-purpose predicate over
+/// arbitrary id strings — including the `arch_` tokens that history keeps
+/// (231 `:IMPLEMENTS: arch_` edges in `done.org`, 57 source markers). Removing
+/// it "for symmetry" buys nothing and re-arms that path for any caller that
+/// later feeds it a historical id.
 pub fn is_valid_greenfield_arch_id(value: &str) -> bool {
     let Some(rest) = value.strip_prefix("arch_") else {
         return false;
@@ -513,7 +492,6 @@ mod tests {
         for class in [
             NodeIdClass::Task,
             NodeIdClass::Decision,
-            NodeIdClass::Architecture,
             NodeIdClass::Term,
             NodeIdClass::Artifact,
         ] {
@@ -557,15 +535,6 @@ mod tests {
         assert!(is_valid_task_path_id("TASK-8KX2M.1"));
         assert!(!is_valid_task_path_id("TASK-"));
         assert!(!is_valid_task_path_id("dec_001"));
-    }
-
-    #[test]
-    fn arch_id_accepts_legacy_and_minted() {
-        assert!(is_arch_id("arch_001"));
-        assert!(is_arch_id("arch_006.3"));
-        assert!(is_arch_id("arch_8KX2M"));
-        assert!(!is_arch_id("arch_"));
-        assert!(!is_arch_id("arch_12345"));
     }
 
     #[test]

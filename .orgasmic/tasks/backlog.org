@@ -79,7 +79,7 @@ Independent review is not yet complete. First rmux/Opus attempt never reached co
 * BACKLOG TASK-CQM2X Crash-safe run inventory, bounded history, and manual retro foundation    :daemon:recovery:retro:plan:
 :PROPERTIES:
 :ID: TASK-CQM2X
-:IMPLEMENTS: arch_RN73Z
+:MOTIVATED_BY: dec_PC6T2 dec_WDR5K
 :DEPENDS_ON: TASK-KWSTJ TASK-FZB6T TASK-VBSG2 TASK-5P60H TASK-3R3EZ TASK-TJKFC
 :END:
 
@@ -95,7 +95,7 @@ Done only when the production-shaped wire regression completes inside its deadli
 :PROPERTIES:
 :DEPENDS_ON: TASK-FZB6T
 :ID: TASK-VBSG2
-:IMPLEMENTS: arch_RN73Z
+:MOTIVATED_BY: dec_PC6T2 dec_WDR5K
 :PRIORITY: P1
 :END:
 

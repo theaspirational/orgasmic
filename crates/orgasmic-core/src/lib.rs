@@ -5,8 +5,7 @@
 //! JSONL session writer, and the strict prompt-slot compiler.
 //!
 //! Downstream crates (daemon, drivers, cli) depend on orgasmic-core for every
-//! piece of durable state they touch. See `.orgasmic/architecture.org`
-//! (arch_002, arch_003, arch_011) for the design contract.
+//! piece of durable state they touch.
 
 pub mod home;
 pub mod id;
@@ -28,18 +27,18 @@ pub mod slots;
 pub mod tx;
 pub use home::{resolve_loader, Home, HomeError};
 pub use id::{
-    is_arch_id, is_dec_id, is_legacy_sequential_create_id, is_minted_stem,
-    is_valid_greenfield_arch_id, is_valid_greenfield_artifact_id, is_valid_greenfield_dec_id,
-    is_valid_greenfield_identity, is_valid_greenfield_task_id, is_valid_greenfield_term_id,
-    is_valid_task_path_id, looks_like_legacy_numeric_task, mint_node_id, node_id_class_by_prefix,
-    parse_parent_value, validate_parent_exists, validate_parent_pointer, validate_parent_tree,
-    NodeIdClass, ParentTree, ParentTreeError, ParentTreeNode, CROCKFORD,
+    is_dec_id, is_legacy_sequential_create_id, is_minted_stem, is_valid_greenfield_arch_id,
+    is_valid_greenfield_artifact_id, is_valid_greenfield_dec_id, is_valid_greenfield_identity,
+    is_valid_greenfield_task_id, is_valid_greenfield_term_id, is_valid_task_path_id,
+    looks_like_legacy_numeric_task, mint_node_id, node_id_class_by_prefix, parse_parent_value,
+    validate_parent_exists, validate_parent_pointer, validate_parent_tree, NodeIdClass, ParentTree,
+    ParentTreeError, ParentTreeNode, CROCKFORD,
 };
 pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, IdRepairError};
 pub use identity_lint::{
-    collect_identity_occurrences, duplicate_id_groups, lint_arch_heading_id_token,
-    lint_decision_heading_id_token, lint_project_identities, lint_task_heading_id_token,
-    unresolved_reference_tokens, IdentityLintFinding, IdentityLintKind, REFERENCE_PROPERTY_KEYS,
+    collect_identity_occurrences, duplicate_id_groups, lint_decision_heading_id_token,
+    lint_project_identities, lint_task_heading_id_token, unresolved_reference_tokens,
+    IdentityLintFinding, IdentityLintKind, REFERENCE_PROPERTY_KEYS,
 };
 pub use marker::{
     has_comment_token_before_marker, is_marker_id_byte, is_structured_marker_payload,
@@ -66,9 +65,8 @@ pub use paths::{
 pub use retired::{RetiredContent, RETIRED_CONTENT};
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{
-    ArchEdge, ArchEdgeKind, ArchEdgeTarget, ArchNode, ArchitectureNode, ArtifactNode,
-    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, ProjectFile, SchemaError,
-    SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
+    DecisionNode, GlossaryTerm, LifecycleStage, ProjectFile, SchemaError, SkillMetadata,
+    TaskHeading, TxHeadingView, WorkerKind,
 };
 pub use session::{
     bound_driver_event_payload, driver_event_total_cap, read_session_file, scan_session_lifecycle,
