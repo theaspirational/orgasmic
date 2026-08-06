@@ -5,7 +5,7 @@
 
 ** Agent router
 Worker route when the prompt is a strict orgasmic worker dispatch with all of:
-- worker role: implementer, architect, planner, reviewer, or griller
+- worker role: implementer, planner, reviewer, or griller
 - task ID or task heading
 - read/write scope
 - acceptance, reporting, or evidence expectations

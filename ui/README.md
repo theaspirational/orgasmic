@@ -46,8 +46,8 @@ The **Manager** is a root-level overlay rather than a route, sized via the
 `?manager=peek\|workbench\|focus` search param (RunDock → ManagerWorkbench). It
 drives `GET /manager/state`, `POST /manager/launch`, `GET /managers/drivers`,
 `GET /skills`, and `GET/POST /tx`, with a live
-terminal pane over xterm. Pipeline stages post to `/grill`, `/architect`, and
-`/plan`. Adding a project browses `GET /filesystem/{roots,entries}` and
+terminal pane over xterm. Pipeline stages post to `/grill` and `/plan`. Adding
+a project browses `GET /filesystem/{roots,entries}` and
 `POST /filesystem/validate-project`.
 
 ## Events
