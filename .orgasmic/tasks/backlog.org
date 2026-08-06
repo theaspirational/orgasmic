@@ -3843,3 +3843,171 @@ leaving it UNDECLARED would not have been.
   all the existing =rotation_failure_does_not_propagate_and_counts_a_drop= and
   =failed_intermediate_rename_counts_a_drop= do today.
 
+* BACKLOG TASK-G64ZH.1.1 fix-round: stop deciding the mirror at construction time — the type change silenced every non-terminal launch, and a permanently unopenable path still loses every line    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-G64ZH.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+** READ THIS FIRST — the pattern, because it is the actual finding
+This is round THREE of one defect, and each round fixed its finding and shipped a
+new instance of the same class. Read the sequence before the findings:
+
+- TASK-ZBYH3 decided the mirror question by INODE EQUALITY. A plist rewrite moved
+  the inode, the mirror survived, and the double-write relocated.
+- TASK-ZBYH3.1 decided it by =is_terminal()=. Correct for the shipped launch
+  paths, wrong both directions, and TASK-G64ZH was filed to answer it by
+  construction instead.
+- TASK-G64ZH decided it by an EXPLICIT FLAG at construction, and made a
+  boot-time open failure totally silent under suppression (F-A).
+- TASK-G64ZH.1 kept the path so the retry could reach it, and thereby made the
+  SAME failure silent for EVERY non-terminal launch (R-1) — wider than the
+  defect it was fixing.
+
+*Every one of those is a construction-time answer to a question that is
+dynamic.* =resolve_mirror='s real contract is "do not double-write", and whether
+there is anything to double is a property of the LIVE HANDLE at write time, not
+of the path, the inode, the tty, or a flag read once at boot. Four rounds have
+now proxied it. Do not ship a fifth proxy.
+
+*The fix that ends the class, and what this task wants:* keep a "suppressed
+because a durable sink exists" marker rather than a resolved =MirrorState=, and
+write to stdout whenever =state.durable.is_none()=. That discharges R-1, both
+halves of R-2, and the post-roll reopen-failure case (which is PRE-EXISTING — at
+=eaa88da^= a successful boot open already yielded =MirrorState::None= under
+launchd, so a later failed roll was already silent — and is therefore in scope
+here only because the dynamic fix covers it for free).
+
+The construction-time narrow fix — pass HANDLE presence rather than PATH presence
+into =resolve_mirror= — discharges R-1 and the boot half of R-2 and nothing else.
+It is defensible and it is smaller. If you choose it, say why in the report, and
+know you are choosing to leave the reopen-failure case silent.
+
+Accept the tradeoff the reviewer named explicitly: falling back to stdout during
+a failure window writes into =daemon.stdout.log=, which nothing rotates. F1's
+objection was to STEADY-STATE growth; this is FAILURE-WINDOW growth, and the
+failure window is exactly when losing logs is most expensive.
+
+** R-1 — HIGH — BLOCK SHIP — NEW THIS ROUND — total silence widened from "mirror suppressed" to "stdout is not a terminal"
+=logging.rs:322-323= (construction order), =:244-248= (the gate), =:136=, =:511=
+
+=new_with_terminal_gate= derives =durable_path= from =durable= at =:322= and feeds
+it to =resolve_mirror= at =:323=, BEFORE the handle is destructured. At =eaa88da=
+the type was =Option<(PathBuf, File)>=, so =durable_path.is_some()= GUARANTEED a
+live handle. TASK-G64ZH.1 changed it to =Option<(PathBuf, Option<File>)>= and
+never updated =resolve_mirror=, which still keys on the path. So a failed boot
+open now presents as "durable sink present" and trips the =is_terminal()= gate.
+
+Manager-verified against all three trees. For a launch with NO suppression at all
+— hand-rolled systemd unit, Docker entrypoint, =supervisord=, =nohup=, or plain
+=orgasmic serve >> capture.log= — with =logs/daemon.out.log= unopenable:
+
+| tree | mirror after construction | output |
+| pre-G64ZH (=eaa88da^=) | =Stdout= (early return; =durable_path= None) | every line -> the stdout capture |
+| =eaa88da= (round 1) | =Stdout= — same | every line -> the stdout capture |
+| HEAD (round 2) | =resolve_mirror(Stdout, Some(path), false)= -> =None= | *ZERO* |
+
+=requested_log_mirror(false)= returns =Stdout=, so the caller's mirror is NOT
+=None= here. This launch shape was never in F-A's scope and was never silent
+before.
+
+NO TEST COVERS IT, and the one that looks like it does is the trap:
+=stdout_mirror_without_durable_still_writes_when_redirected= passes
+=BestEffortMakeWriter::new(None, ..)= — durable ABSENT, not durable FAILED. There
+is no test anywhere with =LogMirror::Stdout= + a failed boot open +
+=stdout_is_terminal == false=. Add it.
+
+** R-2 — HIGH — BLOCK SHIP — F-A is not dead: a permanently unopenable path still loses every line
+=logging.rs:257= (=LogMirror::None => LogMirror::None=), =:483-495=, =:511=
+
+Ruling from the review, and it confirms the manager's own pre-review claim:
+keep-the-path is NOT sufficient. Under suppression (the new plist env, an
+already-installed plist still carrying =--no-log-mirror=, or =spawn_detached=)
+with a path that never becomes openable, the write path does exactly two things
+per line: =record_drop()= at =:491= and =MirrorState::None => {}= at =:511=. Zero
+bytes anywhere.
+
+The acceptance bullet "still produces log output AND moves =dropped_log_writes="
+is met only for the TRANSIENT case. For the persistent trigger class F1 actually
+names — =EMFILE=, =EACCES= on the logs dir, =ENOSPC=, =daemon.out.log= replaced
+by a directory — the first half is unmet. That is the class the whole backoff was
+built for.
+
+One qualifier that softens the symptom without changing the ruling: every retry
+emits a cause line to stderr, so the operator does get a recurring reason in
+=daemon.err.log=. They get no request log, no error, no shutdown diagnostic. See
+R-4, which is about the cost of that breadcrumb.
+
+** R-3 — MEDIUM — the F-E test is self-referential, so F-E's own named mutation still passes
+=logging.rs:1396-1414=
+
+=reopen_backoff_expires_and_allows_a_second_attempt= reads the scheduled deadline
+OUT OF STATE (=state.next_reopen_attempt=) and then sets the injected clock to
+exactly that value. It asserts the gate IS A COMPARISON AGAINST
+=next_reopen_attempt=; it does not assert the deadline is BOUNDED.
+
+Apply the exact mutation F-E's heading names, at =schedule_reopen_retry=:
+=self.next_reopen_attempt = self.now() + Duration::from_secs(86400)=. Every
+assertion still holds — the scheduled retry is in the future, the backoff still
+doubles, the clock is advanced to whatever was scheduled, the second attempt
+happens — and =persistent_open_failure_bounds_reopen_attempts_not_per_line=
+asserts =open_attempts == 1=, which a permanent backoff also satisfies. ALL 15
+LOGGING TESTS GREEN with a retry that never effectively expires.
+
+Partial credit, stated precisely so you do not over-fix: the OTHER mutation F-E
+named — a raised =REOPEN_BACKOFF_CAP= — IS caught, by the direct
+=assert_eq!(REOPEN_BACKOFF_CAP, Duration::from_secs(60))=.
+
+*Fix:* compute the expected deadline INDEPENDENTLY of state. Capture
+=let start = state.now();= before the first write, assert
+=state.next_reopen_attempt <= start + REOPEN_BACKOFF_CAP=, then set the clock to
+=start + REOPEN_BACKOFF_CAP + 1ms= rather than reading the deadline back.
+
+** R-4 — LOW — throttle the retry's stderr line; do not remove it
+=logging.rs:409= -> =:196-204=
+
+Making the boot failure retryable means =try_open_durable= calls
+=open_durable_log= on every retry, and each failure writes
+=orgasmic: failed to open log file <path>: <err>= to stderr — under launchd, to
+the unrotated =daemon.err.log=. Pre-fix: exactly one line ever. Post-fix at the
+60s cap: ~1440 lines/day, ~47MB/year, indefinitely. Same shape F-B objected to,
+reached from a fourth direction.
+
+Not blocking, because the rate IS bounded per unit time and F1's actual invariant
+holds. But it is the operator's ONLY diagnostic in the R-2 permanent case, so
+THROTTLE IT, do not remove it: first failure, then only on transition (error kind
+changes, or the first success), or every Nth attempt. Worth doing here since you
+are already in the path.
+
+** Acceptance
+- A failed boot open with NO suppression and a non-tty stdout still writes every
+  line to stdout — the =eaa88da^= behaviour. Pinned by a test with
+  =LogMirror::Stdout= + failed boot open + =stdout_is_terminal == false=, which
+  did not exist before.
+- Under suppression with a PERMANENTLY unopenable path, tracing output still
+  reaches somewhere. If you chose the narrow construction-time fix instead, this
+  bullet is explicitly waived — say so in the report and say what stays silent.
+- The mutation =next_reopen_attempt = now() + 86400s= makes a test FAIL.
+- The retry's stderr output is bounded by something other than the retry rate.
+- =verify/TASK-G64ZH= and =verify/TASK-G64ZH.1= both still pass. If either needs
+  retargeting, say so explicitly in the report and keep the pinned assertion
+  message identical — a retarget that changes what the proof asserts is a new
+  proof, not a retarget.
+- =verify/TASK-G64ZH.1.1/= pins R-1: the injection restores the path-keyed gate
+  and the pinned message is the FIRST failing assertion in the red run.
+
+** Notes
+NOT IN THIS ROUND: TASK-CGJM7 (the rename-failure branch staying per-line). Still
+out of scope, still filed separately.
+
+TWO RESIDUAL GAPS the review flagged as non-blocking, listed so they are not
+rediscovered: =spawn_detached='s environment has no test (the flag was equally
+untested, so not a regression); and =ORGASMIC_LOG_MIRROR= now lives in the
+daemon's environment and is inherited by every dispatch worker, so adding it to
+=SCRUBBED_ENV= (=verify.rs:33=, currently =ORGASMIC_RUN_ID= + =ORGASMIC_HOME=)
+would remove a standing tripwire cheaply. The review traced the inheritance and
+found nothing broken TODAY — =env_log_mirror_off= has exactly two callers,
+=requested_log_mirror= has exactly one production caller, and that is the =serve=
+path only.
