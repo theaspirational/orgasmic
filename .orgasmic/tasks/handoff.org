@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         0d27f03
+:LIVENESS:         631d2b7
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -202,53 +202,59 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-ONE DISPATCH RUNNING: TASK-G64ZH.1 (P1, =:FIX_SUBTASK: t=) implementer,
-=implementer-cursor-agent-tmux= (tmux / cursor-agent / cursor-grok-4.5-high-fast),
-run =run-20260806T135605-e9f0ea7e9295418dacad1d6331a57b5f=, started_tx
-=tx-20260806-orgasmic-4885=, base =3f2c2a0=-ish (the state commit after the
-G64ZH close). Report lands at
-=.orgasmic/tmp/dispatch/task-g64zh-1/task-g64zh-1-6b408ba12bb647afa96711c992da979c-last.txt=.
-Both cursor prompts were cleared by hand at launch (TASK-VD0VB).
+ONE DISPATCH RUNNING: TASK-G64ZH.1 REVIEWER, =reviewer-claude-tmux= (tmux /
+claude / claude-opus-5 / high), run
+=run-20260806T141312-0b85522b32ca43b69eeb67abb0811f55=, started_tx
+=tx-20260806-orgasmic-4892=. Verdict lands at
+=.orgasmic/tmp/dispatch/task-g64zh-1-review/task-g64zh-1-review-43f92de504ab4795adcb8af28add7328-last.txt=.
 
-IT IS A FIX ROUND, SO ITS CLOSE LANDS =in_review= ON ITS OWN and it needs a
-FRESH review before the chain closes — that is the active goal's own Reached-When,
-not a preference. The runtime carries TASK-4WKNX now, so no manual stage flip.
+ITS IMPLEMENTER IS MERGED BUT NOT CLOSED, AND THAT IS THE GATE, NOT AN OVERSIGHT.
+TASK-G64ZH.1 merged at =44e7e8d= (worker commits =94e54f8= + =ea60fba=,
+=implementer-cursor-agent-tmux=, started_tx =tx-20260806-orgasmic-4885=). On a
+default branch, =dispatch-close --merge-sha= is REFUSED until a reviewer verdict
+exists for that generation — learned in anger one dispatch earlier. So:
+1. read the verdict,
+2. =dispatch-close --task TASK-G64ZH.1 --started-tx tx-20260806-orgasmic-4892
+   --status done --verdict <approve|approve-with-follow-ups|reject>=,
+3. THEN =dispatch-close --task TASK-G64ZH.1 --started-tx
+   tx-20260806-orgasmic-4885 --status done --merge-sha 44e7e8d
+   --worktree-remove --branch-delete=.
+Do not remove =~/.orgasmic/worktrees/orgasmic/task-g64zh.1= by hand — step 3 is
+the salvaging path.
 
-WHAT IT IS FIXING, so you do not re-derive it. TASK-G64ZH merged at =eaa88da=,
-answered all three of its original findings correctly, and introduced two
-regressions in the by-construction mirror flag. Both were verified against the
-code by the manager before the fix task was filed:
-- F-A: =init_tracing_to='s =and_then= discards the durable PATH along with the
-  handle when the boot open fails, so =resolve_mirror='s durable-absent early
-  return hands back the caller's =LogMirror::None= and the daemon logs NOTHING AT
-  ALL — where before the diff every line landed in launchd's =StandardOutPath=.
-  Second leg: the discarded path makes the new 1s->60s backoff unreachable for
-  exactly the failure class it was built for (=EMFILE=, =EACCES=, =ENOSPC=,
-  =daemon.out.log= replaced by a directory).
-- F-B: the generated plist / unit / wrapper EMBED =--no-log-mirror=, so a manual
-  runtime rollback — which =update.rs= keeps one previous install for, by design
-  — hands an OLD binary an unknown flag under =KeepAlive= =true=: a launchd crash
-  loop writing clap usage into the unrotated =daemon.err.log=. The env form is
-  already implemented and an old binary ignores it harmlessly.
-Plus three test gaps: the F3 seam moved rather than closed (the TRUE side of the
-production predicate is still free), only the backoff CEILING is pinned and never
-the floor, and =requested_log_mirror=/=env_log_mirror_off= have no test at all —
-which F-B's fix makes load-bearing.
+AND THEN THE CHAIN IS NOT DONE: TASK-G64ZH itself is still =IN_REVIEW= with a
+=reject= verdict recorded. Once the fix round passes a fresh review, close the
+PARENT too. A BLOCK SHIP is not closed until its fix round lands AND passes a
+fresh review — the goal's own Reached-When.
 
-WHAT THE REVIEW GOT RIGHT THAT IS WORTH COPYING INTO THE NEXT REVIEW BRIEF: it
-was handed two named suspicions and it CONFIRMED one (F-B, with the KeepAlive
-crash-loop mechanism the brief had not worked out), DOWNGRADED the other to
-non-blocking with a reasoned classification (F-C is pre-existing — byte-identical
-to =eaa88da^1= in the reopen-succeeds sub-case — so it minted TASK-CGJM7 instead
-of blocking), and found the BLOCK SHIP the brief never mentioned (F-A). It also
-answered both mandated questions with mechanism rather than opinion, and reported
-F-A's probe as an UNRUN GAP rather than pretending to have run it — the correct
-answer for a read-only contract, and the implementer now owns that probe.
+WHAT THE FIX ROUND DID, so you do not re-derive it. F-A: =resolve_durable_open=
+keeps the durable PATH when the boot open fails
+(=Option<(PathBuf, Option<File>)>=), so =record_drop= fires per line and the
+1s->60s backoff is reachable — both were unreachable before. F-B: the plist,
+unit and wrapper set =ORGASMIC_LOG_MIRROR=off= instead of embedding
+=--no-log-mirror=, so an older binary ignores it and a rollback degrades instead
+of crash-looping; and all three render from =orgasmic_daemon::LOG_MIRROR_ENV=,
+the same constant the parser reads, which closes the literal-drift half
+STRUCTURALLY. Plus an =openpty= test on the production constructor (F-D), an
+injectable clock so a never-expiring backoff goes red (F-E), and env-parser
+coverage (F-F).
 
-A NOTE ON MONITORING A TMUX DISPATCH: =dispatch-status= prints =[pid-gone]= for
-EVERY tmux dispatch, always, because =WORKER_PID=-=. It is NOT a death signal.
-The real signals are =[run-gone]=, the tmux session disappearing, and a non-empty
-=last.txt=. A pane that looks dead is usually PARKED — capture it.
+THREE CLAIMS THE REVIEW WAS TOLD TO ATTACK, two of them the manager's own:
+1. F-A MAY BE HALF-FIXED. Under a mirror-suppressed launch with a PERMANENTLY
+   unopenable durable path, =resolve_mirror= takes its =None => None= arm and the
+   handle is absent, so there is STILL ZERO OUTPUT — a moving counter and a
+   failing retry, but no lines anywhere, where the pre-G64ZH daemon captured them
+   all on =StandardOutPath=. The acceptance says "still produces log output AND
+   moves =dropped_log_writes="; only the second half is clearly met.
+2. THE ENV FORM IS INHERITABLE IN A WAY THE FLAG WAS NOT. The LaunchAgent puts
+   =ORGASMIC_LOG_MIRROR=off= in the DAEMON's environment, and the daemon spawns
+   dispatch workers that run =orgasmic= commands.
+3. THIS ROUND EDITED A PREVIOUSLY APPROVED PROOF —
+   =verify/TASK-G64ZH/injection.patch= retargeted =Instant::now()= ->
+   =self.now()=. The manager checked it independently: same injection, same
+   assertion, and the red log's single panic carries the IDENTICAL message as
+   before the retarget. Mechanical, not weakened — but a later round editing an
+   approved artifact deserves its own ruling every time.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions
