@@ -3652,85 +3652,42 @@ rather than assuming, and correct the loop line in the same pass.
 - The audit that closes this task inspects RENDERED assets, not only source text,
   and says so.
 
-* BACKLOG TASK-RQ270.3.2 Excision stage C part 2 — remove the architecture read model and land the lint carve-out
+* BACKLOG TASK-RQ270.3 Excision stage C — remove the architecture read model and land the lint carve-out
 :PROPERTIES:
-:ID: TASK-RQ270.3.2
+:ID: TASK-RQ270.3
 :PRIORITY: P1
-:DEPENDS_ON: TASK-RQ270.3.1
-:WRITE_SCOPE: crates/
 :END:
 
 ** Description
 
-Stage C, part 2 of 2: remove the architecture READ MODEL from the daemon and CLI,
-*and land the dangling-edge lint carve-out*. Read =TASK-RQ270= for the staged plan
-and the coupling map. TASK-RQ270.3.1 removes the UI and lands first.
+Stage C of the dec_HBK6A excision: *remove the architecture READ MODEL* — the
+daemon routes and index projection, the CLI read verbs, the UI surface — and land
+the dangling-edge lint carve-out that stage D depends on.
 
-** THE ORDERING CONSTRAINT THIS WHOLE EXCISION DEPENDS ON
+Split into two dispatches because ~1,500 LOC across daemon, CLI and UI is more
+than one review can do well, and every rejection this excision has produced was a
+gap a large diff hid:
 
-*The lint carve-out lands HERE and must be on main BEFORE stage D deletes
-=.orgasmic/architecture.org=.* If stage D runs first, every =:IMPLEMENTS: arch_=
-token in the task ledger becomes a dangling graph edge and the daemon starts
-emitting parse errors for the whole board.
+- *TASK-RQ270.3.1* — the UI read surface. Landed first so main never contained a
+  UI calling a route the daemon had removed. Merged =18739ea=, APPROVED.
+- *TASK-RQ270.3.2* — the daemon read model, the CLI verbs, and the carve-out.
 
-Measured at HEAD, not estimated: *141 =:IMPLEMENTS:= lines carrying =arch_=
-tokens* across the task files — 138 in =done.org=, 3 in =backlog.org= — bearing
-*243 individual =arch_= tokens*. (The parent task says 231; that figure is
-approximate and predates this measurement.)
+** This node exists because of a manager error
 
-The two sites:
+Both halves were minted as =TASK-RQ270.3.1= and =.3.2= without this parent ever
+being created. Task parentage is derived FROM THE ID GRAMMAR and from nothing
+else, so each child orphan-referenced an absent =TASK-RQ270.3= and the daemon
+raised two =orphan derived parent= parse errors.
 
-- =crates/orgasmic-daemon/src/index.rs:1255= — =lint_dangling_graph_edges= only
-  lints structured-id targets, and =arch_= is one of the four prefixes it checks.
-  Dropping =arch_= there is the carve-out.
-- =crates/orgasmic-daemon/src/index.rs:1280= — =looks_like_structured_node_id=
-  carries the same four prefixes and governs write-time reference validation.
+Found by the TASK-RQ270.3.2 implementer, which measured =parse_errors= as
+required, reported the criterion UNMET rather than rounding it to zero, and
+correctly declined to repair it — the fix is a daemon-managed task-ledger change,
+outside its =crates/**= scope and squarely the manager's.
 
-*Decide both deliberately and say why.* Dropping =arch_= from the first stops the
-dangling lint firing after stage D. Dropping it from the second stops =arch_=
-tokens being treated as resolvable references at write time — which is what a
-retired class should look like, but it is a different consequence. Do not assume
-one answer covers both.
-
-** In scope
-
-- =GET /architecture=, =/architecture/nodes=, =/architecture/:id=
-  (=api.rs:699-701=) and their entries in the route inventory (=:772-774=).
-- =load_architecture= (=index.rs:1065=), =architecture_nodes_response=
-  (=index.rs:260=), and the call sites at =index.rs:827-828=.
-- CLI =architecture {list, get, schema}= (=main.rs:302, 731, 3081-3116=) and the
-  =schema_examples= architecture example and legend
-  (=orgasmic-core/src/schema_examples.rs:111,125=).
-- The =node.rs= architecture arms.
-- The lint carve-out above.
-
-** Explicitly NOT in this stage
-
-- =ArchitectureNode= / =parse_arch_edges= (=schema.rs=), =NodeIdClass::Architecture=
-  / =is_arch_id= (=id.rs=), the identity-lint arch collectors, the =node_kind=
-  variant, and =WorkerKind::Architector= removal — *stage D*.
-- Deleting =.orgasmic/architecture.org= or repointing the two live task drawers
-  (=backlog.org:82,:98=, TASK-CQM2X and TASK-VBSG2) — *stage D*.
-- =lint_arch_heading_id_tokens= (=index.rs:1428=), which lints headings inside
-  =architecture.org= — it dies with the file in stage D.
+*The lesson: minting =X.N.M= silently asserts that =X.N= exists.* Nothing at
+creation time checks it; the board tells you afterwards, through the parse-error
+count, which is exactly why the count is worth measuring rather than assuming.
 
 ** Acceptance
 
-- No route, index projection or CLI verb reads the architecture layer.
-- The dangling-edge lint does not fire on =arch_= targets, proven by a test that
-  constructs an =:IMPLEMENTS: arch_= edge with no resolving node and asserts *no
-  parse error*. This is the gate stage D depends on; assert it, do not describe
-  it.
-- Historical =arch_= references in =tx=, =done.org= and =decisions.org= still
-  parse.
-- =parse_errors= is 0 on this repository's own state after the change.
-- =cli_parity= passes — it resolves every =orgasmic ...= invocation in =shipped/=
-  against the real binary, so doctrine naming a deleted verb fails there.
-
-** Not to be broken — the coupling map
-
-=GraphLayer= / =NodeLayer= / =NodeKind= / =NodeIdClass=, =read_or_seed_graph_file=,
-writer authority, tx append, the generic marker scanner and =GraphEdgeSummary=
-all serve decisions, glossary and tasks too. Excision removes VARIANTS AND THEIR
-MATCH ARMS, never the enum machinery. =:IMPLEMENTS:= remains a legal task drawer
-key; only the LINT's arch-prefix handling changes.
+Both halves landed and reviewed, and =parse_errors= back to 0.
