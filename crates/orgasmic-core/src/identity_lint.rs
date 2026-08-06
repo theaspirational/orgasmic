@@ -345,7 +345,7 @@ pub fn lint_dangling_references(
 ) -> Vec<IdentityLintFinding> {
     let mut findings = Vec::new();
     for (token, path, line, context) in references {
-        if known_ids.contains(token) {
+        if known_ids.contains(token) || is_retired_architecture_id(token) {
             continue;
         }
         findings.push(IdentityLintFinding {
@@ -356,7 +356,7 @@ pub fn lint_dangling_references(
         });
     }
     for (marker_id, files) in marker_ids {
-        if known_ids.contains(marker_id) {
+        if known_ids.contains(marker_id) || is_retired_architecture_id(marker_id) {
             continue;
         }
         for file in files {
@@ -372,6 +372,12 @@ pub fn lint_dangling_references(
         }
     }
     findings
+}
+
+fn is_retired_architecture_id(id: &str) -> bool {
+    // Index-time history carve-out only. `unresolved_reference_tokens` stays
+    // prefix-agnostic so write-time guards still reject newly added arch_ refs.
+    id.starts_with("arch_")
 }
 
 fn project_relative_or_abs(path: &Path) -> PathBuf {
@@ -621,6 +627,12 @@ mod tests {
                     && f.message.contains("missing-slug")),
             "{findings:?}"
         );
+    }
+
+    #[test]
+    fn retired_architecture_id_remains_unresolved_for_write_time_guards() {
+        let unresolved = unresolved_reference_tokens("RELATES_TO", "arch_GONE99", &BTreeSet::new());
+        assert_eq!(unresolved, vec!["arch_GONE99"]);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+# Pinned from /tmp/TASK-RQ270.3.2.1-pre-fix-red.log on 2026-08-06. The marker
+# indexing assertion passed first; the next assertion saw the exact old
+# dangling-advisory parse error and was the first failure.
+exit: 101
+contains: retired architecture marker must not emit a dangling advisory parse error
+contains: dangling advisory marker `arch_GONE99` in src/lib.rs
+contains: test index::tests::retired_architecture_marker_stays_indexed_without_dangling_parse_error ... FAILED
+contains: test result: FAILED. 0 passed; 1 failed
