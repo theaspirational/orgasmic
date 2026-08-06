@@ -1153,3 +1153,4 @@ produced by =--classify= over the F9 green log plus a measured stamp, not by a
 live full run — the third run was skipped per the execution budget. So "the gate
 returns GREEN on a calm host" is demonstrated through the reclassify path, which
 is itself one of the paths this round changed.
+

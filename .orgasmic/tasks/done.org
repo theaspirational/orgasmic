@@ -26242,3 +26242,205 @@ durability depended on a manual step.
 *A scope note that is the MANAGER'S error:* =WRITE_SCOPE= says
 =crates/**,shipped/**= but the brief demanded a =verify/TASK-QGWK7/= artifact.
 The =verify/= writes are authorised; the task drawer was not updated to match.
+
+* DONE TASK-QGWK7.1 fix-round: nothing stages the promoted report, and stdout.log is 10-25x the repo per year in permanent git history :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+Fix round for the TASK-QGWK7 review. NINE findings, NONE blocking — the parent
+shipped and is DONE, and no close path destroys a worker report any more. This
+round finishes the job: as merged, the change does not yet meet its OWN
+acceptance criterion 2.
+
+The full review is preserved at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-4946/last.txt= (tracked, in
+git). READ IT — it carries measurements this summary compresses. That file
+exists because the manager copied it by hand; the parent's change will do it
+automatically once the runtime is rebuilt.
+** F-1 — HIGH — nothing stages the promoted directory, so criterion 2 is unmet
+=shipped/prompt-studio/conventions/manager-dispatch.org:312-323= says "Commit the
+promoted directory with the rest of the change so a fresh clone can read it."
+NOTHING IN =crates/= RUNS =git add=. The promoted files land UNTRACKED, and the
+durability guarantee is a sentence in a convention.
+
+*Ruling (the reviewer's, and the manager concurs): close should STAGE the
+directory itself* — =git add -- <dest_dir>= after a successful promote, in
+=remove_worktree_required_with_hook= (=manager.rs:5163=) and
+=promote_dispatch_artifacts_in_place= (=manager.rs:5462=). STAGING, NOT
+COMMITTING: a path in the index is in git, so every subsequent state chore
+carries it automatically — including =git add -u= and =git commit -a= — while
+WHEN to commit stays with the manager, which is the part needing judgement. A
+staging failure is reportable through the =CLEANUP_ERROR= channel that already
+exists.
+
+*CORRECTION TO THE REVIEW'S EVIDENCE, verified by the manager — do not carry the
+original claim forward.* The review argued from five sampled commits that no
+manager habit would ever sweep the directory in, concluding "zero precedent in
+468 opportunities". THOSE COMMITS CANNOT DISCRIMINATE: =dispatch-records/= did
+not exist yet, so there was nothing untracked to sweep, and they look identical
+under =git add -A= and =git add -u=. Tested directly with =git add -n=:
+=git add -A .orgasmic= (this session's actual command) DOES stage it;
+=git add -u .orgasmic= does NOT. Proof it works: the two reports committed at
+=54a82bd= got there precisely that way.
+
+THE FINDING AND THE RULING BOTH STAND ANYWAY, and for a sharper reason than the
+one given: the guarantee currently rests on an UNSTATED detail of which =add=
+form a manager happens to use. A durability property that depends on an
+undocumented habit is worse than one that depends on a documented step, not
+better.
+** F-2 — MEDIUM — =stdout.log= promoted unconditionally into PERMANENT git history
+=crates/orgasmic-core/src/paths.rs:234=; retention at
+=manager-dispatch.org:319=. The arithmetic is the finding, so do not re-derive
+it — it is measured, not estimated:
+- Volume: =manager.dispatch_started= tx — 202 (Jun), 556 (Jul), 191 (Aug 1-6) =
+  949 in ~67 days = *14.2/day*, annualizing to *5,200-6,500 generations/year*.
+- Size: =last.txt= mean 4,580B (max 15,562B); =stdout.log= max *478,920B*, and
+  47 of 51 measured are 0 bytes because tmux never persists pane content — the
+  4 non-zero ones are stdio/ws and average *157,703B*.
+- Year one: =last.txt= *24-30MB/yr* — fine, keep it. =stdout.log= at the stdio
+  mean is *820MB-1.03GB/yr uncompressed*, against a repo whose ENTIRE packed
+  history is *8.71MiB*. That is 10-25x the whole repo packed, ~100x raw. And
+  unlike =daemon.err.log= you CANNOT rotate it: pruning git history rewrites
+  every downstream clone.
+
+The implementer's reason for including =stdout.log= is GOOD and is the strongest
+argument in the change — it can FALSIFY a curated close reason, and an
+unfalsifiable curated =REASON= is exactly what the parent exists to fix. So weigh
+it, do not dismiss it. *Ruling: =last.txt= yes, =stdout.log= not as-is.* Pick one
+and say why:
+1. BOUNDED TAIL (preferred): promote the last 64KB and RECORD THE ORIGINAL BYTE
+   COUNT beside it. Caps the year at ~400MB worst case and ~0 typical, keeps
+   falsifiability, and makes truncation VISIBLE rather than silent.
+2. Promote only on non-success (=--status aborted=, or a =blocked= finalize) —
+   when the transcript is worth more than the summary.
+3. At minimum, skip a 0-byte =stdout.log= entirely, whichever of the above lands.
+
+Also: the retention policy states "keep forever" with NO number and no age-out.
+The parent's own text says a policy needs a number. "Keep forever" is defensible
+for =last.txt= at 24-30MB/yr — it was chosen WITHOUT the =stdout.log= arithmetic.
+** F-3 — MEDIUM — the =--no-worktree-remove= promote takes neither the cleanup lock nor the close guard
+=manager.rs:5401-5413= -> =:5462-5479=. Every other artifact-touching path takes
+=acquire_dispatch_cleanup_lock= (=manager.rs:5107=, =api.rs:5766=) and, for a
+destructive close, a daemon-owned close guard.
+=promote_dispatch_artifacts_in_place= takes NEITHER — and it IS destructive now,
+because =promote_validated_dispatch_attempt= UNLINKS both tmp artifacts
+(=paths.rs:235=). Before this change =--no-worktree-remove= touched no files, so
+the missing fence cost nothing.
+
+The hole is named in the code's own comment at =manager.rs:1147-1152=: a 404 from
+=release_dispatch_run= is filtered as "not live by that id", and the thing it
+fails to rule out — a recovery replacement whose origin->replacement association
+never reached the ledger, live in this very worktree — is what the guard refuses.
+CONCRETE FAILURE: a recovery replacement is streaming into =last.txt=; the close
+copies a PARTIAL report, unlinks the inode, and every subsequent worker write
+goes to an unlinked file.
+** F-4 — MEDIUM — =--no-worktree-remove= on an already-reclaimed worktree flips =CLEANUP_STATUS= ok -> partial
+=manager.rs:5401-5413=, =:5438-5440=; =paths.rs:302=.
+=promote_dispatch_artifacts_in_place= calls =validate_dispatch_cleanup_targets=
+-> =validate_dispatch_worktree= -> =symlink_metadata(worktree)=. If the worktree
+is gone that errors, the error is pushed, and the new arm downgrades =Ok= ->
+=Partial=. A close that did everything right now reports partial.
+** F-5 — LOW — orphan reclaim never promotes
+=reclaim_managed_worktree:3454-3585= hardcodes =report_path: None= at six exit
+points and never calls =validate_dispatch_cleanup_targets=. =manager
+worktree-prune= removes the worktree and leaves the artifacts in =tmp/=
+indefinitely with no tx naming them. Nothing is destroyed, so it is a gap not a
+block — but it is the RESCUED-DISPATCH case, the one the parent's text says
+matters most, and the one path where a report never becomes resolvable.
+** F-6 — LOW — the finalize =REPORT_PATH= fallback writes an absolute, user-specific path into a committed tx
+=manager.rs:1911-1913=: the fallback pushes =run.last_path.display()=, which is
+ABSOLUTE (=:1957= writes through it from the worker's cwd, so it must be). A
+committed tx should not carry =/Users/<someone>/...=.
+** F-7 — LOW — the promote copy buffers the whole artifact in RSS
+=paths.rs:268-290=. =copy_validated_artifact_to= accumulates the entire file into
+a =Vec<u8>= before writing a byte — for a file the parent's own text calls "a
+streaming sink for unbounded untrusted bytes". The chunked =read_at= loop is
+already there; writing each chunk as it is read is a two-line change and removes
+the only place a runaway worker's output size becomes the manager's memory.
+** F-8 — LOW — a half-succeeded promote leaves =last.txt= promoted but unnamed
+=paths.rs:233-236=. If =last.txt= copies and =stdout.log= fails, the function
+returns =Err=, so =report_path= is =None= and NO =REPORT_PATH= lands on the close
+tx — even though =last.txt= is sitting at the canonical path. The fd-anchored
+ordering is CORRECT (unlink runs only after both copies succeed, so a partial
+failure duplicates rather than loses); this is the mirror gap on the TX side.
+A mid-flight failure also leaves =last.promoting= / =stdout.promoting=
+(=paths.rs:285=) in the tracked directory.
+** F-9 — LOW — the =--no-worktree-remove= promotion branch has no test
+Three tests pass =--no-worktree-remove= (=dispatch.rs:2070=, =:8211=, =:8296=)
+and now traverse the new branch at =manager.rs:5401=, but none asserts on
+promotion or on =CLEANUP_STATUS=. So F-3 AND F-4 ARE BOTH INVISIBLE TO THE SUITE.
+** Acceptance
+- A promoted record is IN THE GIT INDEX after a close, without the manager
+  choosing a particular =git add= form. Pinned by a test.
+- =stdout.log= promotion is bounded by a stated number, truncation is VISIBLE,
+  and a 0-byte file is not promoted at all. State the year-one growth for
+  =last.txt= and =stdout.log= separately in the convention.
+- The =--no-worktree-remove= promote takes the same cleanup lock and close guard
+  as every other destructive path, and a test proves it.
+- A close that promotes successfully against an already-reclaimed worktree
+  reports =CLEANUP_STATUS=ok=.
+- =REPORT_PATH= is always project-relative.
+- A half-succeeded promote still names what it did promote, and leaves no
+  =.promoting= files behind.
+- The promote copy streams; it does not buffer a whole artifact.
+** Evidence
+IMPLEMENTED 2026-08-06. Worker implementer-cursor-agent-tmux; driver tmux,
+harness cursor-agent, model cursor-grok-4.5-high-fast, effort omitted
+deliberately (the model id carries the tier). Merged 955c8d6. Report preserved
+at =.orgasmic/dispatch-records/tx-20260806-orgasmic-5021/last.txt=.
+
+F-2 CHOICE: *option 1, bounded tail.* Promote the last 64KB
+(=STDOUT_PROMOTE_TAIL_BYTES= at =paths.rs:130=), record the original byte count
+beside it in =stdout.log.bytes=, and skip 0-byte files entirely. Caps year-one
+growth at ~400MB worst case and ~0 typical on tmux — against an 8.71MiB packed
+repo — while keeping the falsifiability that was the strongest argument for
+including stdout at all, and making truncation VISIBLE rather than silent.
+
+F-5 DEFERRED, with a stated reason rather than silently: =worktree-prune= is
+gated off by construction (TASK-M47E5.3) and TASK-RMA18 owns the reclamation
+redesign, so promote-on-reclaim would either widen into RMA18 territory or ship
+unreachable code. Nothing is destroyed today — the artifacts stay in =tmp/=.
+
+MANAGER-VERIFIED IN THE MERGED SOURCE, not taken on report:
+- F-1. =stage_promoted_dispatch_record= (=manager.rs:5566=) runs
+  =git add -- <dest_dir>= in the project root. Staging only, as ruled. A failure
+  is folded into =outcome.error= and surfaces through the existing
+  =CLEANUP_ERROR= channel, so *a failed stage never fails the close* — the
+  invariant the brief set.
+- F-2. =STDOUT_PROMOTE_TAIL_BYTES = 64 * 1024=; =stdout.log.bytes= written
+  beside the tail; empty stdout skipped, with tests asserting both the
+  byte-count file's presence when truncated and its ABSENCE when skipped.
+- F-7. The promote copy streams — =copy_validated_artifact_to= and
+  =copy_validated_stdout_tail_to= write each =read_at= chunk through a 64KB
+  buffer instead of accumulating a whole-file =Vec<u8>=.
+
+GATES at merge, manager-run: =cargo test -p orgasmic-core --lib= 165 passed / 0
+failed; =cargo test -p orgasmic-daemon --lib -- dispatch= 43 passed / 0 failed;
+=cargo clippy --workspace --all-targets -D warnings= clean; =cargo fmt --all
+--check= clean; =orgasmic verify TASK-QGWK7.1= PASS (red-then-green). The pinned
+red was checked against the log rather than trusted: the ONLY panic in the
+injected run is =manager.rs:9149=, the F-1 index assertion, which is the finding
+that made the parent miss its own acceptance criterion.
+
+NOT RUN: =cargo test --workspace= and any full daemon suite — deliberate, per
+the execution budget (test EXECUTION is the syspolicyd trigger and this host has
+hard-rebooted twice from that chain). Scoped runs only.
+
+RESIDUAL, carried to the review: the close-guard proof for F-3 is the fence
+predicate plus lock integration (the production =--no-worktree-remove= arm now
+calls =close_needs_artifact_fence= and =acquire_dispatch_cleanup_lock=), NOT a
+live =--no-worktree-remove= + pause-file race. So the concrete failure F-3
+described — a recovery replacement streaming into =last.txt= while the close
+copies a partial report and unlinks the inode — is guarded by construction but
+not reproduced under race.
+
+INDEPENDENT CONFIRMATION OF F-2's PREMISE, from this session's own dispatches:
+every =stdout.log= produced by the five tmux dispatches run today was 0 bytes,
+matching the review's measurement that 47 of 51 sampled were empty because tmux
+never persists pane content. The bounded-tail change makes those promote to
+nothing at all.
+

@@ -16954,3 +16954,327 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1
 :SHA:          5274a786cd6e72c8ff658a281258e64bf2c62aed
 :END:
+
+* TX 2026-08-06 Thu 20:29:06 task.edited TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5024
+:TIME:         [2026-08-06 Thu 20:29:06]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-QGWK7.1
+:NODE_ID:      TASK-QGWK7.1
+:END:
+
+* TX 2026-08-06 Thu 20:29:57 task.state_transitioned TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5025
+:TIME:         [2026-08-06 Thu 20:29:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 20:29:58 manager.dispatch_started TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5026
+:TIME:         [2026-08-06 Thu 20:29:58]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1-review
+:BRANCH:       task-qgwk7.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7-1-review/task-qgwk7-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 20:29:58]
+:LIVENESS:     c0eec0fda25d985752a3a9a96a783a786aed7d99
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-5021
+:REASON_INITIAL: Post-merge review of 955c8d6, the nine-finding fix round on evidence promotion. Different harness family from the cursor-agent implementer. Crux is claim 1 (is the report durable by construction or still by habit) and claim 3 (F-3's fence is argued, not demonstrated).
+:END:
+
+* TX 2026-08-06 Thu 20:29:59 run.created TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5027
+:TIME:         [2026-08-06 Thu 20:29:59]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1-reviewer-20260806T202958.jsonl
+:REASON:       Post-merge review of 955c8d6, the nine-finding fix round on evidence promotion. Different harness family from the cursor-agent implementer. Crux is claim 1 (is the report durable by construction or still by habit) and claim 3 (F-3's fence is argued, not demonstrated).
+:RUN_ID:       run-20260806T202958-480d701dd73a4c05a453ac43c9938f7e
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7-1-review/task-qgwk7-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7-1-review/task-qgwk7-1-review-d81e6835e856472ba4837aed388513c7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7-1-review/task-qgwk7-1-review-d81e6835e856472ba4837aed388513c7-stdout.log
+:DISPATCH_ATTEMPT: d81e6835e856472ba4837aed388513c7
+:DISPATCH_TX:  tx-20260806-orgasmic-5026
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 20:38:17 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5028
+:TIME:         [2026-08-06 Thu 20:38:17]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       A git add or stdout-tail failure folds into WorktreeRemovalOutcome.error, which sets worktree_failed=true even though removed=true: close reports CLEANUP_STATUS=worktree_failed and the 5460-5481 chain silently skips --branch-delete with branch_failed=false; give promote/stage errors the non-worktree channel the --no-worktree-remove arm already uses at 5452
+:SEVERITY:     MEDIUM
+:KIND:         bug
+:FILE:         crates/orgasmic-cli/src/manager.rs:5423
+:END:
+
+* TX 2026-08-06 Thu 20:38:18 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5029
+:TIME:         [2026-08-06 Thu 20:38:18]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       git add -- <dir> exits 0 while silently skipping ignored files inside it (measured), so a project rule like *.log drops stdout.log from the record with the close reporting success; a fully-ignored .orgasmic fails loudly at exit 1, inner-file ignores do not; verify staged entries with git ls-files after adding
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs:5566
+:END:
+
+* TX 2026-08-06 Thu 20:38:18 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5030
+:TIME:         [2026-08-06 Thu 20:38:18]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       Truncation is visible only out-of-band: stdout.log.bytes is written for EVERY non-empty stdout so its presence does not mean truncated, the promoted tail carries no banner and starts mid-line, and a skipped 0-byte stdout leaves no sidecar so empty and not-promoted look identical
+:SEVERITY:     LOW
+:KIND:         design
+:FILE:         crates/orgasmic-core/src/paths.rs:388
+:END:
+
+* TX 2026-08-06 Thu 20:38:18 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5031
+:TIME:         [2026-08-06 Thu 20:38:18]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       A 64 KB tail is the right default for a curated-REASON check but keeps the wrong end for the transcript F-2 cared about: a harness that dies early then emits retry noise has its evidence at the head and is exactly the stdout most likely to exceed the cap; 32 KB head + 32 KB tail with an elision marker costs the same year-one bytes
+:SEVERITY:     LOW
+:KIND:         design
+:FILE:         crates/orgasmic-core/src/paths.rs:130
+:END:
+
+* TX 2026-08-06 Thu 20:38:18 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5032
+:TIME:         [2026-08-06 Thu 20:38:18]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       Acceptance says REPORT_PATH is always project-relative but a manager-supplied --property REPORT_PATH=/abs/path still overrides unvalidated and lands absolute in a committed tx; tests/dispatch.rs:988 and :1001 currently pin that absolute behaviour
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs:4863
+:END:
+
+* TX 2026-08-06 Thu 20:38:19 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5033
+:TIME:         [2026-08-06 Thu 20:38:19]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       close_needs_artifact_fence returns true for a record with LAST_PATH+STDOUT_PATH but no WORKTREE, yet reserve_close_guard returns Ok(None) for that record, so the --no-worktree-remove promote arm at 5439 unlinks the tmp inodes with the fence requested and silently absent
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs:4294
+:END:
+
+* TX 2026-08-06 Thu 20:38:19 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5034
+:TIME:         [2026-08-06 Thu 20:38:19]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       The new close_needs_artifact_fence was inserted between reserve_close_guard's doc comment and its signature, so rustdoc now attaches Ok(None) means there is no worktree to reserve to a -> bool predicate and reserve_close_guard is undocumented
+:SEVERITY:     LOW
+:KIND:         docs
+:FILE:         crates/orgasmic-cli/src/manager.rs:4280
+:END:
+
+* TX 2026-08-06 Thu 20:38:19 reviewer.finding TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5035
+:TIME:         [2026-08-06 Thu 20:38:19]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       no_worktree_remove_with_artifacts_needs_close_guard asserts on the close_needs_artifact_fence predicate only and never enters cmd_dispatch_close, so the F-3 wiring at manager.rs:1123 has no coverage; finalize_report_path_fallback_is_project_relative has the same shape against cmd_dispatch_finalize
+:SEVERITY:     LOW
+:KIND:         test
+:FILE:         crates/orgasmic-cli/src/manager.rs:9142
+:END:
+
+* TX 2026-08-06 Thu 20:39:39 reviewer.reported TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5036
+:TIME:         [2026-08-06 Thu 20:39:39]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:RUN_ID:       run-20260806T202958-480d701dd73a4c05a453ac43c9938f7e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1-review
+:END:
+
+* TX 2026-08-06 Thu 20:40:35 reviewer.done TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5037
+:TIME:         [2026-08-06 Thu 20:40:35]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       Parent acceptance criterion 2 is met: a promoted report lands in the git index by construction, not by habit. Eight follow-ups, none blocking. One MEDIUM is a real behaviour bug this change introduced and the manager reproduced it in source: a git add failure sets worktree_failed=true even when the worktree WAS removed, which mis-reports CLEANUP_STATUS and makes every --branch-delete arm at manager.rs:5460-5481 fail its !worktree_failed guard, so the branch is silently retained with branch_failed=false and no error naming it. Carried to TASK-QGWK7.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260806-orgasmic-5026
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 20:40:36 task.state_transitioned TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5038
+:TIME:         [2026-08-06 Thu 20:40:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 20:40:38 implementer.done TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5039
+:TIME:         [2026-08-06 Thu 20:40:38]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:REASON:       Fix round merged at 955c8d6; reviewed approve-with-follow-ups (tx-20260806-orgasmic-5026). Nine findings closed or explicitly deferred; eight follow-ups carry to TASK-QGWK7.1.1.
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    955c8d6707290f375336c2cdfcae11bb87fa8efa
+:BRANCH:       task-qgwk7.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-5021
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 20:40:38 task.state_transitioned TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5040
+:TIME:         [2026-08-06 Thu 20:40:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 20:41:56 task.created TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5041
+:TIME:         [2026-08-06 Thu 20:41:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Follow-up round for the TASK-QGWK7.1 review (tx-20260806-orgasmic-5026, approve-with-follow-ups). Eight findings, none blocking; M-1 is a real behaviour bug the manager reproduced in source.
+:END:
+
+* TX 2026-08-06 Thu 20:41:56 task.property_updated TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5042
+:TIME:         [2026-08-06 Thu 20:41:56]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-QGWK7.1.1
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-06 Thu 20:41:57 task.state_transitioned TASK-QGWK7.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5043
+:TIME:         [2026-08-06 Thu 20:41:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-QGWK7.1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
