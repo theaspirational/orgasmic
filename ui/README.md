@@ -20,9 +20,6 @@ for the event stream.
 | `src/lib/backend.ts` | Backend profiles (base URL + token), Tauri local-daemon detection. |
 | `src/lib/routing.ts`, `theme.ts`, `storage.ts`, `timers.ts` | URL/query, theme, localStorage, timer seams. |
 
-Source modules carry `@arch arch_MK2Q2.*` annotations linking them back to the
-architecture graph.
-
 ## Screens
 
 Routing is path-based (TanStack Router). `/` redirects to the last project's

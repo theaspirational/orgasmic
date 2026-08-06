@@ -1,3 +1,130 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-RQ270.2.1 Strip the @arch back-edges stage B missed, and stop the schema legend naming a deleted verb
+:PROPERTIES:
+:ID: TASK-RQ270.2.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-core/,ui/
+:END:
+
+** Description
+
+Fix round for the two BLOCK SHIP findings on TASK-RQ270.2's review. Both are
+confirmed by the manager. The full record is on that task under "Review round 1 —
+REJECT (finding 1 is a manager inventory error)". Read it there.
+
+** Finding 1 — 26 =// @arch= back-edges survive in =ui/=
+
+The deleted comparator accepted FOUR prefixes, not two
+(=architecture_drift.rs:263-277= at base =f59ce41=): =// arch:=, =# arch:=,
+=// @arch=, =# @arch=. Stage B stripped the first two. *The manager's inventory
+only ever counted those two*, so the acceptance grep false-greened.
+
+Nothing reads the survivors — the generic scanner (=marker.rs:169=) indexes only
+=orgasmic:= payloads — so these are dead back-edges of exactly the kind stage B
+exists to remove.
+
+*Manager ruling on scope*: these amend stage B rather than becoming a follow-on.
+=ui/**= enters scope *for comment stripping only*; stage C still owns every UI
+behaviour, view and route.
+
+** Finding 2 — a live command advertises the deleted one
+
+=crates/orgasmic-core/src/schema_examples.rs:86='s =SOURCE_PATHS= note reads
+"repo paths =architecture drift= checks against =// orgasmic:<id>= markers".
+=architecture schema= is deliberately still live (stage C owns it) and
+=print_node_schema= emits that legend verbatim.
+
+Reword rather than delete: the note is also WRONG in a second way that predates
+this stage — drift checked =// arch:=/=@arch=, never =orgasmic:=. Say what
+=SOURCE_PATHS= means now, without naming a deleted verb.
+
+=cli_parity= cannot catch this class: it extracts invocations from =shipped/=
+only, not from generated schema text.
+
+** Acceptance
+
+- Zero matches for =^\s*(//|#)\s+@arch(\s|$)= outside =.orgasmic/= and
+  =archive/=.
+- Zero matches for the =arch:= forms as well; do not regress stage B's work.
+- All 60 =orgasmic:arch_= markers unchanged, proven with a *per-path* comparison
+  (path + marker content), not a content-only hash. The content-only form is
+  blind to a marker moving between files, and marker PATHS are observable through
+  =scan_project_markers= / =/graph/markers/:node_id=.
+- No UI behaviour, view, route, type or import changes. Line-1 comment removal
+  only.
+- The schema legend names no deleted verb.
+- =cli_parity= still passes; the CLI still offers =architecture {list,get,schema}=
+  and not =drift=.
+
+** Not in scope
+
+Everything stage C and D own: the read model, =GET /architecture*=, the CLI reads,
+the UI views themselves, the node class, the dangling-edge lint carve-out, and
+=architecture.org=.
+** Landed and verified by the manager
+Merged =3536be8= (worker =e56af71=, base =1f14c35=). 27 files, +1/-27.
+
+=== It derived the patterns from the reader, which was the point
+
+The report states the patterns and their source: =f59ce41:architecture_drift.rs:263-277=,
+whose =strip_prefix= chain accepted all four forms. That is the correction the
+manager's own inventory failed to make, and the implementer applied it rather
+than copying the manager's narrower grep.
+
+=== Manager's independent verification on the merged tree
+
+*All four retired prefixes, one regex, zero matches* outside =.orgasmic/= and
+=archive/=:
+
+: git grep -n -I -E '^[[:space:]]*(//|#)[[:space:]]+(@arch([[:space:]]|$)|arch:)' \
+:   -- . ':(exclude).orgasmic/**' ':(exclude)archive/**'   ->  0
+
+*The UI diff is comment-only, proven not asserted.* Every added/removed line in
+=ui/= across =1f14c35..3536be8=, with =-\s*// @arch= filtered out, is EMPTY. 26
+files, one line each. No behaviour, view, route, type or import moved.
+
+*Per-path marker comparison, run by the manager across THREE revisions* —
+pre-stage-B base, stage B, and this fix — normalizing to =path|marker-content=:
+
+: f59ce41  1a0cec73b545a6127172233f22d7aad902f099206937daacc473f2ca1651e578  60 records
+: bb06bc4  1a0cec73b545a6127172233f22d7aad902f099206937daacc473f2ca1651e578  60 records
+: 3536be8  1a0cec73b545a6127172233f22d7aad902f099206937daacc473f2ca1651e578  60 records
+
+Constant across all three. The 60 =orgasmic:arch_= markers survived BOTH rounds
+in the same files with byte-identical content. (This hash differs from the
+reviewer's =187fb552…= because the normalization differs; what matters is that it
+is invariant across revisions, which is the property being claimed.)
+
+*Real-binary probe of the reworded legend:*
+
+: ./target/debug/orgasmic architecture schema
+:   :SOURCE_PATHS: — repo paths that implement this architecture node
+
+No deleted verb named, and the pre-existing conflation of =// arch:= with
+=orgasmic:= markers is gone too.
+
+=== Gates on the merged tree
+
+- =scripts/run-tests.sh -p orgasmic-cli= — GREEN, 0 failures.
+- =scripts/run-tests.sh -p orgasmic-core= — GREEN, 0 failures.
+- =cargo test -p orgasmic-cli --test cli_parity= — 3 passed.
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0.
+- =cargo fmt --all --check= — exit 0.
+
+*The UI gates were not re-run by the manager, with a stated basis.* The
+implementer ran =npm run typecheck= and =npm test= (38 files, 264 tests) green.
+The manager's independent check that the UI diff contains NO line other than 26
+=// @arch= removals is the stronger argument: a removed leading comment cannot
+change typecheck or test behaviour unless it carried a directive, and the diff
+filter would have surfaced any non-=@arch= removal. Re-running =npm ci= for a
+provably comment-only diff would buy nothing.
+
+=== No injection proof, agreed again
+
+Dead-text removal and a prose correction — no red to pin. The authoritative-reader
+greps, the per-path inventory, the emitted schema output and =cli_parity= are the
+instruments. The previous reviewer endorsed this reasoning for stage B and it
+applies unchanged.
