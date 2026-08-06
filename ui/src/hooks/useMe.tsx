@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.2
 // Member-session identity + capability context. The default (no member session)
 // is the ADMIN bearer flow: identity 'admin', can() always true, nothing
 // fetched — the existing app behaves exactly as before. A member enters via

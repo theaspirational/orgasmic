@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.7
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ArrowLeft, Check, Copy, ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';

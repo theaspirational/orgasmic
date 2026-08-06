@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.5
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';

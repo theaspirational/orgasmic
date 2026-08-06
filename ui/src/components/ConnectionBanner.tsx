@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.4
 import type { WsConnectionState } from '../lib/types';
 
 const LABELS: Record<WsConnectionState, string> = {

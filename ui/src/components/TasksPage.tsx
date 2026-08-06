@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.6
 import {
   useCallback,
   useEffect,

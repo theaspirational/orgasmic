@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.5
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import {

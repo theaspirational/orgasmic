@@ -83,7 +83,7 @@ const ARCH_PROPERTIES: &[PropertySpec] = &[
     PropertySpec {
         key: "SOURCE_PATHS",
         value: "crates/example/src/widgets.rs",
-        note: "repo paths `architecture drift` checks against `// orgasmic:<id>` markers",
+        note: "repo paths that implement this architecture node",
     },
     PropertySpec {
         key: "TESTS",

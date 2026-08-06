@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.6
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Eye,

@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.3
 import { useEffect, useRef, useState } from 'react';
 
 export type UseResourceOptions = {

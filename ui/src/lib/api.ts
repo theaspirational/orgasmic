@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.2
 import { get, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
 import type {
