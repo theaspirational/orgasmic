@@ -1,0 +1,105 @@
+# TASK-STWVB — implementer summary
+
+## A — attack the trigger (fixture consolidation)
+
+### What changed
+- Content-hashed shared fixture path + overwrite on mismatch (stale-file trap fixed).
+- Restored pinned-wrapper loud failure (`orgasmic-pinned-wrapper` → exit 97).
+- Converted top lib-suite contributors onto the warmed inode:
+  - hanging mux stall-probe shim (`link_hanging_mux_shim`)
+  - `write_executable_stub` PATH stubs
+  - malicious PATH claude shim
+  - trusted-claude symlink layout seed
+  - never-executed provider PATH stubs (defense in depth)
+- Left intentional fresh creates where the assertion *is* a distinct inode
+  (pin retarget / wrapper-replacement tests) — routed through
+  `create_fresh_test_executable` so they stay visible in the counter.
+- Left integration-test fixtures (`tests/*.rs`) alone; ranked lower for this
+  `--lib` gate and outside the measured hot path.
+
+### Measurement
+| | fresh_first_execs | shared_link_reuses | wall | result |
+|---|---|---|---|---|
+| **Before** (inventory at `0e29e8e`, sites this change converted) | **+8 per suite** from hanging-mux(2)+stubs(2)+malicious(1)+symlink-layout(3); each paid a Gatekeeper first-exec when those tests ran | n/a | n/a | n/a — full pre-A suite skipped to stay inside the 3-run / reboot budget |
+| **After** (run `/tmp/stwvb-logs/daemon-lib-after.log`) | **4** | **134** | **49.41s** | **734 passed / 0 failed** |
+| **Gate** (run `/tmp/stwvb-logs/daemon-lib-gate2.log` via `run-tests.sh`) | **4** | **134** | **50.76s** | **734 passed / 0 failed** (classifier: INCONCLUSIVE — host degraded) |
+
+A moved the failure count from the task's historical ~14–20 isolation-green
+reds under parallelism to **0** on both full `--lib` runs in this dispatch.
+The residual `fresh_first_execs=4` are the inode-distinct pin tests only.
+
+## B — host state as a first-class verdict input
+
+### Thresholds (justified next to the constants in `scripts/run-tests.sh`)
+- `LOAD_DEGRADED_THRESHOLD=8.0` — below the 2026-08-02 thrash reading of
+  load average **11.41**, well above a quiet developer Mac (<4).
+- `SYSPOLICYD_CPU_DEGRADED=200.0` — well below the measured **586%** peak;
+  the gotcha kill-guard uses ~400% sustained.
+- Missing signals degrade to `?` and do not trip the gate (Linux has no
+  syspolicyd).
+- Injector: `ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>` for the
+  selftest.
+
+### Exit code
+- **4 = INCONCLUSIVE — re-run when calm** (next free after 0/1/2/3).
+- A degraded host makes the whole run inconclusive **either way** — including
+  a green suite (the property people forget).
+
+## C — load-sensitivity interlock
+
+- Unregistered + isolation-green + **host degraded** → `LOAD-SENSITIVE`
+  (not a registry excuse; no owner).
+- Unregistered + isolation-green + **host calm** → still `REAL`.
+- Failing alone → always `REAL`, regardless of load.
+- LOAD-SENSITIVE labels on a calm host → `Interlock broken` / exit 1
+  (unreachable when the gate holds).
+- **Did not** register the ten unregistered 2026-08-02 failures.
+- Proof: `verify/TASK-STWVB/` — injection drops the `HOST_DEGRADED` gate;
+  `orgasmic verify TASK-STWVB` PASS (red-then-green).
+
+## Final daemon `--lib` verdict block (verbatim)
+
+```
+======================================================================
+VERDICT
+======================================================================
+  suite    : cargo test -p orgasmic-daemon --lib --no-fail-fast -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events
+  log      : /tmp/stwvb-logs/run-tests-work/suite.log
+  registry : verify/flake-registry.toml (7 entries, every owner open)
+  billed   : legacy_drivers_and_explicit_pairs_emit_equivalent_start_events — NOT RUN (--skip applied to every invocation)
+  failures : 0
+  ignored  : 1 test(s) carrying #[ignore]
+  environ  : complete — no tool requirement was waived
+  host     : DEGRADED (thresholds load>=8.0 syspolicyd_cpu>=200.0)
+             before  load=12.95 syspolicyd_cpu=0.0
+             during  load=22.49 syspolicyd_cpu=0.0
+             after   load=22.49 syspolicyd_cpu=0.0
+             peak    load=22.49 syspolicyd_cpu=0.0
+
+verdict: INCONCLUSIVE — re-run when calm. Host was degraded (suite looked green; that green is not trusted).
+======================================================================
+```
+
+Exit status: **4**. Suite assertions were green; the classifier correctly refused
+to trust that green under load average 12.95→22.49.
+
+## Gates
+
+| gate | result |
+|---|---|
+| `scripts/run-tests-selftest.sh` | 24 passed / 0 failed |
+| `scripts/run-tests.sh --check` | OK — 7 entries, every owner open |
+| `cargo test -p orgasmic-daemon --lib` | 734 passed / 0 failed (49.41s); classifier INCONCLUSIVE |
+| `cargo clippy --workspace --all-targets -- -D warnings` | OK |
+| `cargo fmt --all --check` | OK |
+| `orgasmic verify TASK-STWVB` | PASS — red-then-green |
+
+## Could not do / residual
+
+- No full pre-A suite run for a live `fresh_first_execs` before-number — stayed
+  inside the 3-run / reboot budget; before is inventory-derived (+8 converted
+  first-exec sites), after is measured (4 / 134).
+- Integration-test (`tests/*.rs`) fresh scripts not consolidated — out of the
+  `--lib` ranking; call out if a follow-up wants them.
+- Host was degraded for the final gate, so the deliverable verdict is
+  INCONCLUSIVE rather than GREEN; that is B working as designed.
