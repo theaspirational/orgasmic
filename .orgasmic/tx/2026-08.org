@@ -12775,3 +12775,46 @@
 :REASON:       edited task node TASK-RQ270.3.2.1
 :NODE_ID:      TASK-RQ270.3.2.1
 :END:
+
+* TX 2026-08-06 Thu 07:20:12 task.created TASK-0PAN0
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4773
+:TIME:         [2026-08-06 Thu 07:20:12]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0PAN0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by the TASK-RQ270.3.2.1 review: the guard is verified by code path but by no test, and the invariant that actually holds it is pinned only by a comment
+:END:
+
+* TX 2026-08-06 Thu 07:20:27 task.state_transitioned TASK-RQ270.3.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4774
+:TIME:         [2026-08-06 Thu 07:20:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       chain complete: merged c157c05, reviewed REJECT for an incomplete carve-out, fixed by TASK-RQ270.3.2.1 (merged a4a22dc) which was reviewed APPROVE with stage D explicitly cleared
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 07:20:28 task.state_transitioned TASK-RQ270.3
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4775
+:TIME:         [2026-08-06 Thu 07:20:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       excision stage C is complete. Part 1 (UI, 18739ea) approved; part 2 (read model + graph-edge carve-out, c157c05) plus its identity-lint fix round (a4a22dc) approved with stage D cleared to run. parse_errors 0
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:

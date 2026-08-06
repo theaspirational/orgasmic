@@ -3708,43 +3708,61 @@ rather than assuming, and correct the loop line in the same pass.
 - The audit that closes this task inspects RENDERED assets, not only source text,
   and says so.
 
-* BACKLOG TASK-RQ270.3 Excision stage C — remove the architecture read model and land the lint carve-out
+* BACKLOG TASK-0PAN0 Pin the write-time rejection of retired arch_ refs at the API layer
 :PROPERTIES:
-:ID: TASK-RQ270.3
-:PRIORITY: P1
+:ID: TASK-0PAN0
+:PRIORITY: P3
 :END:
 
 ** Description
 
-Stage C of the dec_HBK6A excision: *remove the architecture READ MODEL* — the
-daemon routes and index projection, the CLI read verbs, the UI surface — and land
-the dangling-edge lint carve-out that stage D depends on.
+Two test gaps found by the TASK-RQ270.3.2.1 review, both NON-BLOCKING and neither
+gating the excision. Filed together because they guard the same invariant.
 
-Split into two dispatches because ~1,500 LOC across daemon, CLI and UI is more
-than one review can do well, and every rejection this excision has produced was a
-gap a large diff hid:
+** Gap 1 — the write-time rejection is untested at the API layer
 
-- *TASK-RQ270.3.1* — the UI read surface. Landed first so main never contained a
-  UI calling a route the daemon had removed. Merged =18739ea=, APPROVED.
-- *TASK-RQ270.3.2* — the daemon read model, the CLI verbs, and the carve-out.
+=reject_unresolved_reference_token= is what stops a retired =arch_= id becoming
+legal to ADD. There is *no test at any layer* asserting that rejection through a
+real handler: =identity_lint.rs:632= tests the helper in isolation only, which is
+exactly what the round's brief flagged as insufficient.
 
-** This node exists because of a manager error
+The reviewer verified the boundary holds today by code path — all four handlers
+(=create_graph_heading=, =mutate_graph_heading=, =post_org_node_edit=,
+=post_task_create=) call the guard under =if !req.force= at =api.rs:12971=,
+=:13142=, =:13786=, =:14853=. But by code path is not by test.
 
-Both halves were minted as =TASK-RQ270.3.1= and =.3.2= without this parent ever
-being created. Task parentage is derived FROM THE ID GRAMMAR and from nothing
-else, so each child orphan-referenced an absent =TASK-RQ270.3= and the daemon
-raised two =orphan derived parent= parse errors.
+*Wanted*: one api-layer test asserting a POST with =RELATES_TO=arch_GONE99= and
+no =force= returns 400 through a real handler.
 
-Found by the TASK-RQ270.3.2 implementer, which measured =parse_errors= as
-required, reported the criterion UNMET rather than rounding it to zero, and
-correctly declined to repair it — the fix is a daemon-managed task-ledger change,
-outside its =crates/**= scope and squarely the manager's.
+** Gap 2 — the invariant that actually holds the boundary is pinned by a comment
 
-*The lesson: minting =X.N.M= silently asserts that =X.N= exists.* Nothing at
-creation time checks it; the board tells you afterwards, through the parse-error
-count, which is exactly why the count is worth measuring rather than assuming.
+The real invariant is not "=unresolved_reference_tokens= is prefix-agnostic". It
+is *"=arch_= never enters =graph.nodes=" — and that is true only because
+=looks_like_structured_node_id= (=index.rs:1109=) KEEPS =arch_= in its list*, so a
+=:PRODUCES: arch_X= target is not materialised as an artifact node.
 
-** Acceptance
+Failure scenario, and it is a plausible one: after stage D someone drops =arch_=
+from that list as cosmetic cleanup of a retired class. A task with
+=:PRODUCES: arch_X= then materialises =arch_X= as an artifact node, it enters
+=known_reference_ids=, and =reject_unresolved_reference_token= *silently stops
+firing on all four write handlers*. Nothing fails. The guard just goes quiet.
 
-Both halves landed and reviewed, and =parse_errors= back to 0.
+*Wanted*: a test pinning =looks_like_structured_node_id("arch_X") == true=, with
+the rationale as its docstring so the next reader sees why the entry is
+load-bearing rather than vestigial.
 
+*This one is carried into stage D's brief*, because stage D is what makes that
+list entry the sole remaining protection.
+
+** Gap 3 — the over-carve guard covers 3 of 5 id classes
+
+=index.rs:2857= asserts unresolved =dec_=, =TASK-= and =term_= markers still
+error. Verified real: widening the predicate to =contains('_')= or
+=starts_with(\"arch\")= breaks it. It does not cover =ART-=
+(=NodeIdClass::Artifact=). Low value; noted for completeness.
+
+** Not in scope
+
+The =is_retired_architecture_id= comment scope question (finding 2 of that
+review) is *already resolved*: the manager ruled the carve-out stays
+unconditional and corrected the comment in =604efd7=.
