@@ -775,9 +775,10 @@ fn bail_auth_token_mismatch<T>() -> Result<T> {
 
 fn bail_start_failed<T>(home: &Home, elapsed: Duration) -> Result<T> {
     bail!(
-        "daemon process exited before becoming ready after {}s; check {} and {}",
+        "daemon process exited before becoming ready after {}s; check {}, {}, and {}",
         elapsed.as_secs(),
         home.logs().join("daemon.out.log").display(),
+        home.logs().join("daemon.stdout.log").display(),
         home.logs().join("daemon.err.log").display()
     )
 }
@@ -789,7 +790,7 @@ fn bail_stale_boot<T>(starting: &DaemonStarting) -> Result<T> {
         .map(|pid| pid.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     bail!(
-        "daemon boot heartbeat is stale (pid {pid} is dead, last phase {phase}); check daemon.out.log and daemon.err.log under $ORGASMIC_HOME/logs"
+        "daemon boot heartbeat is stale (pid {pid} is dead, last phase {phase}); check daemon.out.log, daemon.stdout.log, and daemon.err.log under $ORGASMIC_HOME/logs"
     )
 }
 
@@ -804,7 +805,7 @@ fn bail_boot_stalled<T>(starting: &DaemonStarting, budget: Duration) -> Result<T
         .map(|pid| pid.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     bail!(
-        "daemon boot stalled: booting since {since}, phase {phase}, pid {pid}; no heartbeat progress for {}s — inspect $ORGASMIC_HOME/logs/daemon.out.log and daemon.err.log",
+        "daemon boot stalled: booting since {since}, phase {phase}, pid {pid}; no heartbeat progress for {}s — inspect $ORGASMIC_HOME/logs/daemon.out.log, daemon.stdout.log, and daemon.err.log",
         budget.as_secs()
     )
 }
@@ -820,7 +821,7 @@ fn bail_boot_backstop<T>(starting: &DaemonStarting, backstop: Duration) -> Resul
         .map(|pid| pid.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     bail!(
-        "daemon boot exceeded the {}s absolute startup backstop since {since}, phase {phase}, pid {pid}; inspect $ORGASMIC_HOME/logs/daemon.out.log and daemon.err.log",
+        "daemon boot exceeded the {}s absolute startup backstop since {since}, phase {phase}, pid {pid}; inspect $ORGASMIC_HOME/logs/daemon.out.log, daemon.stdout.log, and daemon.err.log",
         backstop.as_secs()
     )
 }

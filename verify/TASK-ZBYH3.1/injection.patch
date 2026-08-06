@@ -1,0 +1,15 @@
+diff --git a/crates/orgasmic-daemon/src/logging.rs b/crates/orgasmic-daemon/src/logging.rs
+--- a/crates/orgasmic-daemon/src/logging.rs
++++ b/crates/orgasmic-daemon/src/logging.rs
+@@ -181,7 +181,10 @@
+     };
+     match mirror {
+         LogMirror::Stdout => {
+-            if io::stdout().is_terminal() {
++            // INJECTED (TASK-ZBYH3.1): keep the stdout mirror even when stdout
++            // is not a tty — restores the post-ruling-A double-write under
++            // launchd (stdout redirected to any file, distinct inode).
++            if true || io::stdout().is_terminal() {
+                 LogMirror::Stdout
+             } else {
+                 LogMirror::None

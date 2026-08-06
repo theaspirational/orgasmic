@@ -20,7 +20,7 @@ use crate::governance::{
     known_governance_patch_keys, known_sandbox_permission_keys, normalize_governance_key,
     DispatchGovernanceOverlay, GovernancePatch,
 };
-use crate::logging::{DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES};
+use crate::logging::{DEFAULT_LOG_KEEP, DEFAULT_LOG_MAX_BYTES, MAX_LOG_KEEP};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -58,6 +58,10 @@ pub struct DaemonConfig {
     /// Config keys present in YAML but absent from the known schema.
     #[serde(skip)]
     pub unrecognized_keys: Vec<String>,
+    /// Out-of-range or clamped values surfaced at boot (same warn path as
+    /// unrecognized keys). orgasmic:TASK-ZBYH3.1
+    #[serde(skip)]
+    pub config_warnings: Vec<String>,
     pub home_root: PathBuf,
 }
 
@@ -155,6 +159,7 @@ impl DaemonConfig {
                 driver_defaults: driver_defaults(parsed.drivers),
                 dispatch_governance,
                 unrecognized_keys,
+                config_warnings: Vec::new(),
                 home_root: home.root.clone(),
             }
         } else {
@@ -173,12 +178,21 @@ impl DaemonConfig {
                 driver_defaults: driver_defaults(None),
                 dispatch_governance: DispatchGovernanceOverlay::default(),
                 unrecognized_keys: Vec::new(),
+                config_warnings: Vec::new(),
                 home_root: home.root.clone(),
             }
         };
         // LAN bind requires explicit opt-in (dec_021); otherwise pin to localhost.
         if !cfg.lan && !cfg.bind.is_loopback() {
             cfg.bind = "127.0.0.1".parse().unwrap();
+        }
+        // orgasmic:TASK-ZBYH3.1 — clamp log.keep; surface the typo at boot.
+        if cfg.log_keep > MAX_LOG_KEEP {
+            cfg.config_warnings.push(format!(
+                "log.keep={} exceeds maximum {}; clamped to {}",
+                cfg.log_keep, MAX_LOG_KEEP, MAX_LOG_KEEP
+            ));
+            cfg.log_keep = MAX_LOG_KEEP;
         }
         Ok(cfg)
     }
@@ -529,6 +543,25 @@ mod tests {
         assert_eq!(cfg.log_max_bytes, 4096);
         assert_eq!(cfg.log_keep, 5);
         assert!(cfg.unrecognized_keys.is_empty());
+        assert!(cfg.config_warnings.is_empty());
+    }
+
+    #[test]
+    fn clamps_log_keep_and_surfaces_startup_warning() {
+        // orgasmic:TASK-ZBYH3.1
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(home.config(), "log:\n  keep: 100000\n").unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert_eq!(cfg.log_keep, MAX_LOG_KEEP);
+        assert!(
+            cfg.config_warnings
+                .iter()
+                .any(|w| w.contains("log.keep=100000") && w.contains("clamped")),
+            "out-of-range keep must be surfaced, not silently obeyed: {:?}",
+            cfg.config_warnings
+        );
     }
 
     #[test]
