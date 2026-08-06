@@ -1,0 +1,13 @@
+# Pinned from the injected red run of 2026-08-06 (worker implementer for
+# TASK-G64ZH.1.1). With resolve_mirror's non-tty Stdout branch forced back to
+# MirrorState::None (path-keyed gate), a failed boot open under
+# LogMirror::Stdout + non-tty resolves to permanent silence.
+#
+# The FIRST failing assertion is the R-1 write-time fallback keep below — not
+# the later stdout-contents checks.
+
+exit: 101
+
+contains: failed boot open with LogMirror::Stdout and non-tty stdout must keep a write-time fallback, not resolve to permanent silence (TASK-G64ZH.1.1 R-1)
+
+contains: test result: FAILED. 0 passed; 1 failed

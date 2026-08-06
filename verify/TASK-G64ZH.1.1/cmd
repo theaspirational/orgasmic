@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-G64ZH.1.1`.
+#
+# Pins R-1: a failed boot open with LogMirror::Stdout and non-tty stdout must
+# keep a write-time fallback. Under the injection the path-keyed gate returns
+# MirrorState::None and the FIRST failing assertion is the R-1 message below.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact logging::tests::failed_boot_open_with_stdout_mirror_non_tty_still_writes_stdout
