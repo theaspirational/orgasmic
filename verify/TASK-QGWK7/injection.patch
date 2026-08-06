@@ -1,0 +1,29 @@
+--- a/crates/orgasmic-core/src/paths.rs
++++ b/crates/orgasmic-core/src/paths.rs
+@@ -226,20 +226,12 @@
+ ) -> Result<String, String> {
+     let report_rel = dispatch_record_report_rel(started_tx)?;
+     let dest_dir = dispatch_record_dir(project_root, started_tx)?;
+-    std::fs::create_dir_all(&dest_dir).map_err(|err| err.to_string())?;
+-
+-    #[cfg(unix)]
+-    {
+-        copy_validated_artifact_to(&dest_dir.join("last.txt"), &artifacts.last_file)?;
+-        copy_validated_artifact_to(&dest_dir.join("stdout.log"), &artifacts.stdout_file)?;
+-        unlink_validated_attempt_pair(artifacts)?;
+-        Ok(report_rel)
+-    }
+-    #[cfg(not(unix))]
+-    {
+-        let _ = (artifacts, project_root, report_rel, dest_dir);
+-        Err("no-follow dispatch artifact promotion requires unix".into())
+-    }
++    // INJECTED (TASK-QGWK7): restore the pre-fix delete-at-close behaviour.
++    // Still returns REPORT_PATH so the tx looks resolvable, but the file is
++    // gone — the defect this task closes.
++    let _ = (project_root, dest_dir);
++    unlink_validated_attempt_pair(artifacts)?;
++    Ok(report_rel)
+ }
+ 
+ fn unlink_validated_attempt_pair(artifacts: &DispatchAttemptArtifacts) -> Result<(), String> {

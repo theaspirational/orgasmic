@@ -3732,7 +3732,9 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
     let _ = running.join.await;
 }
 
-/// Closing a dispatch removes transient stem artifacts but retains the brief.
+/// Closing a dispatch promotes the selected attempt's report out of gitignored
+/// tmp into a tracked path keyed by the dispatch generation, while retaining
+/// the brief and sibling attempts (TASK-QGWK7).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     let _live_guard = live_session_guard();
@@ -3778,7 +3780,7 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     );
     let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     // TASK-M47E5: the scratch lives under the home; the stem dir keeps only the
-    // RECORD, which is what this test is about pruning.
+    // RECORD, which close promotes out of tmp/ (TASK-QGWK7).
     let worktree = home.root.join("worktrees/orgasmic/task-dispatch");
     assert!(worktree.is_dir());
     let tx_raw = tx_log(&project_root);
@@ -3827,11 +3829,36 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     assert!(!worktree.exists(), "worktree should be removed on close");
     assert!(
         !attempt_last.exists(),
-        "selected attempt last.txt should be pruned on close"
+        "selected attempt last.txt should leave tmp/ on close"
     );
     assert!(
         !attempt_stdout.exists(),
-        "selected attempt stdout.log should be pruned on close"
+        "selected attempt stdout.log should leave tmp/ on close"
+    );
+    let promoted_last =
+        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    let promoted_stdout = project_root.join(format!(
+        ".orgasmic/dispatch-records/{started_tx}/stdout.log"
+    ));
+    assert!(
+        promoted_last.exists(),
+        "after close the report must still be readable from the path the tx names: {}",
+        promoted_last.display()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&promoted_last).unwrap(),
+        "worker summary"
+    );
+    assert!(
+        promoted_stdout.exists(),
+        "stdout.log is promoted beside last.txt as harness evidence"
+    );
+    let close_tx = tx_log(&project_root);
+    assert!(
+        close_tx.contains(&format!(
+            ":REPORT_PATH:  .orgasmic/dispatch-records/{started_tx}/last.txt"
+        )),
+        "close tx must name the promoted report: {close_tx}"
     );
     assert!(
         sibling_last.exists(),

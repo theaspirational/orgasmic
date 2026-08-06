@@ -1,0 +1,17 @@
+# Pinned from the real red run of 2026-08-06 with the injection applied.
+#
+# The injection makes promote_validated_dispatch_attempt delete the tmp
+# artifacts without copying them into .orgasmic/dispatch-records/<started_tx>/,
+# restoring the pre-fix close behaviour. REPORT_PATH is still returned, so
+# the tx looks resolvable while the file is gone.
+#
+# The FIRST failing assertion is the readability claim below — not a downstream
+# content or branch-delete check.
+
+exit: 101
+
+contains: after close the report must still be readable from the path the tx names
+
+contains: test result: FAILED. 0 passed; 1 failed
+
+contains: manager::tests::dispatch_close_promotes_report_readable_from_path_tx_names ... FAILED
