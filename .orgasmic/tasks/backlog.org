@@ -3816,6 +3816,27 @@ unconditional and corrected the comment in =604efd7=.
 :WRITE_SCOPE: shipped/**,crates/**,.orgasmic/**,README.md
 :END:
 
+=== Manager re-measured the inventory [2026-08-06] — it is 18 files, not 5
+The stage-D review named 5 files. A tree-wide sweep of =shipped/= finds *33 hits across 18 files* (excluding =architector.reported= event-name rows). Verified per-file counts:
+
+| 5 | =project-scaffold/tasks/backlog.org= |
+| 4 | =prompt-studio/prompt-specs/planner.org= |
+| 3 | =prompt-studio/prompt-specs/manager.org= (=:12=, =:46=, =:126=) |
+| 3 | =prompt-studio/conventions/manager-dispatch.org= (incl. =:374= =--class architecture=) |
+| 2 | =skills/orgasmic/references/init.md= |
+| 2 | =prompt-studio/prompt-specs/griller.org= |
+| 2 | =project-scaffold/tasks/goal.org= |
+| 2 | =entry/router.org= (=:78= AND =:125=, not just =:78=) |
+| 1 each | =skills/orgasmic/references/recall-resume.md=, =skills/orgasmic/SKILL.md=, =schema/tx.org=, =prompt-specs/implementer.org=, =prompt-specs/general_worker.org=, =prompt-specs/base_worker.org=, =prompt-parts/planning_policy.org=, =prompt-parts/grill_domain_policy.org=, =conventions/tx-scannable-bodies.org=, =project-scaffold/decisions.org= |
+
+*=schema/tx.org= needs a SPLIT decision, and the review's "keep tx.org" would have gotten it wrong.* It carries both kinds of hit:
+- =:108= and =:145= name the =architector.reported= EVENT TYPE. *Keep* — tx TYPE is a free string and history must stay readable.
+- =:277= lists =.orgasmic/architecture.org= among the project's live state files. *Fix* — that claim is now false.
+
+The lesson this excision has paid for seven times over applies to its own last stage: the same file can hold both a historical reference that must survive and a live claim that must die. Counting files is not the same as auditing claims.
+
+*Also stale, and outside =shipped/=:* the INSTALLED skill copy at =~/.claude/skills/orgasmic/SKILL.md:38= carries the same =audit= description. It is materialized from =shipped/= by the installer, so fixing the source is necessary but not sufficient — the operator's installed skill needs re-syncing after this lands.
+
 ** Description
 Stage E of dec_HBK6A: rewrite the shipped doctrine so the runtime stops
 instructing agents to use an architecture layer that no longer exists. Stages
