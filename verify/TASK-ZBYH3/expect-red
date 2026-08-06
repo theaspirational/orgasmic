@@ -1,0 +1,13 @@
+# Pinned from the injected red run of 2026-08-06 (worker implementer for
+# TASK-ZBYH3). Pre-fix measurement on the operator's live daemon: one logged
+# line appeared twice when stdout and the durable sink shared an inode.
+#
+# The injection forces `resolve_mirror` never to suppress, restoring that
+# double-write. The FIRST failing assertion is the count check below — not a
+# missing-line check.
+
+exit: 101
+
+contains: line logged once must appear once in durable file when mirror resolves to the same inode (got 2)
+
+contains: test result: FAILED. 0 passed; 1 failed

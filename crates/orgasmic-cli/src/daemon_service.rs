@@ -367,7 +367,9 @@ fn service_spec(home: &Home) -> Result<ServiceSpec> {
                     home.root.clone()
                 }
             }),
-        stdout: home.logs().join("daemon.out.log"),
+        // orgasmic:TASK-ZBYH3 — keep launchd's capture file distinct from the
+        // daemon's durable sink (`daemon.out.log`) so rotation owns one inode.
+        stdout: home.logs().join("daemon.stdout.log"),
         stderr: home.logs().join("daemon.err.log"),
         path: daemon_service_path(),
     })
@@ -1061,7 +1063,7 @@ mod tests {
             exe: PathBuf::from("/Applications/Orgasmic & Tools/orgasmic"),
             home: PathBuf::from("/Users/tester/Orgasmic Home"),
             cwd: PathBuf::from("/Users/tester/src/orgasmic"),
-            stdout: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.out.log"),
+            stdout: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.stdout.log"),
             stderr: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.err.log"),
             path: "/opt/homebrew/bin:/Users/tester/.cargo/bin:/Users/tester/.local/bin:/Users/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
         }
@@ -1163,7 +1165,14 @@ mod tests {
         assert!(plist.contains("/Users/tester/.local/bin"));
         assert!(plist.contains("/Users/tester/.npm-global/bin"));
         assert!(plist.contains("/Users/tester/Orgasmic Home"));
-        assert!(plist.contains("daemon.out.log"));
+        assert!(
+            plist.contains("daemon.stdout.log"),
+            "StandardOutPath must be the launchd capture file, not the durable sink: {plist}"
+        );
+        assert!(
+            !plist.contains("daemon.out.log"),
+            "durable sink must not be StandardOutPath (double-write under launchd): {plist}"
+        );
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         // orgasmic:TASK-WGXKD.2 — without ExitTimeOut launchd SIGKILLs 20s
@@ -1510,8 +1519,9 @@ mod tests {
         // Single-value path directives must be raw/unquoted — systemd rejects the
         // unit ("path is not absolute") if the value is wrapped in double quotes.
         assert!(unit.contains("WorkingDirectory=/Users/tester/src/orgasmic\n"));
-        assert!(unit
-            .contains("StandardOutput=append:/Users/tester/Orgasmic Home/logs/daemon.out.log\n"));
+        assert!(unit.contains(
+            "StandardOutput=append:/Users/tester/Orgasmic Home/logs/daemon.stdout.log\n"
+        ));
         assert!(
             unit.contains("StandardError=append:/Users/tester/Orgasmic Home/logs/daemon.err.log\n")
         );

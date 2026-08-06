@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZBYH3`.
+#
+# Pins the double-write defect: when the mirror resolves to the durable file's
+# inode, one logged line must appear once. Under the injection the mirror is
+# never suppressed and the line appears twice — the operator-measured 2×.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact logging::tests::same_inode_mirror_writes_each_line_once

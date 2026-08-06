@@ -10,7 +10,9 @@ use std::os::unix::io::FromRawFd;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Router;
-use orgasmic_daemon::{dropped_log_writes, init_tracing_to, LogMirror, DAEMON_OUT_LOG};
+use orgasmic_daemon::{
+    dropped_log_writes, init_tracing_to, LogMirror, LogRotation, DAEMON_OUT_LOG,
+};
 
 fn closed_pipe_writer() -> File {
     let mut fds = [0; 2];
@@ -40,6 +42,7 @@ async fn closed_stdout_mirror_drops_request_logs_without_failing_the_request() {
             "info",
             Some(&log_path),
             LogMirror::Writer(closed_pipe_writer()),
+            LogRotation::default(),
         ),
         "expected to install the best-effort tracing subscriber"
     );

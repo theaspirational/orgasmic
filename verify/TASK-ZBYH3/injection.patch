@@ -1,0 +1,22 @@
+diff --git a/crates/orgasmic-daemon/src/logging.rs b/crates/orgasmic-daemon/src/logging.rs
+--- a/crates/orgasmic-daemon/src/logging.rs
++++ b/crates/orgasmic-daemon/src/logging.rs
+@@ -184,14 +184,16 @@
+     };
+     match mirror {
+         LogMirror::Stdout => {
+-            if stdout_same_as_path(path) {
++            // INJECTED (TASK-ZBYH3): never suppress — pre-fix double-write.
++            if false && stdout_same_as_path(path) {
+                 LogMirror::None
+             } else {
+                 LogMirror::Stdout
+             }
+         }
+         LogMirror::Writer(file) => {
+-            if same_file_as_path(&file, path) {
++            // INJECTED (TASK-ZBYH3): never suppress — pre-fix double-write.
++            if false && same_file_as_path(&file, path) {
+                 LogMirror::None
+             } else {
+                 LogMirror::Writer(file)
