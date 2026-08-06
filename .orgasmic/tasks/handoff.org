@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         49941a6
+:LIVENESS:         ce4387e
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -202,54 +202,41 @@ TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
 =0.0.15-dev.1=.
 
 ** In flight
-ONE DISPATCH RUNNING: TASK-G64ZH.1.1 REVIEWER, =reviewer-claude-tmux= (tmux /
-claude / claude-opus-5 / high), run
-=run-20260806T144351-8f2d27a214a5457e9d0aebe9b9a7f2cc=, started_tx
-=tx-20260806-orgasmic-4912=. Verdict lands at
-=.orgasmic/tmp/dispatch/task-g64zh-1-1-review/task-g64zh-1-1-review-bc1d6e8656d54ee7ba4b2da98ca96b05-last.txt=.
+NOTHING IS IN FLIGHT. Checked four ways: =orgasmic manager dispatch-status=
+prints no open dispatch, =in_progress= and =in_review= are EMPTY, =git worktree
+list= shows only the main checkout, and the tree is clean.
 
-THREE TASKS CLOSE ON THIS ONE VERDICT. If it approves:
-1. =dispatch-close --task TASK-G64ZH.1.1 --started-tx tx-20260806-orgasmic-4912
-   --status done --verdict <v>=
-2. =dispatch-close --task TASK-G64ZH.1.1 --started-tx tx-20260806-orgasmic-4904
-   --status done --merge-sha 40f3ec1 --worktree-remove --branch-delete=
-3. then close TASK-G64ZH.1 and TASK-G64ZH, both still =IN_REVIEW= with =reject=
-   verdicts, because their fix rounds have now landed and passed a fresh review.
-That ordering is forced: on a default branch =--merge-sha= is refused until a
-reviewer verdict exists for that generation.
+THE TASK-G64ZH CHAIN IS CLOSED — three rounds, six dispatches, all three tasks
+DONE. Merges: =eaa88da= (round 1), =44e7e8d= (round 2), =f74256b= (round 3, the
+one that worked). Round three's review was the FIRST in the chain to find no new
+silence and no new double-write.
 
-MERGES IN THE CHAIN: =eaa88da= (round 1, TASK-G64ZH), =44e7e8d= (round 2,
-TASK-G64ZH.1), =40f3ec1= (round 3, TASK-G64ZH.1.1).
+BEFORE YOU DISPATCH ANYTHING, READ TASK-QGWK7 (P1, filed this session).
+=dispatch-close= DELETES the worker's =last.txt=, and the =*.reported= tx carries
+NO BODY — so after a close, the only durable record of what a worker said is
+whatever the manager pasted into the close tx =REASON=. All four dispatch record
+dirs in this chain now hold their brief and nothing else; three reviews and four
+implementer reports are gone. Two review findings had to be filed from their
+TITLES alone (TASK-3RTM0 carries a status block saying so). UNTIL THAT LANDS:
+EXTRACT EVERY FINDING YOU CARE ABOUT BEFORE CLOSING, and write a close =REASON=
+detailed enough to file tasks from — the ones written this session are the only
+reason F-1 through F-5 survived at all.
 
-WHAT ROUND THREE DID. It took the DYNAMIC fix rather than a fifth
-construction-time proxy: =MirrorState::StdoutWhenNoDurable= records only the
-INTENT to suppress, and the write path decides from =state.durable.is_none()= at
-write time. Live handle -> no double-write (F1's defect stays dead); missing
-handle -> the line goes to stdout instead of nowhere. Discharges R-1, both halves
-of R-2, and the post-roll reopen-failure silence that predates this entire chain.
+A CORRECTION WORTH KEEPING, because it nearly went into the record as fact: the
+round-three merge sha was written as =40f3ec1= in the handoff and in
+TASK-G64ZH.1.1's Evidence before =dispatch-close= refused it — "does not resolve
+to a commit". The real sha is =f74256b=. The close gate caught a manager error
+that two prose surfaces had already accepted. Verify a sha with =git log=, not
+from memory of what you typed earlier.
 
-THE MANAGER ALREADY CHECKED THE SHARPEST RISK, so do not spend the next session
-on it: the fallback could have leaked into the unrotated =daemon.stdout.log= on
-every roll, because =maybe_rotate= deliberately drops the handle before renaming.
-IT DOES NOT. The durable write, the mirror decision and =maybe_rotate= all happen
-under ONE mutex hold, and rotation runs AFTER that line's mirror decision, so no
-line can observe the intermediate =durable = None=. Only a FAILED reopen leaves
-the handle missing past the lock, which is the intended fallback. The reviewer
-was asked to confirm it independently anyway.
-
-WHAT THE REVIEW WAS TOLD TO ATTACK: whether the dynamic fix ENDED the class or
-MOVED it (enumerate every sink state and say where a line goes — twice is F1's
-defect, zero is the last three rounds'); whether steady-state double-write is
-still dead through a rotation; the third consecutive edit to an approved proof;
-whether the new =last_open_err_kind= throttle degenerates when the error kind
-ALTERNATES (restoring the =daemon.err.log= growth R-4 bounded); and the cost of
-the fallback itself as a NUMBER.
-
-THE PROOF-EDIT BAR, now met twice and worth keeping: round two retargeted
-=verify/TASK-G64ZH=, round three retargeted =verify/TASK-G64ZH.1=. Both were
-accepted because =expect-red= was UNTOUCHED, so the pinned assertion and its
-message are provably unchanged. A retarget that changes what the proof ASSERTS is
-a new proof, and the old claim has gone unpinned.
+CURSOR-AGENT NEEDS TWO MANUAL CLEARS PER DISPATCH (TASK-VD0VB, P1). Seen on all
+three cursor dispatches this session, each into a fresh worktree path, so it can
+never warm up. Workspace trust = =tmux send-keys -t <session> a=; the command
+allowlist = =BTab= ("Run Everything"). THE TWO ARE SEPARATED BY A VARIABLE DELAY
+— the second appears only after the worker reads its bundle — so POLL for the
+prompt string, do not sleep between them; a fixed sleep missed it on round three
+and the worker sat parked until a monitor caught it. Both claude reviewer
+dispatches started clean, which scopes this to cursor-agent, not tmux.
 
 ** Divergence / Risks
 THE RUNTIME IS CURRENT — this section's largest standing item for three sessions

@@ -15213,3 +15213,233 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-06 Thu 14:52:47 reviewer.reported TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4916
+:TIME:         [2026-08-06 Thu 14:52:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:RUN_ID:       run-20260806T144351-8f2d27a214a5457e9d0aebe9b9a7f2cc
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-g64zh.1.1-review
+:END:
+
+* TX 2026-08-06 Thu 14:53:54 reviewer.done TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4917
+:TIME:         [2026-08-06 Thu 14:53:54]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:REASON:       APPROVE WITH FOLLOW-UPS. Every acceptance bullet met, nothing blocking, and the first round in this chain that introduced NO new silence and NO new double-write. The dynamic fix ended the class: total silence is dead in every state reachable through a durable-open failure — boot, post-roll, transient, permanent, suppressed and unsuppressed. Rotation leaks ZERO lines, by ordering not luck: the mirror decision at :588-608 reads durable.is_none() before maybe_rotate drops the handle at :713, all inside one mutex hold, so no line observes the mid-rotation None. Steady-state double-write is dead by construction — stdout writes only when durable.is_none(), and when it is None nothing was written durably, so the two are mutually exclusive. The proof retarget is sound and was ruled independently: expect-red byte-identical, and .ok() maps Err->None so the injection is semantically identical. All three injections still apply to HEAD, verified with git apply --check. Fallback cost measured rather than estimated: 56KB/day on this host, ~10MiB/day upper bound at the rotation ceiling, against zero bytes anywhere as the alternative. Follow-ups, all non-blocking: F-1 handle PRESENCE is still a proxy for write SUCCESS (a live handle whose write_all fails loses the line and permanently short-circuits reopen) — pre-existing; F-2 the R-4 throttle test passes with the throttle deleted; F-3 alternating error kinds defeat the throttle; F-4 spawn_detached points process stdout at the durable path; F-5 dropped_log_writes now counts preserved lines.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260806-orgasmic-4912
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 14:53:54 task.state_transitioned TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4918
+:TIME:         [2026-08-06 Thu 14:53:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-G64ZH.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 14:54:10 implementer.done TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4919
+:TIME:         [2026-08-06 Thu 14:54:10]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    f74256bc56a8db398ea1a66ceb98268834787843
+:BRANCH:       task-g64zh.1.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4904
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 14:54:10 task.state_transitioned TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4920
+:TIME:         [2026-08-06 Thu 14:54:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-G64ZH.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 14:54:19 task.edited TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4921
+:TIME:         [2026-08-06 Thu 14:54:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-G64ZH.1.1
+:NODE_ID:      TASK-G64ZH.1.1
+:END:
+
+* TX 2026-08-06 Thu 14:54:19 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4922
+:TIME:         [2026-08-06 Thu 14:54:19]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-06 Thu 14:54:34 task.state_transitioned TASK-G64ZH.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4923
+:TIME:         [2026-08-06 Thu 14:54:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged f74256b and passed a fresh review: APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. The dynamic fix ended the construction-time-proxy class — total silence is dead in every state reachable through a durable-open failure, rotation leaks zero lines by ordering, and steady-state double-write is dead by construction. Five non-blocking follow-ups filed separately.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 14:54:34 task.state_transitioned TASK-G64ZH.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4924
+:TIME:         [2026-08-06 Thu 14:54:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       its two BLOCK SHIP findings (R-1, R-2) were fixed by TASK-G64ZH.1.1, which merged f74256b and passed a fresh review with no blocking findings. Merged 44e7e8d; F-B was independently confirmed dead against the actual rollback target.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 14:54:35 task.state_transitioned TASK-G64ZH
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4925
+:TIME:         [2026-08-06 Thu 14:54:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G64ZH
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged eaa88da; reviewed REJECT on two BLOCK SHIP whose fix rounds TASK-G64ZH.1 (44e7e8d) and TASK-G64ZH.1.1 (f74256b) both landed, the last passing a fresh review with no blocking findings. F1's reopen bound, F2's by-construction mirror answer and F3's both-branch pin are all live, and the total-silence regressions the fix rounds introduced are gone.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-06 Thu 14:55:40 task.created TASK-0KP3T
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4926
+:TIME:         [2026-08-06 Thu 14:55:40]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0KP3T
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-G64ZH.1.1 review F-1: the last surviving construction-time proxy after four rounds removed the others; pre-existing since before the chain started
+:END:
+
+* TX 2026-08-06 Thu 14:55:41 task.created TASK-H7TJE
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4927
+:TIME:         [2026-08-06 Thu 14:55:41]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H7TJE
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-G64ZH.1.1 review F-2 and F-3, both on the throttle that round added for R-4
+:END:
+
+* TX 2026-08-06 Thu 14:56:21 task.created TASK-3RTM0
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4928
+:TIME:         [2026-08-06 Thu 14:56:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3RTM0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-G64ZH.1.1 review F-4 and F-5, filed from their titles because the review body was destroyed by dispatch-close (TASK-QGWK7)
+:END:
+
+* TX 2026-08-06 Thu 14:56:21 task.created TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4929
+:TIME:         [2026-08-06 Thu 14:56:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found live while filing follow-ups from a review: all four dispatch record dirs in the TASK-G64ZH chain hold only their brief, and two findings had to be filed from their titles alone
+:END:
+
+* TX 2026-08-06 Thu 14:56:48 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4930
+:TIME:         [2026-08-06 Thu 14:56:48]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-06 Thu 14:56:48 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4931
+:TIME:         [2026-08-06 Thu 14:56:48]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

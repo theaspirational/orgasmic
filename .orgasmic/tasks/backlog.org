@@ -3862,3 +3862,197 @@ leaving it UNDECLARED would not have been.
   all the existing =rotation_failure_does_not_propagate_and_counts_a_drop= and
   =failed_intermediate_rename_counts_a_drop= do today.
 
+* BACKLOG TASK-0KP3T the stdout-mirror fallback keys on handle presence, not write success: a failed durable write loses the line and wedges the sink for the process lifetime    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-0KP3T
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**,verify/**
+:END:
+
+** Description
+From the TASK-G64ZH.1.1 review (F-1, MEDIUM, non-blocking, PRE-EXISTING).
+=logging.rs:573-587=, =:594-601=, =:520=.
+
+TASK-G64ZH.1.1's whole framing is that "do not double-write" must be decided from
+whether the durable sink ACTUALLY TOOK THE LINE. The shipped code decides it from
+=state.durable.is_none()= — handle PRESENCE, not write SUCCESS. A handle that
+exists and whose =write_all= returns =Err= is a live handle that got nothing:
+
+1. =:574= =write_all= fails -> =record_drop()= at =:575=, and THE HANDLE IS
+   RETAINED (never set to =None=).
+2. =:598= then sees =durable.is_some()= -> stdout suppressed.
+3. The line is in no file, on no fd, in no terminal.
+
+AND IT COMPOUNDS: because =state.durable= stays =Some=, =maybe_reopen_durable= at
+=:520= short-circuits =true= on every subsequent line forever. No reopen, no
+backoff, no recovery — the sink is wedged for the daemon's lifetime.
+
+Trigger class: =ENOSPC=, =EDQUOT=, =EIO= — a full disk, a quota, a failing volume.
+Distinct from the open-failure class the G64ZH chain closed, which is why three
+rounds of that chain did not reach it.
+
+** Why it was not blocking
+Genuinely PRE-EXISTING: identical at =eaa88da^=, before the chain started. It is
+the last surviving proxy after four rounds removed the others, and it is outside
+every acceptance bullet those rounds were written against.
+
+** Direction
+Treat a failed durable write like a failed open: drop the handle so
+=maybe_reopen_durable= owns recovery, and let the write-time fallback send the
+line to stdout. That reuses machinery TASK-G64ZH and TASK-G64ZH.1.1 already
+built. Consider whether =write_all= failure should count toward the same
+=dropped_log_writes= meaning the chain just settled on ("one per line that never
+landed").
+
+** Acceptance
+- A live handle whose =write_all= fails does not lose the line, and does not wedge
+  the sink for the process lifetime.
+- A test drives it — a handle that accepts the open and fails the write, which no
+  existing test does.
+
+* BACKLOG TASK-H7TJE the log-open throttle is untested and defeated by alternating error kinds    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-H7TJE
+:PRIORITY: P3
+:WRITE_SCOPE: crates/**
+:END:
+
+** Description
+From the TASK-G64ZH.1.1 review, F-2 (MEDIUM, test) and F-3 (LOW), both on the
+=last_open_err_kind= throttle that TASK-G64ZH.1.1 added for R-4.
+
+** F-2 — the throttle test passes with the throttle DELETED
+=logging.rs:1535-1571=. The test asserts =open_attempts == 2= and
+=last_open_err_kind == Some(Other)=. IT NEVER CAPTURES STDERR, so it does not
+assert that anything was or was not emitted. Delete the early return in
+=note_open_failure= (=:462-469=) so it reports on EVERY attempt, and the test
+stays green.
+
+This is the SAME DEFECT CLASS as R-3 (the self-referential backoff test) in the
+test added by the round that fixed R-3 — which is worth noticing on its own: the
+chain has now produced three tests that assert the shape of a mechanism rather
+than its effect.
+
+** F-3 — alternating error kinds defeat the throttle
+=logging.rs:462-469=. Emission is gated purely on
+=last_open_err_kind != Some(kind)=, so any alternation emits on every attempt:
+=EACCES= <-> =EMFILE= under fd pressure, or =NotFound= <-> =IsADirectory= while a
+path is being recreated. At the 60s cap that is ~1440 lines/day into the
+unrotated =daemon.err.log= — precisely the rate R-4 was filed to bound.
+
+Non-blocking for R-4's own reason: still bounded per unit time by the retry rate,
+and no worse than the pre-throttle behaviour R-4 itself called non-blocking.
+Requires a genuinely flapping failure mode, which is rare.
+
+** Direction
+- F-3: add a =last_open_report_at: Instant= floor, so emission requires
+  =kind != last || now >= last_report + REOPEN_BACKOFF_CAP=.
+- F-2: capture stderr in the test and assert the EFFECT — that the second
+  same-kind attempt emits nothing — rather than asserting the bookkeeping field.
+
+** Acceptance
+- Deleting the throttle's early return makes a test FAIL.
+- An alternating-kind failure emits at a bounded rate, and a test pins it.
+
+* BACKLOG TASK-3RTM0 spawn_detached's stdout target and the drifted meaning of dropped_log_writes    :daemon:ops:
+:PROPERTIES:
+:ID: TASK-3RTM0
+:PRIORITY: P3
+:WRITE_SCOPE: crates/**
+:END:
+
+** READ THIS FIRST — STATUS
+Filed from the TASK-G64ZH.1.1 review, F-4 and F-5, both LOW and non-blocking. The
+review's full text for these two was LOST to the defect described in TASK-QGWK7
+(=dispatch-close= deletes the worker report), so what survives is the finding
+TITLES plus their anchors, recovered from the close tx. A worker should re-derive
+the detail from the code — both are small and the anchors are exact.
+
+** F-4 — =spawn_detached= points process stdout at the durable path itself
+=crates/orgasmic-cli/src/daemon_lifecycle.rs= (the detached fallback, ~=:435-461=).
+PRE-EXISTING SHAPE, not introduced by the G64ZH chain. The detached spawn
+redirects the child's stdout at the same durable log the daemon opens, which is
+the original TASK-ZBYH3 shape — two writers on one inode — surviving in the one
+launch path that is not a service definition. The reviewer noted the tail case
+involves =spawn_detached= after =keep= rotations.
+
+Note this path is now mirror-suppressed via =ORGASMIC_LOG_MIRROR=off= (TASK-G64ZH.1),
+so the daemon's own tracing does not double-write; what remains is where stray
+=println!=/panic output goes, which is exactly what the service definitions were
+changed to send to =daemon.stdout.log= instead.
+
+** F-5 — =dropped_log_writes= now counts PRESERVED lines, and =--no-log-mirror='s help text has an undocumented exception
+Two small consequences of TASK-G64ZH.1.1's write-time fallback:
+- The counter's meaning drifted. The G64ZH chain settled it as "one per line that
+  never landed in the durable file", but a line that falls back to stdout is
+  PRESERVED, not lost — so the counter now conflates "lost" with "written
+  somewhere else". Decide the meaning and document it, or split the two.
+- =serve --no-log-mirror='s help text says the mirror is suppressed, without the
+  exception that it is now restored whenever the durable handle is missing. The
+  flag no longer means "never write to stdout". Correct the text.
+
+** Acceptance
+- =spawn_detached='s stdout target is a deliberate choice with a stated reason,
+  not an inherited default — either changed to match the service definitions or
+  documented as intentionally different.
+- =dropped_log_writes= has ONE documented meaning, and if the fallback should not
+  count toward it, it does not.
+- =--no-log-mirror='s help states the durable-handle exception.
+
+* BACKLOG TASK-QGWK7 dispatch-close destroys the worker report, and the reported tx carries no body — a closed dispatch has no durable record of what the worker said    :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**
+:END:
+
+** Description
+=orgasmic manager dispatch-close= DELETES the worker's =last.txt= and
+=stdout.log=, leaving only the brief — and the =implementer.reported= /
+=reviewer.reported= tx entries carry NO BODY, only metadata (=TX_ID=, =RUN_ID=,
+=WORKTREE=). So after a close, the ONLY durable record of what a worker actually
+reported is whatever the manager happened to paste into the close tx's =REASON=.
+
+Observed live 2026-08-06 while filing follow-ups from a review: all four dispatch
+record dirs for the TASK-G64ZH chain
+(=task-g64zh-review=, =task-g64zh-1-review=, =task-g64zh-1-1-review=,
+=task-g64zh-1-1=) contain their =-brief.md= and nothing else. Three reviews and
+four implementer reports, gone. Two review findings (F-4, F-5) had to be filed
+from their titles alone because the manager's =REASON= summary was the only
+surviving trace — see TASK-3RTM0's status block.
+
+** Why this matters more than it looks
+- The BRIEF survives and the REPORT does not, which is backwards: the brief is
+  reconstructible from the task and the convention, the report is not.
+- It silently punishes the correct workflow. A manager who closes promptly — which
+  the convention and the review gate both push toward — destroys the evidence. A
+  manager who leaves dispatches open keeps it.
+- It defeats the audit trail the tx log exists to be. =reviewer.done= records that
+  a review happened and what verdict it carried, but the FINDINGS, their
+  =file:line= anchors and their mechanisms live only in prose the manager chose to
+  copy. A later manager cannot check whether a finding was actioned faithfully.
+- It interacts badly with the =:FIX_SUBTASK:= flow: a fix round's task body quotes
+  the findings, so the quote becomes the only copy, and any transcription error in
+  it is permanent and unfalsifiable.
+
+** Direction — decide, then implement
+1. Preferred: persist the report body on the completion tx. =dispatch finalize=
+   already receives it verbatim (=--summary-file=); write it into the
+   =*.reported= entry, or into a sibling node the tx references, so it survives
+   independently of the filesystem. Mind =tx.org= size — a long review is tens of
+   KB, so a reference to a stored artifact may beat inlining.
+2. Cheaper: stop deleting =last.txt= at close. Only the WORKTREE needs reclaiming;
+   the record dir is small and already per-task. If the deletion is deliberate
+   (disk hygiene), make it opt-in and say so in the convention.
+3. At minimum: make the convention state that the report is destroyed at close, so
+   a manager knows to extract findings BEFORE closing rather than after.
+
+Whichever lands, the =manager-dispatch= convention's Integrate step should say
+plainly where a report can be read AFTER a close, because today the honest answer
+is "nowhere".
+
+** Acceptance
+- After a =dispatch-close --worktree-remove --branch-delete=, the worker's report
+  is still readable, and the convention names where.
+- A test or a documented probe proves it for both an implementer and a reviewer
+  close.
