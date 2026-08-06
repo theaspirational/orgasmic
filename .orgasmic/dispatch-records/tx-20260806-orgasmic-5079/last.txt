@@ -1,0 +1,127 @@
+# TASK-STWVB.1.1.1 — implementer summary
+
+Round 4 fix: restore the live-path flake verdict without giving back the
+calm-host rate fix. Commit `deffb1e`.
+
+## Live-path verdicts and `--classify` counterparts
+
+Demonstrated with stub cargo + fixture registry (the flake case both prior
+rounds missed).
+
+### 1. Registered flake, calm host
+
+Live:
+```
+  failures : 1
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+FLAKE (1) — green in isolation, registered signature matched:
+verdict: GREEN modulo 1 registered flake(s). No unexplained red.
+exit 0
+```
+
+`--classify` on the same log:
+```
+  failures : 1
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+FLAKE (1) — green in isolation, registered signature matched:
+verdict: GREEN modulo 1 registered flake(s). No unexplained red.
+exit 0
+```
+
+Match.
+
+### 2. Registered flake, degraded host
+
+Live:
+```
+  failures : 1
+  host     : DEGRADED (threshold syspolicyd_rate>=1.50; load corroborating only)
+FLAKE (1) — green in isolation, registered signature matched:
+verdict: INCONCLUSIVE — re-run when calm. Host was degraded (failures were registered flakes; still not a trusted green).
+exit 4
+```
+
+`--classify` on the same log: identical verdict and exit 4.
+
+Match. `EXIT_INCONCLUSIVE` is alive on the live path again.
+
+### 3. Crashed binary, no failure list (calm host)
+
+Live:
+```
+  failures : 0
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+verdict: RED — cargo exited 101 with no per-test failure list.
+exit 1
+```
+
+`--classify` on the same log:
+```
+  failures : 0
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+verdict: GREEN — no failures.
+exit 0
+```
+
+**Do not match.** Pre-existing `--classify` limitation: `SUITE_EXIT="?"` by
+design, and the cargo exit is not stamped into the log, so the crashed-binary
+arm cannot fire under reclassify. Matching would require stamping the suite
+exit into the host stamp (or equivalent). Out of scope for this fix; M-1's
+standing invariant is the FAIL_COUNT>0 path, which now agrees.
+
+## Minimum window
+
+`SYSPOLICYD_RATE_MIN_WALL_S=10`. Floor of the brief's 10–30 s band: long enough
+to refuse the reviewer probes (`wall_s=1` / `wall_s=3` → `unknown (window too
+short to judge)`, neither calm nor DEGRADED), short enough that a scoped crate
+run still judges. Confirmed by the real scoped run below (`wall_s=11`, calm).
+
+Sub-second clamp-to-1 removed so a fractional window is not under-reported as
+rate-over-1s.
+
+## Stamp with no `wall_s`
+
+Reads `host : unknown (window unknown)` — not calm. Restores the STWVB.1 / F3
+fail-safe for every pre-`b92199a` suite log.
+
+## `LOAD_DEGRADED_THRESHOLD`
+
+Kept and enforced: when load clears 8.0 the host line annotates
+`load=<n> elevated (>=8.0), corroborating only`. The summary no longer
+advertises a bare `display>=8.0` clause with no comparison behind it.
+
+## Scoped live run (real cargo)
+
+`scripts/run-tests.sh -p orgasmic-core --lib`:
+```
+  failures : 0
+  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+             delta   load=3.75 syspolicyd_cpu=1.2 wall_s=11
+             rate    0.1091
+verdict: GREEN — no failures.
+exit 0
+```
+
+## Gates
+
+| gate | result |
+| --- | --- |
+| `scripts/run-tests-selftest.sh` | 44 passed, 0 failed |
+| `scripts/run-tests.sh --check` | registry OK |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo fmt --all --check` | exit 0 |
+| `orgasmic verify TASK-STWVB.1.1.1` | PASS — red-then-green; first FAIL under injection is the pinned live-path flake case |
+| `scripts/run-tests.sh -p orgasmic-core --lib` | GREEN, exit 0 |
+| `verify/flake-registry.toml` | byte-unchanged (sha256 cbc0efef…) |
+
+## Could not do
+
+Make `--classify` and the live path agree on a crashed binary with no
+per-test failure list — cargo exit is not in the log, and `--classify` sets
+`SUITE_EXIT="?"`. Named above; not widened.
+
+## Settled / untouched
+
+- B1 rate shape kept.
+- Part A not probed.
+- M-6 stamp-format duplication left alone (note, not a change request).

@@ -1,3 +1,186 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-STWVB.1.1.1 fix-round: round 3 fixed exit-4-on-a-calm-host and broke exit-0-on-a-flake :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB.1.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Round 4 of the TASK-STWVB chain. Fix round for the TASK-STWVB.1.1 review (merged
+=b92199a=, REJECT). TWO BLOCK SHIP, two MEDIUM, two LOW. All four verified by the
+manager in source before filing.
+
+*B1 IS FIXED AND SETTLED. The rate is the right shape* — the reviewer attacked it
+empirically and could not break it, and the acceptance was demonstrated twice
+(worker's =--workspace= run: exit 1 not 4, =host : calm=, rate 0.6045 s/s; the
+manager's independent scoped run: =verdict: GREEN — no failures=, exit 0). Do not
+re-open the rate-vs-absolute question.
+
+*PART A IS SETTLED AND CLOSED* (mechanism-justified, effect size unmeasured). Do
+not probe it. Three rounds have now been spent adjacent to that question.
+
+The full review is preserved at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-5063/last.txt=.
+=== END STATUS ===
+
+** The headline: round 3 fixed one half and broke the other
+The chain has been chasing "the gate returns no verdict". Round 3 fixed the
+exit-4-on-a-calm-host half and broke the exit-0-on-a-flake half.
+
+*Both of round 3's demonstrations dodged this by construction*, which is why it
+shipped: the =--workspace= run had a REAL failure (so the earlier =REAL_COUNT=
+branch won), and the scoped run had ZERO failures (so cargo exited 0 and the
+branch was never reached). Neither exercised the ordinary flake path. When the
+next round demonstrates its fix, *demonstrate the FLAKE case explicitly* — it is
+the case both prior demonstrations missed.
+
+** M-1 — HIGH — BLOCK SHIP — a registered flake now reddens the live gate
+=scripts/run-tests.sh:1048=. MANAGER-VERIFIED IN SOURCE.
+
+B2's move put
+
+: elif [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+
+above the =HOST_DEGRADED= arm *and above the =FAIL_COUNT > 0= arm*. In the
+pre-change ladder (=4788e1f:scripts/run-tests.sh=) it sat AFTER =FAIL_COUNT > 0=,
+which is exactly what made its message TRUE — it could only fire when there was
+no per-test failure list. There is now NO =FAIL_COUNT= guard, and =cargo test=
+exits 101 whenever any test fails.
+
+Reviewer reproduction, stub cargo emitting one failing test whose signature
+matches a registry entry, isolation-green:
+
+#+begin_example
+  failures : 1
+  host     : calm (threshold syspolicyd_rate>=1.50; ...)
+FLAKE (1) — green in isolation, registered signature matched:
+  tests::recovery_inventory_waits_for_atomic_claim_commit
+verdict: RED — cargo exited 101 with no per-test failure list.   exit 1
+#+end_example
+
+The same log through =--classify= (where =SUITE_EXIT= is =?=):
+
+#+begin_example
+verdict: GREEN modulo 1 registered flake(s). No unexplained red.   exit 0
+#+end_example
+
+*Two modes, one log, opposite verdicts.* And the sentence is false on its face —
+the failure list is printed immediately above it.
+
+Second reproduction, degraded host + unregistered isolation-green failure: the
+=LOAD-SENSITIVE (1)= block prints and the verdict is still
+=RED — cargo exited 101...= at exit 1. *So =EXIT_INCONCLUSIVE= is DEAD on the live
+path, and every artifact this chain exists to build — LOAD-SENSITIVE, the C
+interlock, exit 4 — is now =--classify=-only.*
+
+WHY THE SUITE CANNOT SEE IT: all thirteen flake/load/host cases drive
+=--classify=, where =SUITE_EXIT="?"= short-circuits the branch, and the two new
+live-path cases use a stub cargo that either exits 0 or exits 101 WITH NO FAILURE
+LIST.
+
+*Fix (reviewer's, manager concurs):* keep B2's position, restore the guard its own
+message states —
+
+: elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
+
+— and pin it with LIVE-PATH cases: stub cargo emitting a registered flake and
+exiting 101 -> =GREEN modulo 1 registered flake=, exit 0; and the degraded
+variant -> =INCONCLUSIVE=, exit 4. Neither case exists today.
+
+** M-2 — HIGH — BLOCK SHIP — =host : calm= when the primary signal was never measured
+=scripts/run-tests.sh:496-507= and =:988=. MANAGER-VERIFIED: =host_judgment_
+measured= ORs =num(load) || num(cpu) || num(wall)=, and load essentially always
+parses — so the word is =calm= whenever the GATING signal (the rate) is
+unmeasurable.
+
+Reviewer probes on the live path:
+
+| injected sample | printed |
+| =load=4.0,syspolicyd_cpu=?,wall_s=300= | =host : calm=, =rate ?=, exit 0 |
+| =load=4.0,syspolicyd_cpu=250.0= (no =wall_s=) | =host : calm=, =rate ?=, exit 0 |
+| =load=4.0,syspolicyd_cpu=250.0,wall_s=0= | =host : calm=, =rate ?=, exit 0 |
+| =load=4.0,syspolicyd_cpu=250.0,wall_s=-5= | =host : calm=, =rate ?=, exit 0 |
+
+*Row 2 is a REGRESSION against STWVB.1's F3, not merely an F-E residual*: the
+stamp format gained =wall_s= in this commit with no compat path, so EVERY suite
+log written by any earlier version now reclassifies as =calm= where F3
+deliberately made it =unknown=. Rows 1, 3 and 4 cover Linux, a
+=pgrep -x syspolicyd= miss, and a sub-second window.
+
+THE REACH THAT MATTERS IS CI. =ci.yml:200-206= fails the lane on exit 4 on the
+authority of the rate threshold. If =syspolicyd= is not visible on the
+=macos-15= runner, the gate is INERT and the summary still prints
+=host : calm (threshold syspolicyd_rate>=1.50; ...)= — asserting a threshold was
+applied to a measurement that never happened. Same class as the original F2
+phantom =0.0=, one level up, which is what F-E was filed about.
+
+The two new F-E cases pass because they set EVERY field to =?=/junk. They pin the
+all-unknown corner and miss the common one.
+
+*Fix:* derive the word from the RATE, not from any-field. =calm= only when the
+rate parsed as a number and is below threshold; =unknown= otherwise, with the
+reason named (=no syspolicyd signal= / =window unknown=). Keep load as display.
+
+** M-3 — MEDIUM — the rate has no minimum window
+=scripts/run-tests.sh:465-493=, =:636-638=. =local_wall= is =date +%s=
+arithmetic — integer, +/-1s quantisation — clamped to a floor of 1, and
+=host_is_degraded= gates at ANY wall. Reviewer probes:
+- =wall_s=1, syspolicyd_cpu=2.0= -> rate 2.0000 -> DEGRADED, exit 4
+- =wall_s=3, syspolicyd_cpu=4.5= -> rate 1.5000 -> DEGRADED, exit 4
+
+So a 1-3s scoped run judges the whole host on 1-3 samples of a bursty quantity.
+This is the short-window mirror risk the review was asked to attack, and it is
+real — it simply did not fire in the two runs anyone happened to make.
+
+*Fix:* require =wall_s >== a floor (10-30s) for the rate to gate at all; below the
+floor report =host : unknown (window too short to judge)= — neither calm nor
+DEGRADED. That also disposes of =wall_s=0= and the sub-second clamp, which
+currently UNDER-report (a 0.3s window's delta divided by 1).
+
+** M-4 — MEDIUM — the summary advertises a load threshold that does not exist
+=scripts/run-tests.sh:88=, =:986-990=. MANAGER-VERIFIED BY GREP:
+=LOAD_DEGRADED_THRESHOLD= returns exactly three lines — the assignment and two
+=printf= arguments. *Nothing compares load to it.* Load is printed
+unconditionally at any value, while the summary tells the operator
+=load corroborating only, display>=8.0=.
+
+*Fix:* either annotate the load field when it clears 8.0 (which is what
+"corroborating" would mean in the output), or drop the constant and the clause.
+
+** M-5 — LOW — F-F's replacement assertion is narrower than its headline
+=scripts/run-tests-selftest.sh:396=. =grep -Eq 'syspolicyd_time=0(\.0)?($| )'=
+cannot match the format the field actually carries — verified:
+=syspolicyd_time=0:00.00= does NOT match; only a bare =0= or =0.0= would. No
+longer vacuous, but the realistic phantom-zero shape (the F2 defect re-expressed
+as a cumulative =ps= time) escapes. *Fix:* also reject
+=syspolicyd_time=0:00(\.0+)?=.
+
+** M-6 — LOW — note, not a defect: the stamp format is still duplicated
+=scripts/run-tests-selftest.sh:110-116=. =stamp_host= still hand-writes the
+stamp, so STWVB.1.1's acceptance clause "the stamp format is not duplicated in
+the test" is not literally met. In practice the duplication now works in the
+RIGHT direction — the hand-written fixtures pin the READER while the new e2e case
+pins the WRITER, and the reviewer mutation-tested three field renames and all
+three were caught. Recorded so the clause is not silently dropped; no change
+requested.
+
+** Acceptance
+- A registered flake on the LIVE path returns =GREEN modulo N registered
+  flake(s)= at exit 0, and the degraded variant returns INCONCLUSIVE at exit 4.
+  Both pinned by live-path cases (stub cargo exiting 101 WITH a failure list) —
+  neither exists today, and their absence is why M-1 shipped.
+- =--classify= and the live path return the SAME verdict for the same log.
+- The host word is derived from the RATE: =calm= only when the rate parsed and is
+  below threshold; =unknown= otherwise with the reason named. A stamp with no
+  =wall_s= (any pre-=b92199a= log) reads =unknown=, not =calm=.
+- The rate does not gate below a stated minimum window; below it the host is
+  =unknown (window too short to judge)=.
+- Every constant the summary names is either enforced or removed from the
+  summary.
+- =verify/flake-registry.toml= byte-unchanged, as in all three prior rounds.
+- THE DEMONSTRATION MUST INCLUDE THE FLAKE CASE. Both prior rounds demonstrated
+  on inputs that skipped the branch they broke.
