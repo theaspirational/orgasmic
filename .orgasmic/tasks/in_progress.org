@@ -189,3 +189,62 @@ NOT IN THIS ROUND: the rename-failure branch staying per-line. It is
 PRE-EXISTING — byte-identical to =eaa88da^1= in the reopen-succeeds sub-case — and
 it has its own task, TASK-CGJM7. Do not fold it in; it needs a rotate-side
 backoff design, not a patch.
+** Evidence
+*Implementer* =implementer-cursor-agent-tmux= — tmux / cursor-agent /
+cursor-grok-4.5-high-fast. Run
+=run-20260806T135605-e9f0ea7e9295418dacad1d6331a57b5f=, started_tx
+=tx-20260806-orgasmic-4885=, worker commits =94e54f8= + =ea60fba=, merged
+=44e7e8d=.
+
+*F-A — keep the path.* =resolve_durable_open()= now returns
+=Option<(PathBuf, Option<File>)>= and maps rather than =and_then=s, so a failed
+boot open keeps =durable_path= = =Some=. =record_drop()= fires per dropped line
+and =maybe_reopen_durable= owns the 1s->60s retry, both of which were unreachable
+before. The implementer took the heading's PREFERRED direction rather than the
+=resolve_mirror= degrade.
+
+*F-B — env form, and better than asked.* The plist, the systemd unit and the
+Windows wrapper no longer embed =--no-log-mirror=; they set
+=ORGASMIC_LOG_MIRROR=off=. An older binary ignores an unknown env var and, under a
+non-tty stdout, its pre-flag =is_terminal()= fallback still suppresses the mirror
+— so a manual rollback degrades to IDENTICAL behaviour instead of a KeepAlive
+crash loop into the unrotated =daemon.err.log=. The literal-drift half of the
+finding is closed STRUCTURALLY, not by assertion: all three definitions render
+from =orgasmic_daemon::LOG_MIRROR_ENV=, the same constant the parser reads, and
+the tests now assert the flag's ABSENCE. =serve --no-log-mirror= survives as the
+interactive override.
+
+*F-D / F-E / F-F.* =production_new_keeps_stdout_mirror_when_stdout_is_pty= drives
+the PRODUCTION =new()= after =openpty= + =dup2= makes fd 1 a real tty, so
+hardcoding =false= at =:311= goes red — the true side of the predicate the other
+tests leave free. An injectable clock pins that the backoff EXPIRES, not only that
+it holds. =LOG_MIRROR_ENV= / =env_log_mirror_off= have direct coverage.
+
+*Gates, replayed by the manager on the MERGED tree:* =cargo fmt --all --check=
+clean; =cargo test -p orgasmic-daemon --lib logging= 16 passed (up from 12);
+=--test logging_sink= 1 passed; =cargo test -p orgasmic-cli --bin orgasmic
+daemon_service::tests= 25 passed; =cargo clippy --workspace --all-targets -- -D
+warnings= clean.
+
+*Proofs.* BOTH replay green on the committed tree, each with EXACTLY ONE panic in
+its red log and that panic being the pinned assertion. =verify/TASK-G64ZH.1/=
+injects the old =and_then= collapse and fails on "boot-time open failure must keep
+durable_path so reopen backoff and record_drop remain reachable".
+=verify/TASK-G64ZH/= was RETARGETED by this round (=Instant::now()= ->
+=self.now()=, because F-E introduced the clock seam) and still fails on the
+IDENTICAL assertion with the IDENTICAL message as before the retarget — checked
+against the previous round's red log, which is what distinguishes a mechanical
+retarget from a weakened claim.
+
+*Carried to the reviewer — the manager's own finding, not the implementer's.*
+F-A MAY BE HALF-FIXED. Under a mirror-suppressed launch with a PERMANENTLY
+unopenable durable path, =resolve_mirror= takes its =LogMirror::None =>
+LogMirror::None= arm and the handle is absent, so there is STILL ZERO OUTPUT for
+the whole failure window — a moving counter and a failing retry, but no lines
+anywhere. The pre-TASK-G64ZH daemon captured every one of them on launchd's
+=StandardOutPath=. This task's own acceptance says the failure "still produces log
+output AND moves =dropped_log_writes=": the second half is met, the first
+arguably is not. The previous reviewer offered the =None= -> =Stdout= degrade for
+exactly this case as a stopgap. Also carried: this round EDITED A PREVIOUSLY
+APPROVED PROOF, which deserves an independent ruling even when the retarget looks
+mechanical.
