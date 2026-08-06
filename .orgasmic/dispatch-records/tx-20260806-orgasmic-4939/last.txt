@@ -1,0 +1,45 @@
+fix(dispatch): keep the worker report when a dispatch closes
+
+dispatch-close deleted last.txt and stdout.log, and the *.reported tx carries
+no body, so a closed dispatch had no durable record of what the worker
+actually said — and .orgasmic/.gitignore excludes tmp/, so there was no copy
+in git either. The brief survived and the report did not, which is backwards:
+the brief is reconstructible from the task and the convention, the report is
+not.
+
+The record is now promoted to a tracked path at close, keyed by the dispatch
+generation rather than the task, and the completion tx names it. The state
+files do not grow by the size of the reports.
+
+## Changed
+- `crates/orgasmic-core/src/paths.rs`: `promote_validated_dispatch_attempt` moves `last.txt` + `stdout.log` from gitignored `.orgasmic/tmp/dispatch/` into tracked `.orgasmic/dispatch-records/<started_tx>/`. Delete-only `prune_*` remains for failed-dispatch rollback only.
+- `crates/orgasmic-cli/src/manager.rs`: close promotes on worktree removal (and with `--no-worktree-remove` when artifacts exist); close tx gets `:REPORT_PATH:`; finalize's `*.reported` gets `:REPORT_PATH:` when the generation can be resolved.
+- `shipped/prompt-studio/conventions/manager-dispatch.org`: Integrate step names the post-close path and retention policy.
+- `shipped/schema/tx.org`: documents `REPORT_PATH` on reported/done.
+- `verify/TASK-QGWK7/`: injection restores delete-at-close; first red assertion is the readability claim.
+
+## Promoted path
+`.orgasmic/dispatch-records/<started_tx>/last.txt` (+ `stdout.log` beside it).
+Why: outside gitignored `tmp/`, keyed by generation not task, not an `.org` file so the indexer ignores it.
+
+## stdout.log
+Promoted yes. `last.txt` is the summary `:REPORT_PATH:` names; `stdout.log` is harness evidence that can falsify a curated close reason.
+
+## Retention
+Keep forever. Growth: one dir per generation; implementer ~1–5 KB, review ~25 KB, stdout often larger.
+
+## Daemon parse
+Indexer reads named files only (`decisions.org`, `glossary.org`, `tasks/*`, `tx/`, `project.org`) — confirmed in `index.rs`. Live reindex: orgasmic project parse_errors 0; daemon total 2 is pre-existing (all projects at 0).
+
+## Gates
+- core promote unit test pass
+- `dispatch_close_*` unit tests 7 pass
+- `dispatch_close_prunes_stem_dir_leaving_brief` pass
+- shipped convention post-close path test pass
+- fmt + clippy `-D warnings` pass
+- red first assertion: `after close the report must still be readable from the path the tx names`
+
+## Would this report survive close?
+Yes — that is the behaviour this change installs.
+
+orgasmic: TASK-QGWK7

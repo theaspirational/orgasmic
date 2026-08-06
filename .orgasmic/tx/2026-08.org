@@ -15752,3 +15752,98 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-06 Thu 15:42:53 reviewer.reported TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4951
+:TIME:         [2026-08-06 Thu 15:42:53]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:RUN_ID:       run-20260806T153149-15ba05b4c6bf49f692488686f55efb5c
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7-review
+:END:
+
+* TX 2026-08-06 Thu 15:44:32 reviewer.done TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4952
+:TIME:         [2026-08-06 Thu 15:44:32]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:REASON:       APPROVE WITH FOLLOW-UPS, nine findings, none blocking. NO CLOSE PATH DESTROYS A REPORT ANY MORE — the two remaining deleting call sites are failed-dispatch rollback where no worker ran; verified end-to-end on the production path. F-1 HIGH: acceptance criterion 2 (readable from a fresh clone) is UNMET — the destination is trackable but nothing stages it, so durability is a sentence in a convention. Ruling: close should git add the dir (staging, not committing, leaving WHEN to commit with the manager). MANAGER CORRECTION TO ITS EVIDENCE: the review inferred from five sampled commits that no manager habit would sweep it in, but those commits cannot discriminate — dispatch-records did not exist yet, so nothing untracked was there to sweep. Tested directly: 'git add -A .orgasmic', this session's actual command, DOES stage it; 'git add -u' does not. The finding stands and the ruling stands, because the guarantee currently rests on an unstated detail of which add form a manager happens to use, which is worse than a documented step. F-2 MEDIUM with decisive arithmetic: 14.2 dispatch generations/day measured (5200-6500/yr); last.txt is 24-30MB/yr and fine, but stdout.log at the observed 157.7KB stdio mean is 820MB-1.03GB/yr uncompressed against a repo whose entire packed history is 8.71MiB — 10-25x the repo, unrotatable because pruning git history rewrites every clone. Ruling: promote a bounded tail (64KB) with the original byte count recorded, or promote only on non-success, and skip 0-byte files. F-3/F-4 MEDIUM: the --no-worktree-remove promote takes neither the cleanup lock nor the close guard yet is now destructive (it unlinks), and it flips CLEANUP_STATUS ok->partial on an already-reclaimed worktree. F-5 orphan reclaim never promotes — the rescued-dispatch case. F-6 the finalize REPORT_PATH fallback writes an absolute user-specific path into a committed tx. F-7 the copy buffers the whole artifact in RSS. F-8 a half-succeeded promote leaves last.txt promoted but no REPORT_PATH on the tx, plus .promoting leftovers. F-9 the new branch has no test, so F-3 and F-4 are invisible to the suite.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260806-orgasmic-4946
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 15:44:32 task.state_transitioned TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4953
+:TIME:         [2026-08-06 Thu 15:44:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 15:44:34 implementer.done TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4954
+:TIME:         [2026-08-06 Thu 15:44:34]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    da88c1950a1f4368f77e64b50a08dca0d8a59314
+:BRANCH:       task-qgwk7-impl
+:CLOSED_TX:    tx-20260806-orgasmic-4939
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 15:44:34 task.state_transitioned TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4955
+:TIME:         [2026-08-06 Thu 15:44:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 15:44:50 task.state_transitioned TASK-QGWK7
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4956
+:TIME:         [2026-08-06 Thu 15:44:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged da88c19 and passed a fresh review: APPROVE WITH FOLLOW-UPS, nine findings, none blocking. No close path destroys a worker report any more. The nine follow-ups are TASK-QGWK7.1.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
