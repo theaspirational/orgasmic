@@ -11621,3 +11621,58 @@
 :REASON:       edited task node TASK-RQ270
 :NODE_ID:      TASK-RQ270
 :END:
+
+* TX 2026-08-06 Thu 04:19:36 task.created TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4710
+:TIME:         [2026-08-06 Thu 04:19:36]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       stage C split in two so each half gets a sharp review; the UI goes first so main never has a UI calling a route the daemon removed
+:END:
+
+* TX 2026-08-06 Thu 04:19:36 task.property_updated TASK-RQ270.3.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4711
+:TIME:         [2026-08-06 Thu 04:19:36]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       UI only; the daemon and CLI read model is TASK-RQ270.3.2
+:WRITE_SCOPE:  ui/
+:END:
+
+* TX 2026-08-06 Thu 04:20:03 task.created TASK-RQ270.3.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4712
+:TIME:         [2026-08-06 Thu 04:20:03]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       the lint carve-out must be on main before stage D deletes architecture.org, or 243 arch_ tokens across 141 IMPLEMENTS lines become dangling edges
+:END:
+
+* TX 2026-08-06 Thu 04:20:04 task.property_updated TASK-RQ270.3.2
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-4713
+:TIME:         [2026-08-06 Thu 04:20:04]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RQ270.3.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       daemon and CLI only; depends on the UI half landing first so main never has a UI calling a removed route
+:DEPENDS_ON:   TASK-RQ270.3.1
+:WRITE_SCOPE:  crates/
+:END:

@@ -3651,3 +3651,160 @@ rather than assuming, and correct the loop line in the same pass.
 - =README.md:10='s loop matches the post-excision pipeline.
 - The audit that closes this task inspects RENDERED assets, not only source text,
   and says so.
+
+* BACKLOG TASK-RQ270.3.1 Excision stage C part 1 — remove the architecture read surface from the UI
+:PROPERTIES:
+:ID: TASK-RQ270.3.1
+:PRIORITY: P1
+:WRITE_SCOPE: ui/
+:END:
+
+** Description
+
+Stage C, part 1 of 2: remove the architecture READ SURFACE FROM THE UI. Read
+=TASK-RQ270= for the staged plan and the coupling map. Stages A and B are done
+and reviewed.
+
+*Split rationale, and the ORDER matters.* The parent estimates stage C at ~1,500
+LOC across daemon, CLI and UI. This session's repeated evidence is that large
+changes hide their gaps from review. So stage C is two dispatches, and *the UI
+goes FIRST* so main never contains a UI calling a route the daemon has removed.
+
+TASK-RQ270.3.2 removes the daemon read model, the CLI reads and lands the lint
+carve-out.
+
+** Measured surface, at HEAD
+
+*18 files* under =ui/src/= reference architecture — the parent estimated 14.
+Measure again yourself before trusting either number; three rounds of this
+excision have been rejected over an inventory someone trusted too early.
+
+Known members: =ArchitectureView.tsx=, =app/routes.ts=, =app/router.tsx=,
+=components/ProjectTabs.tsx=, =components/AppShell.tsx=,
+=components/node-views/NodeModal.tsx=, =components/node-views/orgNodes.ts=,
+=components/orgdoc/descriptor.ts=, =lib/capabilities.ts=, =lib/api.ts=,
+=lib/types.ts=, =lib/tabsStore.ts=, =lib/orgdoc/types.ts=, =lib/richText.tsx=,
+=components/OrgView.tsx=, =components/ArtifactsView.tsx=, plus the
+=lib/__tests__/= files.
+
+*Named explicitly because a previous round misclassified it*:
+=ui/src/lib/api.ts:370= — =postStage= accepts ='architect'= and constructs a live
+=POST /architect=. It has no callsite and the daemon rejects the stage, but it is
+a client WRITE surface, not a read. *Drop ='architect'= from that union.*
+
+** In scope
+
+Every UI surface that lists, routes to, renders, types or advertises the
+architecture read model: the view, its route and nav entry, the node-modal arch
+rendering, the org-doc descriptor, capabilities, the API wrappers and types.
+
+** Explicitly NOT in this stage
+
+- =GET /architecture*=, =load_architecture=, the index projections, the CLI
+  =architecture {list,get,schema}= verbs — TASK-RQ270.3.2.
+- The dangling-edge lint carve-out — TASK-RQ270.3.2, and it MUST be on main
+  before stage D.
+- The node class, =schema.rs=/=id.rs=, =.orgasmic/architecture.org= — stage D.
+- The README hero image — TASK-ZFNE1, deferred by operator decision.
+
+** Acceptance
+
+- No UI route, nav entry, view, type, API wrapper or capability offers the
+  architecture read model.
+- ='architect'= is gone from =postStage='s union.
+- The UI builds and typechecks with no unused-import or dead-type residue.
+- =npm test= passes.
+- *The audit is claim-shaped and includes the RENDERED result*, not only source
+  text. Five audit failure shapes have been paid for on this excision, ending
+  with a claim rasterized into an image no grep could see. Confirm the running UI
+  offers no architecture surface — nav, route, search, command palette — and say
+  how you confirmed it.
+
+** Not to be broken
+
+The generic org-node viewer, the graph view, decisions, glossary and tasks all
+share the machinery architecture used. Excision removes ARCHITECTURE-SPECIFIC
+arms and surfaces, never the shared org-doc, node-modal or graph plumbing.
+
+* BACKLOG TASK-RQ270.3.2 Excision stage C part 2 — remove the architecture read model and land the lint carve-out
+:PROPERTIES:
+:ID: TASK-RQ270.3.2
+:PRIORITY: P1
+:DEPENDS_ON: TASK-RQ270.3.1
+:WRITE_SCOPE: crates/
+:END:
+
+** Description
+
+Stage C, part 2 of 2: remove the architecture READ MODEL from the daemon and CLI,
+*and land the dangling-edge lint carve-out*. Read =TASK-RQ270= for the staged plan
+and the coupling map. TASK-RQ270.3.1 removes the UI and lands first.
+
+** THE ORDERING CONSTRAINT THIS WHOLE EXCISION DEPENDS ON
+
+*The lint carve-out lands HERE and must be on main BEFORE stage D deletes
+=.orgasmic/architecture.org=.* If stage D runs first, every =:IMPLEMENTS: arch_=
+token in the task ledger becomes a dangling graph edge and the daemon starts
+emitting parse errors for the whole board.
+
+Measured at HEAD, not estimated: *141 =:IMPLEMENTS:= lines carrying =arch_=
+tokens* across the task files — 138 in =done.org=, 3 in =backlog.org= — bearing
+*243 individual =arch_= tokens*. (The parent task says 231; that figure is
+approximate and predates this measurement.)
+
+The two sites:
+
+- =crates/orgasmic-daemon/src/index.rs:1255= — =lint_dangling_graph_edges= only
+  lints structured-id targets, and =arch_= is one of the four prefixes it checks.
+  Dropping =arch_= there is the carve-out.
+- =crates/orgasmic-daemon/src/index.rs:1280= — =looks_like_structured_node_id=
+  carries the same four prefixes and governs write-time reference validation.
+
+*Decide both deliberately and say why.* Dropping =arch_= from the first stops the
+dangling lint firing after stage D. Dropping it from the second stops =arch_=
+tokens being treated as resolvable references at write time — which is what a
+retired class should look like, but it is a different consequence. Do not assume
+one answer covers both.
+
+** In scope
+
+- =GET /architecture=, =/architecture/nodes=, =/architecture/:id=
+  (=api.rs:699-701=) and their entries in the route inventory (=:772-774=).
+- =load_architecture= (=index.rs:1065=), =architecture_nodes_response=
+  (=index.rs:260=), and the call sites at =index.rs:827-828=.
+- CLI =architecture {list, get, schema}= (=main.rs:302, 731, 3081-3116=) and the
+  =schema_examples= architecture example and legend
+  (=orgasmic-core/src/schema_examples.rs:111,125=).
+- The =node.rs= architecture arms.
+- The lint carve-out above.
+
+** Explicitly NOT in this stage
+
+- =ArchitectureNode= / =parse_arch_edges= (=schema.rs=), =NodeIdClass::Architecture=
+  / =is_arch_id= (=id.rs=), the identity-lint arch collectors, the =node_kind=
+  variant, and =WorkerKind::Architector= removal — *stage D*.
+- Deleting =.orgasmic/architecture.org= or repointing the two live task drawers
+  (=backlog.org:82,:98=, TASK-CQM2X and TASK-VBSG2) — *stage D*.
+- =lint_arch_heading_id_tokens= (=index.rs:1428=), which lints headings inside
+  =architecture.org= — it dies with the file in stage D.
+
+** Acceptance
+
+- No route, index projection or CLI verb reads the architecture layer.
+- The dangling-edge lint does not fire on =arch_= targets, proven by a test that
+  constructs an =:IMPLEMENTS: arch_= edge with no resolving node and asserts *no
+  parse error*. This is the gate stage D depends on; assert it, do not describe
+  it.
+- Historical =arch_= references in =tx=, =done.org= and =decisions.org= still
+  parse.
+- =parse_errors= is 0 on this repository's own state after the change.
+- =cli_parity= passes — it resolves every =orgasmic ...= invocation in =shipped/=
+  against the real binary, so doctrine naming a deleted verb fails there.
+
+** Not to be broken — the coupling map
+
+=GraphLayer= / =NodeLayer= / =NodeKind= / =NodeIdClass=, =read_or_seed_graph_file=,
+writer authority, tx append, the generic marker scanner and =GraphEdgeSummary=
+all serve decisions, glossary and tasks too. Excision removes VARIANTS AND THEIR
+MATCH ARMS, never the enum machinery. =:IMPLEMENTS:= remains a legal task drawer
+key; only the LINT's arch-prefix handling changes.
