@@ -5,223 +5,230 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         99723b9
+:LIVENESS:         7b4cba3
 :LIVENESS_AT:      [2026-08-06 Thu]
 :UPDATED_AT:       [2026-08-06 Thu]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-06, continuing 08-03/05. The architecture layer is GONE (stages
-A-E, all reviewed), three chains closed, the daemon log defect fixed, and the
-runtime reinstalled TWICE and verified behaviourally both times.
+Session 2026-08-06, third block, continuing 08-03/05. Two task chains driven
+hard: TASK-QGWK7.1 is DONE and TASK-STWVB is on its third round.
 
-THE FOUR THINGS TO KNOW BEFORE YOU DO ANYTHING
+THE FIVE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
-1. THE RUNTIME IS NO LONGER BEHIND THE REPO, AND EVERY "INERT UNTIL REINSTALL"
-   WARNING IN THE PREVIOUS HANDOFF IS RETIRED. =~/.orgasmic/bin/orgasmic= was
-   rebuilt 2026-08-06T11:39Z (=0.0.15-dev.1=; both builds call themselves that,
-   so the version string proves nothing). Verified BEHAVIOURALLY, three probes:
-   =orgasmic manager drivers= prints =stdio=/=ws=, NOT =acp-stdio=/=acp-ws=;
-   =dispatch-close= carries BOTH =--verdict= and =--fix-round-final=; and
-   =manager worktree-prune= refuses by construction. So dispatch with =--mode
-   stdio= (the old trap said the opposite and is dead), close a reviewer with
-   =--verdict approve= rather than =--property VERDICT=ship=, and expect a
-   =:FIX_SUBTASK:= close to land =in_review= on its own with no manual flip.
+1. THE RUNTIME IS BEHIND THE REPO AGAIN, AND IT MATTERS MORE THAN USUAL. The
+   installed =~/.orgasmic/bin/orgasmic= was built 2026-08-06T11:39Z; =da88c19=
+   (promote the worker report) landed 15:30Z and =955c8d6= (STAGE it) later
+   still. So =dispatch-close= RUNS FROM THE INSTALLED CLI AND STILL DELETES
+   =last.txt=. Copy the report out by hand into
+   =.orgasmic/dispatch-records/<started_tx>/last.txt= BEFORE every close until
+   the runtime is rebuilt. The previous handoff's "the runtime is no longer
+   behind the repo" was true when written and is NOT true now.
 
 2. NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.
    =ensure_running= -> =start_via_selected_adapter= -> =daemon_service::start=
    writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
    not scope; a staged home restarts the real daemon and kills every live
-   dispatch. Five workers died this way. The safe pattern is =ORGASMIC_DAEMON_URL=
-   on the CHILD. =env -u ORGASMIC_HOME= to strip a leaked value is the opposite
-   and is fine. TASK-48SFW carries the source chain. Note the asymmetry recorded
-   there: BRIEFS keep the blunt blanket ban, because a worker cannot tell which
-   verbs open a connection and the failure is total and silent; the CODE fix
-   targets the precise rule at =ensure_running=.
+   dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
+   the safe pattern; =env -u ORGASMIC_HOME= to strip a leaked value is fine.
+   TASK-48SFW carries the source chain.
 
-3. A PASSING GATE PROVES LESS THAN IT LOOKS, IN TWO SPECIFIC WAYS.
-   - =orgasmic verify=: a pass proves the red HAPPENS, not that it is the RIGHT
-     red. For a RE-CUT artifact, read the patch and confirm the pinned message is
-     the FIRST failing assertion.
-   - The daemon suite has NO TRUSTWORTHY FULL-RUN SIGNAL on this host. Under
-     load =syspolicyd= bursts (measured 586% CPU, load 11.41, suite 8-15x
-     slower); the 2026-08-02 run showed 14 failures that ALL passed alone in 8s
-     against the same binary. The cheap control is to re-run each failure alone
-     against the ALREADY-BUILT binary before believing any red:
-     =env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1=
-     TEST EXECUTION is the trigger, not compilation. This machine has hard-
-     rebooted twice from that chain, so DO NOT loop the full workspace suite.
-     TASK-STWVB owns the real fix and is the only task in =todo=.
+3. =scripts/run-tests.sh= IS CURRENTLY NOT TRUSTWORTHY, AND THAT IS AN OPEN
+   TASK, NOT A SURPRISE. Its host-state gate returns *exit 4 INCONCLUSIVE on a
+   calm host* for the default no-argument (whole-workspace) invocation — the
+   exact command =.orgasmic/project.org:23= prescribes. Cause is measured:
+   =SYSPOLICYD_CPU_DEGRADED=100.0= is an absolute bound on a quantity that grows
+   with run duration, and ambient accrual alone reaches it in ~22 minutes.
+   TASK-STWVB.1.1 owns the fix and is in flight. UNTIL IT LANDS, use plain scoped
+   =cargo test= for gates, not the wrapper.
 
-4. CODEX IS OUT OF CREDITS ON THIS WORKSPACE, AND ITS FAILURE MODE IMPERSONATES A
-   TRANSPORT FAULT. Three orphans on 2026-08-06 were root-caused to it: codex
-   blocks on an INTERACTIVE QUOTA PROMPT at 0% cpu, the 600s stall release kills
-   the pane, the tmux server loses its only session and exits, and =no server
-   running= then reads like a transport death. Found by CAPTURING THE PANE EARLY
-   instead of waiting out the stall clock — do that before blaming tmux. Until
-   the operator restores credits, codex is not a dispatchable harness here, which
-   is why this session's implementers ran =cursor-agent= and its reviewers ran
-   =claude=.
+4. A PASSING GATE PROVES LESS THAN IT LOOKS. =orgasmic verify=: a pass proves the
+   red HAPPENS, not that it is the RIGHT red — read the red log and confirm the
+   pinned message is the FIRST failure. Done four times this session; correct
+   four times, but it was worth checking each one. And the daemon suite still has
+   no trustworthy full-run signal on this host (that is what the STWVB chain is
+   FOR). Re-run any single failure alone against the ALREADY-BUILT binary before
+   believing a red. DO NOT loop the full workspace suite: test EXECUTION bursts
+   =syspolicyd= and this machine has hard-rebooted twice from that chain.
+
+5. EVERY =tmux/cursor-agent= DISPATCH PARKS ON TWO INTERACTIVE PROMPTS BEFORE IT
+   EXECUTES ANYTHING, and each one is a dead worker if unattended (0% CPU, no
+   pane output, killed by the 600s stall release, presents as a hung transport).
+   Clear workspace trust with =tmux send-keys <session> a= right after dispatch,
+   and the =orgasmic= allowlist with =send-keys BTab=. TASK-VD0VB is filed P1 and
+   unfixed; it fired on all four cursor-agent dispatches this block. CODEX
+   remains out of credits and is not dispatchable here.
 
 ALSO STILL TRUE, from the 08-05 measurements: SHARED =CARGO_TARGET_DIR= IS
-UNSOUND (two checkouts share one cargo fingerprint dir, so a worker's build
-reports =Fresh= without compiling and =CARGO_BIN_EXE_*= hands its integration
-tests ANOTHER CHECKOUT'S BINARY — a green suite that never ran your code), and
-STABLE WORKTREE SLOTS DO NOT FIX THE TCC PROMPTS (a grant for an ad-hoc-signed
-binary is pinned to its CDHASH and a rebuild at the SAME path changes it). Do not
-implement either. The surviving fix, TASK-M47E5, shipped.
+UNSOUND (a worker's build reports =Fresh= without compiling and =CARGO_BIN_EXE_*=
+hands its integration tests ANOTHER CHECKOUT'S BINARY), and STABLE WORKTREE SLOTS
+DO NOT FIX THE TCC PROMPTS (a grant is pinned to the binary's CDHASH and a
+rebuild at the same path changes it). Do not implement either.
 
 ** Done so far
-SESSION 2026-08-06 (second half), continuing the excision/log work of the first.
-TWO CHAINS DRIVEN TO DONE — five merges, five reviews, three of them REJECT — and
-the session's own tooling was fixed mid-flight after it ate the evidence.
+SESSION 2026-08-06 (third block). FIVE MERGES, FOUR REVIEWS, and the pattern of
+the session is that EVERY review earned its keep: three REJECT, one
+approve-with-follow-ups, and every finding held up when the manager re-verified
+it against the source before acting.
 
-THE TASK-G64ZH CHAIN — the daemon stdout mirror, three rounds.
-- =eaa88da= TASK-G64ZH bounded the unbounded reopen retry (1s->60s backoff,
-  =maybe_rotate= no longer runs while the handle is missing, one drop per dropped
-  line), answered the mirror question by construction in the three service
-  definitions orgasmic writes, and pinned both branches of the gate. REJECTED:
-  two BLOCK SHIP, both regressions it introduced.
-- =44e7e8d= TASK-G64ZH.1 kept the durable path when the boot open fails and moved
-  the suppression to =ORGASMIC_LOG_MIRROR=off= so a runtime rollback degrades
-  instead of crash-looping under =KeepAlive=. REJECTED AGAIN: the type change to
-  =Option<(PathBuf, Option<File>)>= dropped the invariant "=durable_path= is
-  =Some= implies a live handle", which =resolve_mirror= still depended on, so a
-  failed boot open silenced EVERY non-terminal launch — wider than the defect it
-  fixed.
-- =f74256b= TASK-G64ZH.1.1 stopped proxying. =MirrorState::StdoutWhenNoDurable=
-  records only the INTENT to suppress and the write path reads
-  =state.durable.is_none()= at write time. APPROVE WITH FOLLOW-UPS — the first
-  round in the chain with no new silence and no new double-write.
+THE TASK-QGWK7.1 ROUND — DONE, and the chain's actual goal is met.
+=955c8d6= stages the promoted record (=git add -- <dest>= in both promote paths,
+routed through one =promote_and_stage_dispatch_record=), bounds =stdout.log= to a
+64KB tail with the original byte count beside it in =stdout.log.bytes=, skips
+0-byte stdout entirely, streams the copy instead of buffering a whole artifact,
+fences the =--no-worktree-remove= promote with the cleanup lock and close guard,
+and makes =REPORT_PATH= project-relative on the finalize fallback. Reviewed
+APPROVE WITH FOLLOW-UPS: *a worker report is now durable BY CONSTRUCTION, not by
+habit* — the reviewer traced every close path and confirmed there is no third
+promote caller that skips staging, and established that staging is STRONGER than
+the prior state (a staged path survives =git checkout -- .= and is skipped by
+=git clean -fdx=). F-5 was deferred with a stated reason and the reasoning was
+checked and accepted: =worktree-prune= refuses by construction, so
+promote-on-reclaim would be unreachable code today.
 
-THE LESSON IS THE PATTERN, NOT THE INSTANCE. Four rounds answered one dynamic
-question with four construction-time proxies — inode equality (TASK-ZBYH3),
-=is_terminal()= (TASK-ZBYH3.1), an explicit flag (TASK-G64ZH), path presence
-(TASK-G64ZH.1) — and every one created a new way for the daemon to log nothing.
-Only asking the live handle at write time ended it, and it swept up the post-roll
-silence that predated the whole chain for free.
+THE TASK-STWVB CHAIN — THREE ROUNDS, and it is the cautionary tale of the session.
+- =b94f942= TASK-STWVB landed A (fixture consolidation onto a warmed inode), B
+  (host state in the verdict, new exit 4 INCONCLUSIVE) and C (load-sensitivity
+  interlock). REJECTED, four BLOCK SHIP.
+- =54dae49= TASK-STWVB.1 answered all four IN MECHANISM. REJECTED AGAIN, two
+  BLOCK SHIP.
+- TASK-STWVB.1.1 is the round in flight.
 
-THE TASK-QGWK7 CHAIN — found by the session's own pain, fixed the same day.
-=dispatch-close= deleted the worker's =last.txt=, the =*.reported= tx carries no
-body, and =.orgasmic/.gitignore= excludes =tmp/= (zero commits, ever) — so a
-closed dispatch had NO durable record of what a worker said. Discovered while
-filing follow-ups from a review that had already been deleted; two findings had to
-be filed from their TITLES. =da88c19= promotes the record into tracked
-=.orgasmic/dispatch-records/<started_tx>/=, keyed by GENERATION not task, with
-=:REPORT_PATH:= on the close and =*.reported= tx. Reviewed APPROVE WITH
-FOLLOW-UPS: no close path destroys a report any more.
+THE LESSON IS THE SHAPE, NOT THE INSTANCE. Every round fixed the MECHANISM it
+was handed and left THE NUMBER uncalibrated, so the same failure returned through
+whichever signal had not been examined yet. Round 1: the suite tripped its own
+LOAD threshold and INCONCLUSIVE preempted REAL, so exit 0 and exit 1 were both
+unreachable for =orgasmic-daemon= — demonstrated by the implementer's own gate,
+*exit 4 on 734 passed / 0 failed*. Round 2 fixed that for load and reopened it for
+SYSPOLICYD: an absolute 100s bound on a quantity that grows with run duration,
+with the cargo build INSIDE the sampled window. Manager-measured independently,
+clean 60s window on an idle host: *+4.42s, 0.0737 s/s, so 22.6 minutes to reach
+the threshold with NOTHING RUNNING* (reviewer measured 0.0753 s/s separately).
+Round 3's acceptance is therefore written as a DEMONSTRATION, not an assertion:
+=scripts/run-tests.sh= with no arguments must not return exit 4 on a calm host.
+
+PART A IS SETTLED — DO NOT RE-PROBE IT. The round-2 implementer ran the A-effect
+probe and read it as negative; the round-2 REVIEWER OVERTURNED that, and the
+argument is right: the probe measures syspolicyd CPU BURN while part A avoids
+serialized Gatekeeper QUEUE WAIT — the measured 196ms fresh vs 4ms linked is
+BLOCKING, not CPU — so an instrument blind to the effect returned exactly what it
+returned. Recorded as *mechanism-justified, effect size unmeasured*. Two rounds
+died on that question; a third would be waste.
 
 FILED FROM WHAT THE WORK UNCOVERED
-- TASK-QGWK7.1 (P1) — nine review findings. F-1: NOTHING STAGES the promoted dir,
-  so the change does not meet its own acceptance criterion. F-2, measured: 14.2
-  dispatch generations/day, so promoting =stdout.log= at the observed stdio mean
-  is 820MB-1.03GB/yr against a repo whose entire packed history is 8.71MiB — and
-  git history cannot be rotated.
-- TASK-0KP3T (P2) — the last surviving proxy: the mirror fallback keys on handle
-  PRESENCE, not write SUCCESS, so a failed =write_all= loses the line AND wedges
-  the sink for the process lifetime.
-- TASK-CGJM7 (P2) — the rotation rename-failure branch is still per-line: ~32
-  stderr writes per tracing line into the unrotated =daemon.err.log=.
-- TASK-VD0VB (P1) — =tmux/cursor-agent= parks on TWO interactive prompts before
-  first execution, each at 0% CPU, indistinguishable from a hung transport.
-- TASK-H7TJE, TASK-3RTM0 (P3) — throttle coverage, =spawn_detached='s stdout
-  target, and the drifted meaning of =dropped_log_writes=.
+- TASK-STWVB.1.1 (P1) — two block-ship, four follow-ups. In flight.
+- TASK-QGWK7.1.1 (P2) — eight follow-ups. M-1 is a real behaviour bug the
+  QGWK7.1 change introduced, manager-reproduced in source: a =git add= failure
+  sets =worktree_failed=true= even when the worktree WAS removed, so all three
+  =--branch-delete= arms fail their =!worktree_failed= guard and the branch is
+  SILENTLY retained with =branch_failed=false= and no error naming it. Trigger:
+  a concurrent state chore holding =.git/index.lock=.
 
-TWO MANAGER ERRORS, both recorded because they are habit problems not slips.
-TWO MERGE SHAS WERE TYPED FROM MEMORY AND NEITHER RESOLVED — =40f3ec1= (caught by
-=dispatch-close= refusing it) and =0e8ba1e= (caught by checking before a reviewer
-read it). Real values =f74256b= and =da88c19=. Both reached COMMITTED STATE first.
-Read the sha out of =git log --grep="Merge <branch>"= into a variable at merge
-time; never retype it into prose. Separately, a brief demanded a =verify/=
-artifact while the task's =WRITE_SCOPE= said =crates/**,shipped/**= — update the
-drawer or stop demanding out-of-scope artifacts.
+WHAT WENT RIGHT IN THE PROCESS, worth repeating. Every brief named SPECIFIC
+CLAIMS to attack and carried a do-not-re-derive list; every review answered them
+by number and came back with measurements. The manager verified every block-ship
+finding against the source BEFORE acting on it, and independently reproduced the
+one measurement the whole round-3 case rests on. And every =orgasmic verify= pass
+was checked by reading the red log to confirm the pinned message was the FIRST
+failure — which it was, all four times.
 
 ** Next likely actions
-ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START. There is no
-project default and nothing enforces resolution (=--model= > task drawer >
-harness default, and the harness default wins SILENTLY — TASK-A55J7). The
-2026-08-06 answers, which are NOT a standing setting: implementers =tmux /
-cursor-agent / cursor-grok-4.5-high-fast=, reviewers =tmux / claude /
-claude-opus-5 / high=. They changed from the 08-05 session precisely because
-codex ran out of credits mid-session (lead item 4). Pass =--model= explicitly and
-echo all four back after each dispatch.
+ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START. Still no
+project default and nothing enforces resolution. The 2026-08-06 answers, which
+are NOT a standing setting: implementers =tmux / cursor-agent /
+cursor-grok-4.5-high-fast= (effort omitted DELIBERATELY — the cursor model id
+carries the tier, and that choice was stated on each dispatch =--reason= rather
+than left as an unnoticed omission); reviewers =tmux / claude / claude-opus-5 /
+high=. Every one of those reviewers earned its cost.
 
-TRANSPORT: tmux. Both properties read against the INSTALLED daemon: pane liveness
-from TASK-4CSMY is confirmed reporting in production, so no =stall_timeout_secs=
-override is needed; and rmux fails the survival property (TASK-4DTBZ — it killed
-three workers in 24ms). Every dispatch across 08-05 and 08-06 ran on tmux with no
-transport trouble. Note the runtime now accepts =--mode stdio= as well, but the
-dispatch convention still requires a TUI pane so the operator can watch and
-intervene.
+TRANSPORT: tmux, unchanged. Six dispatches across this block, zero transport
+trouble. =[pid-gone]= is still printed for every tmux run always and is still not
+a death signal.
 
-SERIALIZE IMPLEMENTER DISPATCHES ON THIS HOST. Each worktree gets its OWN cargo
-target dir (shared ones are unsound — see the lead), so two concurrent
-implementers mean two workspace builds plus two =run-tests.sh= runs. Test
-EXECUTION is what bursts =syspolicyd=, and this machine has hard-rebooted twice
-from that chain. One implementer at a time is a deliberate throughput sacrifice,
-not an oversight.
+*CLEAR THE TWO CURSOR-AGENT PROMPTS BY HAND, WITHIN TEN MINUTES OF EVERY
+DISPATCH.* TASK-VD0VB is filed, P1, and UNFIXED, and it fired on every single
+=tmux/cursor-agent= dispatch this block: workspace trust (=send-keys a=), then
+the =orgasmic= allowlist (=send-keys BTab= for "Run Everything"). Each parks at
+0% CPU, emits nothing, and is killed by the 600s stall release — indistinguishable
+from a hung transport. The working recipe is a watcher that captures the pane
+every 20s and clears the allowlist prompt automatically; the trust prompt fires
+before the watcher is useful, so clear that one by hand right after dispatch.
+
+*THE WATCHER WILL BE KILLED, THE DISPATCH WILL NOT.* Harness-tracked background
+watchers died to session-level group-kills twice this block. Both times
+=dispatch-status= still showed =[run-live] [unreported]= and the worker was fine
+— it is daemon-owned. Just relaunch the watcher; do not read a dead watcher as a
+dead worker.
 
 THE ORDER FROM HERE
-1. TASK-G64ZH (P2) — THE NEXT ROUND, and the only unactioned review follow-up on
-   the board. Three findings on =crates/orgasmic-daemon/src/logging.rs=: bound the
-   reopen retry (backoff in =SinkState=, one stderr note per window, and SKIP
-   =maybe_rotate= entirely while =state.durable.is_none()= so one path owns the
-   retry); answer the mirror question BY CONSTRUCTION in the three service
-   definitions orgasmic writes itself (launchd =ProgramArguments=, systemd
-   =ExecStart=, the Windows wrapper) with =is_terminal()= demoted to the fallback
-   for supervisors orgasmic did not write; and pin BOTH branches of the gate,
-   since all four new tests drive the non-tty side only.
-2. TASK-STWVB (P2) — the suite's full-run signal, and the only task in =todo=.
-   Design is on the task; A and B/C are separable rounds. Every other estimate on
-   this board is degraded by not having it.
-3. TASK-RMA18 (P1) — the worktree-reclamation redesign, carrying all six BLOCK
-   SHIP findings from the two prune reviews. It starts from the gated-off code,
-   and =worktree-prune= stays refusing until it lands.
+1. TASK-STWVB.1.1 (P1) — IN FLIGHT. Round 3. Its acceptance is a DEMONSTRATION:
+   =scripts/run-tests.sh= with no arguments must not return exit 4 on a calm
+   host. Do not accept an assertion in its place; two rounds have already been
+   lost to numbers that were never measured against the invocation that matters.
+2. TASK-QGWK7.1.1 (P2) — eight follow-ups, M-1 first (the silent branch
+   retention). Small and fully specified.
+3. TASK-RMA18 (P1) — the worktree-reclamation redesign, six BLOCK SHIP from two
+   prune reviews. =worktree-prune= stays refusing until it lands, and TASK-QGWK7.1
+   deferred its F-5 onto this.
 4. TASK-A1KJW (P3) — the dispatch record dir is named from the BRIEF FILENAME,
-   never the task id (=dispatch_artifact_stem=). Fixing it would also make
-   cursor-acp's narrow own-artifacts grant expressible again (TASK-M47E5.1 had to
-   delete it).
+   not the task id. Now more visible: the tracked =dispatch-records/= directories
+   are keyed by =started_tx= (good), but the =tmp/= staging dir is still
+   brief-stem-named.
 5. TASK-3HR8R — a task parked in =in_review= with no reviewer dispatch is
-   invisible; cheap, and it closes a real hole in the manager's own status read.
-6. TASK-37WN7 (P3) — one acceptance item left: strengthen
-   =wait_until_serve_awaits_signals= or record why not. The flake itself is
-   registered in =verify/flake-registry.toml= with a captured signature.
+   invisible. Cheap, and it closes a hole in the manager's own status read.
+6. TASK-37WN7 (P3) — one acceptance item left.
 7. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
    TASK-ADHWZ, TASK-NTNK0, TASK-5M45A.
 
-THE RUNTIME REINSTALL IS NO LONGER A PENDING ITEM — it happened twice this
-session. The recipe and its four traps stay worth knowing for next time
-(=install.sh= silently skips the unpack if the version dir exists, its trailing
-=orgasmic status= auto-spawns a competing daemon — use
-=ORGASMIC_INSTALL_SKIP_STATUS=1= — and you MUST codesign or the binary loses its
-TCC grant). Always verify BEHAVIOURALLY: both builds call themselves
-=0.0.15-dev.1=.
+BUDGET DISCIPLINE THAT WORKED, keep it. Every brief carried an explicit execution
+budget (a named maximum number of full suite runs) and every worker respected it.
+Test EXECUTION is the syspolicyd trigger; this machine has hard-rebooted twice
+from that chain. Serializing implementer dispatches one at a time is a deliberate
+throughput sacrifice and it held all session.
 
 ** In flight
-NOTHING IS IN FLIGHT. =dispatch-status= shows no open dispatch, =in_progress= and
-=in_review= are EMPTY, =git worktree list= shows only the main checkout, and the
-tree is clean.
+ONE IMPLEMENTER IS LIVE: TASK-STWVB.1.1, =tx-20260806-orgasmic-5045=, run
+=run-20260806T204306-...=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1= on =task-stwvb.1.1-impl=. Round 3
+of the STWVB chain. Both interactive prompts were cleared. If you are picking
+this up cold: read =last.txt= in
+=.orgasmic/tmp/dispatch/task-stwvb-1-1-impl/= BEFORE closing, and check
+=dispatch-status= rather than any watcher.
 
-THE EVIDENCE PROBLEM IS FIXED IN CODE BUT NOT YET LIVE. =da88c19= merged, but
-=dispatch-close= runs from the INSTALLED CLI, so it still deletes worker reports
-until the runtime is rebuilt. UNTIL THEN: copy =last.txt= out of
-=.orgasmic/tmp/dispatch/<stem>/= BEFORE closing, and write a close =REASON=
-detailed enough to file tasks from, with =file:line= anchors.
+THE EVIDENCE PROBLEM IS NOW FIXED IN CODE AND STILL NOT LIVE. =955c8d6= makes
+=dispatch-close= promote AND STAGE the record automatically — but the INSTALLED
+CLI predates =da88c19= by about four hours (binary built 2026-08-06T11:39Z,
+=da88c19= committed 15:30Z), so close STILL DELETES =last.txt=. UNTIL THE RUNTIME
+IS REBUILT: copy =last.txt= out of =.orgasmic/tmp/dispatch/<stem>/= into
+=.orgasmic/dispatch-records/<started_tx>/last.txt= BY HAND BEFORE CLOSING. That
+was done for all six dispatch generations this session and every report is
+preserved.
 
-THIS REPO NOW HOLDS ITS FIRST TWO DURABLE WORKER REPORTS, placed by hand at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-4939/last.txt= (the QGWK7
-implementer) and =...-4946/last.txt= (its review, 24,695 bytes and worth reading
-— it carries measurements no summary preserves). That is exactly what the merged
-code will do automatically after the reinstall.
+SIX DURABLE WORKER REPORTS NOW LIVE IN THE REPO, all placed by hand:
+=tx-...-4939= and =-4946= (the QGWK7 pair, from the previous block), then
+=-4975= (STWVB implementer), =-4980= (its review, 28,018 bytes and the best
+single document produced this session), =-5000= (STWVB.1 implementer), =-5005=
+(its review, 19,959 bytes), =-5021= (QGWK7.1 implementer), =-5026= (its review,
+14,200 bytes). The reviews are worth reading before touching either chain; they
+carry measurements and per-site tables that no summary preserves.
+
+A REBUILD IS THE HIGHEST-LEVERAGE HOUSEKEEPING AVAILABLE. It would retire the
+hand-copy step, and it is also what makes =955c8d6='s staging real. Recipe and
+its four traps are unchanged (=install.sh= silently skips the unpack if the
+version dir exists; its trailing =orgasmic status= auto-spawns a competing daemon
+— use =ORGASMIC_INSTALL_SKIP_STATUS=1=; you MUST codesign or the binary loses its
+TCC grant). Always verify BEHAVIOURALLY: every build calls itself =0.0.15-dev.1=.
 
 ** Divergence / Risks
-THE RUNTIME IS CURRENT — this section's largest standing item for three sessions
-is CLOSED. Installed =0.0.15-dev.1= rebuilt 2026-08-06T11:39Z, verified by the
-three behavioural probes in lead item 1. The four changes that were inert (the
-YN5FJ review gate, the M47E5 worktree relocation, the =--verdict= flag, the
-4WKNX fix-round default) are all LIVE now. Stop applying the workarounds: no
-=--property VERDICT=ship= compat, no manual =done= -> =in_review= flip, no
-=--mode acp-stdio=.
+THE RUNTIME IS BEHIND THE REPO AGAIN — this section's standing item REOPENED on
+2026-08-06. The installed =0.0.15-dev.1= was rebuilt at 11:39Z, which is BEFORE
+=da88c19= (promote the worker report, 15:30Z) and =955c8d6= (stage it). So
+=dispatch-close= still deletes =last.txt= and the promotion/staging work is inert
+until the next rebuild — copy the report out by hand before every close (lead
+item 1). What the 11:39Z rebuild DID make live stays live and its workarounds
+stay retired: the YN5FJ review gate, the M47E5 worktree relocation, the
+=--verdict= flag, and the 4WKNX fix-round default. No =--property VERDICT=ship=
+compat, no manual =done= -> =in_review= flip, no =--mode acp-stdio=.
 
 CODEX IS OUT OF CREDITS AND FAILS LIKE A TRANSPORT (lead item 4). Until the
 operator restores them, do not dispatch codex — and do not read =no server
@@ -301,3 +308,39 @@ test engineers a host-independent credential refusal, so none spawns today, but
 the safety is per-test rather than structural. NEVER run
 =legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6); it
 spawns real billed provider turns.
+
+NEW THIS BLOCK, 2026-08-06 third block:
+
+THE TEST GATE ITSELF IS THE LARGEST OPEN RISK. =scripts/run-tests.sh= returns
+exit 4 on a calm host for its default invocation (lead item 3), and
+=.github/workflows/ci.yml:200-206= now DELIBERATELY fails the lane on exit 4 with
+a comment justifying it as "host state not attributable to this run" — a premise
+that is FALSE until TASK-STWVB.1.1 lands. NOT YET LIVE: nothing is pushed (main
+is ~740 commits ahead of =origin/main=), so no CI run has happened. Push would
+make it live. Revisit that comment when the fix lands.
+
+A GATE CAN FAIL BY RETURNING NO VERDICT, NOT ONLY BY BEING RED. The STWVB chain's
+recurring defect was never a false green — it was INCONCLUSIVE swallowing REAL,
+so exit 0 and exit 1 both became unreachable. A gate whose answer is always "no
+verdict" gets waved through exactly like one that is always red. When reviewing
+any gate change, ask what its answer is on the ORDINARY case, not just the
+failure cases.
+
+A SIGNAL THAT CANNOT FIRE READS AS A MEASUREMENT. Twice now in one chain: the
+syspolicyd sampler reported a measured =0.0= where it should have reported
+UNKNOWN (regex could never match a truncated =ps comm= field), and after that was
+fixed the host WORD still printed =calm= for an all-unknown judgment. Whenever a
+probe can be unavailable, check that unavailable and zero are DISTINGUISHABLE in
+the output — this is the same class as the four-round =logging.rs= proxy chain
+from the previous block.
+
+A TEST THAT COULD NOT HAVE FAILED BEFORE THE CHANGE PINS NOTHING. The QGWK7.1
+review found two of nine acceptance tests assert on a NEW helper in isolation and
+never enter the production call path — they cannot fail on the parent tree because
+the function did not exist there. When a brief demands "pinned by a test", check
+the test enters the production function, not just that it exists.
+
+A =git add= FAILURE CURRENTLY MIS-CLASSIFIES A CLOSE AND SILENTLY KEEPS THE
+BRANCH (TASK-QGWK7.1.1 M-1). Manager-reproduced in source. If a close reports
+=CLEANUP_STATUS=worktree_failed= but the worktree is gone and the report is
+present, this is why — and the branch was NOT deleted despite =--branch-delete=.
