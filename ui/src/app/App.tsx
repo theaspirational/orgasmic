@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.1
 import { Suspense, lazy } from 'react';
 import { RouterProvider } from '@tanstack/react-router';
 

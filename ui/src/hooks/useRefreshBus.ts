@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.3
 import { createContext, createElement, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
 type RefreshContextValue = {

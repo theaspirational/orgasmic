@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.2
 // Single seam for all UI ⇄ daemon traffic.
 // Rule: do not call fetch/WebSocket directly outside this module.
 

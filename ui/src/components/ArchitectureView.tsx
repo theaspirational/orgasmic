@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.7
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';

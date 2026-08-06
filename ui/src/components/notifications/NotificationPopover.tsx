@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.4
 import { ArrowRight, RotateCw, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';

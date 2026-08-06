@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.7
 import type { ReactNode } from 'react';
 import { Search } from 'lucide-react';
 

@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.1
 import { getQueryParam } from '../lib/routing';
 import type { ViewName } from '../lib/types';
 

@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.4
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { toast } from 'sonner';

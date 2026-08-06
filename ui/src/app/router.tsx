@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.1
 import { lazy, Suspense, useEffect } from 'react';
 import {
   createRootRoute,

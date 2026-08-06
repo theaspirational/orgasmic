@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.4
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {

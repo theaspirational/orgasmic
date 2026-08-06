@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.2
 export type BoardEntry = {
   id: string;
   path: string;

@@ -1,4 +1,3 @@
-// @arch arch_MK2Q2.2
 import {
   requestWithProfile,
   setActiveProfileForTransport,
