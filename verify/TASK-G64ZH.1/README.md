@@ -18,7 +18,9 @@ discarded the path with the handle; `resolve_mirror` handed back the caller's
 ## Injection
 
 `resolve_durable_open` collapses with `and_then` again — path discarded on
-failed open. The FIRST failing assertion is `durable_path.is_some()`.
+failed open (adapted to the `Result<File, _>` open return from TASK-G64ZH.1.1;
+the pinned assertion message is unchanged). The FIRST failing assertion is
+`durable_path.is_some()`.
 
 ## Why this pins the production path
 

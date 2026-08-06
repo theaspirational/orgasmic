@@ -1,0 +1,15 @@
+diff --git a/crates/orgasmic-daemon/src/logging.rs b/crates/orgasmic-daemon/src/logging.rs
+--- a/crates/orgasmic-daemon/src/logging.rs
++++ b/crates/orgasmic-daemon/src/logging.rs
+@@ -286,7 +286,10 @@
+             if durable_path.is_none() || stdout_is_terminal {
+                 MirrorState::Stdout
+             } else {
+-                MirrorState::StdoutWhenNoDurable
++                // INJECTED (TASK-G64ZH.1.1): restore the path-keyed gate —
++                // permanent silence whenever a durable path is intended and
++                // stdout is not a tty, even when the handle failed to open.
++                MirrorState::None
+             }
+         }
+         LogMirror::Writer(file) => {
