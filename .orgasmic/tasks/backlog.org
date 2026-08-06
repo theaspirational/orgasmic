@@ -3777,6 +3777,25 @@ different harnesses.
   capture in the dispatch convention.
 - =.orgasmic/gotchas.org= carries the two prompts and the manual clearing keys, so
   the fact stops living only in closed-task evidence.
+** Evidence
+*Third consecutive dispatch, and the manual clearing is racy* [2026-08-06]. Seen
+on all three cursor-agent dispatches this session (TASK-G64ZH, TASK-G64ZH.1,
+TASK-G64ZH.1.1), each into a fresh =~/.orgasmic/worktrees/<project-id>/<stem>=
+path, confirming the per-directory-trust reading: it can never warm up.
+
+The manual workaround is =tmux send-keys -t <session> a= for the trust prompt and
+then =BTab= ("Run Everything") for the allowlist prompt — but THE TWO PROMPTS ARE
+SEPARATED BY A VARIABLE DELAY, because the second only appears once the worker
+tries its first command, which is after it has read its own prompt bundle. A
+fixed =sleep= between the two sends is a race: on the third dispatch the
+allowlist prompt had not yet appeared when the conditional check ran, the =BTab=
+was never sent, and the worker sat parked until a monitor noticed. Poll for the
+prompt string instead of sleeping, or drive both from the same watcher that is
+already capturing the pane.
+
+*Scoped to cursor-agent, not to tmux.* The two claude reviewer dispatches this
+session, on the same transport into the same worktree root, started clean with no
+prompt at all.
 
 * BACKLOG TASK-CGJM7 the log rotation rename-failure branch is still per-line: ~32 stderr writes per tracing line into the unrotated daemon.err.log    :daemon:ops:
 :PROPERTIES:
