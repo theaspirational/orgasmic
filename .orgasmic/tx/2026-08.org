@@ -16575,3 +16575,304 @@
 :WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1
 :SHA:          4b5fc9b13d0003fb3a7412b4ab9e704a86418895
 :END:
+
+* TX 2026-08-06 Thu 19:56:13 task.edited TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5003
+:TIME:         [2026-08-06 Thu 19:56:13]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB.1
+:NODE_ID:      TASK-STWVB.1
+:END:
+
+* TX 2026-08-06 Thu 19:57:05 task.state_transitioned TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5004
+:TIME:         [2026-08-06 Thu 19:57:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-STWVB.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 19:57:06 manager.dispatch_started TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5005
+:TIME:         [2026-08-06 Thu 19:57:06]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1-review
+:BRANCH:       task-stwvb.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb-1-review/task-stwvb-1-review-brief.md
+:STARTED_AT:   [2026-08-06 Thu 19:57:06]
+:LIVENESS:     7ac4bb4e1545021d950a0d88078385d1b540451e
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260806-orgasmic-5000
+:REASON_INITIAL: Post-merge review of 54dae49, the fix round for four block-ship findings. Different harness family from the cursor-agent implementer. Crux is claim 1 (the calibration margin is ~0.5 load) and claim 2 (the F9 probe came back negative on part A).
+:END:
+
+* TX 2026-08-06 Thu 19:57:07 run.created TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5006
+:TIME:         [2026-08-06 Thu 19:57:07]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-STWVB.1-reviewer-20260806T195706.jsonl
+:REASON:       Post-merge review of 54dae49, the fix round for four block-ship findings. Different harness family from the cursor-agent implementer. Crux is claim 1 (the calibration margin is ~0.5 load) and claim 2 (the F9 probe came back negative on part A).
+:RUN_ID:       run-20260806T195706-7e13f6a424fc4d04ad19849695f7af7e
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb-1-review/task-stwvb-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-stwvb-1-review/task-stwvb-1-review-d10ed81f61174995b9fbcaa9127f4e18-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-stwvb-1-review/task-stwvb-1-review-d10ed81f61174995b9fbcaa9127f4e18-stdout.log
+:DISPATCH_ATTEMPT: d10ed81f61174995b9fbcaa9127f4e18
+:DISPATCH_TX:  tx-20260806-orgasmic-5005
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-06 Thu 20:07:39 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5007
+:TIME:         [2026-08-06 Thu 20:07:39]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       BLOCK SHIP HIGH correctness scripts/run-tests.sh:95 — SYSPOLICYD_CPU_DEGRADED=100.0 is a fixed threshold on a duration-proportional quantity, so the default workspace run is structurally INCONCLUSIVE on a calm host
+:severity:     HIGH
+:kind:         correctness
+:blocks_ship:  yes
+:file:         scripts/run-tests.sh:95,591-599
+:evidence:     implementer F9: daemon --lib subset, 51.4s wall, syspolicyd delta +49.33s on a calm host (BEFORE 4.13) = 49% of the threshold in under a minute; reviewer-measured ambient rate on this Mac 0.0753 s/s over 60s idle
+:failure:      cargo build is INSIDE the sampled window (HOST_BEFORE :591 -> cargo test :595 -> HOST_AFTER :598); default CARGO_ARGS is --workspace; CI Suite runs the whole workspace with a cold build under timeout-minutes 90 and ci.yml:200-206 now deliberately fails on exit 4
+:fix:          judge on a rate (syspolicyd CPU seconds per wall second of the window) or exclude the build from the window; recalibrate against measured 0.075 s/s ambient vs 0.35-0.96 s/s in-run
+:END:
+
+* TX 2026-08-06 Thu 20:07:54 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5008
+:TIME:         [2026-08-06 Thu 20:07:54]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       BLOCK SHIP HIGH correctness scripts/run-tests.sh:1002,1016 — a test binary that dies with no per-test failure list is reported 'suite looked green; that green is not trusted' at exit 4 on a degraded host
+:severity:     HIGH
+:kind:         correctness
+:blocks_ship:  yes
+:file:         scripts/run-tests.sh:1002-1013,1016-1019
+:evidence:     reproduced with a cargo stub on PATH emitting a SIGABRT tail and exit 101: calm host -> 'RED — cargo exited 101 with no per-test failure list' exit 1; same run with ORGASMIC_HOST_STATE_SAMPLE=load=11.41 -> 'INCONCLUSIVE ... (suite looked green; that green is not trusted)' exit 4
+:failure:      the SUITE_EXIT!=0 branch still sits after HOST_DEGRADED, and because FAIL_COUNT is 0 the INCONCLUSIVE text actively misdescribes a crashed binary as green; only BUILD_BROKE is caught earlier
+:fix:          move the SUITE_EXIT!=0 branch above HOST_DEGRADED (the same move F4 made for REAL_COUNT); at minimum make the INCONCLUSIVE text name the non-zero cargo exit instead of saying the suite looked green
+:END:
+
+* TX 2026-08-06 Thu 20:07:54 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5009
+:TIME:         [2026-08-06 Thu 20:07:54]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       MEDIUM correctness scripts/run-tests.sh:83-90 — the measured calm-host baseline justifies a during/after threshold but is applied to the BEFORE sample, a different quantity nobody measured; 8.0 sits inside this board's ambient load band
+:severity:     MEDIUM
+:kind:         correctness
+:blocks_ship:  no
+:file:         scripts/run-tests.sh:83-90,469-470
+:evidence:     only three BEFORE values exist (4.13, 8.94, 12.95); reviewer measured 7.20 with a single dispatch running and 4.01 two minutes later; the cited baseline (mid-run 7.35, post-run 7.87) is the suite's OWN contribution, which BEFORE excludes by construction
+:failure:      project.org:23 prescribes cargo build immediately before scripts/run-tests.sh, and the 1-minute load average carries that build into the BEFORE sample; on a normally-busy board GREEN vs INCONCLUSIVE is decided by ambient dispatch activity within one load unit
+:fix:          make load a corroborating signal rather than an independent trigger (host_is_degraded ORs the two at :469-470) and leave the normalized syspolicyd delta primary — it is the mechanism this task documented and has the better separation (~50 normal vs 281 thrash)
+:END:
+
+* TX 2026-08-06 Thu 20:08:10 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5010
+:TIME:         [2026-08-06 Thu 20:08:10]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       MEDIUM test scripts/run-tests-selftest.sh:107-112,377 — the live sampler/stamp/verdict path has no test, and the selftest hand-writes the stamp format instead of using the writer, so a writer-format change leaves all eight stamp-driven cases green
+:severity:     MEDIUM
+:kind:         test
+:blocks_ship:  no
+:file:         scripts/run-tests-selftest.sh:107-112,377-398
+:evidence:     the new 'live sampler path' case only calls --sample-host, a snapshot printer; host_judgment_from_snapshots, write_host_stamp and the live BEFORE/AFTER wiring are uncovered; reviewer verified the live path works today by stubbing cargo on PATH — sampler, stamp write and reclassify round-trip are all correct, but nothing pins them
+:failure:      rename a stamp field in write_host_stamp and the selftest stays 27/27 while --classify silently stops reading real logs and falls back to host unknown
+:fix:          one selftest case that runs the runner with a stubbed cargo on PATH, then reclassifies the log the same run wrote — covers live sampling, stamp write and round-trip in a second with no cargo
+:END:
+
+* TX 2026-08-06 Thu 20:08:13 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5011
+:TIME:         [2026-08-06 Thu 20:08:13]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       LOW correctness scripts/run-tests.sh:940-948 — a judgment sample whose signals are all unknown or unparseable prints 'host : calm', the same class of defect as F2's measured 0.0
+:severity:     LOW
+:kind:         correctness
+:blocks_ship:  no
+:file:         scripts/run-tests.sh:940-948,460-473
+:evidence:     reclassify with 'delta=load=? syspolicyd_cpu=?' -> 'host : calm', exit 0; with 'delta=load=abc syspolicyd_cpu=xyz' -> 'host : calm', exit 0; only the no-stamp path reaches 'unknown' (a truncated stamp with no delta= correctly fails safe)
+:fix:          derive the word from whether any signal parsed as a number, not from host_is_degraded returning false
+:END:
+
+* TX 2026-08-06 Thu 20:08:13 reviewer.finding TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5012
+:TIME:         [2026-08-06 Thu 20:08:13]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       LOW test scripts/run-tests-selftest.sh:386 — the --sample-host case asserts grep syspolicyd_cpu=0.0 against a snapshot that never emits a syspolicyd_cpu field, so the case's headline 'never a measured 0.0' is unchecked
+:severity:     LOW
+:kind:         test
+:blocks_ship:  no
+:file:         scripts/run-tests-selftest.sh:386
+:evidence:     sample_host_snapshot_live at :413-415 prints 'load=%s syspolicyd_time=%s'; there is no syspolicyd_cpu field in a snapshot, so that assertion can never fire
+:fix:          assert on syspolicyd_time= instead, or move the 0.0 assertion to the judgment sample where the field exists
+:END:
+
+* TX 2026-08-06 Thu 20:10:06 reviewer.reported TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5013
+:TIME:         [2026-08-06 Thu 20:10:06]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:RUN_ID:       run-20260806T195706-7e13f6a424fc4d04ad19849695f7af7e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1-review
+:END:
+
+* TX 2026-08-06 Thu 20:11:33 reviewer.done TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5014
+:TIME:         [2026-08-06 Thu 20:11:33]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       Two BLOCK SHIP. B1: SYSPOLICYD_CPU_DEGRADED=100.0 is a fixed threshold on a duration-proportional quantity — manager-verified that HOST_BEFORE/HOST_AFTER bracket the cargo build (run-tests.sh:591-598), so the build's own Gatekeeper scans are charged to the degradation score; at the measured in-run rate the default --workspace invocation trips exit 4 on a calm host, reopening F4 via the other signal. B2: a SIGABRTed test binary on a degraded host reports 'suite looked green' at exit 4 (SUITE_EXIT != 0 still sits after HOST_DEGRADED at :1016). Reviewer also OVERTURNED the implementer's read of the F9 probe: uninformative, not negative — the instrument measures syspolicyd CPU burn while part A avoids serialized Gatekeeper queue WAIT. Part A stays, question closed as mechanism-justified/effect-size-unmeasured.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260806-orgasmic-5005
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 20:11:33 task.state_transitioned TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5015
+:TIME:         [2026-08-06 Thu 20:11:33]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-06 Thu 20:11:35 implementer.done TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5016
+:TIME:         [2026-08-06 Thu 20:11:35]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:REASON:       Fix round merged at 54dae49; reviewed REJECT (tx-20260806-orgasmic-5005). Four parent block-ship findings answered in mechanism; two new block-ship on the numbers carry to TASK-STWVB.1.1.
+:MODEL:        cursor-grok-4.5-high-fast
+:MERGE_SHA:    54dae4977ba6b6f27bb9c64339bb8e6cc9e6f9c2
+:BRANCH:       task-stwvb.1-impl
+:CLOSED_TX:    tx-20260806-orgasmic-5000
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-08-06 Thu 20:11:35 task.state_transitioned TASK-STWVB.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5017
+:TIME:         [2026-08-06 Thu 20:11:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-STWVB.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-06 Thu 20:14:02 task.created TASK-STWVB.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5018
+:TIME:         [2026-08-06 Thu 20:14:02]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round 3: fix round for the TASK-STWVB.1 review (tx-20260806-orgasmic-5005). Two BLOCK SHIP — B1 reopens the suite-trips-its-own-gate failure via the syspolicyd signal; B2 misreports a SIGABRTed binary as green. Manager independently reproduced B1's ambient rate (0.0737 s/s, 22.6 min to threshold).
+:END:
+
+* TX 2026-08-06 Thu 20:14:03 task.property_updated TASK-STWVB.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260806-orgasmic-5019
+:TIME:         [2026-08-06 Thu 20:14:03]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-STWVB.1.1
+:FIX_SUBTASK:  t
+:END:
