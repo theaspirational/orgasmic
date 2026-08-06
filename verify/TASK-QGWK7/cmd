@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-QGWK7`.
+#
+# Pins the production claim: after dispatch-close removes the worktree, the
+# worker report is still readable from the path the close tx names. Under the
+# injection, promote becomes delete-only again and the first assertion fails.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic -- --exact manager::tests::dispatch_close_promotes_report_readable_from_path_tx_names

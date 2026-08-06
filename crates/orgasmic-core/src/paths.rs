@@ -87,6 +87,43 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
     project_tmp_dir(project_root).join("dispatch")
 }
 
+/// Durable, git-tracked home for a closed dispatch's worker report
+/// (TASK-QGWK7). Lives under `.orgasmic/` but outside gitignored `tmp/`, so a
+/// fresh clone can still read it. Keyed by the dispatch generation
+/// (`started_tx`), not the task — a chain of six dispatches across three tasks
+/// keeps six distinct records.
+pub fn project_dispatch_records_dir(project_root: &Path) -> PathBuf {
+    project_root.join(DOTORG).join("dispatch-records")
+}
+
+/// Directory for one dispatch generation's promoted record.
+pub fn dispatch_record_dir(project_root: &Path, started_tx: &str) -> Result<PathBuf, String> {
+    Ok(project_dispatch_records_dir(project_root).join(sanitize_started_tx(started_tx)?))
+}
+
+/// Repo-relative path recorded as `:REPORT_PATH:` on the close (and optionally
+/// `*.reported`) tx. Always names `last.txt` — the worker summary — not the
+/// harness `stdout.log` that sits beside it.
+pub fn dispatch_record_report_rel(started_tx: &str) -> Result<String, String> {
+    let started_tx = sanitize_started_tx(started_tx)?;
+    Ok(format!("{DOTORG}/dispatch-records/{started_tx}/last.txt"))
+}
+
+fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
+    let trimmed = started_tx.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+        || trimmed.contains('\0')
+    {
+        return Err(format!(
+            "invalid started_tx for dispatch record: {started_tx}"
+        ));
+    }
+    Ok(trimmed)
+}
+
 /// Validated dispatch attempt artifact pair for cleanup. Stores the opened
 /// stem directory handle, no-follow artifact file handles, and relative names
 /// so unlink targets the validated inode, not a replaced same-name entry
@@ -150,6 +187,10 @@ pub fn verify_dispatch_worktree_identity(
 
 /// After a dispatch worktree is removed, drop only the validated attempt's
 /// transient artifacts while retaining the brief and sibling attempts.
+///
+/// Prefer [`promote_validated_dispatch_attempt`] on the manager close path
+/// (TASK-QGWK7): a close must keep the report. This delete-only helper remains
+/// for failed-dispatch rollback, where there is no durable report to keep.
 // orgasmic:TASK-ZHRRH,TASK-AFE5Q,TASK-ZGT1X
 pub fn prune_dispatch_stem_after_worktree(
     project_root: &Path,
@@ -162,9 +203,46 @@ pub fn prune_dispatch_stem_after_worktree(
     prune_validated_dispatch_attempt(&artifacts)
 }
 
+/// Delete the validated tmp artifacts with no durable copy. Used by failed-
+/// dispatch rollback only — see [`promote_validated_dispatch_attempt`].
 pub fn prune_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
 ) -> Result<(), String> {
+    unlink_validated_attempt_pair(artifacts)
+}
+
+/// Move the validated attempt's `last.txt` and `stdout.log` out of gitignored
+/// `tmp/` into `.orgasmic/dispatch-records/<started_tx>/`, then unlink the tmp
+/// copies. Returns the repo-relative `:REPORT_PATH:` (always `last.txt`).
+///
+/// Both files are promoted: `last.txt` is the worker summary the tx names;
+/// `stdout.log` is the harness transcript that can falsify a curated close
+/// reason. Retention is forever (see manager-dispatch convention).
+// orgasmic:TASK-QGWK7
+pub fn promote_validated_dispatch_attempt(
+    artifacts: &DispatchAttemptArtifacts,
+    project_root: &Path,
+    started_tx: &str,
+) -> Result<String, String> {
+    let report_rel = dispatch_record_report_rel(started_tx)?;
+    let dest_dir = dispatch_record_dir(project_root, started_tx)?;
+    std::fs::create_dir_all(&dest_dir).map_err(|err| err.to_string())?;
+
+    #[cfg(unix)]
+    {
+        copy_validated_artifact_to(&dest_dir.join("last.txt"), &artifacts.last_file)?;
+        copy_validated_artifact_to(&dest_dir.join("stdout.log"), &artifacts.stdout_file)?;
+        unlink_validated_attempt_pair(artifacts)?;
+        Ok(report_rel)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (artifacts, project_root, report_rel, dest_dir);
+        Err("no-follow dispatch artifact promotion requires unix".into())
+    }
+}
+
+fn unlink_validated_attempt_pair(artifacts: &DispatchAttemptArtifacts) -> Result<(), String> {
     #[cfg(unix)]
     {
         unlink_validated_artifact(
@@ -177,12 +255,40 @@ pub fn prune_validated_dispatch_attempt(
             &artifacts.stdout_name,
             &artifacts.stdout_file,
         )?;
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         let _ = artifacts;
-        return Err("no-follow dispatch artifact deletion requires unix".into());
+        Err("no-follow dispatch artifact deletion requires unix".into())
     }
+}
+
+#[cfg(unix)]
+fn copy_validated_artifact_to(dest: &Path, source: &std::fs::File) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::FileExt;
+
+    let mut buf = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let mut chunk = [0u8; 64 * 1024];
+        let n = source
+            .read_at(&mut chunk, offset)
+            .map_err(|err| err.to_string())?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        offset += n as u64;
+    }
+    let tmp = dest.with_extension("promoting");
+    {
+        let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
+        out.write_all(&buf).map_err(|err| err.to_string())?;
+        out.sync_all().map_err(|err| err.to_string())?;
+    }
+    std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
     Ok(())
 }
 
@@ -528,6 +634,51 @@ mod tests {
         assert!(attempt_b_last.exists());
         assert!(attempt_b_stdout.exists());
         assert!(legacy_last.exists());
+    }
+
+    // orgasmic:TASK-QGWK7
+    #[test]
+    fn promote_dispatch_attempt_keeps_report_under_started_tx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "worker report survives close").unwrap();
+        std::fs::write(&stdout, "harness stdout").unwrap();
+
+        let artifacts =
+            validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+                .unwrap();
+        let started_tx = "tx-20260806-orgasmic-4916";
+        let report_path =
+            promote_validated_dispatch_attempt(&artifacts, &project_root, started_tx).unwrap();
+
+        assert_eq!(
+            report_path,
+            ".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/last.txt"
+        );
+        let promoted = project_root.join(&report_path);
+        assert!(
+            promoted.exists(),
+            "after close the report must still be readable from the path the tx names"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&promoted).unwrap(),
+            "worker report survives close"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                project_root
+                    .join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/stdout.log")
+            )
+            .unwrap(),
+            "harness stdout"
+        );
+        assert!(!last.exists(), "tmp last.txt must be moved, not copied");
+        assert!(!stdout.exists(), "tmp stdout.log must be moved, not copied");
     }
 
     #[test]

@@ -718,6 +718,9 @@ struct CleanupOutcome {
     status: CleanupStatus,
     error: Option<String>,
     salvage: Option<SalvageCommit>,
+    /// Repo-relative path of the promoted worker report (`last.txt`), when
+    /// close moved it out of gitignored `tmp/` (TASK-QGWK7).
+    report_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -733,6 +736,7 @@ struct WorktreeRemovalOutcome {
     removed: bool,
     salvage: Option<SalvageCommit>,
     error: Option<String>,
+    report_path: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -877,6 +881,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
                             plan.branch
                         ))),
                         salvage: None,
+                        report_path: None,
                     },
                 }
             } else {
@@ -1174,6 +1179,7 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             status: CleanupStatus::CleanupAlreadyRun,
             error: None,
             salvage: None,
+            report_path: None,
         }
     } else {
         cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
@@ -1895,6 +1901,16 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         // MERGE_SHA points at a commit that was never on main as such.
         extra.push(("SHA".to_string(), sha.to_string()));
     }
+    // orgasmic:TASK-QGWK7 — name where the report will live after close, keyed
+    // by the dispatch generation. Close promotes last.txt there; until then
+    // the streaming sink remains under tmp/.
+    if let Some(report_path) =
+        durable_report_path_for_finalize(home, project_id.as_deref(), &run.run_id)
+    {
+        extra.push(("REPORT_PATH".to_string(), report_path));
+    } else if let Some(last) = run.last_path.as_ref() {
+        extra.push(("REPORT_PATH".to_string(), last.display().to_string()));
+    }
 
     // Order matters (reviewer #2): the worker's terminal tx lands only after
     // the durable artifacts (commit above, last.txt) and the lease release have
@@ -2135,6 +2151,30 @@ fn resolve_finalize_project_id(git_root: &Path) -> Option<String> {
             .ok()
             .and_then(|root| read_project_id(&root).ok())
     })
+}
+
+/// Resolve the durable `:REPORT_PATH:` a finalize tx should name (TASK-QGWK7).
+/// Looks up the live project's tx log for this run's `DISPATCH_TX` (the
+/// generation / `started_tx`), then returns the tracked path close will
+/// promote `last.txt` into. Returns `None` when the live project or the
+/// pairing cannot be resolved — finalize then falls back to the tmp last_path.
+fn durable_report_path_for_finalize(
+    home: &Home,
+    project_id: Option<&str>,
+    run_id: &str,
+) -> Option<String> {
+    let project_id = project_id?;
+    let board = projects::read_board(home).ok()?;
+    let project_root = board
+        .into_iter()
+        .find(|entry| entry.id == project_id)
+        .map(|entry| entry.path)?;
+    let started_tx = scan_dispatches(&project_root)
+        .ok()?
+        .into_iter()
+        .find(|record| record.run_ids.iter().any(|id| id == run_id))
+        .map(|record| record.tx_id)?;
+    orgasmic_core::dispatch_record_report_rel(&started_tx).ok()
 }
 
 fn finalize_commit_message(task: &str, status: FinalizeStatus, summary: &str) -> String {
@@ -3420,6 +3460,7 @@ fn reclaim_managed_worktree(
         removed: false,
         salvage: None,
         error: Some(error),
+        report_path: None,
     };
 
     if let WorktreeDisposition::RepoGone { .. } = worktree.disposition {
@@ -3449,6 +3490,7 @@ fn reclaim_managed_worktree(
                 removed: true,
                 salvage: None,
                 error: None,
+                report_path: None,
             },
             Err(err) => kept(err.to_string()),
         };
@@ -3472,6 +3514,7 @@ fn reclaim_managed_worktree(
                             removed: false,
                             salvage: None,
                             error: Some(format!("salvage failed, worktree kept: {err}")),
+                            report_path: None,
                         };
                     }
                 }
@@ -3485,6 +3528,7 @@ fn reclaim_managed_worktree(
                          cannot be salvaged; kept"
                             .to_string(),
                     ),
+                    report_path: None,
                 };
             }
         },
@@ -3493,6 +3537,7 @@ fn reclaim_managed_worktree(
                 removed: false,
                 salvage: None,
                 error: Some(format!("could not read worktree status: {err}")),
+                report_path: None,
             };
         }
     };
@@ -3511,6 +3556,7 @@ fn reclaim_managed_worktree(
                 removed: false,
                 salvage,
                 error: Some(format!("git worktree remove: {err}")),
+                report_path: None,
             };
         }
     };
@@ -3523,6 +3569,7 @@ fn reclaim_managed_worktree(
                 String::from_utf8_lossy(&output.stderr).trim(),
                 String::from_utf8_lossy(&output.stdout).trim()
             )),
+            report_path: None,
         };
     }
     if let Some(salvage) = &mut salvage {
@@ -3532,6 +3579,7 @@ fn reclaim_managed_worktree(
         removed: true,
         salvage,
         error: None,
+        report_path: None,
     }
 }
 
@@ -3739,6 +3787,7 @@ fn worktree_prune_ungated(home: &Home, args: WorktreePruneArgs) -> Result<()> {
                 removed: false,
                 salvage: None,
                 error: Some("the managed worktree root was not anchored".to_string()),
+                report_path: None,
             },
         };
         finish_worktree_guard(&runtime, &client, &project_id, &task_property, &mut guard);
@@ -4769,6 +4818,12 @@ fn close_done_request(
     manager_extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
     push_lifecycle_extra(&mut manager_extra, transition);
     push_cleanup_extra(&mut manager_extra, cleanup);
+    // A manager-supplied `--property REPORT_PATH=` (historical reviewer.done
+    // curated report) wins over the auto-promoted last.txt path. The promoted
+    // file still exists on disk either way.
+    if args.properties.iter().any(|(key, _)| key == "REPORT_PATH") {
+        manager_extra.retain(|(key, _)| key != "REPORT_PATH");
+    }
     if let Some(goal_id) = optional_value(open.goal_id.as_deref()) {
         manager_extra.push(("GOAL_ID".to_string(), goal_id));
     }
@@ -4982,6 +5037,7 @@ fn acquire_dispatch_cleanup_lock(project_root: &Path) -> Result<DispatchCleanupL
     Ok(DispatchCleanupLock(file))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn remove_worktree_if_present(
     project_root: &Path,
     path: &Path,
@@ -4990,12 +5046,14 @@ fn remove_worktree_if_present(
     task: &str,
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
+    started_tx: Option<&str>,
 ) -> Result<WorktreeRemovalOutcome> {
     if !path.exists() {
         return Ok(WorktreeRemovalOutcome {
             removed: false,
             salvage: None,
             error: None,
+            report_path: None,
         });
     }
     remove_worktree_required(
@@ -5006,9 +5064,11 @@ fn remove_worktree_if_present(
         task,
         branch,
         expected_branch_oid,
+        started_tx,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn remove_worktree_required(
     project_root: &Path,
     path: &Path,
@@ -5017,6 +5077,7 @@ fn remove_worktree_required(
     task: &str,
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
+    started_tx: Option<&str>,
 ) -> Result<WorktreeRemovalOutcome> {
     remove_worktree_required_with_hook(
         project_root,
@@ -5026,6 +5087,7 @@ fn remove_worktree_required(
         task,
         branch,
         expected_branch_oid,
+        started_tx,
         |_| {},
     )
 }
@@ -5039,6 +5101,7 @@ fn remove_worktree_required_with_hook(
     task: &str,
     branch: Option<&str>,
     expected_branch_oid: Option<&str>,
+    started_tx: Option<&str>,
     before_remove: impl FnOnce(&Path),
 ) -> Result<WorktreeRemovalOutcome> {
     let _cleanup_lock = acquire_dispatch_cleanup_lock(project_root)?;
@@ -5080,6 +5143,7 @@ fn remove_worktree_required_with_hook(
                 removed: false,
                 salvage,
                 error: Some(format!("git worktree remove {}: {err}", path.display())),
+                report_path: None,
             });
         }
     };
@@ -5092,18 +5156,44 @@ fn remove_worktree_required_with_hook(
                 String::from_utf8_lossy(&output.stderr),
                 String::from_utf8_lossy(&output.stdout)
             )),
+            report_path: None,
         });
     }
     if let Some(salvage) = &mut salvage {
         salvage.worktree_removed = true;
     }
-    let error = orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
-        .err()
-        .map(|err| format!("prune dispatch artifacts for {}: {err}", path.display()));
+    // orgasmic:TASK-QGWK7 — promote the report into a tracked path keyed by
+    // the dispatch generation, rather than deleting it with the tmp artifacts.
+    // Failed-dispatch rollback passes `started_tx: None` and still deletes.
+    let (report_path, error) = match started_tx {
+        Some(started_tx) => {
+            match orgasmic_core::promote_validated_dispatch_attempt(
+                &artifacts,
+                project_root,
+                started_tx,
+            ) {
+                Ok(path) => (Some(path), None),
+                Err(err) => (
+                    None,
+                    Some(format!(
+                        "promote dispatch report for {}: {err}",
+                        path.display()
+                    )),
+                ),
+            }
+        }
+        None => (
+            None,
+            orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
+                .err()
+                .map(|err| format!("prune dispatch artifacts for {}: {err}", path.display())),
+        ),
+    };
     Ok(WorktreeRemovalOutcome {
         removed: true,
         salvage,
         error,
+        report_path,
     })
 }
 
@@ -5144,6 +5234,7 @@ fn daemon_cleanup_to_outcome(
             Some(sanitize_tx_value(&errors.join("; ")))
         },
         salvage: None,
+        report_path: None,
     })
 }
 
@@ -5165,12 +5256,15 @@ fn cleanup_created_resources(
                 status: CleanupStatus::BranchFailed,
                 error: Some(sanitize_tx_value(&format!("branch validation: {err}"))),
                 salvage: None,
+                report_path: None,
             };
         }
     };
 
     let mut salvage = None;
     let mut worktree_removed = false;
+    // Failed-dispatch rollback: delete tmp artifacts, do not promote
+    // (TASK-QGWK7 promotion is for manager close of a finished worker).
     match remove_worktree_if_present(
         project_root,
         path,
@@ -5179,6 +5273,7 @@ fn cleanup_created_resources(
         task,
         Some(branch),
         expected_branch_oid.as_deref(),
+        None,
     ) {
         Ok(outcome) => {
             worktree_removed = outcome.removed;
@@ -5219,6 +5314,7 @@ fn cleanup_created_resources(
             Some(sanitize_tx_value(&errors.join("; ")))
         },
         salvage,
+        report_path: None,
     }
 }
 
@@ -5245,6 +5341,7 @@ fn cleanup_dispatch(
     let mut worktree_removed = false;
     let mut errors = Vec::new();
     let mut salvage = None;
+    let mut report_path = None;
     let expected_branch_oid = if branch_delete {
         match &open.branch {
             Some(branch) => match resolve_branch_oid(project_root, branch) {
@@ -5254,6 +5351,7 @@ fn cleanup_dispatch(
                         status: CleanupStatus::BranchFailed,
                         error: Some(sanitize_tx_value(&format!("branch validation: {err}"))),
                         salvage: None,
+                        report_path: None,
                     };
                 }
             },
@@ -5262,6 +5360,7 @@ fn cleanup_dispatch(
                     status: CleanupStatus::BranchFailed,
                     error: Some("branch: open dispatch has no BRANCH property".to_string()),
                     salvage: None,
+                    report_path: None,
                 };
             }
         }
@@ -5280,10 +5379,12 @@ fn cleanup_dispatch(
                     &task_list_property(&open.tasks),
                     open.branch.as_deref(),
                     expected_branch_oid.as_deref(),
+                    Some(open.tx_id.as_str()),
                 ) {
                     Ok(outcome) => {
                         worktree_removed = outcome.removed;
                         salvage = outcome.salvage;
+                        report_path = outcome.report_path;
                         if let Some(err) = outcome.error {
                             worktree_failed = true;
                             errors.push(format!("worktree: {err}"));
@@ -5299,6 +5400,18 @@ fn cleanup_dispatch(
                 worktree_missing = true;
                 errors.push("worktree: open dispatch has no WORKTREE property".to_string());
             }
+        }
+    } else if let (Some(last), Some(stdout), Some(worktree)) = (
+        last_path.as_deref(),
+        stdout_path.as_deref(),
+        open.worktree.as_deref(),
+    ) {
+        // orgasmic:TASK-QGWK7 — even with `--no-worktree-remove`, promote the
+        // report out of gitignored tmp so a later close-no-op cannot lose it.
+        match promote_dispatch_artifacts_in_place(project_root, worktree, last, stdout, &open.tx_id)
+        {
+            Ok(path) => report_path = Some(path),
+            Err(err) => errors.push(format!("report: {err}")),
         }
     }
 
@@ -5326,7 +5439,8 @@ fn cleanup_dispatch(
     }
 
     let status = match (worktree_missing, worktree_failed, branch_failed) {
-        (false, false, false) => CleanupStatus::Ok,
+        (false, false, false) if errors.is_empty() => CleanupStatus::Ok,
+        (false, false, false) => CleanupStatus::Partial,
         (true, false, false) => CleanupStatus::WorktreeMissing,
         (false, true, false) => CleanupStatus::WorktreeFailed,
         (false, false, true) => CleanupStatus::BranchFailed,
@@ -5340,7 +5454,28 @@ fn cleanup_dispatch(
             Some(sanitize_tx_value(&errors.join("; ")))
         },
         salvage,
+        report_path,
     }
+}
+
+/// Promote tmp dispatch artifacts without removing the worktree.
+fn promote_dispatch_artifacts_in_place(
+    project_root: &Path,
+    worktree: &Path,
+    last_path: &Path,
+    stdout_path: &Path,
+    started_tx: &str,
+) -> Result<String, String> {
+    if !last_path.exists() {
+        return Err(format!("last_path missing: {}", last_path.display()));
+    }
+    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
+        project_root,
+        worktree,
+        Some(last_path),
+        Some(stdout_path),
+    )?;
+    orgasmic_core::promote_validated_dispatch_attempt(&artifacts, project_root, started_tx)
 }
 
 fn push_cleanup_extra(extra: &mut Vec<(String, String)>, cleanup: &CleanupOutcome) {
@@ -5350,6 +5485,11 @@ fn push_cleanup_extra(extra: &mut Vec<(String, String)>, cleanup: &CleanupOutcom
     ));
     if let Some(error) = optional_value(cleanup.error.as_deref()) {
         extra.push(("CLEANUP_ERROR".to_string(), error));
+    }
+    if let Some(report_path) = optional_value(cleanup.report_path.as_deref()) {
+        // orgasmic:TASK-QGWK7 — close tx names the durable report so a
+        // body-less completion entry is resolvable after tmp/ is gone.
+        extra.push(("REPORT_PATH".to_string(), report_path));
     }
     if let Some(salvage) = &cleanup.salvage {
         extra.push(("SALVAGE_SHA".to_string(), salvage.sha.clone()));
@@ -8707,6 +8847,7 @@ mod tests {
 
     fn dispatch_cleanup_record(fixture: &DispatchCleanupFixture, task: &str) -> DispatchRecord {
         let mut open = architector_record();
+        open.tx_id = format!("tx-start-{}", task.to_lowercase());
         open.tasks = vec![task.to_string()];
         open.kind = "implementer".to_string();
         open.worktree = Some(fixture.worktree.clone());
@@ -8818,6 +8959,24 @@ mod tests {
             resolve_branch_oid(&fixture.root, &fixture.branch).unwrap(),
             before
         );
+        // orgasmic:TASK-QGWK7 — the report survives close at the path the tx names.
+        let report_path = cleanup
+            .report_path
+            .as_deref()
+            .expect("close must name a promoted REPORT_PATH");
+        assert_eq!(
+            report_path,
+            ".orgasmic/dispatch-records/tx-start-task-clean/last.txt"
+        );
+        assert!(
+            fixture.root.join(report_path).exists(),
+            "after close the report must still be readable from the path the tx names"
+        );
+        assert!(!fixture.last.exists(), "tmp last.txt must be promoted away");
+        assert!(
+            !fixture.stdout.exists(),
+            "tmp stdout.log must be promoted away"
+        );
 
         let close = close_aborted_request(
             "orgasmic",
@@ -8831,6 +8990,42 @@ mod tests {
             .extra
             .iter()
             .any(|(key, _)| key.starts_with("SALVAGE_")));
+        assert_eq!(
+            close
+                .extra
+                .iter()
+                .find(|(key, _)| key == "REPORT_PATH")
+                .map(|(_, value)| value.as_str()),
+            Some(report_path)
+        );
+    }
+
+    // orgasmic:TASK-QGWK7
+    #[test]
+    fn dispatch_close_promotes_report_readable_from_path_tx_names() {
+        let fixture = dispatch_cleanup_fixture("task-qgwk7");
+        std::fs::write(&fixture.last, "worker report survives close\n").unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-QGWK7");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, true);
+        assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
+        let report_path = cleanup
+            .report_path
+            .as_deref()
+            .expect("close must name a promoted REPORT_PATH");
+        assert!(
+            fixture.root.join(report_path).exists(),
+            "after close the report must still be readable from the path the tx names"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.root.join(report_path)).unwrap(),
+            "worker report survives close\n"
+        );
+        assert!(!fixture.last.exists());
+        assert!(!fixture.worktree.exists());
+        assert!(resolve_branch_oid(&fixture.root, &fixture.branch)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -8943,6 +9138,7 @@ mod tests {
             "TASK-SALVAGE-LATE-WRITER",
             Some(&fixture.branch),
             Some(&expected_oid),
+            Some("tx-start-salvage-late-writer"),
             |path| std::fs::write(path.join("late-writer.txt"), "late\n").unwrap(),
         )
         .unwrap();

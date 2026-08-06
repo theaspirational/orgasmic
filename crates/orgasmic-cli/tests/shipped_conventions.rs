@@ -381,3 +381,22 @@ fn manager_convention_documents_generation_bound_close() {
         "the prose must say a tokenless close of a live dispatch is refused"
     );
 }
+
+/// TASK-QGWK7: after close the report must be findable; the Integrate step
+/// used to point only at a tmp/ path that close then deleted.
+#[test]
+fn manager_convention_names_post_close_report_path() {
+    let text = manager_dispatch_convention();
+    assert!(
+        text.contains(".orgasmic/dispatch-records/<started_tx>/last.txt"),
+        "step 4 must name where a closed dispatch's report lives"
+    );
+    assert!(
+        text.contains("Retention: keep forever"),
+        "the retention policy must be stated, not a silent delete"
+    );
+    assert!(
+        text.contains(":REPORT_PATH:"),
+        "the prose must say the close tx names the promoted path"
+    );
+}
