@@ -3090,6 +3090,12 @@ E. SHIPPED DOCTRINE REWRITE (~-200 LOC, ~20 files, 1 round)
 - =cli_parity= passes — it resolves every =orgasmic ...= invocation and named
   flag in =shipped/= against the real binary, so it is what catches a doctrine
   rewrite that names a verb the excision just deleted.
+** Stage C inventory addition — ui/src/lib/api.ts postStage
+Found by the TASK-RQ270.1.1 review, recorded here so stage C cannot miss it.
+
+=ui/src/lib/api.ts:370= — =postStage(stage: 'grill' | 'architect' | 'plan', ...)= still ACCEPTS ='architect'= and constructs a live =POST /architect= request. It has *no callsite* in =ui/src= and the daemon rejects the stage via =stage_spec_for=, so it cannot launch a producer — but it is an inert client WRITE surface, not read-only historical recognition, and the stage-A doctrine round classified it wrongly on that point.
+
+The parent stage C description says "api/types" among its 14 UI files, which is too vague to guarantee this line gets removed. Naming it explicitly: *stage C must drop ='architect'= from =postStage='s union.*
 
 * BACKLOG TASK-37WN7 serve announces readiness before it installs the SIGTERM handler, so the announcement is not a precondition for signal delivery    :test:cli:
 :PROPERTIES:
