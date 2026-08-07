@@ -20483,3 +20483,16 @@
 :SHA:          b6f94454134e1377954dc245ff9a7d9e98322c0f
 :REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5232/last.txt
 :END:
+
+* TX 2026-08-07 Fri 13:31:47 task.created TASK-8Q92K
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5237
+:TIME:         [2026-08-07 Fri 13:31:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8Q92K
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Found by accident: a worker flagged one stale chain-root artifact, and a git apply --check sweep found sixteen more. verify/README.md says a stale artifact is a failure, not a skip, so ~19% of the repo's regression proofs are failing silently. The systemic half is that no channel reports it — unlike the flake registry, which has a lifecycle guard and caught an orphaned owner within the hour.
+:END:
