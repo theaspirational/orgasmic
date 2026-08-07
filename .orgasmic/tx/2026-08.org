@@ -21014,3 +21014,46 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-07 Fri 14:37:46 task.created TASK-QNE3R
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5268
+:TIME:         [2026-08-07 Fri 14:37:46]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QNE3R
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Reviewer F-2 from the QGWK7 chain's final round, ACCEPT with no BLOCK SHIP. The new bidirectional pin compares field 3 only, so a typo'd marker file or a wrong refusal name both PASS — demonstrated. Four of seven operations have no behavioural coverage. This is the guard the reviewer said would actually pay, because it closes the chain's generating cause rather than another instance.
+:END:
+
+* TX 2026-08-07 Fri 14:38:04 task.state_transitioned TASK-QGWK7.1.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5269
+:TIME:         [2026-08-07 Fri 14:38:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged 11620d6, gates re-run by the manager, reviewed ACCEPT with no BLOCK SHIP. The guard is restored with a two-branch message, and SEQUENCER_MARKERS plus the bidirectional pin close round 5's defect class — the reviewer could not make the pin false-pass in five mutation attempts, and every miss is a loud panic. The four findings were taken DIRECT by the manager (F-1/F-3/F-4) or filed as TASK-QNE3R (F-2), on the reviewer's explicit recommendation: twice running, a round convened to remove a false claim introduced a new one.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-07 Fri 14:38:04 task.state_transitioned TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5270
+:TIME:         [2026-08-07 Fri 14:38:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Its BLOCK SHIP (the sequencer entry the manager wrongly ordered dropped) is discharged: fix round TASK-QGWK7.1.1.1.1.1.1 landed at 11620d6 and passed a fresh review with no blocking finding. THE QGWK7 CHAIN IS CLOSED at seven nodes — a worker report is committed into git history by the close itself, recoverably, on the branch the close resolved, never inside an operation that owns HEAD, and the convention that documents all of it can no longer drift from the code without failing a test.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
