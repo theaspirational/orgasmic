@@ -4253,3 +4253,119 @@ state, not chasing three independent bugs.
 - If a mode proves unreproducible on current HEAD, say so with the measurement
   and delete it on that evidence — a registry that only grows is a graveyard.
 
+* BACKLOG TASK-STWVB.1.1.1.1.1.1 follow-up: cross-check the failing-target count so a cargo reword cannot fail green    :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB.1.1.1.1.1.1
+:PRIORITY: P2
+:WRITE_SCOPE: scripts/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Follow-ups from the TASK-STWVB.1.1.1.1.1 review (merged =6402f2d=, verdict
+*approve-with-follow-ups*, NO BLOCK SHIP). *THE STWVB CHAIN IS CLOSED AND TOTAL —
+this task does not reopen it.*
+
+The reviewer ran a 72-cell =--classify= sweep (exit {0,101,137,unstamped} x
+failures {none,flake,real} x crash {none,SIGABRT} x host {calm,degraded,unstamped})
+plus a live-path run at exit 139, and established that *the verdict ladder is an
+if/elif/else chain, so no cell is unowned or double-owned by construction*, and
+every cell's owner is the right one except the two below — both of which require
+a log real cargo cannot emit.
+
+*DO NOT RE-DERIVE:* the ladder's completeness, the =claimed subset-of reported=
+cardinality floor (crashes = N - |claimed| >= N - A, exact not approximate), the
+doctest special-case removal (verified against a REAL cargo 1.94.1 log with lib
+red + abort bin + failing doctest), arm 6's provable unreachability, arm 7 being
+live defensive depth, and =project.org:23= being true clause by clause. Row 7's
+INCONCLUSIVE->RED is SETTLED AS CORRECT — do not move it.
+=== END STATUS ===
+
+** F-6 — LOW — the one parser dependency whose breakage fails GREEN
+=scripts/run-tests.sh:850,855=. *This is the item worth taking; the other two are
+optional.*
+
+The crash detector rests on four cargo string shapes. THREE FAIL LOUDLY: if
+=^[ \t]+Running …(bin)= or =^[ \t]+Doc-tests = breaks, every target's matchbin
+becomes =?=, nothing can claim, and every failing target becomes a crash — a
+false RED. If =Caused by:= / =process didn't exit successfully= breaks it costs a
+display line only, which is exactly what unioning by identity bought.
+
+ONE FAILS SILENTLY, GREEN-WARD: =^error: [a-z]+ failed, to rerun pass `= at
+=:855=. If a future cargo rewords it, =TARGETS_TSV= is empty, =CRASH_COUNT= is 0,
+the =CRASHED= section vanishes, and the only surviving witness is exit 101 —
+which arm 7's =FAIL_COUNT= guard swallows the moment one registered flake fires.
+*That is R-1's exact shape, re-armed by a cargo upgrade rather than by an edit.*
+
+MEASURED (reviewer, cargo 1.94.1): cargo emits an INDEPENDENT second count of
+failing targets, for N=1 as well as N>1:
+#+begin_example
+error: test failed, to rerun pass `--lib`
+error: 1 target failed:
+    `--lib`
+#+end_example
+
+*Fix:* cross-check. =grep -E '^error: [0-9]+ targets? failed:'= yields a target
+count parsed from a DIFFERENT sentence; if it disagrees with =TARGETS_FAILED=,
+the parser has drifted — RED with its own line. One grep, and it converts the
+single green-ward dependency into a loud one. The summary block is emitted under
+=--no-fail-fast=, which =run-tests.sh= always passes.
+
+** F-7 — LOW — PRE-EXISTING, latent — a cargo-shaped line inside a test's own stdout invents a target
+=scripts/run-tests.sh:855=. The crash awk has no notion of the =---- name ----=
+capture region that the failure parser at =:733= maintains, so a column-0
+=error: <kind> failed, to rerun pass `…`= INSIDE a test's captured stdout is read
+as a real failing target by one awk and as detail text by the other.
+
+REVIEWER REPRODUCTION (probe P4): one registered flake whose captured panic block
+contains =error: test failed, to rerun pass `--bin phantom`= and nothing else
+changed -> the phantom claims the reporting binary, so *the target that DID
+report its failures is printed as crashed*, and =--bin phantom= appears nowhere.
+
+CLASSIFICATION: pre-existing — round 5's =grep -c= counted the same phantom and
+produced the same false RED. NOT LIVE HERE: =grep -rn "to rerun pass" crates
+--include="*.rs"= and the same for =Running unittests= return nothing. Direction
+is RED, so it cannot mint a green. The one reachability route in this repo is a
+test that captures a nested cargo's or an agent's stdout.
+
+*Fix:* give the crash awk the same =capturing= flag the sibling parser already
+has — set on =^---- .* ----$=, cleared on =^failures:$= / =^test result:= /
+=Running= / =Doc-tests= — and ignore =error:= lines while it is set.
+
+** F-8 — LOW — PRE-EXISTING, unreachable from cargo — exit 0 with listed failures returns GREEN modulo N
+=scripts/run-tests.sh:1391=. Reachable in the MODEL (sweep row =exit 0 / flake /
+no crash / calm= -> =GREEN modulo 1=, exit 0) but *not from cargo*: libtest
+prints a =failures:= block only on a run it fails, and cargo exits 101 if any
+target fails — the reviewer re-measured both halves on 1.94.1. The only routes
+are a hand-assembled or CONCATENATED =--classify= log (=read_suite_exit_stamp=
+takes =tail -n1=, so appending a green log's stamp to a red log's body produces
+exactly this).
+
+The reviewer explicitly said it would NOT spend a round on this. *Take it only if
+something else opens this file.* Fix is one =elif= above arm 9:
+=FAIL_COUNT > 0 && SUITE_EXIT == 0= -> RED, "cargo exited 0 but the log lists
+failures; this log is not internally consistent."
+
+** F-9 — LOW — a note printed as fact can be false under a mis-join
+The crash section's =note : … this target reported NO failures= is printed as a
+statement of fact about the named target, and under a mis-join (reviewer probe
+P1) it is false — the same falsehood F-2 was filed for last round. The mis-join
+itself MIS-NAMES BUT NEVER LOSES (proven by construction and by probe, and cargo
+cannot produce the ordering that triggers it), so this is cosmetic. *If a future
+round touches the crash printer, gate that line on =matchbin not-in reported=.*
+
+** Open question worth one cheap grep
+Does any test in this workspace capture a nested cargo's or an agent's stdout
+into its own? That is the single reachability route for F-7, and one grep over
+the test bodies retires it either way.
+
+** Acceptance
+- =TARGETS_FAILED= is cross-checked against cargo's independent
+  =^error: [0-9]+ targets? failed:= count, and a disagreement is RED with its own
+  line naming the drift (F-6). Pinned by a fixture whose two counts disagree.
+- The crash awk ignores =error:= lines inside a =---- name ----= capture region,
+  pinned by the phantom-target log (F-7).
+- =verify/flake-registry.toml= byte-unchanged, as in all six prior rounds.
+- =open_owner()= is kept; the =FAIL_COUNT= guard is not dropped; 101 stays exempt.
+- Every existing selftest case still passes and the derived case count still
+  agrees.
