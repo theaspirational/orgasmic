@@ -42,6 +42,21 @@
 #   Reclassify-time sampling is never used — it has no relationship to the run
 #   under review and must not mint a LOAD-SENSITIVE excuse.
 #
+# Crashed targets (TASK-STWVB.1.1.1.1):
+#   A test binary that aborts or is signalled takes libtest with it, so it
+#   reports no failures at all and counts zero in `failures :`. Crashed targets
+#   are therefore detected from the LOG — the `error: test failed, to rerun
+#   pass` target set minus the targets that produced a parsed failure block,
+#   plus cargo's crash-specific `process didn't exit successfully: … (signal:
+#   N, …)` cause — never from cargo's exit code, which any classified failure
+#   would mask. They get their own `CRASHED (n)` section and their own RED arm
+#   above everything except the billed-test and build-failure arms. The same
+#   detection runs under --classify, on stamped and pre-stamp logs alike.
+#
+#   The live run also stamps `# orgasmic-suite-exit: <n>` into the log next to
+#   the host stamp, so --classify judges the same cargo exit the live run saw
+#   instead of `?`. Logs written before that stamp existed keep `?`.
+#
 #   Thresholds (TASK-STWVB.1.1 / TASK-STWVB.1.1.1):
 #     SYSPOLICYD_RATE_DEGRADED — syspolicyd CPU seconds per wall second of the
 #       sampled window. An absolute CPU-seconds bound is a bound on run
@@ -111,6 +126,11 @@ SYSPOLICYD_RATE_DEGRADED=1.50
 SYSPOLICYD_RATE_MIN_WALL_S=10
 HOST_STATE_ENV="ORGASMIC_HOST_STATE_SAMPLE"
 HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
+# orgasmic:TASK-STWVB.1.1.1.1
+# R-2: the suite exit is a fact known at write time and, until now, written
+# nowhere. Stamped into the log next to the host stamp so --classify reads the
+# same number the live run saw instead of falling back to `?`.
+SUITE_EXIT_STAMP_PREFIX="# orgasmic-suite-exit:"
 SAMPLE_HOST_ONLY=0
 
 die() {
@@ -530,6 +550,28 @@ write_host_stamp() {
         "$HOST_STATE_STAMP_PREFIX" "$before" "$after" "$judgment" >> "$log"
 }
 
+# orgasmic:TASK-STWVB.1.1.1.1
+# R-2, by the same mechanism F3 used for host state: record the fact rather
+# than accept a weaker mode. The live run knows cargo's exit; --classify on the
+# log it wrote must not have to guess.
+write_suite_exit_stamp() {
+    local log="$1" code="$2"
+    printf '%s %s\n' "$SUITE_EXIT_STAMP_PREFIX" "$code" >> "$log"
+}
+
+# Print the stamped suite exit, or fail when the log predates the stamp.
+read_suite_exit_stamp() {
+    local log="$1" line
+    line=$(grep -E "^${SUITE_EXIT_STAMP_PREFIX}" "$log" 2>/dev/null | tail -n1) || line=""
+    [ -n "$line" ] || return 1
+    line=${line#"$SUITE_EXIT_STAMP_PREFIX"}
+    line=${line# }
+    case "$line" in
+        '' | *[!0-9]*) return 1 ;;
+    esac
+    printf '%s' "$line"
+}
+
 # Read `# orgasmic-host-state:` from a suite log. Prints the delta= judgment
 # sample, or empty when absent.
 read_host_stamp_judgment() {
@@ -601,7 +643,14 @@ if [ -n "$CLASSIFY_LOG" ]; then
     [ -f "$CLASSIFY_LOG" ] || die "no such log: $CLASSIFY_LOG"
     cp "$CLASSIFY_LOG" "$SUITE_LOG" || die "cannot copy $CLASSIFY_LOG"
     SUITE_CMD="(reclassified from $CLASSIFY_LOG)"
-    SUITE_EXIT="?"
+    # R-2: prefer the exit the live run stamped into this log. `?` is the
+    # fallback for pre-stamp logs only — and a crashed target in one of those
+    # is still caught, because CRASH_COUNT below is derived from the log text.
+    if SUITE_EXIT=$(read_suite_exit_stamp "$SUITE_LOG"); then
+        :
+    else
+        SUITE_EXIT="?"
+    fi
     # F3: reclassify-time sampling is unrelated to the run that produced the
     # log. Prefer a stamp written by the live run; otherwise host is unknown
     # and LOAD-SENSITIVE is unavailable (unknown must not mint an excuse).
@@ -630,6 +679,7 @@ elif [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
     "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
         -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
     SUITE_EXIT=$?
+    write_suite_exit_stamp "$SUITE_LOG" "$SUITE_EXIT"
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
         HOST_DEGRADED=1
@@ -654,6 +704,7 @@ else
     # under-reports the rate. Short/zero walls are unknown (M-3), not judged.
     local_wall=$((local_wall1 - local_wall0))
     HOST_JUDGMENT=$(host_judgment_from_snapshots "$HOST_BEFORE" "$HOST_AFTER" "$local_wall")
+    write_suite_exit_stamp "$SUITE_LOG" "$SUITE_EXIT"
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
         HOST_DEGRADED=1
@@ -726,6 +777,89 @@ if grep -Eq '^error: could not compile|^error\[E[0-9]+\]' "$SUITE_LOG"; then
 fi
 
 FAIL_COUNT=$(wc -l < "$FAILURES_TSV" | tr -d ' ')
+
+# ---------------------------------------------------------------------------
+# crashed targets
+# ---------------------------------------------------------------------------
+#
+# orgasmic:TASK-STWVB.1.1.1.1
+# R-1. A test binary that aborts or is signalled dies WITH libtest, so it emits
+# no `---- name ----` block and no `failures:` list: it contributes ZERO to
+# FAIL_COUNT. Every earlier attempt to catch it keyed off cargo's exit code,
+# which `FAIL_COUNT -eq 0` suppresses the moment any other failure classifies —
+# so a crashed binary plus one registered flake read as GREEN modulo 1, exit 0,
+# over a log saying SIGABRT.
+#
+# So detect it from the LOG, independent of both SUITE_EXIT and FAIL_COUNT.
+# That is also what makes it survive `--classify` and pre-stamp logs. Two
+# independent derivations, unioned:
+#
+#   NAMED       cargo prints, for a target that did not exit through libtest:
+#                 error: test failed, to rerun pass `<target>`
+#                 Caused by:
+#                   process didn't exit successfully: `<bin>` (signal: 6, ...)
+#               The cause line is crash-specific. `(exit status: 101)` is
+#               explicitly NOT counted here: 101 is libtest's own "tests
+#               failed" code, and treating it as a crash would redden every
+#               ordinary red — M-1 by another route.
+#   UNACCOUNTED cargo prints one `error: test failed, to rerun pass` per failing
+#               target. A failing target that produced no parsed failure block
+#               is unaccounted for, whatever cargo said about why.
+#
+# Doctests are excluded from both sides of the cardinality diff: a failing
+# doctest target prints `error: doctest failed`, which is not counted as a
+# failing test target, so its parsed block must not be counted as accounting
+# for one either.
+CRASH_TSV="$WORK/crashed.tsv"
+: > "$CRASH_TSV"
+
+awk -v out="$CRASH_TSV" '
+    /^error: [a-z]+ failed, to rerun pass `/ {
+        t = $0
+        sub(/^error: [a-z]+ failed, to rerun pass `/, "", t)
+        sub(/`.*$/, "", t)
+        pending = t
+        in_cause = 0
+        next
+    }
+    /^Caused by:[ \t]*$/ { in_cause = (pending != ""); next }
+    in_cause && /^[ \t]+process didn.t exit successfully:/ {
+        body = $0
+        sub(/^[ \t]+process didn.t exit successfully:[ \t]*/, "", body)
+        binp = "?"
+        cause = body
+        if (body ~ /^`/) {
+            binp = body
+            sub(/^`/, "", binp)
+            sub(/`.*$/, "", binp)
+            cause = body
+            sub(/^`[^`]*`[ \t]*/, "", cause)
+        }
+        # libtest exits 101 when tests fail; that is a reported red, not a
+        # crash. Anything else (a signal, or any other status) means the
+        # target died without reporting.
+        if (cause !~ /^\(exit status: 101\)/) {
+            printf("%s\t%s\t%s\n", pending, binp, cause) >> out
+        }
+        pending = ""
+        in_cause = 0
+        next
+    }
+    { in_cause = 0 }
+' "$SUITE_LOG"
+
+CRASH_NAMED=$(wc -l < "$CRASH_TSV" | tr -d ' ')
+TARGETS_FAILED=$(grep -c '^error: test failed, to rerun pass `' "$SUITE_LOG")
+TARGETS_ACCOUNTED=$(awk -F'\t' '
+    $2 != "" && $2 != "doctests" { if (!($2 in seen)) { seen[$2] = 1; n++ } }
+    END { print n + 0 }' "$FAILURES_TSV")
+CRASH_UNACCOUNTED=$((TARGETS_FAILED - TARGETS_ACCOUNTED))
+[ "$CRASH_UNACCOUNTED" -gt 0 ] || CRASH_UNACCOUNTED=0
+if [ "$CRASH_NAMED" -ge "$CRASH_UNACCOUNTED" ]; then
+    CRASH_COUNT=$CRASH_NAMED
+else
+    CRASH_COUNT=$CRASH_UNACCOUNTED
+fi
 
 # ---------------------------------------------------------------------------
 # classify
@@ -986,6 +1120,14 @@ else
     printf '  billed   : %s — RAN. THIS COSTS REAL MONEY.\n' "$BILLED_TEST"
 fi
 printf '  failures : %s\n' "$FAIL_COUNT"
+# R-1: `failures :` counts LISTED failures only, so a crashed target is invisible
+# there by construction. Give the crash accounting its own always-present line —
+# a reader must not have to infer it from a silence.
+if [ "$CRASH_COUNT" -eq 0 ]; then
+    printf '  crashed  : none — every failing target reported a failure list\n'
+else
+    printf '  crashed  : %s target(s) died without reporting a failure list\n' "$CRASH_COUNT"
+fi
 printf '  ignored  : %s test(s) carrying #[ignore]\n' "$IGNORED_COUNT"
 if [ -z "$SKIPPED_TOOLS" ]; then
     printf '  environ  : complete — no tool requirement was waived\n'
@@ -1043,6 +1185,26 @@ if [ "$BUILD_BROKE" -eq 1 ]; then
     grep -E '^error(\[E[0-9]+\])?: ' "$SUITE_LOG" | head -5 | sed 's/^/  /'
 fi
 
+if [ "$CRASH_COUNT" -gt 0 ]; then
+    printf '\nCRASHED (%s) — target died without reporting a failure list:\n' "$CRASH_COUNT"
+    while IFS=$'\t' read -r target binp cause; do
+        [ -n "$target" ] || continue
+        printf '  %s\n' "$target"
+        printf '      binary   : %s\n' "$binp"
+        printf '      why      : process did not exit successfully %s\n' "$cause"
+        printf '      note     : libtest dies with the process, so this target reported NO\n'
+        printf '                 failures. It cannot be classified, registered, or excused.\n'
+        printf '      next     : re-run this target alone and read %s\n' "$SUITE_LOG"
+    done < "$CRASH_TSV"
+    if [ "$CRASH_UNACCOUNTED" -gt "$CRASH_NAMED" ]; then
+        printf '  %s further failing target(s) produced no parsed failure block:\n' \
+            "$((CRASH_UNACCOUNTED - CRASH_NAMED))"
+        printf '      failing  : %s target(s) per cargo; %s produced a failure list\n' \
+            "$TARGETS_FAILED" "$TARGETS_ACCOUNTED"
+        grep '^error: test failed, to rerun pass `' "$SUITE_LOG" | sed 's/^/      /'
+    fi
+fi
+
 if [ "$REAL_COUNT" -gt 0 ]; then
     printf '\nREAL (%s):\n' "$REAL_COUNT"
     cat "$REAL_REPORT"
@@ -1064,6 +1226,20 @@ if [ "$BILLED_RAN" -eq 1 ]; then
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
     STATUS=$EXIT_REAL
+elif [ "$CRASH_COUNT" -gt 0 ]; then
+    # orgasmic:TASK-STWVB.1.1.1.1
+    # R-1: a crashed target is a code fact whatever else the run found — the
+    # same argument F4 made for REAL_COUNT. It sits above REAL_COUNT, above
+    # FAIL_COUNT > 0 and above HOST_DEGRADED, and it is derived from the log,
+    # so neither a registered flake (which lifts FAIL_COUNT off zero) nor
+    # --classify (which has no live exit code) can suppress it.
+    printf '\nverdict: RED — %s crashed test target(s)' "$CRASH_COUNT"
+    if [ "$REAL_COUNT" -gt 0 ]; then
+        printf ' and %s real failure(s)' "$REAL_COUNT"
+    fi
+    printf '. A binary died without reporting; nothing here is a trusted green. Read %s.\n' \
+        "$SUITE_LOG"
+    STATUS=$EXIT_REAL
 elif [ "$REAL_COUNT" -gt 0 ]; then
     # F4: an alone-red failure is a code fact whatever the host was doing.
     # The host stamp above is reported alongside this verdict, not instead of it.
@@ -1077,11 +1253,15 @@ elif [ "$LOAD_COUNT" -gt 0 ] && [ "$HOST_DEGRADED" -eq 0 ]; then
     STATUS=$EXIT_REAL
 elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0 ]; then
     # B2 + TASK-STWVB.1.1.1 / M-1: a non-zero cargo exit with no per-test
-    # failure list is a code fact (crashed binary, etc.). Keep B2's position
-    # above HOST_DEGRADED, but restore the FAIL_COUNT guard the message
-    # states — cargo exits 101 whenever any test fails, so without the guard
-    # a registered flake reddens the live gate while --classify on the same
-    # log stays GREEN-modulo-flake.
+    # failure list is a code fact. Keep B2's position above HOST_DEGRADED, and
+    # keep the FAIL_COUNT guard the message states — cargo exits 101 whenever
+    # any test fails, so without the guard a registered flake reddens the live
+    # gate while --classify on the same log stays GREEN-modulo-flake.
+    # TASK-STWVB.1.1.1.1: this arm is the backstop for a non-zero exit that
+    # named no failing target at all (so CRASH_COUNT is 0 — cargo refused an
+    # argument, the runner died before printing). Crashed targets are caught
+    # above, from the log. Under --classify SUITE_EXIT is the stamped exit
+    # when the log carries one, and `?` only for pre-stamp logs.
     printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
         "$SUITE_EXIT" "$SUITE_LOG"
     STATUS=$EXIT_REAL

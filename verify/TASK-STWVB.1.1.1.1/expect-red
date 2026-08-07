@@ -1,0 +1,19 @@
+# Pinned from the pre-fix red of 2026-08-07 (worker implementer for
+# TASK-STWVB.1.1.1.1). With the crash arm back behind the FAIL_COUNT guard, a
+# run holding a crashed target AND a registered flake returns exit 0 with
+# `GREEN modulo 1 registered flake(s)` — the demonstrated false green R-1 was
+# filed for.
+#
+# The FIRST failing assertion is the crash-plus-flake live-path case, ahead of
+# its --classify companion and ahead of the explicit never-reads-as-green
+# assertion. It is not a later host-word, window or B2 case: those keep
+# passing under this injection, which is the point — the defect only shows on
+# the crash-plus-flake input.
+
+exit: 1
+
+contains: FAIL live path: crashed target + registered flake -> RED exit 1, crash named
+
+contains: exit 0, wanted 1
+
+contains: a crashed target read as GREEN modulo a registered flake

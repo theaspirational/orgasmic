@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-STWVB.1.1.1.1`.
+#
+# Pins R-1: a run containing BOTH a crashed target and a classified registered
+# flake must be RED / exit 1. Under the injection the crash arm goes back
+# behind the FAIL_COUNT guard and the FIRST failing selftest assertion is the
+# crash-plus-flake live-path case, reading GREEN modulo 1 registered flake at
+# exit 0 over a log that says SIGABRT.
+scripts/run-tests-selftest.sh
