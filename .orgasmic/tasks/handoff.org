@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         046d027
+:LIVENESS:         9f2489a
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -287,39 +287,32 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1.1 REVIEW.
-=tx-20260807-orgasmic-5218=, run =run-20260807T124524-254152065ca341288edfb213c614ffc8=,
-worker =reviewer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1-review=, dispatched
-[2026-08-07 Fri 12:45:24] on =tmux / claude / claude-opus-5 / high=. Reviews merge
-=8e56b86=.
+ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1.1.1 (the false-claim correction).
+=tx-20260807-orgasmic-5232=, run =run-20260807T130518-cf5333ddb4794a89aaf73b4144dc72d1=,
+worker =implementer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1=, dispatched
+[2026-08-07 Fri 13:05:18] on =tmux / claude / claude-opus-5 / high=.
 
-*THE ASK IS COMPLETENESS FROM THE OTHER SIDE.* The last round's guard was one
-marker short. The brief tells the reviewer NOT to re-check the six markers it now
-has, but to enumerate the GIT OPERATIONS that leave a state where a HEAD-moving
-commit is harmful and check each against the guard — naming =git merge --squash=
-(believed to leave NO =MERGE_HEAD=), =stash pop= conflicts, =am --3way=,
-=checkout -m=, and mid-range =rebase --continue= as the places to start. *This is
-the third time in two chains that a guard has been one case short.*
+Small and mostly prose: correct a FALSE measured claim in four sites, drop one
+array entry, rename a test, add a clause to a warning. Two manager rulings are in
+the brief so the worker does not have to weigh them — =expect-red= is IMMUTABLE
+(correct the README instead), and the =("sequencer", …)= entry is DROPPED rather
+than given a better message.
 
-WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 8e56b86=),
-committing the staged records after each close.
+*THIS GATES THE RUNTIME REINSTALL — and the gate MOVED, deliberately.* The
+original gate (TASK-QGWK7.1.1.1's unrecoverable persist path) is LANDED. The new
+reason to wait is that the =sequencer= entry LATCHES: after a stopped
+revert/cherry-pick range, an ordinary =git reset --hard= clears the =*_HEAD=
+marker but leaves =.git/sequencer=, so *every close would refuse to persist any
+record indefinitely*, telling the manager to wait for a sequence that will never
+finish. Reinstalling before this lands would ship that trap into the runtime this
+manager uses constantly.
 
-*IF THERE IS NO BLOCK SHIP THE WHOLE QGWK7 CHAIN CLOSES.* Close
-=.1.1.1.1= then =.1.1.1= then =.1.1= (check =DEPENDS_ON= on each first; each was
-held open only by its successor's BLOCK SHIP). *THEN THE RUNTIME REINSTALL IS
-UNBLOCKED* — it is the next action and it retires preamble item 1.
+WHEN IT REPORTS: merge, gate, review, close reviewer then implementer, commit the
+staged records. Then close TASK-QGWK7.1.1.1.1.1 and *REINSTALL THE RUNTIME* — see
+Next likely actions item 2. That retires preamble item 1.
 
-NOTHING ELSE IS OPEN.
-
-MANAGER ERROR WORTH KNOWING, because it shows the failure mode of trusting a
-review: the TASK-QGWK7.1.1.1.1 heading asserted =shipped_conventions.rs= PINNED
-the sequencer prose, so the prose was "pinned wrong". *That was FALSE* — the
-manager inherited it from the review's F-1 and passed it on without checking.
-The list was UNPINNED prose, which is HOW it drifted from the code. The
-implementer grepped, said so, and wrote the assertion that should have existed.
-Verified after the fact: zero matches at =f6c6c4d=, four on the fix branch.
-*Verify a review's incidental claims too, not only its findings.*
+NOTHING ELSE IS OPEN. The QGWK7 chain's other five nodes are DONE.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
