@@ -247,4 +247,66 @@ the choice is part of this task:
 
 Whichever lands, *the failing test must go green with the durability property
 intact* — do not fix it by dropping the assertion or by un-staging in the test.
+=== MANAGER RULING 2026-08-07 on the salvaged attempt (=0273e9f=) ===
+The first (dead) worker invented a FIFTH option for M-0, not on the list above:
+build a temporary index from HEAD (=GIT_INDEX_FILE=), =git add= the record into
+THAT index, verify every expected entry landed (a genuine M-2 fix), then
+=write-tree= -> =commit-tree -p HEAD= -> =update-ref
+refs/orgasmic/dispatch-records/<started_tx>=. The working index is never
+touched, so it cannot block a merge.
+
+*RULING: REJECTED, and the reason is measured, not argued.* The record becomes
+reachable only from a custom ref that =git clone= does not fetch, and it is not
+in the working tree either.
+
+MANAGER-MEASURED with a scratch repo — created the ref exactly as the salvaged
+code does, then cloned:
+#+begin_example
+$ ls clone1/rec            -> No such file or directory
+$ git -C clone1 for-each-ref 'refs/**'
+refs/heads/main
+refs/remotes/origin/HEAD
+refs/remotes/origin/main
+#+end_example
+The default refspec is =+refs/heads/*:refs/remotes/origin/*=; =refs/orgasmic/*=
+is neither fetched nor pushed.
+
+So the approach *fails the parent's acceptance criterion 2* —
+=manager-dispatch.org:312-323= says "Commit the promoted directory with the rest
+of the change so a fresh clone can read it", and TASK-QGWK7.1's own acceptance
+says "A promoted record is IN THE GIT INDEX after a close". It buys
+merge-compatibility by giving up the durability property the whole QGWK7 chain
+exists for. Consistently, it also REWROTE the F-1 test
+(=dispatch_close_stages_promoted_record_in_git_index=) and the parent's verify
+artifact to match — which is the "bent proof" shape, even though it follows
+honestly from the design change.
+
+*DO NOT ADOPT IT. Salvage the M-2 verification loop from it* (=ls-files
+--error-unmatch= per expected entry) — that part is correct and independent of
+the rejected design.
+
+=== WHAT THE M-0 FIX MUST RECKON WITH ===
+A fact the review did not have, and it reframes the options: *the manager never
+hit M-0 all session because it COMMITS =.orgasmic= state immediately after every
+close, before the next merge.* The test hits it because it closes and then merges
+with the record still staged and uncommitted. So the failure is not "staging is
+incompatible with merging" — it is "staging is incompatible with merging BEFORE
+the state is committed".
+
+That leaves two honest candidates, and choosing between them IS the task:
+1. *The close COMMITS the record* (option 2, previously rejected on the grounds
+   that WHEN to commit needs manager judgement). Reconsider it: a dedicated
+   record commit is not the manager's change, and a committed file merges
+   normally. If it is rejected again, say why in terms of what breaks, not
+   precedent.
+2. *Staging stays and the documented flow becomes close -> commit state ->
+   merge*, with =manager-dispatch.org= saying so explicitly and the test
+   committing state between its close and its merge. This keeps criterion 2
+   intact and matches what the manager already does in practice — but it makes
+   the guarantee depend on a documented STEP rather than on construction, which
+   is what F-1 set out to remove. Weigh that honestly.
+
+Whichever lands, the acceptance is unchanged: *a promoted record must be readable
+by a fresh clone*, and =reviewer_dispatches_before_reported_implementer_close_
+and_unlocks_main_merge= must pass without the test dodging the case.
 
