@@ -1,0 +1,18 @@
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -5774,10 +5774,11 @@
+ fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
+     for (marker, operation) in [
+         ("rebase-merge", "rebase"),
+         ("rebase-apply", "rebase or am"),
+         ("MERGE_HEAD", "merge"),
+         ("CHERRY_PICK_HEAD", "cherry-pick"),
+-        ("REVERT_HEAD", "revert"),
++        // INJECTED (TASK-QGWK7.1.1.1.1 B-1): the five-marker set TASK-QGWK7.1.1.1
++        // shipped. `git revert` is the same sequencer machinery as cherry-pick,
++        // and a record commit written inside one wedges `git revert --abort`.
+         ("BISECT_LOG", "bisect"),
+-        ("sequencer", "revert or cherry-pick sequence"),
+     ] {
+         if git_dir.join(marker).exists() {
+             return Some(operation);

@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-QGWK7.1.1.1.1`.
+#
+# Pins B-1: a close during a `git revert` refuses to persist, exactly as the
+# other sequencer operations get. Under the injection the close commits inside
+# the revert and reports `ok`.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic -- --exact manager::tests::a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working

@@ -338,13 +338,21 @@ check the rest of the invocation too.
    are UNSIGNED*: they are written with =git commit-tree=, which ignores
    =commit.gpgsign= (measured), so a repo whose push side enforces signatures
    will reject them. *A close does not persist while a sequencer operation owns
-   HEAD* (rebase, am, merge, cherry-pick, bisect) or on a detached HEAD: it
-   promotes the files, skips the commit, and says why through =CLEANUP_ERROR= —
-   a record commit written inside a conflicted rebase is destroyed by
-   =rebase --abort=, and one written on a detached HEAD is on no branch at all.
+   HEAD* (rebase, am, merge, cherry-pick, revert, bisect, or an interrupted
+   revert/cherry-pick sequence) or on a detached HEAD: it promotes the files,
+   skips the commit, and says why through =CLEANUP_ERROR= — a record commit
+   written inside a conflicted rebase is destroyed by =rebase --abort=, a record
+   commit written inside a revert makes your =git revert --abort= fail outright
+   (=Untracked working tree file … would be overwritten by merge=, measured),
+   and one written on a detached HEAD is on no branch at all. A staged
+   =git revert -n= counts: it leaves =REVERT_HEAD= just as a conflicted one does.
    Re-run the same close once the operation finishes or you are back on a
    branch; a re-run repairs any record its close promoted but could not commit,
-   printing =re-persisted:=, and is otherwise still a no-op. The harness
+   printing =re-persisted:=, and is otherwise still a no-op. *The repair lands on
+   the branch you are standing on when you re-run*, not on the branch the failed
+   close resolved (measured), and the =re-persisted:= line names that ref — so
+   re-running a close from an unrelated branch is a known move, and if you care
+   which branch carries the record, check it out before the re-run. The harness
    =stdout.log= sits beside the summary as falsifiable evidence: empty files
    promote no =stdout.log= (but still a =stdout.log.bytes= of =0=, so "printed
    nothing" is distinguishable from "never promoted"); larger files promote a
