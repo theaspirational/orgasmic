@@ -1,0 +1,23 @@
+# Pinned from the pre-fix red of 2026-08-07 (worker implementer for
+# TASK-STWVB.1.1.1.1.1). With the anomalous-exit arm back behind the
+# FAIL_COUNT guard, a run whose cargo was killed at 137 AND which classified
+# one registered flake returns exit 0 with `GREEN modulo 1 registered
+# flake(s). No unexplained red.` — the demonstrated false green F-1 was filed
+# for, and the third round in which this one guard produced the defect.
+#
+# The FIRST failing assertion is the live-path flake-at-137 case, ahead of the
+# explicit never-reads-as-green assertion, ahead of its --classify companion
+# and ahead of the degraded-host ordering case. The companion case that runs
+# the SAME stub at exit 101 still passes GREEN modulo 1 at exit 0, in the same
+# run: the fix is not a re-dropping of the FAIL_COUNT guard, and 101 stays
+# exempt (M-1). Every crash, host-word, window and B2 case also keeps passing
+# under the injection — the defect is specific to an anomalous exit that
+# coincides with a classified failure.
+
+exit: 1
+
+contains: FAIL live path: same flake stub at exit 137 -> RED exit 1, the exit is named
+
+contains: exit 0, wanted 1
+
+contains: a cargo killed at exit 137 read as GREEN modulo a registered flake

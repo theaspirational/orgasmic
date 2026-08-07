@@ -1,0 +1,10 @@
+# One line. Run from the repo root by `orgasmic verify TASK-STWVB.1.1.1.1.1`.
+#
+# Pins F-1: a cargo that exits neither 0 nor 101 — killed by jetsam, killed by
+# an operator ^C, truncated — must be RED / exit 1 even when a registered
+# flake classified. Under the injection the anomalous-exit arm goes back
+# behind the `FAIL_COUNT -eq 0` guard and the FIRST failing selftest assertion
+# is the live-path flake-plus-exit-137 case, reading `GREEN modulo 1
+# registered flake(s)` at exit 0 over a log the same run stamped
+# `# orgasmic-suite-exit: 137`.
+scripts/run-tests-selftest.sh
