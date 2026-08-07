@@ -340,11 +340,18 @@ check the rest of the invocation too.
    will reject them. *A close does not persist while a sequencer operation owns
    HEAD* (rebase, am, merge, cherry-pick, revert, bisect, or an interrupted
    revert/cherry-pick sequence) or on a detached HEAD: it promotes the files,
-   skips the commit, and says why through =CLEANUP_ERROR= — a record commit
-   written inside a conflicted rebase is destroyed by =rebase --abort=, a record
-   commit written inside a revert makes your =git revert --abort= fail outright
-   (=Untracked working tree file … would be overwritten by merge=, measured),
-   and one written on a detached HEAD is on no branch at all. A staged
+   skips the commit, and says why through =CLEANUP_ERROR=. Only one of those
+   aborts actually destroys a record — =rebase --abort= takes the commit and the
+   promoted file with it (measured), and a rebase detaches HEAD, so the
+   detached-HEAD refusal catches that case first. A record commit written inside
+   a revert or cherry-pick is NOT destroyed: git declines to rewind a HEAD that
+   moved, so =git revert --abort= and =git cherry-pick --abort= exit 0 and the
+   record survives in =HEAD= and on disk (measured). Standing down is still the
+   right move, for a different reason: the record would otherwise land in the
+   middle of an operation you have not finished, on a branch whose shape you are
+   still deciding — and one written on a detached HEAD is on no branch at all.
+   Skipping the commit costs a promote plus a re-run, and buys a record that
+   enters history once, cleanly, at a point you chose. A staged
    =git revert -n= counts: it leaves =REVERT_HEAD= just as a conflicted one does.
    Re-run the same close once the operation finishes or you are back on a
    branch; a re-run repairs any record its close promoted but could not commit,
