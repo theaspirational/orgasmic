@@ -1,12 +1,40 @@
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -5668,36 +5668,11 @@ fn promote_and_persist_dispatch_record(
+@@ -5677,77 +5677,15 @@
  /// orgasmic's own bookkeeping, under a path no worker change can occupy.
  // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
  fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
 -    use std::ffi::OsStr;
 -
 -    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+-    let git_dir = PathBuf::from(git_capture(
+-        project_root,
+-        ["rev-parse", "--absolute-git-dir"],
+-    )?);
+-    // orgasmic:TASK-QGWK7.1.1.1 — F-3: refuse BEFORE the real `git add`, so a
+-    // refusal stages nothing. A record commit written inside a conflicted
+-    // rebase is discarded by `git rebase --abort` along with the promoted file
+-    // (measured; the staged-only baseline loses it identically, so this is a
+-    // pre-existing class, not a regression). Skipping persistence keeps the
+-    // files, and the re-run of the close puts them into history.
+-    if let Some(operation) = sequencer_operation_in_progress(&git_dir) {
+-        return Err(format!(
+-            "a git {operation} is in progress, so the record was promoted to disk but not \
+-             committed (an --abort would discard the commit and the promoted file with it); \
+-             re-run this close once the {operation} finishes"
+-        ));
+-    }
+-    // orgasmic:TASK-QGWK7.1.1.1 — F-5: on a detached HEAD `update-ref HEAD`
+-    // moves only the detached HEAD, so the record commit is on NO branch and
+-    // the manager's next checkout orphans it — while the close reports `ok`.
+-    // Refuse instead, before anything is staged, and CAS the branch this close
+-    // actually resolved rather than whatever HEAD names at update time (F-2).
+-    let branch_ref = git_capture(project_root, ["symbolic-ref", "-q", "HEAD"]).map_err(|_| {
+-        "HEAD is detached, so a record commit would land on no branch and the next checkout \
+-         would orphan it; the record was promoted to disk but not committed — re-run this close \
+-         from a branch"
+-            .to_string()
+-    })?;
 -    let head = git_capture(project_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
 -    git_capture(
 -        project_root,
@@ -15,14 +43,20 @@
 -    // A thinned record is worth keeping and worth naming; it is not a reason to
 -    // keep nothing. Commit either way and report the delta.
 -    let thinned = verify_dispatch_record_staged(project_root, &dest_dir);
--    match write_dispatch_record_commit(project_root, &dest_dir, &head) {
+-    match write_dispatch_record_commit(project_root, &dest_dir, &head, &branch_ref) {
 -        Ok(()) => thinned,
 -        Err(err) => {
 -            // Never leave the record staged-but-uncommitted: that is exactly
 -            // the state that blocks the manager's next merge. Put the index
 -            // back to HEAD for this path. The promoted files stay on disk
 -            // either way — the close reports why they are not in history yet.
--            let _ = git_capture(
+-            //
+-            // orgasmic:TASK-QGWK7.1.1.1 — F-1: and REPORT the rollback rather
+-            // than dropping it behind `let _ =`. If the index lock is held at
+-            // this moment the restore fails, and a silently left-staged record
+-            // is M-0's symptom verbatim: the manager's next merge refuses with
+-            // no clue why.
+-            match git_capture(
 -                project_root,
 -                [
 -                    OsStr::new("restore"),
@@ -30,15 +64,26 @@
 -                    OsStr::new("--"),
 -                    dest_dir.as_os_str(),
 -                ],
--            );
--            Err(err)
+-            ) {
+-                Ok(_) => Err(err),
+-                Err(restore_err) => Err(format!(
+-                    "{err}; AND the record is left STAGED because the rollback failed too \
+-                     ({restore_err}) — run `git restore --staged -- {}` before your next merge, \
+-                     which will otherwise refuse",
+-                    dest_dir.display()
+-                )),
+-            }
 -        }
 -    }
 +    // INJECTED (TASK-QGWK7.1): skip persistence so the promoted directory
 +    // stays untracked -- F-1's defect, whichever mechanism persistence uses.
 +    let _ = (project_root, started_tx);
-+    let _ = (verify_dispatch_record_staged, write_dispatch_record_commit);
++    let _ = (
++        verify_dispatch_record_staged,
++        write_dispatch_record_commit,
++        sequencer_operation_in_progress,
++    );
 +    Ok(())
  }
  
- /// Prove every promoted file actually reached the index (TASK-QGWK7.1.1 M-2).
+ /// The git sequencer operation in progress in this worktree, if any

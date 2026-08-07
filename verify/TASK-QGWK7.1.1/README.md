@@ -16,3 +16,9 @@ failing assertion is the merge inside `run_git`, pinned below.
 
 Measured pre-fix on the unfixed tree (`eb772a6`): the same test fails **alone**
 in 3.13 s, exit 101, with the same stderr.
+
+**Re-authored under TASK-QGWK7.1.1.1 (2026-08-07), context only.**
+`commit_promoted_dispatch_record` grew a sequencer-state refusal, a detached-HEAD
+refusal and a reported rollback, so the patch's context lines no longer matched.
+It still restores the same stage-and-stop behaviour. `cmd` and `expect-red` are
+byte-unchanged, because what M-0 claims is unchanged.

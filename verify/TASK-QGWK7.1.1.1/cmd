@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-QGWK7.1.1.1`.
+#
+# Pins F-1: a record persist that failed must be RECOVERABLE by the one command
+# a manager re-runs. Under the injection the already-closed no-op leaves the
+# promoted record on disk, untracked, with tmp already unlinked — no way back
+# into git at all.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch -- --exact a_record_persist_that_failed_is_recovered_by_re_running_the_close

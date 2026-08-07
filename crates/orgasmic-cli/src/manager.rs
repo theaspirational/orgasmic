@@ -946,15 +946,19 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
 pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-close")?;
     let project_id = read_project_id(&project_root)?;
-    // orgasmic:TASK-QGWK7.1.1 — M-5: refuse before anything is destroyed, so a
-    // fixable typo costs nothing.
-    normalize_report_path_property(&project_root, &mut args.properties)?;
     let tasks = normalize_tasks(args.task.clone())?;
     // orgasmic:task_EP3H1 — before anything else, including the already-closed
     // no-op below: a re-run of a torn close must finish the transition it lost
     // rather than report "already closed" over a task still stranded at its
     // pre-close stage.
     reconcile_torn_closes_best_effort(home, &project_root, &project_id);
+    // orgasmic:TASK-QGWK7.1.1 — M-5: refuse before anything is destroyed, so a
+    // fixable typo costs nothing. TASK-QGWK7.1.1.1 F-6: and BELOW the
+    // reconciliation, not above it. Inserting the refusal first silently demoted
+    // a path that was explicitly ordered first — a torn close re-run with the
+    // same command line (which is how it is re-run) carries the same
+    // `REPORT_PATH`, so it bailed before the stranded transition was repaired.
+    normalize_report_path_property(&project_root, &mut args.properties)?;
     let open = match resolve_close_target(&project_root, &tasks, args.started_tx.as_deref())? {
         CloseTarget::Open(open) => open,
         CloseTarget::AlreadyClosed(closed) => {
@@ -969,6 +973,11 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
                 task_list_property(&tasks),
                 closed.tx_id
             );
+            // orgasmic:TASK-QGWK7.1.1.1 — F-1: "no-op" is the contract for
+            // CLEANUP, not for a record the previous close promoted onto disk
+            // and then failed to commit. That state has no other way back into
+            // git, and this is the only command a manager re-runs after it.
+            repersist_dispatch_record_best_effort(&project_root, &closed);
             if args.worktree_remove && !args.no_worktree_remove {
                 if let Some(worktree) = closed.worktree.as_deref().filter(|path| path.exists()) {
                     eprintln!(
@@ -5671,6 +5680,34 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
     use std::ffi::OsStr;
 
     let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+    let git_dir = PathBuf::from(git_capture(
+        project_root,
+        ["rev-parse", "--absolute-git-dir"],
+    )?);
+    // orgasmic:TASK-QGWK7.1.1.1 — F-3: refuse BEFORE the real `git add`, so a
+    // refusal stages nothing. A record commit written inside a conflicted
+    // rebase is discarded by `git rebase --abort` along with the promoted file
+    // (measured; the staged-only baseline loses it identically, so this is a
+    // pre-existing class, not a regression). Skipping persistence keeps the
+    // files, and the re-run of the close puts them into history.
+    if let Some(operation) = sequencer_operation_in_progress(&git_dir) {
+        return Err(format!(
+            "a git {operation} is in progress, so the record was promoted to disk but not \
+             committed (an --abort would discard the commit and the promoted file with it); \
+             re-run this close once the {operation} finishes"
+        ));
+    }
+    // orgasmic:TASK-QGWK7.1.1.1 — F-5: on a detached HEAD `update-ref HEAD`
+    // moves only the detached HEAD, so the record commit is on NO branch and
+    // the manager's next checkout orphans it — while the close reports `ok`.
+    // Refuse instead, before anything is staged, and CAS the branch this close
+    // actually resolved rather than whatever HEAD names at update time (F-2).
+    let branch_ref = git_capture(project_root, ["symbolic-ref", "-q", "HEAD"]).map_err(|_| {
+        "HEAD is detached, so a record commit would land on no branch and the next checkout \
+         would orphan it; the record was promoted to disk but not committed — re-run this close \
+         from a branch"
+            .to_string()
+    })?;
     let head = git_capture(project_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
     git_capture(
         project_root,
@@ -5679,14 +5716,20 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
     // A thinned record is worth keeping and worth naming; it is not a reason to
     // keep nothing. Commit either way and report the delta.
     let thinned = verify_dispatch_record_staged(project_root, &dest_dir);
-    match write_dispatch_record_commit(project_root, &dest_dir, &head) {
+    match write_dispatch_record_commit(project_root, &dest_dir, &head, &branch_ref) {
         Ok(()) => thinned,
         Err(err) => {
             // Never leave the record staged-but-uncommitted: that is exactly
             // the state that blocks the manager's next merge. Put the index
             // back to HEAD for this path. The promoted files stay on disk
             // either way — the close reports why they are not in history yet.
-            let _ = git_capture(
+            //
+            // orgasmic:TASK-QGWK7.1.1.1 — F-1: and REPORT the rollback rather
+            // than dropping it behind `let _ =`. If the index lock is held at
+            // this moment the restore fails, and a silently left-staged record
+            // is M-0's symptom verbatim: the manager's next merge refuses with
+            // no clue why.
+            match git_capture(
                 project_root,
                 [
                     OsStr::new("restore"),
@@ -5694,10 +5737,131 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
                     OsStr::new("--"),
                     dest_dir.as_os_str(),
                 ],
-            );
-            Err(err)
+            ) {
+                Ok(_) => Err(err),
+                Err(restore_err) => Err(format!(
+                    "{err}; AND the record is left STAGED because the rollback failed too \
+                     ({restore_err}) — run `git restore --staged -- {}` before your next merge, \
+                     which will otherwise refuse",
+                    dest_dir.display()
+                )),
+            }
         }
     }
+}
+
+/// The git sequencer operation in progress in this worktree, if any
+/// (TASK-QGWK7.1.1.1 F-3). Four `exists()` calls close the whole class: only
+/// `rebase --abort` was measured to destroy a record, but `--continue`,
+/// `--skip` and the merge/cherry-pick equivalents all rewrite HEAD out from
+/// under a commit this close just wrote.
+fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
+    for (marker, operation) in [
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase or am"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("BISECT_LOG", "bisect"),
+    ] {
+        if git_dir.join(marker).exists() {
+            return Some(operation);
+        }
+    }
+    None
+}
+
+/// Re-commit a promoted record whose close failed to persist it
+/// (TASK-QGWK7.1.1.1 F-1).
+///
+/// Promotion unlinks the tmp artifacts as soon as the COPIES succeed
+/// (`paths.rs`), so a persist that failed afterwards used to be terminal:
+/// `promote_dispatch_artifacts_in_place` bails on `last_path missing`, the
+/// re-run of the close is an `already-closed` no-op by design, and there is no
+/// re-persist verb. But the promoted files are still on disk and
+/// [`commit_promoted_dispatch_record`] needs only that directory — only its
+/// CALLER was gated on tmp. So the no-op is exactly where the repair belongs.
+///
+/// Best-effort and silent when there is nothing to do: this runs on every
+/// re-run of every close, and a close that persisted fine must stay a no-op.
+// orgasmic:TASK-QGWK7.1.1.1
+fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchRecord) {
+    let Some(status) = closed_dispatch_cleanup_status(project_root, &closed.tx_id) else {
+        return;
+    };
+    if !cleanup_status_reports_failure(&status) {
+        return;
+    }
+    let Ok(dest_dir) = orgasmic_core::dispatch_record_dir(project_root, &closed.tx_id) else {
+        return;
+    };
+    if !dest_dir.is_dir() {
+        // Nothing was promoted (or the failure was elsewhere entirely, e.g.
+        // worktree removal). There is no record to put into history.
+        return;
+    }
+    if dispatch_record_is_in_history(project_root, &dest_dir) {
+        return;
+    }
+    // Same lock the promote path takes: this stages and commits a path another
+    // close may be touching right now.
+    let _cleanup_lock = match acquire_dispatch_cleanup_lock(project_root) {
+        Ok(lock) => lock,
+        Err(err) => {
+            eprintln!("warning: dispatch record re-persist skipped: {err}");
+            return;
+        }
+    };
+    match commit_promoted_dispatch_record(project_root, &closed.tx_id) {
+        Ok(()) => println!(
+            "re-persisted: dispatch record {} committed (the close that promoted it reported \
+             cleanup status={status})",
+            closed.tx_id
+        ),
+        Err(err) => eprintln!(
+            "warning: dispatch record {} is promoted at {} but still not in git history \
+             (the close reported cleanup status={status}): {err}",
+            closed.tx_id,
+            dest_dir.display()
+        ),
+    }
+}
+
+/// `CLEANUP_STATUS` recorded by the close tx that closed this generation.
+fn closed_dispatch_cleanup_status(project_root: &Path, started_tx: &str) -> Option<String> {
+    let entries = read_tx_entries(project_root).ok()?;
+    entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            matches!(
+                entry.ty.as_str(),
+                "implementer.done"
+                    | "reviewer.done"
+                    | "architector.done"
+                    | "manager.dispatch_aborted"
+            ) && extra(entry, "CLOSED_TX") == Some(started_tx)
+        })
+        .and_then(|entry| extra(entry, "CLEANUP_STATUS"))
+        .map(str::to_string)
+}
+
+/// Whether the promoted record directory is already in `HEAD`'s tree, so a
+/// re-run has nothing to repair.
+fn dispatch_record_is_in_history(project_root: &Path, dest_dir: &Path) -> bool {
+    use std::ffi::OsStr;
+
+    git_capture(
+        project_root,
+        [
+            OsStr::new("ls-tree"),
+            OsStr::new("--name-only"),
+            OsStr::new("HEAD"),
+            OsStr::new("--"),
+            dest_dir.as_os_str(),
+        ],
+    )
+    .map(|listed| !listed.trim().is_empty())
+    .unwrap_or(false)
 }
 
 /// Prove every promoted file actually reached the index (TASK-QGWK7.1.1 M-2).
@@ -5752,11 +5916,20 @@ fn verify_dispatch_record_staged(project_root: &Path, dest_dir: &Path) -> Result
 /// Plumbing rather than `git commit` so the commit can be scoped to one
 /// directory without touching the manager's staged work, and so no hook-owning
 /// porcelain path runs inside a close. `update-ref` is given the old value, so
-/// a HEAD that moved underneath this close refuses instead of clobbering.
+/// a branch that moved underneath this close refuses instead of clobbering.
+///
+/// The compare-and-swap names `branch_ref` — the ref `HEAD` resolved to when
+/// this close started — rather than `HEAD` (TASK-QGWK7.1.1.1 F-2). Through
+/// `HEAD` the CAS compares OIDs, not ref identity: a concurrent checkout onto a
+/// SIBLING branch sitting at the same OID passes the check and lands the record
+/// on a branch this close never resolved (measured). Naming the ref makes the
+/// swap refuse on the one thing that matters — the branch moved — and land
+/// nowhere else.
 fn write_dispatch_record_commit(
     project_root: &Path,
     dest_dir: &Path,
     head: &str,
+    branch_ref: &str,
 ) -> Result<(), String> {
     use std::ffi::OsStr;
 
@@ -5807,7 +5980,7 @@ fn write_dispatch_record_commit(
                 "update-ref",
                 "-m",
                 "orgasmic dispatch record",
-                "HEAD",
+                branch_ref,
                 commit.as_str(),
                 head,
             ],
@@ -9555,6 +9728,138 @@ mod tests {
                 .join(".orgasmic/dispatch-records/tx-start-task-lockout/last.txt")
                 .exists(),
             "the report itself is never the casualty of a failed persist"
+        );
+    }
+
+    fn git_capture_ok(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn staged_record_paths(root: &Path, started_tx: &str) -> String {
+        let dest_dir = root.join(".orgasmic/dispatch-records").join(started_tx);
+        String::from_utf8_lossy(
+            &Command::new("git")
+                .args(["ls-files", "--stage", "--"])
+                .arg(&dest_dir)
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    }
+
+    /// TASK-QGWK7.1.1.1 F-3. A record commit written inside a conflicted
+    /// sequencer operation is discarded by `git rebase --abort`, which resets
+    /// HEAD to `orig-head` and takes the promoted FILE with it (measured; the
+    /// staged-only baseline loses it identically, so the class is pre-existing).
+    /// Persistence must stand down while the sequencer owns HEAD, keep the
+    /// files, and say why — never stage and never commit.
+    // orgasmic:TASK-QGWK7.1.1.1
+    #[test]
+    fn a_close_inside_a_conflicted_merge_keeps_the_record_and_persists_nothing() {
+        let fixture = dispatch_cleanup_fixture("task-seq");
+        let base = git_capture_ok(&fixture.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        git_ok(&fixture.root, &["checkout", "-q", "-b", "task-seq-side"]);
+        std::fs::write(fixture.root.join("base.txt"), "side\n").unwrap();
+        git_ok(&fixture.root, &["commit", "-qam", "side"]);
+        git_ok(&fixture.root, &["checkout", "-q", &base]);
+        std::fs::write(fixture.root.join("base.txt"), "trunk\n").unwrap();
+        git_ok(&fixture.root, &["commit", "-qam", "trunk"]);
+        let conflicted = Command::new("git")
+            .args(["merge", "task-seq-side"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            !conflicted.status.success() && fixture.root.join(".git/MERGE_HEAD").exists(),
+            "the fixture must really be mid-merge: {}",
+            String::from_utf8_lossy(&conflicted.stdout)
+        );
+        let tip = git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-SEQ");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(cleanup.status, CleanupStatus::Partial, "{error}");
+        assert!(
+            error.contains("a git merge is in progress"),
+            "the refusal must name the sequencer operation that caused it: {error}"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-seq/last.txt")
+                .exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-seq"),
+            "",
+            "a refusal must stage nothing — a staged path is what blocks the resolve+commit"
+        );
+        assert_eq!(
+            git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]),
+            tip,
+            "the close must not move HEAD out from under the merge"
+        );
+        assert!(
+            fixture.root.join(".git/MERGE_HEAD").exists(),
+            "the close must leave the operator's merge intact"
+        );
+    }
+
+    /// TASK-QGWK7.1.1.1 F-5. On a detached HEAD `update-ref HEAD` moves only the
+    /// detached HEAD: the record commit is on NO branch, the manager's next
+    /// checkout orphans it, and the close reported `ok`. Unborn HEAD was already
+    /// safe (`rev-parse --verify HEAD^{commit}` fails before anything is
+    /// staged); this makes the two unusual shapes symmetric.
+    // orgasmic:TASK-QGWK7.1.1.1
+    #[test]
+    fn a_close_on_a_detached_head_refuses_to_persist_rather_than_orphan_the_record() {
+        let fixture = dispatch_cleanup_fixture("task-detached");
+        let base = git_capture_ok(&fixture.root, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let branch_tip = git_capture_ok(&fixture.root, &["rev-parse", &base]);
+        git_ok(&fixture.root, &["checkout", "-q", "--detach"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-DETACHED");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(cleanup.status, CleanupStatus::Partial, "{error}");
+        assert!(
+            error.contains("HEAD is detached"),
+            "a detached HEAD must be refused by name, not reported as ok: {error}"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-detached/last.txt")
+                .exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-detached"),
+            "",
+            "the refusal lands before the real `git add`, so nothing is staged"
+        );
+        assert_eq!(
+            git_capture_ok(&fixture.root, &["rev-parse", &base]),
+            branch_tip,
+            "no branch may move for a close that could not resolve one"
         );
     }
 
