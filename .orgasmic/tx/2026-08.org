@@ -20496,3 +20496,96 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Found by accident: a worker flagged one stale chain-root artifact, and a git apply --check sweep found sixteen more. verify/README.md says a stale artifact is a failure, not a skip, so ~19% of the repo's regression proofs are failing silently. The systemic half is that no channel reports it — unlike the flake registry, which has a lifecycle guard and caught an orphaned owner within the hour.
 :END:
+
+* TX 2026-08-07 Fri 13:32:34 task.state_transitioned TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5238
+:TIME:         [2026-08-07 Fri 13:32:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1.1.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 13:32:36 manager.dispatch_started TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5239
+:TIME:         [2026-08-07 Fri 13:32:36]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1-review
+:BRANCH:       task-qgwk7.1.1.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1.1-review/task-qgwk7.1.1.1.1.1-review-brief.md
+:STARTED_AT:   [2026-08-07 Fri 13:32:36]
+:LIVENESS:     e851eab1df6565a86cc88e151f64f2ccb8c58bc6
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260807-orgasmic-5232
+:REASON_INITIAL: review merge 091d62a; this round corrects a false claim, so the question is whether the replacement is true and does not overstate in the other direction. Same-family review accepted: codex is out of credits and cursor-agent is unreliable, so no third harness family exists on this host
+:END:
+
+* TX 2026-08-07 Fri 13:32:36 run.created TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5240
+:TIME:         [2026-08-07 Fri 13:32:36]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1.1.1.1.1-reviewer-20260807T133236.jsonl
+:REASON:       review merge 091d62a; this round corrects a false claim, so the question is whether the replacement is true and does not overstate in the other direction. Same-family review accepted: codex is out of credits and cursor-agent is unreliable, so no third harness family exists on this host
+:RUN_ID:       run-20260807T133236-e799aa632c134debb34644aaa246e8f3
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1.1-review/task-qgwk7.1.1.1.1.1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1.1-review/task-qgwk7.1.1.1.1.1-review-1f3af54307b04227b1b173f8c1310346-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1.1-review/task-qgwk7.1.1.1.1.1-review-1f3af54307b04227b1b173f8c1310346-stdout.log
+:DISPATCH_ATTEMPT: 1f3af54307b04227b1b173f8c1310346
+:DISPATCH_TX:  tx-20260807-orgasmic-5239
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-07 Fri 13:33:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5241
+:TIME:         [2026-08-07 Fri 13:33:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 13:33:04 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5242
+:TIME:         [2026-08-07 Fri 13:33:04]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
