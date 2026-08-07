@@ -1,0 +1,16 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -1226,7 +1226,11 @@
+ elif [ "$BUILD_BROKE" -eq 1 ]; then
+     printf '\nverdict: RED — build failure.\n'
+     STATUS=$EXIT_REAL
+-elif [ "$CRASH_COUNT" -gt 0 ]; then
++elif [ "$CRASH_COUNT" -gt 0 ] && [ "$FAIL_COUNT" -eq 0 ]; then
++    # INJECTED (TASK-STWVB.1.1.1.1): put the crash signal back behind the
++    # FAIL_COUNT guard — R-1's exact shape. Any classified failure lifts
++    # FAIL_COUNT off zero, the crash arm is skipped, and a run containing a
++    # SIGABRT falls through to `GREEN modulo N registered flake(s)` at exit 0.
+     # orgasmic:TASK-STWVB.1.1.1.1
+     # R-1: a crashed target is a code fact whatever else the run found — the
+     # same argument F4 made for REAL_COUNT. It sits above REAL_COUNT, above

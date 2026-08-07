@@ -26,8 +26,39 @@ PASSED=0
 FAILED=0
 CASE=""
 
+# orgasmic:TASK-STWVB.1.1.1.1
+# R-5: the companion `--classify`-agreement cases used to sit behind
+# `if [ -f "$live_log" ]`, so a live run that wrote no log deleted the case
+# instead of failing it, and nothing noticed. Two tripwires now: the helper
+# below FAILS the started case when the log is missing, and the run asserts
+# the total case count so a case cannot go missing any other way either.
+EXPECTED_CASES=50
+live_log=""
+
 start() {
     CASE="$1"
+}
+
+fail_case() {
+    printf 'FAIL %s: %s\n' "$CASE" "$1"
+    FAILED=$((FAILED + 1))
+}
+
+# Hand the log the previous live run wrote to the next --classify case. Fails
+# the started case (never skips it) when the live run produced no log.
+take_live_log() {
+    if [ ! -f "$live_log" ]; then
+        rm -rf "$TMP/work"
+        fail_case "the live run wrote no suite.log at $live_log"
+        return 1
+    fi
+    cp "$live_log" "$TMP/suite.log" || {
+        rm -rf "$TMP/work"
+        fail_case "cannot copy $live_log"
+        return 1
+    }
+    rm -rf "$TMP/work"
+    return 0
 }
 
 # Assert on the run we just made. `want_exit` is the expected exit code; the
@@ -152,10 +183,47 @@ run() {
 LOAD_PANIC='assertion failed: waited for the atomic claim commit'
 OTHER_PANIC='resume_native_fork recover: 500'
 
+# orgasmic:TASK-STWVB.1.1.1.1
+# The healthy-registry fixtures need an owner `check_owner_lifecycle` accepts:
+# a task that exists and is neither done nor cancelled. A hardcoded id rots —
+# this fixture named TASK-STWVB until that task closed, at which point every
+# case using it failed `registry: REJECTED` / exit 2 and the whole gate went
+# red for a reason that has nothing to do with the classifier under test.
+# Resolve an open one at startup instead, so the self-test measures the
+# classifier and not the task board.
+open_owner() {
+    local tasks="$REPO/.orgasmic/tasks" f id
+    for f in "$tasks"/*.org; do
+        [ -f "$f" ] || continue
+        case "${f##*/}" in
+            done.org | cancelled.org) continue ;;
+        esac
+        while read -r id; do
+            [ -n "$id" ] || continue
+            grep -Eq "^[ \t]*:ID:[ \t]+${id}[ \t]*$" \
+                "$tasks/done.org" "$tasks/cancelled.org" 2>/dev/null && continue
+            printf '%s\n' "$id"
+            return 0
+        done <<EOF
+$(awk 'match($0, /^[ \t]*:ID:[ \t]+TASK-[A-Z0-9.]+[ \t]*$/) {
+        id = $2
+        print id
+    }' "$f")
+EOF
+    done
+    return 1
+}
+
+FIXTURE_OWNER=$(open_owner) || {
+    printf 'FAIL setup: no open task in %s to own the fixture registry entries\n' \
+        "$REPO/.orgasmic/tasks"
+    exit 1
+}
+
 KNOWN_FLAKE_ENTRY=(
     '[[flake]]'
     'test = "tests::recovery_inventory_waits_for_atomic_claim_commit"'
-    'owner = "TASK-STWVB"'
+    "owner = \"$FIXTURE_OWNER\""
     'signature = "waited for the atomic claim commit"'
     'evidence = "fixture entry for the self-test"'
     'filed = "2026-07-28"'
@@ -169,7 +237,7 @@ write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit"
 run --classify "$TMP/suite.log"
 check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "FLAKE (1)" \
-    "owner    : TASK-STWVB" \
+    "owner    : $FIXTURE_OWNER" \
     "isolation: passed" \
     "verdict: GREEN modulo 1 registered flake"
 
@@ -181,7 +249,7 @@ check 1 "$RUN_EXIT" "$TMP/out.txt" \
     "REAL (1)" \
     "REGISTERED NAME, UNREGISTERED SIGNATURE" \
     "$OTHER_PANIC" \
-    'excused  : "waited for the atomic claim commit" (owner TASK-STWVB)' \
+    "excused  : \"waited for the atomic claim commit\" (owner $FIXTURE_OWNER)" \
     "verdict: RED"
 
 start "two entries for one name -> the matching one wins and names its own owner"
@@ -221,7 +289,7 @@ check 1 "$RUN_EXIT" "$TMP/out.txt" \
 start "a bare function name in the registry matches the module-qualified failure"
 registry '[[flake]]' \
     'test = "recovery_inventory_waits_for_atomic_claim_commit"' \
-    'owner = "TASK-STWVB"' \
+    "owner = \"$FIXTURE_OWNER\"" \
     'signature = "waited for the atomic claim commit"' \
     'evidence = "fixture entry for the self-test"' \
     'filed = "2026-07-28"'
@@ -281,7 +349,7 @@ check 2 "$RUN_EXIT" "$TMP/out.txt" "is not a task in" "registry: REJECTED"
 start "missing key -> registry REJECTED, exit 2"
 registry '[[flake]]' \
     'test = "tests::whatever"' \
-    'owner = "TASK-STWVB"' \
+    "owner = \"$FIXTURE_OWNER\"" \
     'evidence = "no signature, so it would excuse any failure of this name"' \
     'filed = "2026-07-28"'
 run --check
@@ -655,8 +723,11 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "host     : unknown (window unknown)" \
     "verdict: GREEN — no failures"
 
-# B2: crashed binary is never "suite looked green", even on a degraded host.
-start "crashed cargo on degraded host -> RED names exit, never looked green"
+# B2 + TASK-STWVB.1.1.1.1: a crashed binary is never "suite looked green", even
+# on a degraded host. After R-1 the crash is caught from the LOG and named in
+# its own CRASHED section, so this case now pins the crash arm rather than the
+# cargo-exit arm — same exit, strictly more said about why.
+start "crashed cargo on degraded host -> RED names the crash, never looked green"
 registry "${KNOWN_FLAKE_ENTRY[@]}"
 install_stub_cargo_abort
 PATH="$TMP/bin:$PATH" \
@@ -668,8 +739,11 @@ rm -rf "$TMP/work"
 bad=""
 [ "$RUN_EXIT" = 1 ] || bad="exit $RUN_EXIT, wanted 1"
 grep -qF 'host     : DEGRADED' "$TMP/out.txt" || bad="$bad; output lacks \`host     : DEGRADED\`"
-grep -qF 'verdict: RED — cargo exited 101 with no per-test failure list' "$TMP/out.txt" \
-    || bad="$bad; output lacks cargo-exit RED"
+grep -qF 'CRASHED (1)' "$TMP/out.txt" || bad="$bad; output lacks the CRASHED section"
+grep -qF '(signal: 6, SIGABRT: process abort signal)' "$TMP/out.txt" \
+    || bad="$bad; output does not name the signal"
+grep -qF 'verdict: RED — 1 crashed test target(s)' "$TMP/out.txt" \
+    || bad="$bad; output lacks the crashed-target RED"
 grep -qF 'suite looked green' "$TMP/out.txt" && bad="$bad; misreported suite looked green"
 if [ -z "$bad" ]; then
     printf 'ok   %s\n' "$CASE"
@@ -765,16 +839,12 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "host     : calm" \
     "verdict: GREEN modulo 1 registered flake"
 # Same log through --classify must agree (standing invariant M-1 broke).
-if [ -f "$live_log" ]; then
-    cp "$live_log" "$TMP/suite.log"
-    rm -rf "$TMP/work"
-    start "live path flake log via --classify agrees: GREEN modulo flake, exit 0"
+start "live path flake log via --classify agrees: GREEN modulo flake, exit 0"
+if take_live_log; then
     run --classify "$TMP/suite.log"
     check 0 "$RUN_EXIT" "$TMP/out.txt" \
         "FLAKE (1)" \
         "verdict: GREEN modulo 1 registered flake"
-else
-    rm -rf "$TMP/work"
 fi
 
 start "live path: registered flake on degraded host -> INCONCLUSIVE, exit 4"
@@ -790,16 +860,12 @@ check 4 "$RUN_EXIT" "$TMP/out.txt" \
     "host     : DEGRADED" \
     "verdict: INCONCLUSIVE — re-run when calm" \
     "registered flakes; still not a trusted green"
-if [ -f "$live_log" ]; then
-    cp "$live_log" "$TMP/suite.log"
-    rm -rf "$TMP/work"
-    start "live path degraded-flake log via --classify agrees: INCONCLUSIVE, exit 4"
+start "live path degraded-flake log via --classify agrees: INCONCLUSIVE, exit 4"
+if take_live_log; then
     run --classify "$TMP/suite.log"
     check 4 "$RUN_EXIT" "$TMP/out.txt" \
         "FLAKE (1)" \
         "verdict: INCONCLUSIVE — re-run when calm"
-else
-    rm -rf "$TMP/work"
 fi
 
 start "live path: degraded host + unregistered iso-green -> INCONCLUSIVE, exit 4"
@@ -897,7 +963,161 @@ check 0 "$RUN_EXIT" "$TMP/out.txt" \
     "load=11.41 elevated (>=8.0), corroborating only" \
     "verdict: GREEN — no failures"
 
+# -- TASK-STWVB.1.1.1.1 -----------------------------------------------------
+# orgasmic:TASK-STWVB.1.1.1.1
+#
+# R-1: a crashed target contributes ZERO listed failures, so every detector
+# keyed off cargo's exit code is switched off by the FAIL_COUNT guard the
+# moment any other failure classifies. On a board with seven registered flakes
+# that is the ordinary case: crash + flake returned `GREEN modulo 1 registered
+# flake` at exit 0 over a log saying SIGABRT.
+
+# The shape real cargo emitted in the reviewer's reproduction: one target fails
+# with a listed failure whose signature is registered and which is green in
+# isolation (so it classifies FLAKE, FAIL_COUNT=1), one target aborts and
+# reports nothing at all. Backticks are escaped so the writer does not run
+# them; the inner heredoc is quoted so the stub does not either.
+install_stub_cargo_crash_plus_flake() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<EOF
+#!/bin/sh
+cat <<'LOG'
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::recovery_inventory_waits_for_atomic_claim_commit ... FAILED
+
+failures:
+
+---- tests::recovery_inventory_waits_for_atomic_claim_commit stdout ----
+thread 'tests::recovery_inventory_waits_for_atomic_claim_commit' panicked at src/lib.rs:1:1:
+assertion failed: waited for the atomic claim commit
+
+failures:
+    tests::recovery_inventory_waits_for_atomic_claim_commit
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass \`-p orgasmic-daemon --lib\`
+     Running unittests src/main.rs (target/debug/deps/crashdemo-0cce3376237212be)
+
+running 1 test
+error: test failed, to rerun pass \`--bin crashdemo\`
+
+Caused by:
+  process didn't exit successfully: \`target/debug/deps/crashdemo-0cce3376237212be\` (signal: 6, SIGABRT: process abort signal)
+
+error: 2 targets failed:
+    \`-p orgasmic-daemon --lib\`
+    \`--bin crashdemo\`
+LOG
+exit 101
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
+# A non-zero cargo exit that names no failing target and lists no failure —
+# cargo refused the invocation. CRASH_COUNT is 0 here by construction, so this
+# is what keeps the B2 arm (and, under --classify, the suite-exit stamp)
+# honest rather than dead.
+install_stub_cargo_exit_without_targets() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<'EOF'
+#!/bin/sh
+cat <<'LOG'
+error: no test target named `nope` in default-run packages
+LOG
+exit 101
+EOF
+    chmod +x "$TMP/bin/cargo"
+}
+
+start "live path: crashed target + registered flake -> RED exit 1, crash named"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_crash_plus_flake
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+live_log="$TMP/work/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : 1 target(s) died without reporting a failure list" \
+    "CRASHED (1)" \
+    "--bin crashdemo" \
+    "(signal: 6, SIGABRT: process abort signal)" \
+    "FLAKE (1)" \
+    "host     : calm" \
+    "verdict: RED — 1 crashed test target(s)"
+# The crash must survive the flake, not the other way round.
+start "crash + flake never reads as GREEN modulo flake"
+if grep -qF 'verdict: GREEN modulo' "$TMP/out.txt"; then
+    fail_case "a crashed target read as GREEN modulo a registered flake"
+else
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+fi
+
+# Same log, both modes, same verdict — the acceptance criterion R-2 found unmet,
+# checked on the crashed-binary population specifically.
+start "crash+flake log via --classify agrees: RED exit 1, crash named"
+if take_live_log; then
+    run --classify "$TMP/suite.log"
+    check 1 "$RUN_EXIT" "$TMP/out.txt" \
+        "CRASHED (1)" \
+        "FLAKE (1)" \
+        "verdict: RED — 1 crashed test target(s)"
+fi
+
+# R-2: the suite exit is stamped into the log, so --classify judges the same
+# number the live run saw. Before the stamp this log reclassified as
+# `GREEN — no failures`, exit 0, against a live verdict of RED, exit 1.
+start "live path: non-zero exit naming no target -> RED, cargo exit named"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_exit_without_targets
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+live_log="$TMP/work/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : none" \
+    "verdict: RED — cargo exited 101 with no per-test failure list"
+
+start "that log via --classify agrees: RED exit 1 (suite exit is stamped)"
+if take_live_log; then
+    grep -qE '^# orgasmic-suite-exit: 101$' "$TMP/suite.log" \
+        || fail_case "live run wrote no suite-exit stamp"
+    run --classify "$TMP/suite.log"
+    check 1 "$RUN_EXIT" "$TMP/out.txt" \
+        "verdict: RED — cargo exited 101 with no per-test failure list"
+fi
+
+# A pre-stamp log has no suite exit to read, and that fallback is documented.
+# The crash detector is derived from the log text, so a legacy log carrying a
+# crashed target is still RED.
+start "--classify on an UNSTAMPED crashed-binary log is still RED, exit 1"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<'EOF'
+     Running unittests src/lib.rs (target/debug/deps/stub-1234)
+error: test failed, to rerun pass `-p orgasmic-daemon --lib`
+
+Caused by:
+  process didn't exit successfully: `target/debug/deps/stub-1234` (signal: 11, SIGSEGV: invalid memory reference)
+EOF
+run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "CRASHED (1)" \
+    "(signal: 11, SIGSEGV: invalid memory reference)" \
+    "verdict: RED — 1 crashed test target(s)"
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
+# R-5: a case that stops running must not be able to look like a pass.
+TOTAL_CASES=$((PASSED + FAILED))
+if [ "$TOTAL_CASES" -ne "$EXPECTED_CASES" ]; then
+    printf 'FAIL case count: ran %s, expected %s — a case was added or vanished\n' \
+        "$TOTAL_CASES" "$EXPECTED_CASES"
+    exit 1
+fi
 [ "$FAILED" -eq 0 ] || exit 1
