@@ -20219,3 +20219,145 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-07 Fri 13:01:47 reviewer.reported TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5221
+:TIME:         [2026-08-07 Fri 13:01:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:RUN_ID:       run-20260807T124524-254152065ca341288edfb213c614ffc8
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5218/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:03:18 reviewer.done TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5222
+:TIME:         [2026-08-07 Fri 13:03:18]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:REASON:       APPROVE WITH FOLLOW-UPS. The behaviour is correct and strictly more conservative, and the completeness question is CLOSED: the reviewer enumerated 12 git states from the operations side and found no harmful unmarked cell. But the JUSTIFICATION is false — the exit-128 revert-abort wedge reproduces ONLY without the real-index git add, a shape production never produces. MANAGER RE-MEASURED IN THE PRODUCTION SHAPE: revert --abort exits 0, the record survives on disk AND in HEAD, REVERT_HEAD clears. The prior review's case C was measured against a simulation. That false claim now sits in the SHIPPED convention plus four other sites. Also found: the sequencer entry latches after an ordinary git reset --hard, refusing every close indefinitely. Carries to a follow-up round.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260807-orgasmic-5218
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5218/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:03:18 task.state_transitioned TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5223
+:TIME:         [2026-08-07 Fri 13:03:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 13:03:22 implementer.done TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5224
+:TIME:         [2026-08-07 Fri 13:03:22]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:REASON:       Merged 8e56b86. All four items done, all three new tests proved red under injection, no verify artifact needed re-authoring. The worker also corrected a FALSE claim in its own task heading (that shipped_conventions.rs pinned the sequencer prose) which the manager had passed through from the review unverified — manager confirmed after the fact: zero matches at the parent, four on the fix branch. Reviewed approve-with-follow-ups.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    8e56b869f0e66297ca6f51b8419d089c3abfc7ef
+:BRANCH:       task-qgwk7.1.1.1.1-impl
+:CLOSED_TX:    tx-20260807-orgasmic-5212
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5212/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:03:22 task.state_transitioned TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5225
+:TIME:         [2026-08-07 Fri 13:03:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 13:04:06 task.created TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5226
+:TIME:         [2026-08-07 Fri 13:04:06]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       The BLOCK SHIP that justified the parent round was measured against a simulation that skipped the real-index git add; in the production shape revert --abort exits 0 and the record survives. Manager re-measured. The false claim is now in shipped content in four places. Also drops the sequencer entry, whose only reachable effect is a latch after git reset --hard.
+:END:
+
+* TX 2026-08-07 Fri 13:04:19 task.property_updated TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5227
+:TIME:         [2026-08-07 Fri 13:04:19]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       follow-up round minted from reviewer findings
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-07 Fri 13:04:20 task.state_transitioned TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5228
+:TIME:         [2026-08-07 Fri 13:04:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged 8e56b86, gates re-run by the manager, reviewed approve-with-follow-ups with NO BLOCK SHIP. The behaviour is correct and the completeness question is CLOSED — 12 git states enumerated from the operations side, no harmful unmarked cell. Four follow-ups carry to TASK-QGWK7.1.1.1.1.1, chiefly a false measured claim now in shipped content.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-07 Fri 13:04:20 task.state_transitioned TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5229
+:TIME:         [2026-08-07 Fri 13:04:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Its BLOCK SHIP (the missing REVERT_HEAD marker) is discharged: fix round TASK-QGWK7.1.1.1.1 landed at 8e56b86 and passed a fresh review with no blocking finding. Note for the record: the wedge symptom that made it BLOCK SHIP was later shown to be measured against a simulation — the refusal is still right, its justification was not, and TASK-QGWK7.1.1.1.1.1 corrects the claim.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

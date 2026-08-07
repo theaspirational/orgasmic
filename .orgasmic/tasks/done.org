@@ -28769,3 +28769,277 @@ for the =FAIL_COUNT>0= population only — and the obvious fix (stamp the suite
 exit into the log, exactly as host state is already stamped) is small enough that
 the reviewer should rule on whether it belongs here.
 
+* DONE TASK-QGWK7.1.1.1.1 fix-round: the sequencer guard misses REVERT_HEAD, so a close wedges git revert --abort :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7.1.1.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Fix round for the TASK-QGWK7.1.1.1 review (merged =f6c6c4d=, REJECT, ONE BLOCK
+SHIP). *THE MECHANISM OF EVERY PRIOR FIX IS CORRECT — DO NOT REDESIGN ANY OF IT.*
+The reviewer confirmed: F-1's repair lives in exactly the right place, F-2's
+ref-named CAS is correct and its shim test is sound AND leak-free, F-5/F-6 are
+correct, the reorder composes (=reconcile_torn_closes_best_effort= never reads
+=args.properties=), linked worktrees resolve correctly, and
+=dispatch_record_is_in_history= works through the macOS =/tmp= symlink alias.
+
+*THE BLOCK SHIP IS ONE LINE OF CODE AND ONE WORD OF PROSE.* Everything else here
+is small. Read the review first —
+=.orgasmic/dispatch-records/tx-20260807-orgasmic-5199/last.txt= — it carries a
+full state table (HEAD shape x sequencer x commit outcome x re-run) and 14 git
+probes with verbatim output. Do not re-derive any of it.
+=== END STATUS ===
+
+** B-1 — BLOCK SHIP — the sequencer guard misses =REVERT_HEAD=, and the symptom is worse than the loss it prevents
+=crates/orgasmic-cli/src/manager.rs:5759-5767=; convention at
+=manager-dispatch.org:340=. MANAGER-VERIFIED IN SOURCE AND BY INDEPENDENT PROBE.
+
+=sequencer_operation_in_progress= checks =rebase-merge=, =rebase-apply=,
+=MERGE_HEAD=, =CHERRY_PICK_HEAD=, =BISECT_LOG=. It does NOT check =REVERT_HEAD=.
+=git revert= is the same sequencer machinery as cherry-pick and its =--abort= has
+the same HEAD-rewinding contract that made =rebase --abort= the original finding.
+
+REVIEWER MEASUREMENT, three scratch repos, same conflicted-revert fixture:
+| case | close leaves | =git revert --abort= | record after |
+| control A (guard fires, as merge/rebase/cherry-pick get today) | on disk, untracked | *exit 0* | on disk, repairable |
+| control B (staged-only, pre-QGWK7.1.1 baseline) | staged | *exit 0* | GONE (the pre-existing loss) |
+| case C (SHIPPED TODAY, unguarded) | COMMITTED on main | *exit 128* =Untracked working tree file … would be overwritten by merge= / =fatal: Could not reset index file= | commit stuck at HEAD, =REVERT_HEAD= still present, index left =D …last.txt= + =UU f.txt= |
+
+*Case C is strictly worse than BOTH controls.* The operator typed
+=git revert --abort=, got a fatal, and their revert is still in progress with a
+mangled index — and nothing in the close's output warned them.
+
+MANAGER-REPRODUCED INDEPENDENTLY, and it widens the window: *a CLEAN
+=git revert -n --no-edit HEAD= — the ordinary way to stage a revert before
+editing it — leaves =REVERT_HEAD= present and =CHERRY_PICK_HEAD= ABSENT.* So the
+exposure is any staged revert, not only a conflicted one.
+
+The shipped convention documents the guarantee the code does not provide: line
+340 enumerates "(rebase, am, merge, cherry-pick, bisect)" — the same incomplete
+set — and =shipped_conventions.rs= PINS that prose, so the prose is pinned WRONG.
+
+*Fix:* add =("REVERT_HEAD", "revert")= to the array, and — belt and braces for a
+multi-commit revert/cherry-pick range that is between picks — =("sequencer",
+"revert or cherry-pick sequence")=. Add =revert= to the convention parenthesis
+and update the pinning assertion. Pin with a conflicted-revert twin of
+=a_close_inside_a_conflicted_merge_keeps_the_record_and_persists_nothing=
+(=manager.rs:9776=).
+
+** B-2 — LOW — the re-persist commits to whichever branch you are STANDING ON
+=manager.rs:5806-5827= -> =commit_promoted_dispatch_record:5686-5705=.
+=repersist_dispatch_record_best_effort= re-resolves =symbolic-ref -q HEAD= AT
+RE-RUN TIME, and the branch the original close resolved is recorded NOWHERE (the
+close tx extras carry =WORKTREE= and =BRANCH=, the DISPATCH branch, not the
+manager's HEAD ref). So: close on =feature-x= fails to commit -> record on disk
+untracked -> =git checkout main= (untracked files survive) -> re-run -> the record
+lands on =main=.
+
+Not lost, not duplicated, and =main= is arguably a fine home — but the PARENT
+round's F-2 was filed precisely against "the record commit cannot land on a
+branch the close did not resolve", and the re-persist path is exempt from that
+property by construction. The new test pins the FIRST-CLOSE path only.
+
+*Fix:* either stamp the resolved ref on the close tx and have the re-persist
+refuse a mismatch (naming the ref in the refusal), or say in the convention that
+repair lands on your current branch, so re-running a close from an unrelated
+branch is a known move. Reviewer-flagged as source-derived, NOT measured through
+the binary — measure it before choosing.
+
+** B-3 — LOW — the =re-persisted: … committed= line can be FALSE
+If =promote last.txt= fails after =create_dir_all= succeeds
+(=paths.rs:299-305=), =dest_dir= exists but is EMPTY and status is =partial=.
+MEASURED by the reviewer: =git add -- <empty dir>= exits 0, the throwaway index's
+=write-tree= equals =head_tree=, =write_dispatch_record_commit= takes its
+=tree == head_tree= early return, =verify_dispatch_record_staged= sees no files
+and returns =Ok=, and the close prints =re-persisted: dispatch record <tx>
+committed=. *Nothing was committed*, =dispatch_record_is_in_history= stays false,
+and every future re-run repeats the same false claim. No commit spam and no data
+at risk — but the one line a manager would trust is wrong.
+
+*Fix:* gate the print on the record actually being in =HEAD= afterwards.
+
+** B-4 — LOW — test — NO test reaches EITHER arm of the =git restore= rollback
+=manager.rs:5731-5748=. The prior report claimed "the =Ok(_) => Err(err)= half is
+exercised by every commit-failure test". It is NOT. Every commit-failure fixture
+injects via =.git/index.lock= (=tests/dispatch.rs:9788=, =manager.rs:9700=), and
+a held =index.lock= makes the REAL-INDEX =git add= at =:5713= fail, so
+=commit_promoted_dispatch_record= returns before =write_dispatch_record_commit=
+is ever called — the whole =match git_capture(restore …)= block is dead in the
+suite. The two verify artifacts replace the function body wholesale, so they do
+not reach it either.
+
+*Fix:* reach it with a failure at =commit-tree= or =update-ref= while the index
+lock is FREE. The =write_same_oid_sibling_git_shim= pattern already in that file
+gets there in about ten lines — have the shim fail =update-ref= once instead of
+swapping branches.
+
+** Recorded, NOTHING TO CHANGE IN THE TREE
+The prior report's residual "=BISECT_LOG= is close to unreachable — a bisect
+detaches HEAD, so the detached-HEAD refusal fires first" is WRONG IN BOTH
+DIRECTIONS. Measured: after =git bisect start= alone, =BISECT_LOG= is present and
+=symbolic-ref -q HEAD= still returns =refs/heads/main= — HEAD is NOT detached
+until you mark good/bad; and even detached, =sequencer_operation_in_progress=
+(=:5692=) sits ABOVE the =symbolic-ref= resolution (=:5706=), so the bisect
+refusal fires FIRST. The check is fully reachable and correctly named. Reports
+are immutable dispatch records, so there is nothing to edit — simply do not carry
+the claim forward.
+
+Also worth a CODE COMMENT, not a change: the repair's reachability depends on
+=close_tx_ran_cleanup= (=:7782=) setting =cleanup_already_run= only for
+=ok=/=worktree_missing=, which is what stops a staggered multi-task close
+stamping it over a =partial=. Load-bearing and currently undocumented.
+
+** Acceptance
+- A close during a =git revert= — CONFLICTED OR CLEAN =-n= — refuses to persist,
+  exactly as the other five operations do, and =git revert --abort= afterwards
+  exits 0 with the record still on disk. Pinned by a conflicted-revert test.
+- A multi-commit revert/cherry-pick sequence between picks is also refused.
+- The convention names =revert=, and its pinning assertion is updated with it.
+- The re-persist either refuses a branch the close did not resolve, or the
+  convention states that repair lands on the current branch (B-2).
+- =re-persisted: … committed= is printed only when the record is in =HEAD=
+  afterwards (B-3).
+- A test reaches BOTH arms of the =git restore= rollback (B-4).
+- All three existing verify artifacts still PASS. If a change moves a function an
+  injection targets, re-authoring is legitimate ONLY if =expect-red= and =cmd=
+  stay byte-unchanged — say so loudly if you do it.
+
+* DONE TASK-QGWK7.1.1.1 follow-up: a failed record persist is unrecoverable, and the update-ref CAS can pass on the wrong branch :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7.1.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: t
+:DEPENDS_ON:  TASK-QGWK7.1.1.1.1
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Follow-up round for the TASK-QGWK7.1.1 review (merged =5b734a1=, verdict
+*approve-with-follow-ups*, NO BLOCK SHIP). The M-0 mechanism — a =dispatch-close=
+that COMMITS the promoted record through a throwaway index — is CORRECT and its
+happy path survived every probe. Do not re-open it.
+
+*THE REVIEW IS THE MOST VALUABLE ARTIFACT HERE. READ IT FIRST:*
+=.orgasmic/dispatch-records/tx-20260807-orgasmic-5129/last.txt=. It carries 14
+scratch-repo git probes with verbatim output; nothing below should be re-derived.
+
+*SETTLED — DO NOT RE-MEASURE:* the real-index =git add= is load-bearing (without
+it the manager's next =git commit= DELETES the record from history); =update-ref
+HEAD <new> <old>= really is a compare-and-swap on the branch through the symref;
+a fully-ignored record dir cannot report false success; =partial= costs nothing
+downstream (all three consumers treat it as they treated =worktree_failed=); the
+flipped rename order in =paths.rs= preserves the fd-anchored invariant; the new
+tests DO enter the production call path. Each was measured.
+=== END STATUS ===
+
+** F-1 — MEDIUM — a failed record persist is UNRECOVERABLE, and re-running the close refuses
+=crates/orgasmic-core/src/paths.rs:317= (tmp unlink) ->
+=crates/orgasmic-cli/src/manager.rs:5636=. MANAGER-VERIFIED IN SOURCE.
+
+=promote_validated_dispatch_attempt= unlinks the tmp artifacts as soon as the
+COPIES succeed — before =commit_promoted_dispatch_record= is ever called. So a
+failed commit leaves: record on disk untracked, tmp gone, =CLEANUP_ERROR= set,
+status =partial=. There is then no way back into git:
+=promote_dispatch_artifacts_in_place= bails on =last_path missing= (tmp is gone);
+re-running =dispatch-close= hits =CloseTarget::AlreadyClosed= and returns a no-op
+by design (=manager.rs:960-983=, verified); and there is no =--repersist= verb.
+
+*The one path where the guarantee fails is the one path with no repair*, and its
+only signal is a =warning:= line. That is the regression back to "manager habit"
+that F-1 of the parent existed to remove, narrowed to the error path.
+
+Worse, the rollback is unguarded: =manager.rs:5689= runs =git restore --staged=
+behind =let _ =, so if the index lock is held at THAT moment the restore fails
+silently and the record is left STAGED — which is M-0's symptom back verbatim.
+
+*Fix:* make persistence idempotent and re-entrant. =commit_promoted_dispatch_record=
+already works from =dest_dir= alone; only its CALLER is gated on tmp. Route the
+already-closed no-op into it when the recorded =CLEANUP_STATUS= was non-ok.
+Minimum viable: stop discarding the =git restore= result.
+
+** F-2 — MEDIUM — the =update-ref= CAS can pass on the WRONG BRANCH
+=crates/orgasmic-cli/src/manager.rs:5800-5812=.
+
+The CAS compares OIDs, not ref identity. Reviewer measured: with a sibling
+branch at the same OID, =git branch other && git checkout other= between the
+=rev-parse= and the =update-ref= makes the check PASS and the record commit land
+on =other=. Millisecond window, requires a concurrent checkout.
+
+*Fix:* resolve =git symbolic-ref -q HEAD= alongside the OID and CAS that specific
+ref instead of =HEAD=, falling back to =HEAD= when detached — which also gives
+F-5 a place to refuse.
+
+** F-3 — MEDIUM (PRE-EXISTING, not a regression) — a close inside a conflicted rebase is discarded by =rebase --abort=
+Measured in four scratch repos. Conflicted merge -> close -> resolve -> commit is
+SAFE (=MERGE_HEAD= survives, both parents intact). =rebase --continue= is SAFE.
+=cherry-pick --abort= is SAFE and the record survives on disk. Only
+=rebase --abort= destroys the record — and *the staged-only baseline loses it
+identically*, which is why this is classified pre-existing from TASK-QGWK7.1 and
+was NOT the BLOCK SHIP the brief pre-authorised.
+
+*Fix:* refuse persistence (or skip it and say so through =CLEANUP_ERROR=) when
+=.git/rebase-merge=, =.git/rebase-apply=, =.git/MERGE_HEAD=,
+=.git/CHERRY_PICK_HEAD= or =.git/BISECT_LOG= exists. Four =exists()= calls close
+the whole class.
+
+** F-4 — LOW — =commit-tree= ignores =commit.gpgsign=, and one stated residual is FALSE
+Measured: with =commit.gpgsign=true= and a garbage =user.signingkey=,
+=git commit-tree= exits 0 and produces an UNSIGNED commit — so a repo enforcing
+signatures gets unpushable history silently. Correctly named by the implementer.
+
+But the implementer's residual "if =user.name=/=user.email= are unset the commit
+fails" is WRONG: =commit-tree= succeeds using git's derived =user@host= ident.
+Harmless in effect; remove it rather than carry a false failure mode.
+
+** F-5 — LOW — detached HEAD persists the record to no branch
+Measured: on a detached HEAD, =update-ref HEAD= moves only the detached HEAD;
+=refs/heads/*= is untouched, so the record commit is on NO branch and the
+manager's next =git checkout= orphans it. The close still reports =ok=.
+
+Unborn HEAD is SAFE by contrast — =rev-parse --verify HEAD^{commit}= fails before
+the real =git add=, so nothing is staged. The two unusual shapes are not
+symmetric; only one is guarded.
+
+** F-6 — LOW — M-5's refusal was inserted AHEAD of the torn-close recovery
+=crates/orgasmic-cli/src/manager.rs:951= vs =:957=. MANAGER-VERIFIED IN SOURCE.
+
+=normalize_report_path_property= now runs above =reconcile_torn_closes_best_effort=,
+whose own comment says it must run "before anything else, including the
+already-closed no-op below". So re-running a torn close with a command line
+carrying an absolute =REPORT_PATH= bails BEFORE the stranded transition is
+reconciled. Refusing is still right; the ORDERING silently demoted a path that
+was explicitly ordered first. *Fix:* move the call below the reconcile.
+
+** F-7 — LOW (docs) — the sidecar now has two meanings and the convention documents one
+=crates/orgasmic-core/src/paths.rs:394-460=, convention at
+=manager-dispatch.org:334-340=. A =stdout.log.bytes= with NO =stdout.log= means
+either "the harness printed nothing" (value =0=) or "the promote failed partway"
+(value non-zero) — distinguishable only by reading the value, and the prose
+documents only the first. Also: the promoted excerpt is =64 KiB + ~180= bytes
+(the banners ride on top of the cap) while the convention still says "64 KB".
+
+Fold in the two other doc gaps: record commits are UNSIGNED (F-4), and
+*promote-only =--no-worktree-remove= closes advance the branch too* — the
+convention says "a close moves the branch you are on by one commit" without
+saying it applies to those as well.
+
+** Acceptance
+- A failed record persist is RECOVERABLE without hand-repair, or the failure is
+  loud enough that a manager cannot miss it — and the =git restore= result is
+  reported rather than discarded. Pinned by a test that fails the commit and then
+  recovers the record into history.
+- The record commit cannot land on a branch the close did not resolve (F-2),
+  pinned by a test that repoints HEAD to a same-OID sibling.
+- A close during any sequencer operation cannot lose the record (F-3).
+- Detached HEAD either persists to something durable or refuses and says so (F-5).
+- =normalize_report_path_property= runs BELOW =reconcile_torn_closes_best_effort=,
+  pinned by a torn-close re-run carrying an absolute =REPORT_PATH= (F-6).
+- The convention states: what a non-zero =stdout.log.bytes= with no =stdout.log=
+  means, that record commits are unsigned, that promote-only closes advance the
+  branch, and the real excerpt size (F-7, F-4).
+- The false residual about unset =user.name= is removed, not carried forward.
+- =verify/TASK-QGWK7.1.1/= and =verify/TASK-QGWK7.1/= still PASS unchanged.
+
