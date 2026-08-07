@@ -328,15 +328,33 @@ check the rest of the invocation too.
    touches — makes =git merge= refuse with "your local changes would be
    overwritten", and the review gate's own refusal message prescribes close
    first, merge second. Two consequences worth knowing: a close moves the
-   branch you are on by one commit, and =orgasmic update= / =install.sh=
+   branch you are on by one commit — *including a promote-only
+   =--no-worktree-remove= close*, which persists the record the same way, so a
+   round of N closes leaves N =chore(orgasmic): dispatch record= commits
+   interleaved with your own work — and =orgasmic update= / =install.sh=
    (=git stash push --include-untracked= in the source repo, which for this
    project IS the orgasmic project) can no longer un-persist a record between a
-   close and your next commit — a committed file is not stashed. The harness
+   close and your next commit — a committed file is not stashed. *Record commits
+   are UNSIGNED*: they are written with =git commit-tree=, which ignores
+   =commit.gpgsign= (measured), so a repo whose push side enforces signatures
+   will reject them. *A close does not persist while a sequencer operation owns
+   HEAD* (rebase, am, merge, cherry-pick, bisect) or on a detached HEAD: it
+   promotes the files, skips the commit, and says why through =CLEANUP_ERROR= —
+   a record commit written inside a conflicted rebase is destroyed by
+   =rebase --abort=, and one written on a detached HEAD is on no branch at all.
+   Re-run the same close once the operation finishes or you are back on a
+   branch; a re-run repairs any record its close promoted but could not commit,
+   printing =re-persisted:=, and is otherwise still a no-op. The harness
    =stdout.log= sits beside the summary as falsifiable evidence: empty files
    promote no =stdout.log= (but still a =stdout.log.bytes= of =0=, so "printed
    nothing" is distinguishable from "never promoted"); larger files promote a
-   64 KB excerpt, half from the head and half from the tail, with a banner line
+   64 KiB excerpt (plus ~180 bytes of banner, which ride on top of the cap),
+   half from the head and half from the tail, with a banner line
    naming the truncation and the original byte count in =stdout.log.bytes=.
+   =stdout.log.bytes= is therefore two statements, told apart by its VALUE: a
+   =0= with no =stdout.log= means the harness printed nothing, while a NON-ZERO
+   count with no =stdout.log= means the promote failed between the two renames
+   — the excerpt is missing, and the close's =CLEANUP_ERROR= names it.
    =:REPORT_PATH:= always points at the summary, and is always
    project-relative — a =--property REPORT_PATH== outside the project root is
    refused rather than committed as a machine-specific path. *Retention: keep forever, with measured year-one growth.*

@@ -1,0 +1,21 @@
+# Pinned from the real red run of 2026-08-07 with the injection applied.
+#
+# F-1: `promote_validated_dispatch_attempt` unlinks the tmp artifacts as soon as
+# the COPIES succeed, so a persist that fails afterwards leaves the record on
+# disk and untracked with no route back: promote-in-place bails on `last_path
+# missing`, and the re-run of the close is an `already-closed` no-op by design.
+#
+# The FIRST failing assertion is the recovery claim below. Everything before it
+# passes under the injection and is what makes the red the RIGHT red: the close
+# still succeeded, `CLEANUP_ERROR` still named the failed commit, the promoted
+# report was still on disk, tmp was still gone, and the record was still absent
+# from HEAD. Only the repair is missing, and the no-op line the assertion prints
+# is the whole of what a manager used to get.
+
+exit: 101
+
+contains: the re-run must repair the record it could not persist, and say so: already-closed: TASK-DISPATCH started_tx=
+
+contains: test result: FAILED. 0 passed; 1 failed
+
+contains: a_record_persist_that_failed_is_recovered_by_re_running_the_close ... FAILED

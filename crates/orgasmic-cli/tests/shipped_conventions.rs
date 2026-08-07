@@ -414,4 +414,23 @@ fn manager_convention_names_post_close_report_path() {
         text.contains("makes =git merge= refuse"),
         "the prose must say why staging alone was not enough"
     );
+    // TASK-QGWK7.1.1.1 F-7 / F-4: three properties of the record commit a
+    // manager cannot derive from the files, and one sidecar value that means
+    // two different things.
+    assert!(
+        text.contains("means the promote failed between the two renames"),
+        "the prose must say what a non-zero stdout.log.bytes with no stdout.log means"
+    );
+    assert!(
+        text.contains("are UNSIGNED"),
+        "the prose must say record commits are unsigned, so a signature-enforcing repo knows"
+    );
+    assert!(
+        text.contains("=--no-worktree-remove= close"),
+        "the prose must say a promote-only close advances the branch too"
+    );
+    assert!(
+        text.contains("64 KiB excerpt"),
+        "the prose must state the real excerpt size"
+    );
 }

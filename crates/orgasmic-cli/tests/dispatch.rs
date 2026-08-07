@@ -9662,3 +9662,440 @@ async fn dispatch_close_still_salvages_and_removes_an_old_path_worktree() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// A `git` shim that performs a same-OID sibling checkout the first time the
+/// close reaches `git commit-tree`, and forwards everything to the real git.
+///
+/// TASK-QGWK7.1.1.1 F-2 needs the one interleaving the reviewer measured — HEAD
+/// repointed to a DIFFERENT branch sitting at the SAME OID, between the close
+/// resolving HEAD and the close swapping it. That window is milliseconds wide
+/// in production and cannot be hit by a sleep; putting it on the real `git`
+/// this close runs makes it deterministic, and puts it inside
+/// `cmd_dispatch_close` rather than beside it.
+fn write_same_oid_sibling_git_shim(bin_dir: &Path, sibling: &str) {
+    let output = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("locate git");
+    assert!(output.status.success(), "command -v git failed");
+    let git = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = bin_dir.join("git");
+    write(
+        &path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = \"commit-tree\" ]; then\n    \
+             marker=\"$({git} rev-parse --absolute-git-dir)/orgasmic-sibling-swapped\"\n    \
+             if [ ! -e \"$marker\" ]; then\n      : > \"$marker\"\n      \
+             {git} branch -f {sibling} HEAD\n      \
+             {git} symbolic-ref HEAD refs/heads/{sibling}\n    fi\n  fi\ndone\nexec {git} \"$@\"\n"
+        ),
+    );
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+    }
+}
+
+/// TASK-QGWK7.1.1.1 F-1. A record persist that failed used to be terminal.
+/// Promotion unlinks the tmp artifacts as soon as the COPIES succeed, so a
+/// failed commit left the record on disk, untracked, with tmp gone: the
+/// promote-in-place path bails on `last_path missing`, the re-run of the close
+/// is an `already-closed` no-op by design, and there is no re-persist verb. The
+/// only signal was one `warning:` line. The one path where the guarantee fails
+/// was the one path with no repair.
+///
+/// The trigger is M-1's, one step later: an index lock this close does not own.
+/// The close must still succeed (a failed persist never fails a close), keep the
+/// promoted files, and — on the re-run every manager already performs — put them
+/// into history without hand repair.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_record_persist_that_failed_is_recovered_by_re_running_the_close() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "record recovery brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "record recovery regression",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+
+    let close_args = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        &started_tx,
+        "--status",
+        "done",
+        "--merge-sha",
+        &head,
+        "--codex-commit",
+        &head,
+        "--no-worktree-remove",
+        "--reason",
+        "record recovery regression",
+    ];
+
+    // The failure this finding is about: a lock this close does not own, held
+    // across the persist.
+    let index_lock = project_root.join(".git/index.lock");
+    write(&index_lock, "");
+    let first = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    let first_stderr = String::from_utf8_lossy(&first.stderr).to_string();
+    assert!(
+        first.status.success(),
+        "a failed record persist must never fail the close\nstdout={}\nstderr={first_stderr}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    assert!(
+        first_stderr.contains("warning: dispatch cleanup status=partial")
+            && first_stderr.contains("commit promoted dispatch record"),
+        "the failed persist must be reported through CLEANUP_ERROR: {first_stderr}"
+    );
+    let promoted_last =
+        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    assert!(
+        promoted_last.exists(),
+        "the report itself is never the casualty of a failed persist"
+    );
+    let record_in_history = |root: &Path| {
+        Command::new("git")
+            .args([
+                "cat-file",
+                "-e",
+                &format!("HEAD:.orgasmic/dispatch-records/{started_tx}/last.txt"),
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(
+        !record_in_history(&project_root),
+        "the fixture must really reproduce the unrecoverable state: record not in history"
+    );
+    assert!(
+        !attempt_last.exists(),
+        "tmp is already unlinked, which is why promote-in-place can no longer recover this"
+    );
+
+    // The manager clears the lock and re-runs the close, which is the only
+    // command they have. Before this fix that re-run was a pure no-op.
+    std::fs::remove_file(&index_lock).unwrap();
+    let second = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        second.contains("already-closed: TASK-DISPATCH"),
+        "cleanup itself is still a no-op on a re-run: {second}"
+    );
+    assert!(
+        second.contains(&format!(
+            "re-persisted: dispatch record {started_tx} committed"
+        )),
+        "the re-run must repair the record it could not persist, and say so: {second}"
+    );
+    assert!(
+        record_in_history(&project_root),
+        "after the re-run a fresh clone must be able to read the record"
+    );
+    let staged = run_git(&project_root, &["diff", "--cached", "--name-only"]);
+    assert!(
+        staged.is_empty(),
+        "a recovered persist must leave the index clean, or the next merge refuses: {staged}"
+    );
+    let log = run_git(&project_root, &["log", "-1", "--pretty=%s"]);
+    assert_eq!(
+        log,
+        format!("chore(orgasmic): dispatch record {started_tx}"),
+        "the recovery writes the same record-only commit the close would have"
+    );
+
+    // ...and it does not keep repairing: a third run finds it already in
+    // history and says nothing.
+    let third = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        !third.contains("re-persisted:"),
+        "a record already in history must not be re-committed: {third}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-QGWK7.1.1.1 F-2. `update-ref HEAD <new> <old>` is a real
+/// compare-and-swap on the branch through the symref — but it compares OIDs,
+/// not ref IDENTITY. With a sibling branch at the same OID, a checkout landing
+/// between the close resolving HEAD and the close swapping it makes the check
+/// PASS and puts the record commit on a branch the close never resolved.
+///
+/// The fix resolves `git symbolic-ref -q HEAD` alongside the OID and swaps THAT
+/// ref, so the record lands on the branch the close read, or nowhere.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_record_commit_cannot_land_on_a_branch_the_close_never_resolved() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "sibling branch brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "sibling branch regression",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+
+    let main_before = run_git(&project_root, &["rev-parse", "refs/heads/main"]);
+    // Arm the interleaving only now, so the dispatch above ran against real git.
+    write_same_oid_sibling_git_shim(&bin_dir, "sibling");
+
+    let close = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--no-worktree-remove",
+            "--reason",
+            "sibling branch regression",
+        ],
+    );
+    assert!(
+        close.status.success(),
+        "the close still succeeds\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
+    assert_eq!(
+        run_git(&project_root, &["rev-parse", "refs/heads/sibling"]),
+        main_before,
+        "the record must never land on a branch the close did not resolve"
+    );
+    assert_ne!(
+        run_git(&project_root, &["rev-parse", "refs/heads/main"]),
+        main_before,
+        "the branch the close resolved is the one that advances"
+    );
+    assert_eq!(
+        run_git(
+            &project_root,
+            &["log", "-1", "--pretty=%s", "refs/heads/main"]
+        ),
+        format!("chore(orgasmic): dispatch record {started_tx}"),
+        "and it advances by exactly the record commit"
+    );
+    assert!(
+        Command::new("git")
+            .args([
+                "cat-file",
+                "-e",
+                &format!("refs/heads/main:.orgasmic/dispatch-records/{started_tx}/last.txt"),
+            ])
+            .current_dir(&project_root)
+            .status()
+            .unwrap()
+            .success(),
+        "the record must be readable from the branch the close resolved"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-QGWK7.1.1.1 F-6. TASK-QGWK7.1.1's M-5 refusal was inserted ABOVE
+/// `reconcile_torn_closes_best_effort`, whose own comment says it must run
+/// "before anything else, including the already-closed no-op below". A torn
+/// close is re-run with the SAME command line, so a command line carrying an
+/// absolute `REPORT_PATH` bailed before the stranded transition was reconciled.
+/// Refusing is still right; the ordering silently demoted a path that was
+/// explicitly ordered first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-cleanup");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = tmp.path().join("codex/task-cleanup-brief.md");
+    write(&brief, "cleanup brief");
+    seed_open_dispatch_tx(&project_root, "tx-start-order", &worktree, &brief);
+    let outside_report = tmp.path().join("outside/last.txt");
+
+    let running = boot(home.clone()).await;
+    let proxy = start_lifecycle_rejecting_proxy(running.addr).await;
+    let close_args = [
+        "manager".to_string(),
+        "dispatch-close".to_string(),
+        "--task".to_string(),
+        "TASK-CLEANUP".to_string(),
+        "--started-tx".to_string(),
+        "tx-start-order".to_string(),
+        "--status".to_string(),
+        "done".to_string(),
+        "--merge-sha".to_string(),
+        head.clone(),
+        "--no-worktree-remove".to_string(),
+        "--property".to_string(),
+        format!("REPORT_PATH={}", outside_report.display()),
+    ];
+    let borrowed: Vec<&str> = close_args.iter().map(String::as_str).collect();
+    let torn = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", proxy.addr),
+        &project_root,
+        &path_env,
+        &borrowed,
+        &[],
+    );
+    let torn_stderr = String::from_utf8_lossy(&torn.stderr).to_string();
+    assert!(
+        !torn.status.success(),
+        "an absolute REPORT_PATH is refused, which is what makes the ordering matter\
+         \nstdout={}\nstderr={torn_stderr}",
+        String::from_utf8_lossy(&torn.stdout)
+    );
+    // Tear the close for real, with the property the manager can actually pass.
+    let torn_close_args: Vec<&str> = borrowed[..borrowed.len() - 2].to_vec();
+    let torn = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", proxy.addr),
+        &project_root,
+        &path_env,
+        &torn_close_args,
+        &[],
+    );
+    assert!(
+        String::from_utf8_lossy(&torn.stderr)
+            .contains("close tx appended but lifecycle update failed"),
+        "the fixture must really tear the close: {}",
+        String::from_utf8_lossy(&torn.stderr)
+    );
+    assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
+    drop(proxy);
+
+    // The re-run carries the same absolute REPORT_PATH the torn command line
+    // had. It must still be refused — and the stranded transition must be
+    // finished first, not left behind by the refusal.
+    let rerun = run_orgasmic_output(&home, &running, &project_root, &path_env, &borrowed);
+    let rerun_stdout = String::from_utf8_lossy(&rerun.stdout).to_string();
+    let rerun_stderr = String::from_utf8_lossy(&rerun.stderr).to_string();
+    assert!(
+        !rerun.status.success() && rerun_stderr.contains("REPORT_PATH"),
+        "the refusal still stands: stdout={rerun_stdout}\nstderr={rerun_stderr}"
+    );
+    assert!(
+        rerun_stdout.contains("reconciled: TASK-CLEANUP backlog -> in_review"),
+        "the torn transition must be reconciled BEFORE the refusal: stdout={rerun_stdout}\
+         \nstderr={rerun_stderr}"
+    );
+    assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

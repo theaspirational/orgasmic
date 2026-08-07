@@ -1,0 +1,19 @@
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -973,11 +973,11 @@
+                 task_list_property(&tasks),
+                 closed.tx_id
+             );
+-            // orgasmic:TASK-QGWK7.1.1.1 — F-1: "no-op" is the contract for
+-            // CLEANUP, not for a record the previous close promoted onto disk
+-            // and then failed to commit. That state has no other way back into
+-            // git, and this is the only command a manager re-runs after it.
+-            repersist_dispatch_record_best_effort(&project_root, &closed);
++            // INJECTED (TASK-QGWK7.1.1.1 F-1): the already-closed no-op returns
++            // without repairing a record its close promoted onto disk and could
++            // not commit. tmp is already unlinked, so there is then no way back
++            // into git at all -- the unrecoverable state, restored.
++            let _ = repersist_dispatch_record_best_effort;
+             if args.worktree_remove && !args.no_worktree_remove {
+                 if let Some(worktree) = closed.worktree.as_deref().filter(|path| path.exists()) {
+                     eprintln!(

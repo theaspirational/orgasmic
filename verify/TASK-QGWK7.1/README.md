@@ -13,3 +13,8 @@ not the property: F-1 originally shipped as `stage_promoted_dispatch_record`
 `git merge` refuse (M-0). Persistence is now `commit_promoted_dispatch_record`,
 and this patch no-ops that instead. The pinned assertion and `expect-red` are
 unchanged, because what F-1 claims is unchanged.
+
+**Re-authored again under TASK-QGWK7.1.1.1 (2026-08-07), context only.**
+`commit_promoted_dispatch_record` grew a sequencer-state refusal, a detached-HEAD
+refusal and a reported rollback, so the patch's context lines no longer matched.
+It still no-ops the same function. `cmd` and `expect-red` are byte-unchanged.
