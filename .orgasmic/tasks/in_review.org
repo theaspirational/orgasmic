@@ -1,1426 +1,13 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-STWVB The daemon suite has no trustworthy full-run signal on this host, so its gate cannot return a verdict :testing:daemon:flake:
-:PROPERTIES:
-:ID: TASK-STWVB
-:PRIORITY: P2
-:WRITE_SCOPE: crates/**,scripts/**,verify/**
-:END:
-
-=== READ THIS FIRST — STATUS [2026-08-05] ===
-NOT BLOCKED. TASK-8W30B is DONE; the block recorded below was lifted on
-2026-07-26. No worker has ever been dispatched for this task.
-
-THE TITLE AND THE OPENING PARAGRAPH BELOW ARE BOTH DISPROVED. Read the LAST
-section of this task, not the first. Three successive re-measurements superseded
-the original inventory:
-  - [2026-07-26] of the four tests named below, THREE never failed in 5 runs,
-    and two tests not on the list did. The 13-minute runs behind the original
-    claim were made on a thrashing disk (89% full, 57 GB target/); repaired, the
-    suite runs in ~45s.
-  - [2026-07-26] the "shared global state" hypothesis is wrong for
-    poll_direct_child_pid: the process is alive, blocked, and has consumed ZERO
-    CPU, so it is wedged before executing an instruction — a deadline the
-    machine cannot meet, not a data race.
-  - [2026-08-02] a full run produced 14 failures, NONE of them the three in the
-    table; all 14 touch a live mux or probe processes, and all 14 passed alone
-    in 8s against the same binary. syspolicyd at 586% CPU was the discriminator.
-
-CURRENT FRAMING, which supersedes everything above it: the suite has NO
-TRUSTWORTHY FULL-RUN SIGNAL ON THIS HOST, so the original acceptance criterion
-("green, repeatedly, at full parallelism") CANNOT BE EVALUATED. The first
-deliverable is a gate that returns a defensible verdict on a loaded machine.
-Naming a per-test cause still matters, but it is no longer the entry point.
-=== END STATUS ===
-
-Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
-and each passes alone:
-
-- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
-- api::tests::recovery_inventory_waits_for_atomic_claim_commit
-- api::tests::recovery_reattaches_tmux_session_when_handle_exists
-- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
-
-Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
-unrelated change stashed out. They only fail under full-suite parallelism, not
-in a filtered subset, so the trigger is cross-test interference rather than any
-one test's logic.
-
-Why this is worth fixing rather than tolerating: a suite that always fails four
-tests cannot answer "did my change break something?". Establishing that these
-four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
-stash-and-compare that every future change to this crate has to repeat. A red
-suite is also indistinguishable from a red suite with one new real failure in
-it.
-
-Leads, not conclusions:
-- These tests share process-global state: `live_session_guard()` and static
-  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
-  tests against each other but not against everything that observes the same
-  state.
-- The same class of bug was found and fixed in the CLI crate on the same day:
-  `path_env`'s tests set process-global PATH to a bare tempdir, so any
-  concurrently running test spawning a PATH-resolved tool failed with a bare
-  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
-  shared-environment dependency before assuming a timing race.
-- Two of the four are tmux/mux-dependent, so a real external session leaking
-  between tests is also plausible.
-
-Acceptance:
-- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
-  parallelism
-- the cause is named per test, not worked around by serializing the whole suite
-- if any test genuinely requires exclusive global state, it says so and enforces
-  it, rather than depending on scheduling luck
-RE-MEASURED [2026-07-26], and the original inventory does not hold.
-
-The "four tests fail on every full run" claim was made while the build
-environment was badly degraded: the disk was 89% full, target/ was 57 GB with
-164,619 retained .o files, and a full `cargo test -p orgasmic-daemon --lib` run
-took 13 minutes. After clearing that (dead worktree targets, 31 GB of
-incremental, a stale Time Machine snapshot, and switching the dev profile to
-line-tables-only) the same suite runs in ~45 seconds and target/debug is 3.4 GB.
-
-Five consecutive full runs at default parallelism on the repaired environment:
-
-| test                                                          | failed |
-|---------------------------------------------------------------|--------|
-| api::post_artifact_regenerate_hot_path_reuses_live_run_id       | 3/5    |
-| recovery_claim::reconcile_pending_rejects_rename_swap_after_open| 2/5    |
-| api::post_artifact_regenerate_cold_changed_address_replaces_... | 1/5    |
-| api::recovery_inventory_waits_for_atomic_claim_commit           | 0/5    |
-| api::recovery_reattaches_tmux_session_when_handle_exists        | 0/5    |
-| supervisor::poll_direct_child_pid_prefers_worker_server_over_...| 0/5    |
-
-So three of the four originally named tests did not fail once, and two tests
-that were never on the list do fail. The suite is green outright in 1 run of 5.
-
-What this means: a 13-minute run on a thrashing disk stretches every await long
-enough to tip deadline-bounded waits, which is why the failure set looked stable
-and looked like those four. The environment was a confound. The remaining three
-are real flakes but a smaller and different problem than recorded.
-
-Also fixed and split out of this task:
-- stall_detector_revalidates_after_driver_event_race — root-caused to
-  Supervisor::new's own 50ms timeout monitor releasing the aged run out from
-  under the test, not to load. Fixed in a629a51 with Supervisor::unmonitored.
-  wait_for_event_count no longer reports a released run as "event_count 0".
-- The 3 dispatch_endpoint failures were a separate, deterministic defect
-  (TASK-5T575, fixed in 05d029b).
-
-Remaining scope for this task is the three flakes in the table, not the original
-four. The regenerate pair are the priority — both touch the same hot/cold
-artifact-regenerate launch-record path, so they are likely one cause.
-GATE IS BLOCKED BY TASK-8W30B [2026-07-26], and this is a measurement problem
-rather than a remaining-work problem.
-
-The rmux session leak adds 8 leaked sessions per full-suite run (manager-
-confirmed: 23 -> 31 across one run, from a known-empty daemon). Saturation
-degrades the rmux driver to inert, at which point
-`post_artifact_regenerate_hot_path_reuses_live_run_id` fails on all retries with
-`409 capability_unsupported: send_input`.
-
-So '5 consecutive green full-suite runs' cannot be satisfied on a machine where
-each run makes the next one worse. The gate should be re-run only after
-TASK-8W30B lands, and the two fixed tests should be judged on the controlled
-before/after they already have rather than on an absolute streak.
-
-Post-merge state, 3 runs on a quiet machine (499-500 passed):
-- reconcile_pending_rejects_rename_swap_after_open: 0/3 — FIXED, was 4/6
-- post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 — TASK-8W30B
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling: 3/3 in-suite
-  but PASSES ALONE on both the pre-merge and post-merge commits, so it is
-  in-suite interference and specifically NOT a regression from the merge
-  (checked deliberately, since the implementer touched its sibling)
-- recovery_inventory_waits_for_atomic_claim_commit: 1/3
-
-Remaining scope after the merge: the interference behind poll_direct_child_pid
-and recovery_inventory, both of which pass in isolation.
-STATE CORRECTED [2026-07-26]: in_review -> in_progress, and the root-cause
-attribution above is DISCONFIRMED.
-
-The block is lifted: TASK-8W30B merged (d60c4ed / d3fae4d) and release growth
-went from +8 per suite run to 0, manager-measured independently. So the
-"measurement problem" framing above no longer applies — the environment no
-longer degrades run over run.
-
-But the line "post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 —
-TASK-8W30B" attributed that failure to the leak, and that is now wrong. On the
-merged tree, with release growth at zero, the test still fails:
-
-    assertion `left == right` failed: two consecutive rounds must reuse one run_id
-      left:  run-20260726T105347-034ff6ca59844f43a18a9a0ae8a3ba2c
-      right: run-20260726T105337-c9b87801bc334547a747b5b8ebf2277a
-
-That is a run-id reuse failure, not a `409 capability_unsupported: send_input`
-saturation failure. The leak may have aggravated its environment; it was not the
-cause. The reviewer on TASK-8W30B reached the same conclusion independently.
-
-Remaining scope is therefore three tests, not two:
-- post_artifact_regenerate_hot_path_reuses_live_run_id — needs its own root
-  cause, in the hot/cold artifact-regenerate launch-record path
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — in-suite
-  interference, passes alone
-- recovery_inventory_waits_for_atomic_claim_commit — same shape, passes alone
-
-Do not re-run a "5 consecutive green" gate as the closing condition until the
-first of those has a named cause. An absolute streak was the wrong instrument
-while the environment degraded, and it is still the wrong instrument for a
-deterministic assertion failure.
-ROOT CAUSE MEASURED [2026-07-26], manager-direct. The "cross-test shared global
-state" hypothesis at the top of this task is WRONG for poll_direct_child_pid.
-The cause is process-creation latency, and the test is simply asserting a
-deadline the machine cannot meet while the suite runs.
-
-WHAT WAS MEASURED
-
-Both remaining tests pass alone and fast: poll_direct_child_pid in 0.42 s,
-post_artifact_regenerate_hot_path in 0.80 s. In-suite they now fail 3/3, not
-intermittently — that is an improvement, because deterministic is debuggable.
-
-Running each module alone at full parallelism is green:
-- supervisor::tests  99 passed, 12.0 s
-- api::tests        199 passed, 37.5 s
-So the interference is cross-module, not within either.
-
-Live capture of the fake cursor-agent during a full run (three separate runs,
-same result). The test writes a bash script that backgrounds two sleeps, touches
-`children-ready`, then sleeps; it waits up to 30 s for that file:
-
-- the process IS alive the whole time — it is not killed, not starved of a slot
-- it has ZERO children, so it never reached even its first `&`
-- state is S (blocked), never R (runnable), so it is not losing a CPU race
-- CPU time stays at 0:00.00 across 28+ seconds of sampling — it never executed
-  a single instruction
-
-A process that is alive, blocked, and has consumed no CPU is wedged BEFORE
-execution, not running slowly.
-
-THE DISCRIMINATOR
-
-An unrelated trivial bash script (`#!/bin/bash` + one `touch`), spawned from
-outside the test binary while the suite ran, timed at:
-
-    6205 ms, 2993 ms, 63771 ms, 64 ms, 354 ms
-
-Sixty-three seconds to spawn a two-line shell script, then 64 ms a few seconds
-later. Process creation on this machine intermittently stalls for seconds to a
-minute while this suite runs. Nothing about the test is special; it is just the
-one test that asserts a 30 s deadline on a freshly spawned external process.
-
-Caveat on that measurement, stated so nobody over-reads it: the timestamps were
-taken by spawning python3, so each figure includes one additional process
-spawn. That does not change the conclusion — spawning anything is what is slow —
-but the per-call attribution is not exact.
-
-Peak process count during a run was only ~720 against a 5333 maxprocperuid, and
-fd limit is 1048576, so this is not simple resource exhaustion. The likely
-mechanism is serialization in macOS exec (code-signing / syspolicy validation)
-under many concurrent spawns, which is worth confirming before designing around
-it.
-
-CONSEQUENCE FOR THE FIX
-
-Do not fix this by raising the 30 s deadline. Sixty seconds was observed, so any
-constant is a guess. Either remove the dependence on a freshly spawned external
-process reaching a checkpoint, or serialize the process-spawning tests against
-each other so the suite stops competing with itself for exec.
-
-The same mechanism is a plausible cause for post_artifact_regenerate_hot_path:
-its two run_ids are 10 s apart, consistent with round one exceeding a deadline
-and its run being released before round two. Not yet confirmed — do not record
-it as established.
-MECHANISM CONFIRMED [2026-07-26]. It is macOS first-exec evaluation, and it is
-measurable in three lines on a completely idle machine:
-
-    fresh script #1 first exec: 0.18 s    second exec: 0.00 s
-    fresh script #2 first exec: 0.15 s    second exec: 0.00 s
-    fresh script #3 first exec: 0.16 s    second exec: 0.00 s
-
-macOS charges roughly 150-180 ms of syspolicy/Gatekeeper evaluation the first
-time a newly created executable is exec-ed, and nothing thereafter. Idle spawns
-of an already-evaluated script are 0.00 s, which is why every one of these tests
-passes alone.
-
-That per-file cost is paid through a single system daemon, so concurrent first
-execs queue. This suite writes many fresh executable fixtures into tempdirs and
-execs them in parallel, which is how a 150 ms cost becomes the 3 s / 6 s / 63 s
-spawns measured earlier. The failing test is not special; it is the one that
-asserts a 30 s deadline against that queue.
-
-So the chain is: fresh fixture -> per-file Gatekeeper evaluation -> serialized
-daemon -> queue under suite parallelism -> a spawned helper that never reaches
-its first instruction inside the deadline.
-
-FIX DIRECTION
-
-Stop paying the per-file cost per test. The fixture script should be created and
-exec-ed ONCE per test binary and then reused, with the per-test variation moved
-out of the file contents and into argv, so the second and subsequent uses hit
-the warm path. Pre-warming a shared fixture is preferable to serializing the
-tests, because it removes the cost rather than queueing it, and it also speeds up
-every other spawn-based test in the crate.
-
-Raising the deadline is not a fix. 63 s was observed; any constant is a guess.
-
-NOTE FOR CI (TASK-S2KM0): this mechanism is macOS-specific. A Linux runner has
-no Gatekeeper and will very likely not reproduce it, so this test could pass in
-CI while failing on every developer Mac. That is an argument for fixing the
-fixture rather than tolerating the failure locally, and for not concluding "green
-in CI" means "green".
-
-ROUND 2 MERGED, GATE NOT MET [2026-07-26]. The fix is real and kept; the green
-claim is not reproducible.
-
-Merged 67e427c (shared warm fixture in crates/orgasmic-daemon/src/test_fixtures.rs,
-converted spawn fixtures, gotchas entry). Worker: implementer-codex-acp-stdio
-(acp-stdio / codex / gpt-5.6-sol / xhigh), run
-run-20260726T125001-9e991bce9f75485a84e2f4be1d127800. It reported 504 passed /
-0 failed on three consecutive runs at 24.9 / 27.5 / 26.1 s.
-
-Manager measurement on the merged tree, four runs:
-
-    502 passed / 2 failed   106.5 s
-    501 passed / 3 failed   112.1 s   (+ recovery_inventory, known flake)
-    502 passed / 2 failed   108.2 s
-    502 passed / 2 failed   106.5 s
-
-Both target tests still fail:
-- post_artifact_regenerate_hot_path_reuses_live_run_id — now 409 "harness busy"
-  rather than the earlier run_id mismatch
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — still
-  "fake cursor-agent did not start children" at its 30 s deadline
-
-WHY THE WORKER SAW GREEN — see TASK-RRT4T. Removing rmux from PATH, changing
-nothing else, turns the manager's own run into 504 passed / 0 failed in 22.3 s,
-reproducing the worker's numbers exactly. Eight rmux-dependent tests silently
-return when the rmux binary is not found. The worker's own 7-before / 7-after
-session count was the tell: the test never ran.
-
-WHAT THE ROUND-2 WORK DID ESTABLISH, verified independently:
-- Hard-linking a warmed executable does dodge first-exec evaluation. Measured:
-  fresh direct exec 196 ms, second exec 4 ms, hard link to a new path 4 ms, a
-  byte-identical COPY 162 ms. So link_shared_test_executable is sound and the
-  inode, not the path, is the cache key.
-- The pressure is inside the rmux test path, not in the converted fixtures.
-  syspolicyd CPU during one suite run: +281 s with rmux present, +32 s with
-  rmux absent, against ~106 s and ~22 s of wall time. The rmux binary itself is
-  cheap (9.2 ms/exec, 0.0 ms of syspolicyd), so the cost is something the rmux
-  session path execs, and it has not been identified.
-- A strictly simpler primitive exists and was not used: invoking a fresh script
-  through a signed interpreter skips evaluation entirely. Measured on the same
-  fresh file — `./script` 270 ms, `/bin/sh script` 5 ms, `/bin/bash script`
-  3 ms. Round 3 should prefer this over warm-and-hard-link wherever the callee
-  is a script, because it needs no shared state, no OnceLock, and no argv
-  multiplexing.
-
-REMAINING SCOPE
-1. Land TASK-RRT4T first. Until a skipped test is visible in the default
-   summary, no gate on this crate can be trusted, including this task's.
-2. Identify what the rmux test path execs that costs syspolicyd ~250 s per
-   suite run. That is the actual remaining cause for poll_direct_child_pid,
-   which passes when that pressure is absent.
-3. post_artifact_regenerate_hot_path now fails as 409 "harness busy", a
-   different symptom than before; treat its cause as unestablished.
-
-A note on the fixture module for round 3: shared_test_executable() asserts the
-on-disk fixture equals FIXTURE_SCRIPT and panics otherwise, while its doc
-comment claims a changed script gets a new path because the path is derived from
-the hashed test binary name. That reasoning does not hold — cargo's test-binary
-hash is not content-derived — so editing FIXTURE_SCRIPT can leave a stale file
-at the same path and fail every spawn test until it is deleted by hand. Make it
-overwrite, or key the filename on a content hash.
-
-Also weakened, worth restoring: the old pinned-exec wrapper asserted
-[ "$1" = __exec-pinned ] || exit 97, so a production regression that stopped
-passing that argv failed loudly. The shared fixture falls through to exit 0
-instead.
-
-CORRECTION TO THE ABOVE [2026-07-26], same session: the sentence "the pressure is
-inside the rmux test path" states a real correlation but the mechanism it implies
-is DISPROVEN. rmux does not trip Gatekeeper.
-
-Measured directly, rmux 0.9.0 (crates.io, pinned =0.9.0) against tmux 3.x on the
-same machine:
-
-| operation                                | tmux    | rmux    | syspolicyd |
-|------------------------------------------|---------|---------|------------|
-| 15x create session + kill session         | 13.1 ms | 12.1 ms | +0.01 / +0.00 s |
-| 20x pane runs an already-warm script      |  6.9 ms | 12.8 ms | +0.00 / +0.01 s |
-| leftover sessions after all kills         | none    | none    | — |
-
-So rmux is leak-free and Gatekeeper-neutral at this level, and roughly 2x slower
-than tmux per pane spawn — which at 6 ms of absolute difference explains nothing.
-
-What survives: with rmux on PATH the suite is 106 s and syspolicyd burns +281 s;
-with rmux hidden it is 22 s and +32 s, one variable changed. The correlation is
-solid. The attribution is not. Whatever spends that CPU has not been identified,
-and it is NOT rmux exec-ing things.
-
-A better lead, found while checking: the hot-path test polls for the harness
-prompt `for _ in 0..40` at 250 ms — a 10 s ceiling, which is exactly the 10 s gap
-between the two run_ids in the original failure. The eight rmux tests also all
-take `live_session_guard()`, so they are serialized against each other while the
-other ~496 tests run in parallel around them. A serialized 10 s deadline under
-full-suite load is a plausible mechanism that needs no Gatekeeper story at all.
-
-THE EXPERIMENT THAT WOULD SETTLE IT
-These tests exist only in the rmux mode. Parameterize post_artifact_regenerate_*
-over rmux AND tmux. Red under rmux and green under tmux indicts rmux; red under
-both is ours. Right now the question cannot be answered, which is the actual
-problem.
-
-THIRD MEMBER OF THE FAMILY [2026-07-26, found integrating TASK-D0GA3]. The
-full-suite run of `cargo test -p orgasmic-daemon --lib` at merge 0daa77c failed
-THREE tests, not two:
-
-- post_artifact_regenerate_hot_path_reuses_live_run_id
-  (api.rs:25772 — "second regenerate should route via send_input (hot path)",
-  got 409 "harness busy")
-- poll_direct_child_pid_prefers_worker_server_over_generic_sibling
-  (supervisor.rs:8788 — "fake cursor-agent did not start children")
-- recovery_reattaches_tmux_session_when_handle_exists  <-- NEW
-  (api.rs:21866 — left "interrupted", right "reattached")
-
-All three pass together in isolation: `--exact` on the three names gives
-3 passed / 0 failed in 0.54s, 505 filtered out. Whole-suite time was 182.9s with
-rmux present on PATH.
-
-The new one is informative. It is not a spawn-fixture test — it is tmux session
-REATTACH, and it lands on "interrupted" rather than "reattached", i.e. something
-else in the suite killed or claimed the tmux session it expected to find. That
-points at cross-test contention over shared external mux state (session names,
-sockets), not at the executable-fixture path that round 2 addressed. Round 3
-should start from "which tests share a tmux/rmux namespace" rather than from the
-fixture.
-
-Note also that the TASK-D0GA3 worker reported "508 passed, 0 failed" for this
-same command with rmux present. That is a fourth over-report, and unlike the
-first three it is NOT explained by silent tooling skips — TASK-RRT4T's sentinel
-was already in place and would have fired. Either the worker's run genuinely
-came up green (making this load- or order-dependent, which fits) or the number
-was not measured. Do not treat any single green run of this suite as evidence.
-
-=== Measured again 2026-07-28, and the set is larger than four
-
-Full `cargo test -p orgasmic-daemon --lib` in the manager environment at HEAD
-`15997c6`: **528 passed, 5 failed, 451 s**.
-
-| test | symptom |
-|------|---------|
-| `api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim` | `recover: 500 Internal Server Error` |
-| `api::tests::two_recovery_chain_second_resume_uses_first_fork_session_id` | `first recover: 500 Internal Server Error` |
-| `api::tests::recovery_reattaches_tmux_session_when_handle_exists` | `tmux test session should start` |
-| `api::tests::equal_run_id_across_projects_requires_canonical_project` | `project-b recover should succeed independently: 500` |
-| `supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling` | `fake cursor-agent did not start children` |
-
-The first three also failed, identically, inside the TASK-1T3FZ dispatched
-worker, which additionally lost
-`boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`,
-`failed_terminal_with_live_tmux_never_offers_reattach`, and the tmux sentinel.
-The underlying daemon error in the worker was
-`tmux new-session failed (exit 1): server exited unexpectedly`.
-
-Three things this rules out (tx-20260728-orgasmic-3226):
-
-- Not environment. Each of these passes in isolation, in both the manager
-  environment and a replicated dispatched-worker environment.
-- Not a worker-only blindspot. Three reproduce in the manager environment with
-  no rmux shim and no `$TMUX`.
-- Not a missing or broken tmux. Under the exact worker `PATH` + `TMUX`,
-  `tmux new-session -d` exits 0; the tmux the worker resolves is an rmux shim
-  pointing at a live server.
-
-Four of the five are a **recovery** path — three `recover` calls returning 500
-and one tmux session failing to start for a reattach test. That concentration is
-the strongest structural clue on this task so far, and it is not a generic
-"slow machine" story.
-
-TASK-0RCRY carries the one concrete candidate mechanism: no tmux call site
-passes `-L`/`-S`, so every probe, test session and production call shares a
-single tmux server. If isolating that server does not fix these, the result
-belongs back here.
-
-
-=== MANAGER MEASUREMENT 2026-07-28: production_resume_native_fork has TWO failure modes
-
-Recorded after TASK-5HBST merged, because the manager had been mislabelling this
-test as purely 5HBST's.
-
-`api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim`
-fails in two distinct ways:
-
-1. **Env race (5HBST's, now fixed).** A concurrent test clobbers process-global
-   `HOME`, so `pin_trusted_claude_binary` (api.rs:9906) resolves the wrong
-   `~/.local/bin/claude`. Presents as a wrong path or found/not_found mismatch.
-2. **Recovery 500 (this task's, still open).** `resume_native_fork recover:
-   500 Internal Server Error` at api.rs:25171. Nothing to do with the
-   environment.
-
-Measured on the merged 5HBST tree, full `cargo test -p orgasmic-daemon --lib`
-at load ~10: it still failed, with **mode 2**. So 5HBST removed one mode and the
-test remains on the known-flake list until this task lands.
-
-That makes the recovery cluster on this axis larger than previously recorded.
-In the same run: `production_resume_native_fork...` (500 on recover),
-`recovery_inventory_waits_for_atomic_claim_commit`, and
-`recovery_reattaches_tmux_session_when_handle_exists` — three of the four
-failures were recovery-path, and the fourth
-(`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`) is the
-fixture-process one, a different class.
-
-The 'recover returns 500 under load' signature is now observed on three separate
-tests. Whatever this task finds should explain all three, not one.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once — same family as the 'recover: 500 under load' signature already on this task, observed on the live daemon rather than in a test.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once. Two minutes later, a node body append to THIS task failed once with 'daemon request failed: error sending request ... is the daemon reachable?' and succeeded on retry — the HTTP surface itself goes briefly unreachable under load. Same family as the 'recover: 500 under load' signature already recorded here; both observed on the live daemon rather than in a test.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and two manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the inventory read degrades the same way. Relevant to this task because the same mechanism plausibly explains the 'recover: 500 under load' family: not a daemon defect expressing under load, but load starving some request leg. The error text 'is the daemon reachable?' is also a misdiagnosis-generator: the truthful message would be 'request timed out after Ns (system load may be the cause)'.
-PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and repeated manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the run-inventory read degrades the same way. Relevant to this task: the same mechanism plausibly explains the 'recover: 500 under load' family — load starving a request leg rather than a daemon defect. Also: the error text 'is the daemon reachable?' is a misdiagnosis-generator; the truthful message is 'request timed out after Ns (system load may be the cause)'.
-
-FIRST CAPTURED PANIC for the registry's quoted-origin entry [2026-07-29, from TASK-5FEN5's load runs]: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree` — index.rs:2247, `assertion left == right failed, left: None, right: Some("ssh://git@example.com/org/quoted.git")`. The registry names this test as a known STWVB flake awaiting its first verbatim panic; this is it. Registering the row (with this task as owner) is now unblocked and is this task's call, per the DJ1WV rule that only the owning task writes its own entries.
-
-CANDIDATE PANIC [2026-07-29, TASK-0RCRY full-workspace run]: `task_010_recovery_routes_classify_and_continue_runs` (crates/orgasmic-daemon/tests/integration.rs:2637) — `recover: 409 Conflict` under load, green in isolation. Distinct shape from the quoted-origin flake; first time this panic has been written down. Route or register under this task's diagnosis as appropriate.
-
-ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "interrupted"` reattach flake is now named for the first time — `driver tmux/claude attach proof exceeded inventory deadline`, the Err(_) timeout branch of finish_driver_attach (api.rs:9858). Measured with real tmux 3.6a on a 0RCRY owned server, with the rmux arm GREEN in the same process under the same load. This contradicts this task's standing attribution (cross-test contention over shared external mux state) — that would be the third withdrawn attribution. The live question is why a one-process-spawn tmux attach probe cannot finish inside the inventory deadline under load, and whether that deadline is sized for process-spawn starvation. Also note: K4G1D found the seven tmux_on_path-gated tests execute rmux in worker environments (owned by its follow-up task), so any worker-vs-manager comparison recorded here that relied on "the worker ran these under tmux" needs re-reading.
-
-CANDIDATE PANIC [2026-07-29, TASK-GEZHQ gate run 3 of 5]: `api::tests::recovery_inventory_waits_for_atomic_claim_commit` (crates/orgasmic-daemon/src/api.rs:25017) — `recover POST completes: Elapsed(())` under load, green in isolation. Another recover-route timeout shape for this task's diagnosis; first time written down.
-
-RE-READING FLAGS [2026-07-29, TASK-JGHNC, merged 724dd6b] — four recorded comparisons need correction:
-1. The 2026-07-28 five-failure section: the TASK-1T3FZ worker's two extra failures (boot_reattach_respawns…, failed_terminal_with_live_tmux…) plus its tmux sentinel were RMUX failures wearing tmux names, on the shared rmux default server; they say nothing about tmux. Post-JGHNC that comparison cannot be reproduced in a worker at all (strict-gated, NOT RUN).
-2. recovery_reattaches_tmux_session_when_handle_exists: the manager symptom ('tmux test session should start') and the worker symptom ('server exited unexpectedly') were read as one signature; the worker half was an rmux-server symptom. Superseded by K4G1D's tmux-arm and JGHNC's rmux-arm measurements.
-3. The D0GA3 worker's '508 passed, 0 failed' anomaly has a third explanation: in a worker, seven tests ran a different multiplexer than the manager's run of the same names — never a like-for-like comparison.
-4. THE DIFFERENTIAL NOW READS BOTH WAYS: JGHNC's worker run caught recovery_reattaches_RMUX_session_when_handle_exists red with the IDENTICAL sentence K4G1D measured on the tmux arm ('driver rmux/claude attach proof exceeded inventory deadline', api.rs:24464). Red under BOTH multiplexers = the defect is ours (the inventory deadline / attach-proof path), NOT rmux. Any future worker-vs-manager comparison on this family needs the real-tmux PATH recipe (K4G1D report §2); the five new rmux arms are the worker's honest column.
-
-SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tests::direct_child_pid_finds_wrapper_child_process` (supervisor.rs:10801) — `wrapper never forked a direct child` — 5/12 and 2/12 under the 4x64-thread concurrency harness, green in isolation. Sibling of this task's registered `poll_direct_child_pid_prefers_worker_server_over_generic_sibling` but a DIFFERENT signature, so the registry correctly reports it REAL until a row exists. Register under this task with the captured signature when convenient (only the owner writes its rows).
-
-LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
-
-A SECOND AXIS: WORKTREE, NOT ONLY LOAD [2026-07-31, TASK-CB6GQ gate]. This
-task's standing frame is "fails on a full-suite run, passes alone", with load as
-the explanation. There is an independent axis: WHICH WORKTREE runs the suite,
-measured on a quiet machine with sequential runs and no concurrency at all.
-
-Measured, =cargo test -p orgasmic-daemon --lib=, both trees on 75fe95f:
-- =/private/tmp/cb6gq-control= (detached at 75fe95f): 640 passed / 0 failed in
-  42.73s, then 42.90s. Twice, clean.
-- =/private/tmp/task-cb6gq= (a branch one commit on top of 75fe95f): 638-639
-  passed / 1-2 failed, in 122.71s and 123.01s.
-Narrowed to =api::tests= alone: control 36.64s / 0 failed, branch 88.93s / 1
-failed.
-
-THE DECISIVE CONTROL, and the reason this is worth recording: =git checkout
-75fe95f= INSIDE the slow worktree — byte-identical code to the fast one — still
-gave 85.87s and the same failure. Same commit, same machine, same moment,
-different worktree: 2.3x runtime and a red. Whatever this is, it is not the diff
-under test and not concurrent load.
-
-Failures seen on the slow worktree, each green in isolation on the first retry:
-=api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=
-(already registered here), =api::tests::recovery_reattaches_rmux_session_when_handle_exists=,
-=api::tests::recovery_inventory_waits_for_atomic_claim_commit= (the recover-route
-family already on this task), and
-=supervisor::tests::a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=.
-A different subset each run, which is the probabilistic shape already recorded —
-but the 2.3x runtime is reproducible, not probabilistic, and is the part that
-points somewhere.
-
-NOT stale mux state, checked during the slow runs: =rmux ls= empty, no tmux
-server on the default socket, and although 43 leftover
-=/private/tmp/tmux-501/orgasmic-test-*= sockets had accumulated, zero of them
-had a live server behind it. Cause unidentified; the candidates worth trying
-first are per-worktree =target/= state and anything the suite resolves from cwd.
-
-WHY IT MATTERS BEYOND THIS TASK, and the practical rule it produces: a green
-full-suite number is not evidence unless the worktree is held constant, and a
-red one cannot be attributed to a diff without re-running the BASE code in the
-SAME worktree. That control costs one checkout and one run. It was the only
-thing separating "my change broke the suite" from "this worktree is slow" during
-TASK-CB6GQ, where four consecutive full-suite reds on the branch looked exactly
-like a regression and were not.
-THIRD ENVIRONMENT AXIS, MEASURED [2026-08-03]: macOS =syspolicyd= scan pressure.
-And it is the same lesson this task has now learned three times — 89%-full disk
-(2026-07-26), worktree identity (2026-07-31), host scan load (now). Every one of
-them produced a *stable-looking* failure set that read as a code regression.
-
-Measured on =d1a41c1=, repo-root worktree, against the binary cargo had ALREADY
-built (=orgasmic_daemon-5f50721007a8fd8c=, so no compile in the window):
-
-| run                                    | result                  | wall    |
-|----------------------------------------|-------------------------|---------|
-| =cargo test -p orgasmic-daemon --lib=  | 637 passed / 14 FAILED  | 659.90s |
-| the same 14, one at a time, same binary| 14 passed / 0 failed    | 8s      |
-
-Comparable for that suite is 42.9-85.9s, so this run was 8-15x slowed. The
-discriminator was =syspolicyd= at 586% CPU with load average 11.41; killing the
-suite dropped it to 75% within seconds. See the syspolicyd->tccd->WindowServer
-entry in =gotchas.org=: the same chain hard-rebooted this machine at 20:01:36 on
-2026-08-02.
-
-The 14 were not the three flakes in the table above. They were every test that
-touches a live mux or probes processes:
-=explicit_reattach_{rmux,tmux}_is_fenced_out_of_a_worktree_a_close_guard_holds=,
-=recovery_reattaches_{rmux,tmux}_session_when_handle_exists=,
-=two_recovery_chain_second_resume_uses_first_fork_session_id=,
-=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
-=a_network_waiting_{provider,tmux}_turn_...=, =an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued=,
-=a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
-=direct_child_pid_finds_wrapper_child_process=,
-=poll_direct_child_pid_prefers_worker_server_over_generic_sibling=,
-=process_subtree_cpu_probe_{does_not_mistake_a_live_idle_child_for_work,sees_a_real_cpu_burning_child}=.
-Only 4 of the 14 are in =verify/flake-registry.toml=.
-
-TWO THINGS THIS CHANGES FOR THIS TASK.
-
-1. The cheap control is now known and it costs 8 seconds. Re-run the failures
-   ONE AT A TIME AGAINST THE ALREADY-BUILT BINARY before believing any red:
-   =target/debug/deps/orgasmic_daemon-<hash> --exact <test> --test-threads=1=.
-   That is what =scripts/run-tests.sh= does after a full run; doing it directly
-   skips the 11-minute run you already know is untrustworthy. It also costs
-   almost no scan load, because re-executing an existing binary is not what
-   triggers syspolicyd.
-
-2. COMPILATION IS NOT THE TRIGGER — TEST EXECUTION IS. Measured the same night:
-   a full rebuild of the daemon, core and cli test binaries at =jobs=4= ran with
-   =syspolicyd= at 0-64%, while the earlier test RUN pinned it at 586%. The
-   gotcha attributes the burst to build scripts and proc-macro dylibs; that is
-   at best incomplete. The mux suites write and exec many short-lived shim
-   scripts per test, and that is the exec pattern that actually bursts.
-
-So this task should stop being framed as "three flakes in a table". The stable
-finding across all three axes is that the suite has NO trustworthy full-run
-signal on this host, and the acceptance criterion "green, repeatedly, at full
-parallelism" cannot currently be evaluated. Naming a per-test cause still
-matters, but the first deliverable is a gate that reports a defensible verdict
-on a loaded machine.
-** Evidence
-
-MEASUREMENT [2026-08-02], from the TASK-4CSMY integration. Three full-suite
-runs plus the implementer's own, deliberately varying ONE axis at a time:
-
-| # | site | tree | real failures |
-| 0 | dispatch worktree | =75255e5= | 0 (implementer's run) |
-| 1 | repo root | =7d9c60c= (tree-identical to =75255e5=) | 8 |
-| 2 | repo root | =9017514= (base, pre-merge) | 4 |
-| 3 | dispatch worktree | =75255e5= | 2 |
-
-THE AXIS IS ALSO THE RUN, NOT ONLY LOAD AND WORKTREE. Runs 0 and 3 are the same
-tree in the same worktree and disagree: 0 failures against 2. That kills the
-working assumption that a worktree has a stable failure signature — so a claim
-of the form "N tests, worktree X" is still not reproducible without a RUN COUNT.
-This task's own title ("fail on every full-suite run") is now too strong:
-nothing here failed on every run.
-
-PERSISTENCE RANKING across my three runs (1,2,3), which is what a fix should be
-aimed at first:
-
-| test | runs failed |
-| =process_subtree_cpu_probe_sees_a_real_cpu_burning_child= | 3/3 |
-| =recovery_reattaches_rmux_session_when_handle_exists= | 3/3 |
-| =explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds= | 2/3 |
-| =direct_child_pid_finds_wrapper_child_process= | 2/3 |
-| =recovery_inventory_waits_for_atomic_claim_commit= | 1/3 |
-| =live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh= | 1/3 |
-| =dead_pid_aborts_joins_hung_producer_then_receiver_releases= | 1/3 |
-| =a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies= | 1/3 |
-
-The top two failed at BASE as well, so they are the durable core of this task
-and are not waiting on anything else to land. Every failure in every run passed
-in isolation under =run-tests.sh='s own re-run, so the class is contention, not
-correctness.
-
-Logs kept for this session at the scratchpad paths named in the tx; the
-per-test panics are in each run's =suite.log=.
-IMPLEMENTED 2026-08-06, all three parts (A+B+C) in one round. Worker
-implementer-cursor-agent-tmux; driver tmux, harness cursor-agent, model
-cursor-grok-4.5-high-fast, effort omitted deliberately (the cursor model id
-carries the tier — stated on the dispatch --reason, not an unnoticed omission).
-Merged b94f942. Worker report preserved at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-4975/last.txt=.
-
-A — FIXTURE CONSOLIDATION. Converted the top =--lib= contributors onto the
-warmed inode (hanging mux stall-probe shim, =write_executable_stub= PATH stubs,
-malicious PATH claude shim, trusted-claude symlink layout seed, never-executed
-provider PATH stubs). Fresh creates KEPT where a distinct inode IS the assertion
-(pin retarget / wrapper replacement), routed through
-=create_fresh_test_executable= so they stay visible in the counter. Measured
-after: =fresh_first_execs=4=, =shared_link_reuses=134=, 49.41s, 734 passed / 0
-failed. Both full =--lib= runs in the dispatch had ZERO failures, against this
-task history of 14-20 isolation-green reds under parallelism.
-
-*The before-number is inventory-derived, not measured* (+8 converted first-exec
-sites), because a pre-A full run was outside the 3-run execution budget the
-brief imposed. So "A took 14-20 reds to 0" is a plausible reading of two runs,
-not a controlled result — the host also differed. Treat it as promising, not
-proven.
-
-B — HOST STATE IN THE VERDICT. =LOAD_DEGRADED_THRESHOLD=8.0= (below the measured
-11.41 thrash reading, above a quiet Mac) and =SYSPOLICYD_CPU_DEGRADED=200.0=
-(below the measured 586% peak), justified next to the constants. New exit code
-*4 = INCONCLUSIVE — re-run when calm*. A degraded host makes the run
-inconclusive EITHER WAY, so a green under load is no longer silently trusted —
-which is the property the design called the sharper one. Sampler injectable via
-=ORGASMIC_HOST_STATE_SAMPLE=load=<f>,syspolicyd_cpu=<f>= so the selftest drives
-calm and degraded hosts deterministically with no real load.
-
-C — INTERLOCK. Unregistered + isolation-green + host degraded -> LOAD-SENSITIVE;
-the same shape on a CALM host stays REAL; failing alone is always REAL. A
-LOAD-SENSITIVE label on a calm host is itself an error (exit 1). The ten
-unregistered 2026-08-02 failures were NOT registered; =verify/flake-registry.toml=
-is byte-unchanged by this merge (7 entries, every owner open).
-
-GATES at merge, manager-run: =run-tests-selftest.sh= 24 passed / 0 failed;
-=run-tests.sh --check= OK; =cargo clippy --workspace --all-targets -D warnings=
-clean; =cargo fmt --all --check= clean; =orgasmic verify TASK-STWVB= PASS
-(red-then-green). The pinned red was checked against the red log rather than
-trusted: the pinned message IS the first FAIL in the log, and the artifact aims
-at C interlock, the load-bearing new behaviour.
-
-NOT RUN BY THE MANAGER: =cargo test --workspace= and a third full daemon
-=--lib=. Deliberate — test EXECUTION is the syspolicyd trigger and this host has
-hard-rebooted twice from that chain. The worker s two full =--lib= runs are the
-evidence, and its final verdict block is in the preserved report.
-
-DEFECT FOUND AT INTEGRATION REVIEW, MERGED KNOWINGLY: *the syspolicyd signal
-never fires.* =sample_host_state_live= reads =ps -axo comm=,pcpu== and matches
-=/(^|\/)syspolicyd$/=, but =comm= truncates to 16 chars, so the live line is
-=/usr/libexec/sys= and the string "syspolicyd" is never present at all.
-Measured on this host: =ps aux= shows pid 495 =/usr/libexec/syspolicyd=, while
-the sampler awk yields =0.0=. Worse, the =END { if (NR || s > 0) ... }= guard
-makes NR always true, so the miss reports a MEASURED ZERO rather than =?= — the
-exact failure shape B exists to prevent, reproduced inside B. Consistent with
-the run: all three samples read =syspolicyd_cpu=0.0= while load ran 12.95 ->
-22.49. B therefore runs on load average ALONE today, and the headline evidence
-for this whole task (586% syspolicyd) is the signal that is dead. Merged anyway
-because it is fail-SAFE — it can only under-report degradation, never invent it,
-and load average still tripped INCONCLUSIVE correctly on the gate run.
-** How to fix it — design [2026-08-05]
-The classification machinery ALREADY EXISTS and is good. =scripts/run-tests.sh=
-(654 lines) runs the suite, reruns every failure IN ISOLATION, and matches panic
-text against =verify/flake-registry.toml= (6 entries, each requiring an OPEN
-owning task and a literal panic SIGNATURE, so one name carrying two failure
-modes cannot be confused). Do not rebuild any of that.
-
-*THE GAP, precisely.* The classifier has exactly three outcomes:
-1. not in the registry -> REAL
-2. registered NAME but unregistered SIGNATURE -> REAL (the mislabel detector)
-3. registered + signature match + green alone -> FLAKE (exit 0 eligible)
-
-and NO HOST-STATE AWARENESS whatsoever — the only occurrence of "load" in the
-script is a comment. So the 2026-08-02 run (14 failures, 4 registered, all 14
-green alone in 8s, =syspolicyd= at 586% and load average 11.41) put 10 tests in
-branch 1 and returned RED. The verdict vocabulary has no way to say "the host
-was degraded, so this run has no verdict".
-
-*THE FIX IS NOT TO REGISTER THE TEN.* The registry's own header says an entry is
-"an excuse with an expiry" that must name an open owning task, and warns that
-"a registry that only grows is a graveyard". Ten environment-induced failures
-have no owner because there is no code defect to own. Registering them would
-corrupt the instrument that currently works.
-
-=== A. Attack the trigger — the only durable fix
-Test EXECUTION is the trigger, not compilation (measured 2026-08-02: a full
-rebuild at jobs=4 kept syspolicyd at 0-64%, while the test RUN pinned it at
-586%). The mux and process-probe suites write and exec MANY short-lived shim
-scripts per test, and first-exec of a newly written file is what gets scanned.
-
-- Create the shims ONCE PER SUITE RUN behind a shared fixture rather than once
-  per test, so repeated execs of an identical path+content hit a cached scan
-  verdict instead of a fresh one.
-- Prefer a long-lived helper process or an in-process fake over spawning a fresh
-  script per assertion.
-- Where a fresh script is unavoidable, reuse content-identical files from one
-  directory instead of minting a new temp path each time.
-
-This lowers scan load at the source. Everything else below is instrumentation
-around a load problem; this is the part that removes it.
-
-=== B. Make host state a first-class input to the verdict
-Sample load average and =syspolicyd= CPU before, during and after the run, and
-stamp it on the verdict. If the host was degraded past a threshold, the run
-returns *INCONCLUSIVE — re-run when calm*, which is a THIRD outcome the exit
-codes do not currently have (today: 0 clean/all-flake, 1 REAL, 2 registry).
-
-Two things this buys, and the second is the sharper one:
-- a red on a thrashing host stops being read as a code fact;
-- a GREEN on a thrashing host stops being trusted, which today it silently is.
-  Right now a degraded run that happens to pass reports clean, and nothing in
-  the output hints that the run was not worth believing.
-
-=== C. Separate two different facts that currently look identical
-"Passes alone because of a genuine race" is a code defect: it has an owner, an
-expiry, and belongs in the registry. "Passes alone because the host was
-thrashing" is an environmental fact with no owner at all. Branch 1 collapses
-both into REAL, and the obvious workaround collapses both into the registry.
-
-Add a classification for load-sensitivity that is valid ONLY when the run's
-MEASURED host state (from B) justifies it. That interlock is what keeps the
-"excuse with an expiry" discipline intact: the excuse is bounded by a
-measurement taken during that run, not by a name sitting on a list forever.
-
-=== Sequencing
-B before C — C is unsound without a measurement to gate it. A is independent and
-is the one that actually shrinks the problem, so it can run in parallel and
-should not wait on the gate work.
-
-=== What NOT to do
-- Do not serialize the whole suite. The original acceptance already rejected
-  this, and it hides the interference rather than naming it.
-- Do not raise timeouts to fit a degraded host; that makes every future run
-  slower and still returns a meaningless verdict.
-- Do not add registry entries for the ten unregistered 2026-08-02 failures.
-** Measured 2026-08-05 — the red is nondeterministic on unchanged code
-A controlled same-code repeat, run 2026-08-05 while gating TASK-M47E5.1.1 at
-merge =3a825cb=. This is the measurement this task's design question has been
-missing: not "does the suite flake" but "is its red a function of the code".
-
-*Two runs of =scripts/run-tests.sh -p orgasmic-daemon=, identical tree, no
-rebuild between them:*
-
-| | run 1 | run 2 |
-|---|---|---|
-| header failure count | 20 | 19 |
-| failing test names extracted | 19 | 19 |
-| passed the runner's isolation rerun | 19/19 | 19/19 |
-| common to both runs | 17 | |
-| unique to that run | 2 | 2 |
-
-Run 1 only: =index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
-=supervisor::tests::an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued=.
-Run 2 only: =api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
-=supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases=.
-
-*The conclusion, stated precisely:* the failing SET is nondeterministic across
-runs of unchanged code, and 100% of failures pass in isolation. So a daemon-suite
-red currently carries NO information about whether the change under test broke
-anything. That is stronger than "the suite is flaky" — it means the gate cannot
-discriminate, which is the property a gate exists to have.
-
-*What this does and does not license.* It does NOT license ignoring daemon red.
-It licenses exactly one inference: a red whose failures all pass in isolation, on
-a change that cannot touch them, is not evidence of regression. The change being
-gated here was three substantive lines (one parameter, one JSON field, one
-expression) and none of the 19 tests reference either symbol.
-
-*Why the runner still says "This red means something".* By design: an
-unregistered failure is REAL, because the registry is the only sanctioned excuse
-and a signature-less excuse is what trains people to discount red. That is
-correct behaviour and it is what surfaced TASK-3ZR2E earlier the same day. The
-defect is not the classifier — it is that ~17 daemon tests have no owner and no
-entry, so every daemon gate reads RED and the manager has to re-derive this
-analysis by hand each time. Which is this task.
-
-*A cheap discriminator this measurement suggests*, offered as input to the design
-rather than as the design: the runner already reruns each failure in isolation.
-It therefore already knows the difference between "failed in parallel, passed
-alone" and "failed both ways". Today both land in REAL when unregistered. A
-distinct third verdict for "failed only under parallelism, unregistered" would
-separate the load population from genuine red WITHOUT weakening the registry
-rule, and would have made both of today's daemon gates readable at a glance.
-** Third measurement — a stable 14-test core with a rotating fringe
-A THIRD run, 2026-08-05, while gating TASK-M47E5.1.1.1.1 at merge =8e3b317=.
-Same host, same wrapper, and the change under test was TEST-ONLY inside
-=#[cfg(test)]= — so production daemon code was identical to runs 1 and 2.
-
-| | run 1 | run 2 | run 3 |
-|---|---|---|---|
-| header failure count | 20 | 19 | 18 |
-| failing names extracted | 19 | 19 | 18 |
-| isolation-green | 19/19 | 19/19 | *18/18* |
-
-- Common to ALL THREE runs: *14*.
-- Unique to run 3: =api::tests::boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run=.
-- Present in runs 1 AND 2 but PASSING in run 3:
-  =api::tests::boot_reattach_respawns_plan_stage_completion_watcher=,
-  =api::tests::recovery_reattaches_tmux_session_when_handle_exists=,
-  =supervisor::tests::direct_child_pid_finds_wrapper_child_process=.
-
-*Three runs, three different failure sets, 100% isolation-green every time.* Two
-runs could be coincidence; three with a stable 14-test core and a rotating
-fringe is a population, not an accident. There is a persistent set that fails
-under parallelism and a fringe whose membership is decided by scheduling.
-
-*The shape this suggests for the fix*, offered as input rather than as the
-design: the 14-test core and the rotating fringe may not be one problem. A core
-that fails on almost every parallel run is a candidate for registration or a real
-isolation fix with an owner each; a fringe that appears once in three runs is
-what an "unregistered AND isolation-green under parallelism" verdict would
-absorb without weakening the registry rule. Sizing the core is now cheap — it is
-the 14.
-
-*Also measured here*: the suite exceeded a 10-minute foreground budget on this
-host and had to be backgrounded. Whatever this task builds should assume the
-daemon suite is not something a manager runs casually between gates; that cost is
-part of why its red gets waved through rather than read.
-
-*And the control worked.* The round-5 test added by TASK-M47E5.1.1.1.1
-(=dispatch_spawn_derives_the_authoritative_artifact_dir_from_last_path=) does NOT
-appear in run 3's failures, so a genuinely new test lands green inside a red
-suite — further evidence the red is environmental rather than a property of the
-tree.
-
-* IN_REVIEW TASK-STWVB.1 fix-round: the gate now returns INCONCLUSIVE forever, and B's headline signal is both dead and sampled at the wrong time :testing:daemon:flake:
-:PROPERTIES:
-:ID: TASK-STWVB.1
-:PRIORITY: P1
-:WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
-:FIX_SUBTASK: t
-:END:
-
-=== READ THIS FIRST — STATUS ===
-Fix round for TASK-STWVB (merged =b94f942=, reviewed REJECT). FOUR BLOCK SHIP,
-FIVE FOLLOW-UPS. Part A is KEPT — the reviewer checked the link-vs-fresh
-boundary call at every converted site and found it correct at all eight,
-including the one where a wrong call would have been a silent-pass disaster.
-Nothing here argues for reverting A.
-
-The full review is preserved and tracked at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-4980/last.txt= (28,018 bytes).
-READ IT — it carries measurements, a per-site boundary table, and a reproduced
-=execvp= experiment that no summary preserves.
-=== END STATUS ===
-
-** The headline, because it changes what this task is about
-The gate does not merely mis-measure: it now returns *no verdict at all*, for
-the very suite it was built for. The suite trips its own load threshold, and
-=INCONCLUSIVE= preempts =REAL= in the verdict ordering. So exit 0 and exit 1 are
-both effectively unreachable for =orgasmic-daemon=, and a failure that fails IN
-ISOLATION — where load is already excluded as an explanation — comes back
-"re-run when calm". The implementer's own gate is the demonstration: *exit 4 on
-734 passed / 0 failed*.
-
-That is the mirror image of the risk the brief worried about. Not everything
-excused — everything UNADJUDICATED. A gate whose answer is always "no verdict"
-gets waved through exactly like a gate that is always red, which is the failure
-TASK-STWVB was opened to fix, one level up.
-
-** F1 — HIGH — nothing samples DURING the run
-=scripts/run-tests.sh:432=. =HOST_DURING= is taken after =SUITE_EXIT=$?=,
-back-to-back with =HOST_AFTER=. The header claim "sampled before / during /
-after" is not what the code does, and the worker's own block proves it: =during
-load=22.49= and =after load=22.49=, identical. Load average survives this by
-1-minute decay, which is why B looks like it works; syspolicyd %CPU does not —
-the task's own note says killing the suite dropped it to 75% within seconds.
-*So the scan-storm burst is unobservable at that sampling point even once the
-regex is fixed.* Manager-verified in the source.
-
-** F2 — HIGH — the syspolicyd signal never fires, and reports a MEASURED ZERO
-=scripts/run-tests.sh:320-321=. =ps -axo comm=,pcpu== truncates =comm= to 16
-chars, so the line is =/usr/libexec/sys= and the regex can never match. Then
-=END { if (NR || s > 0) ... }= makes NR always true, so the miss prints =0.0=
-rather than =?= — while the sampler's own contract says a missing signal becomes
-=?=. B ships with one of two signals, and the dead one is the mechanism this
-whole task documented (586% syspolicyd at load 11.41).
-
-*Load-average-alone is NOT sufficient*, and the reviewer's ruling on this is the
-sharpest thing in the review: a scan storm is a SERIALIZATION stall — processes
-blocked in exec, not runnable — and this task's own canonical measurement
-("alive, blocked, and has consumed ZERO CPU") describes a state that contributes
-to load average weakly and inconsistently. The 2026-08-02 reading was load 11.41
-on a run 8-15x slowed; load only 2.6x a quiet Mac. Dropping to load-alone deletes
-the only signal that discriminates the mechanism.
-
-Also: =ps -o pcpu= is a short-window decaying average, not a lifetime one
-(syspolicyd read 9.1 / 0.6 / 13.3 seconds apart against a lifetime 8.26%), so a
-point sample is noisy as well as mistimed. *The right instrument is the one this
-task already used successfully*: cumulative CPU-time delta (=ps -o time=)
-before/after, which produced the clean =+281s with rmux / +32s without= result.
-Immune to jitter, immune to F1's timing, needs no background sampler. One piece
-of work fixes F1 and F2 together.
-
-** F3 — HIGH — the interlock is FALSE on =--classify=, and that is the only path under test
-=scripts/run-tests.sh:410,418-419,586=. Under =--classify= the host sample is
-taken at RECLASSIFY time and assigned to before/during/after. It has no
-relationship to the run that produced the log — days later, or a machine busy
-for unrelated reasons. So the =:582= comment ("THIS run's measured host state")
-is false there, and reclassifying an old log from a loaded shell relabels genuine
-REAL failures as LOAD-SENSITIVE.
-
-*And all six new selftest cases drive =--classify=.* The only automated coverage
-the feature has is of the unsound path.
-
-Fix: on =--classify=, host state is UNKNOWN — so =HOST_DEGRADED=0=,
-LOAD-SENSITIVE unavailable, and say so in the stamp. Unknown must not mint an
-excuse, exactly as unknown does not trip the gate elsewhere. Or stamp host state
-into the suite log at run time and read it back. Either way, add a selftest case
-that drives the LIVE sampler path.
-
-** F4 — HIGH — the suite trips its own gate, and INCONCLUSIVE preempts REAL
-=scripts/run-tests.sh:77,822=. =load>=8.0= sampled seconds after a
-full-parallelism =cargo test= on a 10-core machine. This host idles at
-=4.50/6.64/6.34= with dispatches alone; a suite run on top clears 8.0 with room
-to spare. Manager-verified ordering: the =HOST_DEGRADED= branch at =:822= sits
-AHEAD of the interlock tripwire (=:836=), REAL (=:842=), and the bare
-cargo-nonzero branch (=:847=).
-
-Consequences, all confirmed in the source: an alone-red failure returns exit 4;
-a test binary that aborts with no failure list is swallowed into exit 4; and
-since the suite always degrades the host, exit 0 and exit 1 are both unreachable
-for this crate. The selftest ENCODES this as intended (=degraded host + fails
-alone too -> INCONCLUSIVE=), so it is a design ruling to overturn, not a slip.
-
-Fix direction: (a) judge degradation on host state NOT attributable to this run
-— the BEFORE sample for load, plus the syspolicyd cumulative delta; in the
-worker's own run BEFORE was already 12.95 (three live workers), so that run would
-still correctly have been INCONCLUSIVE. (b) Let an alone-red REAL failure keep
-exit 1 regardless of host; report the host stamp ALONGSIDE it rather than
-replacing the verdict with it — move =:822= after =:842=. (c) Re-derive the load
-threshold against a measured calm-host baseline of the suite's OWN load
-contribution, not against the 11.41 thrash reading. Nobody has that number; it
-is one =sysctl -n vm.loadavg= sampled mid-run.
-
-** F5 — MEDIUM — exit 4 fails the CI workspace lane
-=.github/workflows/ci.yml:196-201= runs =bash scripts/run-tests.sh=, captures
-=status=$?=, and does =exit $status=. Manager-verified. Not a misreport —
-non-zero propagates correctly — but combined with F4 it converts a lane that
-would otherwise be green into one that is red saying "re-run when calm". That
-file's OWN header is the argument against shipping it: "a lane that is red for
-reasons nobody is expected to fix teaches everyone to ignore it, which is worse
-than no lane."
-
-Whether it actually trips depends on the runner — =macos-15= is 3-vCPU, so a
-workspace run may or may not clear 8.0. *The new verdict block answers this for
-free on the first CI run: read the =host := line before deciding.* Then decide
-explicitly whether the lane should fail on 4, and say so AT =ci.yml:200= rather
-than by accident.
-
-** F6 — MEDIUM — =/bin/true= does not exist on macOS, and nothing covers the arm
-=crates/orgasmic-daemon/src/test_fixtures.rs:124=. Manager-verified: =/bin/true=
-absent, =/usr/bin/true= present. The =malicious-claude= arm exits 126 with two
-stderr errors instead of exec-ing cleanly. It breaks no test *because the only
-test using it asserts the shim never runs* — so the whole arm is dead code
-reachable only when a test is already failing. That is precisely the
-"still passes and no longer tests anything" shape, caught one step before it
-happened.
-
-Fix =/bin/true= -> =/usr/bin/true= (or =exit 0=), AND add a positive control
-that execs the linked shim directly and asserts the log appears, so the negative
-assertion cannot rot into vacuity.
-
-Good news the reviewer established by experiment and you should not re-derive:
-the =$0=-relative side channel WORKS for a PATH-resolved shim — the kernel's
-=#!= handling passes the path given to =execve=, which =execvp= has already
-resolved to absolute. Reproduced with both a bash launch and =os.execvp=. So the
-security shape of that test is preserved.
-
-** F7 — LOW — the exit-97 sentinel is shadowed by the argv prelude
-=test_fixtures.rs:175-182= sits AFTER the prelude at =:60-101=. For
-=$1 in {warm, artifact-ready, artifact-busy, cursor-worker-sibling, config}= the
-prelude wins and the sentinel never runs, where the old wrapper's
-=[ "$1" = __exec-pinned ] || exit 97= was unconditional. =config= execs
-=/bin/sleep 30=, so that regression shape would HANG rather than fail loudly.
-Move the =orgasmic-pinned-wrapper= check above the prelude for marked links.
-
-** F8 — LOW — the overwrite fallback mutates a shared inode in place
-=test_fixtures.rs:240-251=. The happy path (=pending.persist=) is a same-dir
-rename and is atomic — safe. The =Err= fallback is =std::fs::write=, which
-truncates IN PLACE; since every converted site is a hard link to that inode, it
-would mutate every already-installed fixture link in every running test at once,
-and can race an in-flight exec (=ETXTBSY=, or a torn script). Close to
-unreachable (content-hashed path), but the consequence is exactly the cross-test
-flakiness this task exists to remove, and the safe form is temp-file + rename.
-
-** F9 — MEDIUM — A is not proven, and the probe that would prove it is F2's fix
-Keep A. But the shipped evidence does not support "14-20 -> 0 BECAUSE OF A":
-- The counters count fixture-CREATION API calls
-  (=test_fixtures.rs:238,250,289,311=), not execs. The diff itself documents
-  converted sites never executed at all (=api.rs:23364=). So
-  =shared_link_reuses=134= is an upper bound on avoided scans with no lower
-  bound, and =fresh_first_execs=4= says nothing about what the UNCONVERTED rest
-  of the suite still pays.
-- Before is an 8-site inventory on a different tree; historical runs were ~637
-  passed against the after-run's 734.
-- The discriminator read =0.0= in both after-runs (F2), so there is no evidence
-  either run was under scan pressure at all — the condition under which A is
-  supposed to matter. *Claims 1 and 2 fail together.*
-
-What DOES support A, on the record: 734 passed / 0 failed at load 22.49, where
-load >= 11 historically produced 14 failures. One data point, and load is not
-scan pressure, but it is not nothing. The mechanism itself is not in doubt —
-already measured on this task (fresh exec 196ms, second 4ms, hard link 4ms,
-byte-identical copy 162ms).
-
-*The cheap settling probe:* record syspolicyd cumulative CPU
-(=ps -o time= -p $(pgrep -x syspolicyd)=) before and after ONE run of the
-ALREADY-BUILT test binary, with and without consolidation behind a one-line kill
-switch inside =link_shared_test_executable=. Two runs of an existing binary, no
-rebuild, ~100s total. Same instrument that produced +281s/+32s. It is also the
-F2 fix, so one piece of work buys both.
-
-** F10 — LOW — two documentation/robustness residuals
-- =scripts/run-tests.sh:313-317=: =load=$(sysctl ... | awk ...) || load="?"= —
-  the =||= never fires because awk exits 0 on empty input, and only the cpu field
-  gets the =[ -n "$cpu" ] || cpu="?"= guard. An unreadable load stamps a BLANK,
-  not =?=. Cosmetic (it does not trip the gate) but the same class as F2.
-- =.orgasmic/project.org:23= says "All three must be green before a change is
-  called done". Exit 4 is neither green nor red, so that sentence now has no
-  defined meaning. *Decide and document what a worker does with INCONCLUSIVE* —
-  workers will otherwise invent an answer each.
-
-** Open questions the reviewer left, worth answering rather than assuming
-1. Does a whole-workspace run on a 3-vCPU =macos-15= runner clear load 8.0? The
-   verdict block answers it free on the first CI run; the answer decides whether
-   F5 is theoretical or already breaking merges.
-2. What is the suite's OWN calm-host load contribution on this 10-core Mac? That
-   is what the threshold should be calibrated against and nobody has measured it.
-3. Is INCONCLUSIVE advisory or blocking for a worker's gate?
-
-** Acceptance
-- Host state is sampled in a way that can actually observe a scan storm: either a
-  during-run sampler or (preferred) a cumulative CPU-time delta across the run.
-  Pinned by a test.
-- A missing signal prints =?=, never a measured =0.0= or a blank. Both the
-  syspolicyd path and the load path.
-- An alone-red failure returns exit 1 with its "this red means something"
-  verdict, whatever the host was doing; the host stamp is reported ALONGSIDE the
-  verdict, not INSTEAD of it.
-- Degradation is judged on state not attributable to this run, and the load
-  threshold is justified against a MEASURED calm-host baseline of the suite's own
-  load.
-- On =--classify=, LOAD-SENSITIVE is unavailable and the stamp says host state is
-  unknown. At least one selftest case drives the live sampler path.
-- =/usr/bin/true=, plus a positive control that execs the malicious shim and
-  asserts the log appears.
-- The exit-97 sentinel fires for every argv value.
-- The overwrite fallback no longer writes in place.
-- The CI lane's behaviour on exit 4 is decided EXPLICITLY and stated at
-  =ci.yml:200=; =.orgasmic/project.org= says what a worker does with INCONCLUSIVE.
-- A stated verdict on whether A's own effect is established, with the two-run
-  syspolicyd-delta probe run, or a stated reason it was not.
-** Evidence
-IMPLEMENTED 2026-08-06. Worker implementer-cursor-agent-tmux; driver tmux,
-harness cursor-agent, model cursor-grok-4.5-high-fast, effort omitted
-deliberately (the model id carries the tier). Merged 54dae49. Report preserved
-at =.orgasmic/dispatch-records/tx-20260806-orgasmic-5000/last.txt=.
-
-FOUR BLOCK SHIP ADDRESSED, manager-verified in the merged source:
-- F1+F2 together. =sample_syspolicyd_time_live= now selects by pid
-  (=pgrep -x syspolicyd=) and reads CUMULATIVE CPU-TIME, with the judgment
-  sample taken as a delta across the run — so the truncated =comm= field is out
-  of the path entirely and the mistimed point sample is gone. Verified LIVE by
-  the manager: the sampler returns =load=9.97 syspolicyd_time=491:02.40= where
-  the old one returned a phantom =0.0=. Unknown now prints =?= on both the
-  syspolicyd and the load path.
-- F3. =--classify= reads a host stamp written into the suite log at run time
-  (=:557-558=) and falls back to =load=? syspolicyd_time=?= when absent
-  (=:565-566=), so a reclassify cannot mint an excuse from an unrelated machine
-  state.
-- F4. Ladder reordered and verified in source: =REAL_COUNT= at =:991= now
-  precedes =HOST_DEGRADED= at =:1002=, with the comment stating the rule. An
-  alone-red failure returns exit 1 with the host stamp reported ALONGSIDE.
-  Degradation is judged on the BEFORE load plus the syspolicyd delta — state not
-  attributable to the run.
-- F5. =ci.yml= now says IN CODE that exit 4 fails the lane deliberately, with
-  the reasoning inline. F6 =/usr/bin/true= at =test_fixtures.rs:137= plus a
-  positive control. F7, F8, F10 per the heading.
-
-CALM-HOST BASELINE, the number nobody had: the suite's own mid-run load
-contribution measures ~7.35, and post-run 4.13 -> 7.87. So
-=LOAD_DEGRADED_THRESHOLD=8.0= is applied to the BEFORE sample only — which is
-exactly why the suite can no longer trip its own gate.
-=SYSPOLICYD_CPU_DEGRADED=100.0= seconds of delta.
-
-GATES at merge, manager-run: selftest 27 passed / 0 failed; =--check= OK; clippy
-=-D warnings= clean; fmt clean; =orgasmic verify TASK-STWVB.1= PASS. The pinned
-red was checked against the log rather than trusted: it is the ONLY FAIL in the
-red run and it is the F4 alone-red case, which is the load-bearing behaviour.
-=verify/flake-registry.toml= byte-unchanged again.
-
-THE PROBE CAME BACK NEGATIVE, AND THAT IS THE MOST IMPORTANT LINE IN THIS ROUND.
-F9 ran as specified — two executions of the already-built binary, consolidation
-on and off behind =ORGASMIC_DISABLE_SHARED_FIXTURE_LINKS=:
-
-| run | mode | BEFORE load | syspolicyd delta | wall | fixtures |
-| 1 | consolidated | 8.94 | +53.89s | 155.7s | fresh=4 links=136 |
-| 2 | consolidation OFF | 4.13 | +49.33s | 51.4s | fresh=140 links=0 |
-
-The deltas are within 9% of each other, and the UNCONSOLIDATED run was three
-times FASTER. Both readings are confounded (run 2 was cache-warmed by run 1 and
-started on a calmer host; run 1 spent wall time on a hung-mux failure), so this
-does not disprove A either. But it is now two independent attempts that have
-failed to demonstrate A's causal contribution ON THIS SUITE, and the second one
-leans against it. The MECHANISM is not in question (fresh exec 196ms, link 4ms,
-copy 162ms, measured earlier on this task); what is in question is whether the
-converted sites were ever on the hot path. A is KEPT and the question is live.
-
-PARTIALLY ADDRESSED, carried to the review: the reviewer's F4 also named the
-=SUITE_EXIT != 0= branch (cargo aborts with no per-test failure list) as being
-swallowed into INCONCLUSIVE. It still sits AFTER =HOST_DEGRADED= at =:1016=, so
-that case is unchanged. =BUILD_BROKE= is caught earlier, so the residual is an
-aborting or signalled test binary on a degraded host.
-
-ALSO WORTH NAMING: the final GREEN verdict block in the worker report was
-produced by =--classify= over the F9 green log plus a measured stamp, not by a
-live full run — the third run was skipped per the execution budget. So "the gate
-returns GREEN on a calm host" is demonstrated through the reclassify path, which
-is itself one of the paths this round changed.
-
-* IN_REVIEW TASK-STWVB.1.1 fix-round: the syspolicyd threshold is a bound on run duration, so the default gate returns exit 4 on a calm host :testing:daemon:flake:
-:PROPERTIES:
-:ID: TASK-STWVB.1.1
-:PRIORITY: P1
-:WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
-:FIX_SUBTASK: t
-:END:
-
-=== READ THIS FIRST — STATUS ===
-Round 3 of the TASK-STWVB chain. Fix round for the TASK-STWVB.1 review (merged
-=54dae49=, reviewed REJECT). TWO BLOCK SHIP, four follow-ups.
-
-*PART A IS SETTLED AND CLOSED. DO NOT SPEND ANOTHER ROUND ON IT.* The reviewer
-OVERTURNED the previous round's reading of the F9 probe: it is UNINFORMATIVE,
-not negative. The instrument measures syspolicyd CPU BURN, while part A avoids
-serialized Gatekeeper QUEUE WAIT — the measured 196ms fresh vs 4ms linked is
-dominated by BLOCKING, not by CPU. So 136 avoided scans can be tens of seconds
-of wall latency and only noise-level CPU, and an instrument blind to the effect
-returns exactly what it returned. Two rounds have now died on this question.
-Record: *mechanism-justified, effect size unmeasured on this suite.* Keep A.
-
-The full review is preserved at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-5005/last.txt=. Its predecessor
-(the four original block-ship findings) is at =...-4980/last.txt=.
-=== END STATUS ===
-
-** What round 2 actually achieved, so you do not redo it
-Manager-verified in the merged source. The verdict ladder IS reordered
-(=REAL_COUNT= at =:991= precedes =HOST_DEGRADED= at =:1002=). =--classify= DOES
-read a stamp written at run time instead of sampling at reclassify time, and it
-fails safe to =unknown= on an unstamped or truncated log. The syspolicyd probe
-DOES work live (=pgrep -x syspolicyd= + cumulative CPU-time; manager measured
-=syspolicyd_time=491:02.40= where the old code returned a phantom =0.0=). F6-F8
-are closed with a positive control that is NOT vacuous — it execs the linked
-shim with real argv and asserts the side-channel log contains =--resume=. The
-=ORGASMIC_DISABLE_SHARED_FIXTURE_LINKS= kill switch does not leak: it is inside
-=test_fixtures.rs=, which =lib.rs:36-37= gates behind =#[cfg(test)]=.
-
-The four parent block-ship findings are answered IN MECHANISM. What is not
-answered is THE NUMBER.
-
-** B1 — HIGH — a fixed threshold on a quantity that grows with run duration
-=scripts/run-tests.sh:95=; window at =:591-598=.
-
-=SYSPOLICYD_CPU_DEGRADED=100.0= is an ABSOLUTE bound on cumulative CPU seconds,
-so it is really a bound on HOW LONG THE RUN TOOK. Three compounding facts:
-
-1. *The build is inside the sampled window.* Manager-verified by reading
-   =:591-598=: =HOST_BEFORE= is taken, then =cargo test= runs (which BUILDS),
-   then =HOST_AFTER=. Every freshly linked rustc output is a new Mach-O that
-   Gatekeeper evaluates — the mechanism this repo documents at
-   =test_fixtures.rs:3-7=. A cold build IS a scan storm, and it is charged to
-   the run's own degradation score.
-2. *Ambient accrual alone reaches the threshold.* MANAGER-MEASURED INDEPENDENTLY,
-   clean 60s window on an otherwise-idle host at load 4.71: *+4.42s, rate 0.0737
-   s/s → 22.6 minutes to reach 100s with nothing running.* This reproduces the
-   reviewer's +4.52s / 0.0753 s/s / ~22min almost exactly. Two independent
-   measurements agree.
-3. *In-run rate is 0.35-0.96 s/s* (the F9 pair normalized by wall), so the 100s
-   line is crossed in roughly TWO MINUTES of suite execution.
-
-The threshold was calibrated on the ONE run whose delta happened to land under
-it — a 51.4s SCOPED =-p orgasmic-daemon --lib= run — and is applied to a gate
-whose default =CARGO_ARGS= is the WHOLE WORKSPACE.
-
-*So =scripts/run-tests.sh= with no arguments — the exact invocation
-=.orgasmic/project.org:23= tells every worker to run — reports =host : DEGRADED=
-and exit 4 ON A CALM HOST.* That is the original F4 failure verbatim: the suite
-trips its own gate and exit 0 becomes unreachable. It was closed for the LOAD
-signal and reopened for the SYSPOLICYD signal. It was missed because only the
-scoped case was ever validated.
-
-CI makes it worse: the Suite job (=ci.yml:128-206=) is =macos-15=, has NO
-separate build step (the cold workspace build happens inside =cargo test=,
-inside the sampled window), and =ci.yml:200-206= now DELIBERATELY fails the lane
-on exit 4 — justified by the comment "exit 4 means host state not attributable
-to this run", which B1 makes false. Not yet live: nothing is pushed (737 commits
-ahead of =origin/main=), so the first CI run has not happened. The reviewer
-states the CI consequence as reasoned rather than measured, correctly.
-
-*Fix direction.* Normalize the signal to the window: judge on a RATE (syspolicyd
-CPU seconds per wall second of the sampled window) rather than an absolute.
-Calibration data already exists — 0.0737-0.0753 s/s ambient (two independent
-measurements), 0.35-0.96 s/s in-run on this Mac — and the historical +281/+32
-pair can be re-expressed the same way. Or exclude the build from the window by
-sampling around =cargo test --no-run= and the run separately. *Either way,
-measure the WORKSPACE delta once before picking a number* — every measurement so
-far is of the scoped subset.
-
-** B2 — HIGH — a crashed test binary is reported as "suite looked green"
-=scripts/run-tests.sh:1002-1013= vs =:1016-1019=. Reviewer reproduced it with a
-=cargo= stub on PATH emitting a =signal: 6, SIGABRT= tail and exit 101:
-- calm host → =verdict: RED — cargo exited 101 with no per-test failure list=,
-  exit 1. Correct.
-- same run with =ORGASMIC_HOST_STATE_SAMPLE=load=11.41,syspolicyd_cpu=250.0= →
-  =failures : 0= … =verdict: INCONCLUSIVE — re-run when calm. Host was degraded
-  (suite looked green; that green is not trusted)=, exit 4.
-
-Two defects in one branch. The ordering residual is real — =SUITE_EXIT != 0=
-still sits after =HOST_DEGRADED=, and only =BUILD_BROKE= is caught earlier. But
-the SHARPER problem is the TEXT: because =FAIL_COUNT= is 0, the message says
-*the suite looked green* about a run whose log literally contains
-=SIGABRT: process abort signal=. That is not a downgrade, it is a MISREPORT, and
-it survives into the CI step summary as the lane's deliverable.
-
-The reviewer ruled rather than leaving it open: a binary that died was never
-re-run in isolation, so it is not "alone-red" in the sense F4 protected, and a
-host excuse for it is arguably defensible — but the misreport is not. *Move
-=SUITE_EXIT != 0= above =HOST_DEGRADED=* (the same one-line move F4 made for
-=REAL_COUNT=), since a process that aborted is a code fact; or at absolute
-minimum make the INCONCLUSIVE text name the non-zero cargo exit instead of
-claiming green.
-
-The reviewer traced the rest of the ladder: =BILLED_RAN=, =BUILD_BROKE=,
-=REAL_COUNT= and the interlock tripwire all precede =HOST_DEGRADED=, and
-=FAIL_COUNT == REAL + LOAD + FLAKE= holds, so no OTHER case downgrades a code
-fact and "GREEN modulo flake" cannot swallow a REAL.
-
-** F-C — MEDIUM — the BEFORE-load threshold moved the number, not the justification
-=scripts/run-tests.sh:83-90=, =:469-470=. The cited baseline (mid-run 7.35,
-post-run 4.13 → 7.87) is the SUITE'S OWN CONTRIBUTION, which the BEFORE sample
-excludes by construction. It justifies a threshold for a DURING/AFTER sample and
-is applied to BEFORE.
-
-Nobody measured the distribution of BEFORE on this board. Five values now exist:
-4.13, 8.94, 12.95, plus the reviewer's 7.20 (one dispatch running) and 4.01 (two
-minutes later). 8.0 sits INSIDE that band, so GREEN vs INCONCLUSIVE is decided by
-ambient dispatch activity within one load unit. And BEFORE is not unattributable
-in the prescribed workflow: =.orgasmic/project.org:23= says =cargo build=, THEN
-=scripts/run-tests.sh= — and a 1-minute load average carries that build straight
-into the BEFORE sample.
-
-*Fix:* =host_is_degraded= ORs the two signals at =:469-470=. Make load a
-CORROBORATING signal instead of an independent trigger, and leave the
-(normalized, per B1) syspolicyd delta primary. It is the mechanism this task
-actually documented and it has far better separation (~50s normal vs 281s
-thrash) than a load number straddling ambient noise. On Linux there is no
-Gatekeeper scan storm to excuse, so losing the trigger there is correct, not a
-gap.
-
-** F-D — MEDIUM — the live sampler still has no test, and the stamp format is duplicated
-=scripts/run-tests-selftest.sh:107-112=, =:377-398=. The new "live sampler path"
-case calls =--sample-host=, which prints one snapshot and exits at =:530-534=.
-=host_judgment_from_snapshots=, =write_host_stamp= and the live BEFORE/AFTER
-wiring are untouched by any test — F3's acceptance is met in LETTER only.
-
-And =stamp_host= HAND-WRITES the stamp format rather than calling the writer, so
-the eight stamp-driven cases assert the reader against a COPY of the writer's
-format. Rename a field in =write_host_stamp= and the selftest stays 27/27 while
-=--classify= silently stops reading real logs and falls back to =host : unknown=
-— which fails safe, so nothing goes red. A test that passes without exercising
-the contract.
-
-*Fix:* one case that runs the runner with a stubbed =cargo= on PATH, then
-reclassifies the log THAT SAME RUN wrote. Covers live sampling, stamp write, and
-round-trip in about a second, no cargo. (The reviewer did this by hand and
-confirms the round trip is correct TODAY — nothing pins it.)
-
-** F-E — LOW — an all-unknown or unparseable judgment prints =host : calm=
-=scripts/run-tests.sh:940-948=. Reviewer reproduced: =delta=load=?
-syspolicyd_cpu=?= → =host : calm=, exit 0; =load=abc syspolicyd_cpu=xyz= →
-=host : calm=, exit 0; truncated stamp with no =delta== → =host : unknown= (fails
-safe, correct). Only the no-stamp path reaches unknown.
-
-The FIELDS correctly print =?=, so the acceptance criterion is met at field
-level — but the summary WORD is derived from =host_is_degraded= returning false,
-which conflates "measured calm" with "measured nothing". Same class as the
-original F2 phantom =0.0=, one level up. Derive the word from whether any signal
-parsed as a number.
-
-** F-F — LOW — a vacuous assertion in the new sampler case
-=scripts/run-tests-selftest.sh:386= greps for =syspolicyd_cpu=0\.0= against a
-snapshot that emits =load== and =syspolicyd_time== only (=:413-415=). The
-assertion can never fire, so the case's headline "never a measured 0.0" is
-unchecked. Assert on =syspolicyd_time==, or move it to the judgment sample where
-the field exists.
-
-** Acceptance
-- The syspolicyd signal is duration-independent: judged as a rate over the
-  sampled window, or with the build excluded from the window. Pinned by a test.
-- The chosen number is justified against a MEASURED WORKSPACE run, not a scoped
-  subset. State the measurement.
-- =scripts/run-tests.sh= with NO arguments on a calm host does not return exit 4.
-  This is the acceptance criterion the whole chain has been chasing; demonstrate
-  it, do not assert it.
-- A non-zero cargo exit with no per-test failure list never reports "suite looked
-  green", on any host state.
-- Load is a corroborating signal, not an independent trigger.
-- One selftest case drives the LIVE path end to end — sampler, stamp write, and
-  reclassify of the log that run wrote — and the stamp format is not duplicated
-  in the test.
-- The host summary word distinguishes measured-calm from measured-nothing.
-- No vacuous assertions: every new assertion can fail.
-- Part A is untouched and the settling question stays closed.
-- =verify/flake-registry.toml= byte-unchanged, as in both prior rounds.
-- Once B1 lands, the =ci.yml:200-206= comment is revisited: its stated
-  justification is only true after B1 is fixed.
-** Evidence
-IMPLEMENTED 2026-08-06/07. Worker implementer-cursor-agent-tmux; driver tmux,
-harness cursor-agent, model cursor-grok-4.5-high-fast, effort omitted
-deliberately (the model id carries the tier). Merged b92199a. Report preserved
-at =.orgasmic/dispatch-records/tx-20260806-orgasmic-5045/last.txt=.
-
-B1 — THE SIGNAL IS NOW A RATE, AND IT WAS CALIBRATED AGAINST THE INVOCATION THAT
-MATTERS. One =--workspace= run of =scripts/run-tests.sh= with no arguments,
-BEFORE load 6.10: wall 356s, syspolicyd delta *+215.2s*, rate *0.6045 s/s*.
-*Under the old absolute 100s bound that calm-host run would have been DEGRADED* —
-which is the defect, measured on the exact command
-=.orgasmic/project.org:23= prescribes. Chosen: =SYSPOLICYD_RATE_DEGRADED=1.50=
-(~2.5x the measured workspace rate, above the scoped peak of 0.96, well below the
-historical thrash), with the justification written next to the constant at
-=scripts/run-tests.sh:93-98=. Load is demoted to corroborating only (F-C).
-
-THE ACCEPTANCE WAS DEMONSTRATED, NOT ASSERTED — and then independently
-re-demonstrated by the manager. The worker's no-arg run returned exit 1 (a real
-failure, see below), NOT exit 4, with =host : calm=. The manager then ran the
-real gate scoped (=-p orgasmic-core --lib=) on a calm host and got:
-=host : calm ... delta syspolicyd_cpu=0.2 wall_s=3, rate 0.0667=,
-=verdict: GREEN — no failures=, *exit 0*. That is the first time in this
-three-round chain the gate has returned a usable verdict.
-
-B2 — a crashed binary is no longer called green. With a stub cargo emitting
-SIGABRT / exit 101 on an injected degraded host, the verdict is
-=RED — cargo exited 101 with no per-test failure list= at exit 1.
-
-GATES at merge, manager-run: selftest 33 passed / 0 failed (up from 27);
-=--check= exit 0; clippy =-D warnings= clean; fmt clean;
-=orgasmic verify TASK-STWVB.1.1= PASS. The pinned red was checked against the
-log rather than trusted: it is the ONLY FAIL and it is the B1 rate case
-("long ambient syspolicyd accrual is calm as a rate (absolute would trip)").
-=verify/flake-registry.toml= byte-unchanged for the third consecutive round.
-
-*THE GATE'S FIRST REAL PRODUCT WAS CATCHING A REGRESSION FROM THE OTHER CHAIN,
-AND THAT IS THE STRONGEST EVIDENCE THIS WORK PAID OFF.* The worker's workspace
-run surfaced one REAL failure and reported it as unrelated. It is not unrelated:
-=reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge=
-(=crates/orgasmic-cli/tests/dispatch.rs:274=) fails because
-=git merge --no-ff= is refused with
-"Your local changes to the following files would be overwritten by merge:
-=.orgasmic/dispatch-records/tx-.../last.txt=". Manager-confirmed: it fails ALONE
-too (5.49s, exit 101), so the classifier was right to call it REAL rather than
-load-sensitive. Root cause is TASK-QGWK7.1's =955c8d6= staging change — that
-commit touched =manager.rs= and =paths.rs= but NOT =tests/dispatch.rs=, and the
-test's flow is reviewer =dispatch-close= (which now promotes AND STAGES) followed
-by =git merge=. Carried to TASK-QGWK7.1.1 as M-0.
-
-So a gate that could not discriminate for three rounds, on its first honest run,
-found a real regression that had already been merged and reviewed. That is the
-whole argument for the task.
-
-RESIDUAL, carried to the review:
-- The workspace acceptance run and the B1 calibration run are the SAME run. A
-  second independent workspace run was skipped on budget and reboot risk. The
-  manager's scoped GREEN is an independent second data point but is not a
-  workspace run.
-- A rate is the mirror of an absolute bound, and the mirror risk is SHORT
-  windows: a 3-second window that happens to catch a scan burst could spike the
-  rate spuriously. Measured once at wall_s=3 and it read 0.0667, so it did not
-  fire here — but n=1, and the failure mode is exactly the shape this chain
-  keeps producing.
-
 * IN_REVIEW TASK-STWVB.1.1.1 fix-round: round 3 fixed exit-4-on-a-calm-host and broke exit-0-on-a-flake :testing:daemon:flake:
 :PROPERTIES:
 :ID: TASK-STWVB.1.1.1
 :PRIORITY: P1
 :WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
 :FIX_SUBTASK: t
+:DEPENDS_ON:  TASK-STWVB.1.1.1.1
 :END:
 
 === READ THIS FIRST — STATUS ===
@@ -1654,3 +241,313 @@ means the "same verdict for the same log" invariant this round established holds
 for the =FAIL_COUNT>0= population only — and the obvious fix (stamp the suite
 exit into the log, exactly as host state is already stamped) is small enough that
 the reviewer should rule on whether it belongs here.
+
+* IN_REVIEW TASK-QGWK7.1.1 follow-up: a git add failure mis-reports the close and silently keeps the branch :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS [updated 2026-08-07] ===
+*THIS TASK NOW CARRIES A REGRESSION, NOT ONLY FOLLOW-UPS. Read =M-0= FIRST — it
+was filed after the review and it is the reason this task is P1.* Staging the
+promoted record BREAKS =git merge= after a close, and the close-then-merge order
+is the one the review gate's own refusal message prescribes. Found by the
+TASK-STWVB.1.1 gate on its first honest workspace run; manager-confirmed failing
+in isolation.
+
+The rest of this task is the follow-up round for the TASK-QGWK7.1 review (merged
+=955c8d6=, verdict *approve-with-follow-ups*), which had NO block ship. That
+verdict stands on what the review examined: the parent chain's goal IS met — a
+promoted worker report lands in the git index BY CONSTRUCTION, not by habit, and
+the reviewer traced every close path to confirm there is no third promote caller
+that skips staging. M-0 is not a defect the review missed by being careless; it
+is a consequence no static read of the diff would surface, because it only
+appears when a merge follows a close.
+
+*One further MEDIUM (=M-1=) is a real behaviour bug the same change introduced*
+and is the reason this round existed before M-0 arrived. Everything else is LOW.
+
+The full review is preserved at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-5026/last.txt=. Its predecessor
+(the nine original findings) is at =...-4946/last.txt=.
+=== END STATUS ===
+
+** What is already settled — do not redo it
+Reviewer-verified, and where noted manager-verified too:
+- *Durability is by construction for =last.txt=.* Both promote paths
+  (=remove_worktree_required_with_hook= at =manager.rs:5209=,
+  =promote_dispatch_artifacts_in_place= at =:5527=) route through the single
+  =promote_and_stage_dispatch_record=. =post_dispatch_cleanup= (=:874=) is the
+  dispatch-CREATE rollback and never promoted. No third caller.
+- =.orgasmic/.gitignore= is exactly =tmp/=; =git check-ignore= exits 1 for both
+  =dispatch-records/<tx>/stdout.log= and =stdout.log.bytes=. Nothing about the
+  record path is ignored.
+- Staging is STRONGER than the prior state against the two things that actually
+  threatened the file: a staged path survives =git checkout -- .= and is skipped
+  by =git clean -fdx=.
+- The fd-anchored ordering invariant SURVIVED the new tail-copy code. All four
+  failure cases traced at =paths.rs:272-340=: a failed =last.txt= copy, a failed
+  stdout tail copy, a failed =stdout.log.bytes= write, and a crash between the
+  copies all leave tmp intact or duplicate rather than lose. =.promoting= names
+  do not collide.
+- F-2 arithmetic holds: 6,500 x 64KiB = 406MiB, matching the convention's
+  "<= ~400MB/yr worst case"; =last.txt= 24-30MB/yr. The convention states both
+  separately with numbers (=manager-dispatch.org:311-330=) and
+  =shipped_conventions.rs:398= pins both strings.
+- F-5's deferral REASONING HOLDS: =manager.rs:369= and =:3643= confirm
+  =worktree-prune= refuses every invocation by construction, =:3373= marks the
+  reclaim path unreachable and owned by TASK-RMA18. Promote-on-reclaim would be
+  unreachable code today. Accepted, not carried.
+
+** M-1 — MEDIUM — a =git add= failure mis-reports the close AND silently keeps the branch
+=crates/orgasmic-cli/src/manager.rs:5423=, branch chain at =:5460-5481=.
+MANAGER-VERIFIED IN SOURCE, not taken on report.
+
+=promote_and_stage_dispatch_record= folds a staging error — and now also a
+stdout-tail error, which returns =Ok= + error rather than =Err= — into
+=WorktreeRemovalOutcome.error=. =cleanup_dispatch= then sets
+=worktree_failed = true= for ANY such error *even when =outcome.removed= is
+true*. Two consequences:
+
+1. The close reports =CLEANUP_STATUS=worktree_failed= when the worktree WAS
+   removed and the report WAS promoted, staged and named.
+2. Every =branch_delete= arm requires =!worktree_failed=. Traced with
+   =worktree_failed=true=, =worktree_removed=true=, =remove_worktree=true=: arm 1
+   fails on =!remove_worktree=, arms 2 and 3 fail on =!worktree_failed=. *So NO
+   arm fires — the branch is silently retained, =branch_failed= stays =false=,
+   and no error names it.*
+
+Concrete trigger: a concurrent state chore holding =.git/index.lock= makes
+=git add= exit 128. This CONTRADICTS the design this round shipped under — the
+brief's invariant was "a staging failure never fails the close"; it does not fail
+it, it MIS-CLASSIFIES it, which is worse because the mis-classification is
+silent and costs a branch.
+
+*Fix (the reviewer's, and the manager concurs):* push promote/stage errors into
+=errors= WITHOUT setting =worktree_failed=, exactly as the =--no-worktree-remove=
+arm already does at =:5452=. Note the two arms currently DISAGREE about the same
+class of failure (=worktree_failed= vs =partial=) — pick one and make them agree.
+
+** M-2 — LOW — inner-file ignores are silent
+=manager.rs:5566=. MEASURED by the reviewer: =git add -- <dir>= on a fully
+ignored directory exits 1 with a visible "paths are ignored" message (which
+folds into =CLEANUP_ERROR= — good), but on a directory containing SOME ignored
+entries it exits 0 and stages only the rest. A project rule as common as =*.log=
+would silently drop =stdout.log= from the record while the close reports success.
+Not triggered in this repo (verified). *Fix:* confirm the expected entries with
+=git ls-files --stage= / =--error-unmatch= after adding, and report the delta.
+
+** M-3 — LOW — truncation is visible only out-of-band
+=paths.rs:388=. =stdout.log.bytes= is written for EVERY non-empty stdout, so its
+presence does not mean truncated — a reader must know the 64KB cap and compare.
+The tail itself starts mid-line with no banner. And a skipped 0-byte stdout
+writes no sidecar, so "empty" and "not promoted" are indistinguishable. Also
+folded in here: if the SECOND rename (the sidecar) fails, =stdout.log= is already
+at the dest with no byte count — truncated evidence with no marker.
+*Fix:* one banner line at the head of a truncated tail.
+
+** M-4 — LOW — the tail keeps the wrong end for an early death
+=paths.rs:130=. A harness that fails early and then emits 500KB of retry noise
+has its evidence at the HEAD, and a 64KB tail keeps the noise. The reviewer
+judged the tail the right DEFAULT and not worth a reject — but named the
+alternative: *32KB head + 32KB tail with an elision marker*, which has identical
+year-one arithmetic.
+
+** M-5 — LOW — =REPORT_PATH= is not project-relative on every path
+=manager.rs:4863=. Three of four emitters are clean (=:1913=
+=dispatch_record_report_rel=, =:1919= the new relativizing fallback which returns
+=None= rather than an absolute path, =:5595= cleanup's promoted rel path). The
+fourth lets a manager-supplied =--property REPORT_PATH=<abs>= win unvalidated,
+and =tests/dispatch.rs:988,1001= currently PIN an absolute =/tmp/...= landing in
+a committed tx. The original F-6 named the finalize fallback and that IS fixed;
+the acceptance sentence said "always".
+
+** M-6 — LOW — the fence is requested and silently absent with no WORKTREE
+=manager.rs:4294=. =close_needs_artifact_fence= (=:4285=) is
+=remove_worktree || (last_path.is_some() && stdout_path.is_some())=. A record
+with LAST_PATH + STDOUT_PATH but NO WORKTREE makes the predicate true while
+=reserve_close_guard= returns =Ok(None)= — so the fence is requested and is not
+there. Unlike the remove path, which reports =worktree_missing= and destroys
+nothing, the promote arm still UNLINKS.
+
+Worth recording what the reviewer confirmed alongside this, because it is the
+good news: the predicate and the destructive branch agree BY CONSTRUCTION (the
+promote arm fires on the same pair after =resolve_project_path=, an
+=Option::map= that cannot change Some-ness), and the cleanup lock is the FIRST
+statement of =promote_dispatch_artifacts_in_place= — before the =exists()=
+probe, before validation, therefore before the unlink — with
+=no_worktree_remove_promote_takes_cleanup_lock= proving it blocks under real
+cross-thread contention.
+
+** M-7 — LOW (docs) — a doc comment was orphaned
+=manager.rs:4280=. The new predicate was inserted BETWEEN
+=reserve_close_guard='s doc comment and its signature, so "=Ok(None)= means there
+is no worktree to reserve" now documents a =-> bool= function, and
+=reserve_close_guard= is undocumented.
+
+** M-8 — LOW (test) — two tests accompany rather than pin
+=manager.rs:9142=. Five of the nine acceptance tests genuinely PIN — they would
+fail on the parent tree and they enter production functions:
+=dispatch_close_stages_promoted_record_in_git_index= (plus the
+=verify/TASK-QGWK7.1= red run),
+=no_worktree_remove_promote_against_missing_worktree_is_ok= (asserts
+=CleanupStatus::Ok= through real =cleanup_dispatch=),
+=no_worktree_remove_promote_takes_cleanup_lock= (real cross-thread lock
+contention), and the two =paths::tests= promote tests.
+
+Two merely ACCOMPANY: =no_worktree_remove_with_artifacts_needs_close_guard= and
+=finalize_report_path_fallback_is_project_relative= both assert on the new
+helper IN ISOLATION and never enter =cmd_dispatch_close= / =cmd_dispatch_finalize=.
+They cannot fail on the parent tree because the functions did not exist there, so
+they pin the PREDICATE, not the WIRING. That matters because they are the only
+coverage the original F-3 and F-6 have.
+
+** Open questions from the review, worth deciding rather than inheriting
+1. Should a promote/stage error downgrade =CLEANUP_STATUS= at all, or only
+   populate =CLEANUP_ERROR=? The two arms disagree today. Picking one is the
+   cheap version of M-1.
+2. =--no-worktree-remove= is no longer an escape hatch for a daemon without the
+   close-guard route — BOTH forms now require it, and the message says "restart
+   the daemon". Intentional per the original F-3, but it means a close is
+   IMPOSSIBLE until the daemon is restarted. Worth stating in the convention.
+3. =orgasmic update= / =install.sh= use =git stash push --include-untracked= in
+   the source repo (=update.rs:979=, =install.sh:505=). For THIS project the
+   source repo and the orgasmic project are the same tree, so an update run
+   between a close and the manager's commit would UNSTAGE the record. Not
+   introduced here — it is the one realistic un-stage path and it deserves a
+   decision.
+
+** Acceptance
+- A promote or stage failure populates =CLEANUP_ERROR= without mis-classifying
+  the close, and never silently skips =--branch-delete=. The two cleanup arms
+  agree on the status they report for the same class of failure. Pinned by a test
+  that would fail today.
+- A partially-ignored record directory is detected and reported, not silently
+  thinned.
+- A truncated tail says so IN the file; an unpromoted empty stdout is
+  distinguishable from a promoted empty one.
+- =REPORT_PATH= is project-relative on every emitter, including the
+  manager-supplied =--property= route, and the tests that pin an absolute path
+  are updated.
+- The artifact fence is either present whenever the predicate says it is
+  required, or the predicate stops claiming it.
+- =reserve_close_guard= has its doc comment back.
+- The two accompanying tests enter the production call path, or are replaced by
+  tests that do.
+- A decision is recorded on open question 3 (the =git stash= un-stage path).
+** M-0 — HIGH — staging the promoted record breaks git merge after a close
+*Filed 2026-08-07, AFTER the review, found by the TASK-STWVB.1.1 gate on its
+first honest workspace run. This is a REGRESSION from =955c8d6=, not a review
+finding — and it is the most important item on this task.*
+
+=crates/orgasmic-cli/tests/dispatch.rs:274=, test
+=reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge=.
+
+#+begin_example
+git ["merge", "--no-ff", "-m", "merge reviewed worker", "task-dispatch-test-impl"] failed
+stderr=error: Your local changes to the following files would be overwritten by merge:
+  .orgasmic/dispatch-records/tx-20260806-orgasmic-0006/last.txt
+Merge with strategy ort failed.
+#+end_example
+
+MANAGER-VERIFIED: it fails ALONE as well (5.49s, exit 101), so it is a genuine
+REAL and not load-sensitivity — the new classifier called it correctly.
+=955c8d6= touched =manager.rs= and =paths.rs= but NOT =tests/dispatch.rs=, and
+the last change to that test file was =0df25d0= (the TASK-QGWK7 parent). The
+test's flow is: reviewer =dispatch-close= (which now promotes AND STAGES its
+record) -> =git merge --no-ff= -> implementer =dispatch-close=. The staged
+=dispatch-records/= path is what the merge refuses to overwrite.
+
+*Why this matters beyond one test.* That test encodes the CLOSE-THEN-MERGE flow
+the review gate itself prescribes: its refusal message tells the manager to
+dispatch a reviewer and close it with =--verdict=, and only then does the
+default-branch merge unlock. A manager following that instruction literally
+closes first and merges second — and now the merge fails. This session's manager
+did not hit it only because it merged BEFORE closing, which the gate permits but
+does not prescribe.
+
+*It also sharpens the review's claim 1.* The reviewer asked what could UNSTAGE
+the record between =git add= and the commit. The answer that matters turned out
+to be the opposite direction: staging does not get undone, it BLOCKS a merge that
+wants to touch the same path.
+
+*Fix direction — decide, do not patch reflexively.* The options are not equal and
+the choice is part of this task:
+1. Stage only when the index is otherwise clean for that path, and report through
+   =CLEANUP_ERROR= when it is not. Preserves the guarantee in the common case.
+2. Commit the record instead of staging — rejected once already, because WHEN to
+   commit needs manager judgement; do not re-open without a reason.
+3. Keep staging and make the manager's documented flow merge-before-close.
+   Cheapest, but it moves the guarantee back into habit, which is exactly what
+   F-1 existed to remove.
+4. Stage with a mechanism that does not participate in merge conflict detection.
+   Investigate whether one exists before assuming it does.
+
+Whichever lands, *the failing test must go green with the durability property
+intact* — do not fix it by dropping the assertion or by un-staging in the test.
+=== MANAGER RULING 2026-08-07 on the salvaged attempt (=0273e9f=) ===
+The first (dead) worker invented a FIFTH option for M-0, not on the list above:
+build a temporary index from HEAD (=GIT_INDEX_FILE=), =git add= the record into
+THAT index, verify every expected entry landed (a genuine M-2 fix), then
+=write-tree= -> =commit-tree -p HEAD= -> =update-ref
+refs/orgasmic/dispatch-records/<started_tx>=. The working index is never
+touched, so it cannot block a merge.
+
+*RULING: REJECTED, and the reason is measured, not argued.* The record becomes
+reachable only from a custom ref that =git clone= does not fetch, and it is not
+in the working tree either.
+
+MANAGER-MEASURED with a scratch repo — created the ref exactly as the salvaged
+code does, then cloned:
+#+begin_example
+$ ls clone1/rec            -> No such file or directory
+$ git -C clone1 for-each-ref 'refs/**'
+refs/heads/main
+refs/remotes/origin/HEAD
+refs/remotes/origin/main
+#+end_example
+The default refspec is =+refs/heads/*:refs/remotes/origin/*=; =refs/orgasmic/*=
+is neither fetched nor pushed.
+
+So the approach *fails the parent's acceptance criterion 2* —
+=manager-dispatch.org:312-323= says "Commit the promoted directory with the rest
+of the change so a fresh clone can read it", and TASK-QGWK7.1's own acceptance
+says "A promoted record is IN THE GIT INDEX after a close". It buys
+merge-compatibility by giving up the durability property the whole QGWK7 chain
+exists for. Consistently, it also REWROTE the F-1 test
+(=dispatch_close_stages_promoted_record_in_git_index=) and the parent's verify
+artifact to match — which is the "bent proof" shape, even though it follows
+honestly from the design change.
+
+*DO NOT ADOPT IT. Salvage the M-2 verification loop from it* (=ls-files
+--error-unmatch= per expected entry) — that part is correct and independent of
+the rejected design.
+
+=== WHAT THE M-0 FIX MUST RECKON WITH ===
+A fact the review did not have, and it reframes the options: *the manager never
+hit M-0 all session because it COMMITS =.orgasmic= state immediately after every
+close, before the next merge.* The test hits it because it closes and then merges
+with the record still staged and uncommitted. So the failure is not "staging is
+incompatible with merging" — it is "staging is incompatible with merging BEFORE
+the state is committed".
+
+That leaves two honest candidates, and choosing between them IS the task:
+1. *The close COMMITS the record* (option 2, previously rejected on the grounds
+   that WHEN to commit needs manager judgement). Reconsider it: a dedicated
+   record commit is not the manager's change, and a committed file merges
+   normally. If it is rejected again, say why in terms of what breaks, not
+   precedent.
+2. *Staging stays and the documented flow becomes close -> commit state ->
+   merge*, with =manager-dispatch.org= saying so explicitly and the test
+   committing state between its close and its merge. This keeps criterion 2
+   intact and matches what the manager already does in practice — but it makes
+   the guarantee depend on a documented STEP rather than on construction, which
+   is what F-1 set out to remove. Weigh that honestly.
+
+Whichever lands, the acceptance is unchanged: *a promoted record must be readable
+by a fresh clone*, and =reviewer_dispatches_before_reported_implementer_close_
+and_unlocks_main_merge= must pass without the test dodging the case.
+
