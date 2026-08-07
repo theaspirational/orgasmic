@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         18bddfe
+:LIVENESS:         046d027
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -287,39 +287,37 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1 REVIEW.
-=tx-20260807-orgasmic-5199=, run =run-20260807T120753-a3269dda4e1e4f52aedd71dce1926049=,
-worker =reviewer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1-review=, dispatched
-[2026-08-07 Fri 12:07:53] on =tmux / claude / claude-opus-5 / high=. Reviews merge
-=f6c6c4d=.
+ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1.1 (P1, the =REVERT_HEAD= fix round).
+=tx-20260807-orgasmic-5212=, run =run-20260807T122004-291e71a165344602b8544d5e16ad7d35=,
+worker =implementer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1=, dispatched
+[2026-08-07 Fri 12:20:04] on =tmux / claude / claude-opus-5 / high=.
 
-*THE CHANGE THAT DESERVES SUSPICION: re-running an ALREADY-CLOSED dispatch-close
-can now WRITE A COMMIT.* The =AlreadyClosed= no-op re-persists a record whose
-original close failed to commit it — a behavioural change to a path whose code
-comment says "deliberately NOT re-running cleanup" and "no-op is the contract".
-The brief asks for a STATE TABLE — commit outcome x HEAD shape x sequencer state
-x re-run count -> where the record ends up — rather than spot checks. That
-framing is what closed the STWVB chain after five rounds of spot checks each
-missed a cell.
+*THE BLOCK SHIP IS ONE LINE OF CODE AND ONE WORD OF PROSE.*
+=sequencer_operation_in_progress= guards five markers and misses =REVERT_HEAD=,
+so a close during a revert COMMITS a record that then wedges
+=git revert --abort= at exit 128 with a mangled index — measured against two
+controls, and strictly worse than both. The manager reproduced independently that
+a CLEAN =git revert -n= leaves =REVERT_HEAD= with =CHERRY_PICK_HEAD= ABSENT, so
+the exposure is ANY staged revert. The convention prose enumerates the same
+incomplete set and =shipped_conventions.rs= PINS it, so *the prose and its
+assertion must move together* or the test will enforce the error.
 
-THE SHARPEST SUB-CASE I FLAGGED: =dispatch_record_is_in_history= tests HEAD's
-tree, so *if the re-run happens on a DIFFERENT branch than the close ran on*, the
-record is legitimately absent from HEAD there — does the re-run then commit it
-onto a branch that never ran the dispatch, or onto the operator's unrelated
-feature branch?
+The brief tells it explicitly this is a SMALL round and not to redesign the
+parent's mechanisms, all of which the reviewer confirmed correct.
 
-ALREADY VERIFIED BY THE MANAGER, do not re-derive: fmt, clippy, =manager::tests=
-54, =--test dispatch= 67/0/9, core 165, conventions 4, and ALL THREE verify
-artifacts PASS with the new one's red log carrying EXACTLY ONE panic at the
-pinned assertion. *The two re-authored injection patches are legitimate* —
-=expect-red= and =cmd= are byte-unchanged in both (zero lines of diff), so the
-property did not move, only the mechanism it injects into.
+ONE JUDGEMENT CALL IS DELEGATED: B-2 (the re-persist commits to whichever branch
+you are standing on) has two acceptable answers — stamp the resolved ref and
+refuse a mismatch, or document it. *The reviewer flagged its own B-2 analysis as
+source-derived, NOT measured through the binary*, so the brief requires the worker
+to measure it first and let the observation choose.
 
-WHEN IT REPORTS: close reviewer then implementer (=--merge-sha f6c6c4d=), and
-COMMIT THE STAGED RECORDS AFTER EACH CLOSE. *If the verdict has no BLOCK SHIP,
-TASK-QGWK7.1.1.1 closes and THE RUNTIME REINSTALL IS UNBLOCKED* — that is the
-next action, and it retires preamble item 1.
+WHEN IT REPORTS: merge, gate, review, close reviewer then implementer with
+=--merge-sha=, committing the staged records after each close.
+
+*IF THE REVIEW HAS NO BLOCK SHIP, THE WHOLE QGWK7 CHAIN CLOSES AND THE RUNTIME
+REINSTALL IS UNBLOCKED* — that is the next action, and it retires preamble item 1.
+Close =.1.1.1.1= then =.1.1.1=, checking =DEPENDS_ON= on each.
 
 NOTHING ELSE IS OPEN.
 

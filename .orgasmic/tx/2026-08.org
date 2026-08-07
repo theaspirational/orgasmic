@@ -20017,3 +20017,110 @@
 :REASON:       BLOCK SHIP B-1 is unactioned until the fix round lands and passes a fresh review; the goal's bar keeps this round open until then.
 :DEPENDS_ON:   TASK-QGWK7.1.1.1.1
 :END:
+
+* TX 2026-08-07 Fri 12:20:02 task.state_transitioned TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5210
+:TIME:         [2026-08-07 Fri 12:20:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatching the fix round
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-07 Fri 12:20:03 task.state_transitioned TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5211
+:TIME:         [2026-08-07 Fri 12:20:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1.1.1 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 12:20:04 manager.dispatch_started TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5212
+:TIME:         [2026-08-07 Fri 12:20:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1
+:BRANCH:       task-qgwk7.1.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1/task-qgwk7.1.1.1.1-brief.md
+:STARTED_AT:   [2026-08-07 Fri 12:20:04]
+:LIVENESS:     046d027d10d95b94f6a5643280d2598b9752261e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: add REVERT_HEAD to the sequencer guard (a close during any revert wedges git revert --abort), plus three small follow-ups; gates the runtime reinstall
+:END:
+
+* TX 2026-08-07 Fri 12:20:04 run.created TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5213
+:TIME:         [2026-08-07 Fri 12:20:04]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1.1.1.1-implementer-20260807T122004.jsonl
+:REASON:       add REVERT_HEAD to the sequencer guard (a close during any revert wedges git revert --abort), plus three small follow-ups; gates the runtime reinstall
+:RUN_ID:       run-20260807T122004-291e71a165344602b8544d5e16ad7d35
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1/task-qgwk7.1.1.1.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1/task-qgwk7.1.1.1.1-7341269ce1794c6e909cd1767b96b91e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7.1.1.1.1/task-qgwk7.1.1.1.1-7341269ce1794c6e909cd1767b96b91e-stdout.log
+:DISPATCH_ATTEMPT: 7341269ce1794c6e909cd1767b96b91e
+:DISPATCH_TX:  tx-20260807-orgasmic-5212
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-07 Fri 12:20:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5214
+:TIME:         [2026-08-07 Fri 12:20:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 12:20:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5215
+:TIME:         [2026-08-07 Fri 12:20:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
