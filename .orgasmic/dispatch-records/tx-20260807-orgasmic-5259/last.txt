@@ -1,0 +1,358 @@
+# Review — TASK-QGWK7.1.1.1.1.1.1 (restore the sequencer guard; make the convention pin bidirectional)
+
+Merge `11620d6` / implementer commit `c84a209`, reviewed post-merge.
+
+## Verdict
+
+**ACCEPT — no BLOCK SHIP.** All four D-items are done and the two behavioural
+ones are done correctly: I reproduced D-1's counterexample independently, and
+all five guard tests pass on the merged tree. Four findings, none blocking:
+one MEDIUM prose overclaim (three sites), one MEDIUM test-gap that bounds the
+closure argument, two LOW.
+
+**Closure question: the chain closes here on code. It does not close on prose,
+and a seventh dispatch round is the wrong instrument for what is left.** See
+"Does this close the chain?" below — F-1 is a seventh instance of the chain's
+own species, and it is three one-line edits.
+
+---
+
+## Findings
+
+### F-1 — MEDIUM (docs / correctness) — "Either way the abort discards the conflict resolution" is FALSE for `am`, measured
+
+Sites: `shipped/prompt-studio/conventions/manager-dispatch.org:351-352`,
+`crates/orgasmic-cli/src/manager.rs:5789`,
+`verify/TASK-QGWK7.1.1.1.1/README.md:27`.
+
+The D-3 correction replaced a false mechanism with a true one and then added a
+new universal on top of it. The sentence enumerates two mechanisms —
+revert/cherry-pick/merge *rewind to the current HEAD*, `am` *declines to rewind
+past a moved HEAD* — and closes: "Either way the abort discards the [manager's]
+conflict resolution [you had in the working tree]."
+
+Measured on git 2.52.0, in the production shape (real-index `git add`, throwaway
+index seeded from HEAD, `commit-tree`, `update-ref`), i.e. the exact frame the
+paragraph establishes — a record commit written inside the operation:
+
+| operation | abort exit | record in HEAD | record on disk | conflict resolution after abort |
+|---|---|---|---|---|
+| `merge --abort` | 0 | yes | yes | **discarded** (`f.txt` back to pre-merge) |
+| `revert --abort` (single pick) | 0 | yes | yes | **discarded** (`f.txt` back to `two`) |
+| `am --abort` | 0 (`warning: You seem to have moved HEAD since the last 'am' failure. Not rewinding to ORIG_HEAD`) | yes | yes | **PRESERVED** — `f.txt` still `RESOLVED`, still staged; `git status --porcelain` → `M  f.txt` |
+
+The two halves of the sentence contradict each other: an abort that *declines to
+rewind* cannot also discard the working tree it declined to touch. The "either
+way" is exactly the move this chain keeps repeating — a property measured on
+three operations asserted over four — and it is stamped next to "(measured)" in
+shipped manager-facing prose.
+
+Impact is bounded (nothing behavioural rests on it; the error direction is a
+manager expecting to lose work they actually keep), which is why this is MEDIUM
+and not a block. It does not violate the acceptance criterion by the letter —
+that criterion says *mechanism*, and this is an *outcome* clause — but it is the
+same defect one word over.
+
+**Fix:** scope the clause. `"The rewinding aborts (revert, cherry-pick, merge)
+discard the conflict resolution you had in the working tree; the am abort, having
+declined to rewind, leaves it in place."` Three one-line edits, no test motion.
+
+### F-2 — MEDIUM (test) — the pin proves prose↔label, not prose↔behaviour; 4 of 7 rows are unexercised
+
+`crates/orgasmic-cli/tests/shipped_conventions.rs:495-498` builds `expected` as
+`SEQUENCER_MARKERS.iter().map(|&(_, _, in_prose)| in_prose)`. Fields 1 (the
+marker file the guard actually stats) and 2 (the operation name the refusal
+prints) are destructured away. Field 2 is read for exactly one row (the
+last-entry assert at `:510-519`); field 1 is read by nothing.
+
+Demonstrated with a byte-faithful standalone replica of `:476-519` driven off the
+real `.org` file, mutating only the array:
+
+```
+baseline (untouched prose + array)              rc=0   PASS
+field1 marker file typo'd (MERGE_HEAD->MERGE_HAED)  rc=0   PASS   <-- guard stops firing, prose still promises "merge"
+field2 refusal name wrong (merge->rebase)       rc=0   PASS   <-- refusal would read "a git rebase is in progress"
+```
+
+Field 3 is a **test-only shadow**: it has no production consumer, so a future
+pin failure can be made green by editing field 3 to match the prose rather than
+by fixing the drift.
+
+What backstops field 1/2 is behavioural coverage, and it is partial. Rows with a
+test that asserts the refusal fires and names the operation:
+`MERGE_HEAD` (`manager.rs:9862`), `REVERT_HEAD` (`:9924`+), `sequencer`
+(`:10086`, `:10210`, `:10296`). Rows with **none**: `rebase-merge`,
+`rebase-apply`, `CHERRY_PICK_HEAD` (asserted *absent* at `:10031`/`:10130`/
+`:10317`, never as a refusal trigger), `BISECT_LOG`.
+
+So the closure argument — "drift now fails a test rather than shipping" — is
+true for the drift class that caused round 5 (a whole row dropped, or the list
+reordered; I confirmed both fail loudly) and **not** true for a corrupted marker
+name on four of seven operations. This is a pre-existing gap, not a regression,
+and the pin's own assertion message claims only dropping/reordering, so the
+comment is honest. But the array's field 1 is correct today only because I
+checked it by hand, not because anything holds it:
+
+```
+bisect                -> .git/BISECT_LOG        merge         -> .git/MERGE_HEAD
+cherry-pick (1 pick)  -> .git/CHERRY_PICK_HEAD  rebase(merge) -> .git/rebase-merge
+am                    -> .git/rebase-apply      rebase --apply-> .git/rebase-apply
+```
+All seven names match. **Fix direction (follow-up, not this round):** one table
+test that, for each row, builds the state and asserts
+`sequencer_operation_in_progress` returns that row's field 2 — which pins fields
+1 and 2 for all seven and makes the prose promise real end to end.
+
+### F-3 — LOW (docs) — `verify/TASK-QGWK7.1.1.1.1/README.md` contradicts itself about the injected set
+
+`:44` "The injection restores the five-marker set." and `:56` "It produces the
+same set the old patch produced" are both now false: the array has seven rows,
+the injection removes one, six remain. `:68` of the same file says so —
+"The injection does not touch the `sequencer` row". `injection.patch:12` carries
+the same stale "the five-marker set" in its own INJECTED comment.
+
+Harmless to the red (which depends only on `REVERT_HEAD` being absent — and I
+confirmed a single-pick revert writes `REVERT_HEAD` with no `.git/sequencer` at
+all, so the extra row genuinely plays no part), but this file is the artifact's
+explanation of its own signature, and it was already re-authored once for
+saying more than was measured.
+
+### F-4 — LOW (usability) — the new refusal names two `--continue` forms without a discriminator, and `--quit` without its cost
+
+`manager.rs:5702-5705`. Measured:
+
+- `git revert --continue` on a hand-committed **cherry-pick** range →
+  `exit 128: error: cannot revert during a cherry-pick. fatal: revert failed`.
+- `git cherry-pick --continue` on a hand-committed **revert** range →
+  `exit 128: error: cannot cherry-pick during a revert.`
+- `git revert --quit` on an abandoned **cherry-pick** range → exit 0, cleared.
+  `git cherry-pick --quit` on an abandoned **revert** range → exit 0, cleared.
+
+So the `--quit` half of the remedy is universally correct (good — that is the
+half the escape hatch rests on), and the `--continue` half is not: the message
+offers both forms and the wrong one hard-errors. Self-correcting, because git's
+error names the right verb, so this is LOW.
+
+The sharper edge: `--quit` is named in a message that is also shown for the LIVE
+hand-committed state, where running it **silently drops the remaining picks**.
+The message does condition it ("if you already abandoned it with
+`git reset --hard`"), and the guard genuinely cannot distinguish the two — but a
+manager who does not remember has no way to check from the message.
+
+**Fix direction:** name the discriminator — `cat .git/sequencer/todo` shows what
+is still pending — and say that `--quit` abandons whatever it lists.
+
+---
+
+## The seven claims, answered
+
+**1. Abandoned range now REFUSED where round 5 pinned PERSISTED — is that right?
+Is the escape hatch enough?** Yes, and yes. The reversal is correct: I built both
+states and they are byte-identical on disk (`.git/sequencer` present, no
+`*_HEAD`), so a guard that lets the abandoned one through lets the live one
+through, and the live one is genuinely live — after the hand-commit,
+`.git/sequencer/todo` still lists the pending reverts and `git revert --continue`
+resumes (it proceeded to the next pick; it did not say "no revert in progress").
+The escape hatch is sufficient and, unusually, pinned *end to end*:
+`a_close_after_an_abandoned_pick_range_is_refused_and_names_quit`
+(`manager.rs:10210`) asserts the message contains `git revert --quit` **and then
+runs it and proves `commit_promoted_dispatch_record` succeeds afterwards and the
+record reaches history** (`:10263-10280`). That last part is what makes it an
+escape hatch rather than a slogan. Residual cost is F-4.
+
+**2. Is the literal-sentence anchor loud?** Yes — I could not construct a false
+pass. Driving the real algorithm over mutated copies of the `.org`:
+
+```
+prose reworded ("does not"->"will not")   rc=101  panic: the convention must still say {ANCHOR:?} and follow it with the operation list
+prose drops "revert"                      rc=101  assertion left==right failed, left/right printed as full lists
+prose reordered (am before rebase)        rc=101  assertion left==right failed
+prose adds an inner parenthetical         rc=101  assertion left==right failed
+prose bold marker moved (HEAD* -> HEAD)   rc=101  panic naming ANCHOR
+```
+
+The anchor occurs exactly once in the file, so `split_once` cannot latch onto a
+wrong span. Note for the record: `shipped_conventions.rs:31-36` documents
+TASK-6AYEJ.2 replacing a prose anchor with a structured marker precisely because
+prose anchors "fail on an innocent rewording" and "let a reworded variant evade".
+This new pin re-adopts the prose anchor — but only the *false-red* half of that
+lesson applies here, because the miss mode is a panic, not a silent pass. That is
+the safe direction and the panic names the string to restore.
+
+**3. Ordered `Vec` — right, or spurious failures?** Right, keep it. The only
+*functional* ordering constraint is `sequencer` last, and that is separately
+asserted, so the ordered comparison over-constrains. The cost is a loud red on a
+cosmetic prose reorder whose message prints both lists side by side and tells you
+exactly what to do. That is a good trade; a sorted comparison would buy nothing.
+
+**4. `rebase-apply` → refusal "rebase or am", prose "am" — honest or a fudge?**
+Honest. `.git/rebase-apply` is written by `git am` *and* `git rebase --apply`
+(measured, both). The runtime name covers both, and since `rebase-merge`
+separately carries the prose's "rebase", the prose↔array map is a bijection: drop
+either row and the pin fails. The fudge risk is real but general (field 3 is a
+free label, see F-2), not specific to this row.
+
+**5. Three injection patches — same defect, same red?** Verified by construction,
+not by rerun. All three (and `TASK-QGWK7.1.1.1`'s, untouched) `git apply --check`
+cleanly on the merged tree. Diffing the injected (`+`-side) content old vs new:
+
+- `TASK-QGWK7.1` and `TASK-QGWK7.1.1`: **one added blank line**, nothing else.
+  The injected function body is otherwise byte-identical, so the defect and its
+  first failing assertion are unchanged. Their edits are confined to `-` deleted-
+  context lines and the hunk headers, which is exactly the D-4 refresh.
+- `TASK-QGWK7.1.1.1.1`: retargeted to `sequencer_markers.rs`, deletes the
+  `("REVERT_HEAD", "revert", "revert")` row, same INJECTED comment. Same defect
+  (guard blind to `REVERT_HEAD`), so the same first assertion. Its `cmd` is
+  `--bin orgasmic --exact`, so the injection's collateral breakage of
+  `the_sequencer_list_matches_the_guards_array` is not in the artifact's target
+  and cannot perturb the signature. Wording nit is F-3.
+
+`cmd` and `expect-red` are byte-unchanged in all of them
+(`git diff --name-only c84a209^ c84a209 -- 'verify/*/cmd' 'verify/*/expect-red'`
+→ empty).
+
+**6. `#[path]`-include — one source of truth or two?** Sound. Two compilations,
+one source file, and the file is dependency-free (`&str` consts only, no `cfg`,
+no `use`), so the test sees the same values the binary does; anything that made
+them diverge would have to be a `cfg` in that file, which would also be visible
+in review. `manager.rs:27` imports the array rather than keeping its own copy, so
+the binary really is on the shared definition. The residual — nothing forces
+`manager.rs` to keep using it — is F-2's shape, not a new hole.
+
+**7. The inherited rows — `merge --abort` and `am --abort`, measured.** Done; see
+the table in F-1. Both inherited rows are **confirmed for the property the prose
+uses them for** (exit 0, record intact in `HEAD` and on disk) and the `am`
+mechanism ("declines to rewind past a moved HEAD") is confirmed verbatim. The
+inheritance failed on the *third* property the round added on top of them —
+"either way the abort discards the conflict resolution" — which is why F-1
+exists. The round's own diagnosis was right; the round then did the same thing
+once more, in the same sentence.
+
+**On registering the two `--test dispatch` timeouts:** don't. Both died on
+`daemon request timed out after 10s (1m load average 14.11)` — a timeout, not an
+assertion — and passed alone. `verify/flake-registry.toml`'s own header requires
+an `owner` that is an OPEN task and a `signature` that is "a literal substring of
+the panic"; the only signature available here is the generic daemon-timeout
+string, so an entry would suppress *genuine* 10s-budget regressions in exactly
+those two tests. One occurrence with an identified external cause is
+environment-blocked, not flaky. If it recurs on an unloaded host, that is a real
+finding about the 10s daemon budget and deserves a task, not an excuse.
+
+---
+
+## Does this close the chain?
+
+**Structurally, yes on code and no on prose — and the second half should not be a
+seventh dispatch round.**
+
+The argument for closure is `the_sequencer_list_matches_the_guards_array`, and it
+survives attack in the direction it was built for: I could not make a prose-side
+drop, reorder, reword or re-parenthesisation pass, and every miss is a loud panic
+that names the string to restore. Round 5's exact defect — an entry removed from
+the array while the prose kept promising it — now fails that test. That class is
+closed.
+
+What is not closed is the class the chain actually keeps tripping on. Rounds 4,
+5 and 6 were each caused by a *claim*, and this round's diff contains a new one
+(F-1) plus a stale one (F-3). The pin cannot catch either, and no pin can: it
+compares a list against a list. The generator of these rounds is not missing test
+coverage — it is that every prose sentence in these files is written as a
+universal ("Only one of those…", "…end the same way…", "Either way…", "the
+five-marker set") when the measurement underneath it is a handful of specific
+runs.
+
+So the honest answer to "is there a seventh?" is: there is seventh-round *work*,
+and it is three one-line edits plus a README sentence, with zero behavioural risk
+and no test motion. Routing that through another implementer dispatch has, twice
+running, produced a fresh claim in the round convened to remove the last one.
+**Recommendation: land this, and take F-1 and F-3 as a direct manager edit or a
+non-`FIX_SUBTASK` polish item.** If you want a structural guard against the
+generating cause rather than another round of it, F-2's table test is the one
+that would actually pay — it turns the prose's promise into behaviour for all
+seven operations instead of a label comparison for one field.
+
+Acceptance criteria: all met. The hand-committed state is refused and pinned by
+a test that builds it the ordinary way (`a_close_inside_a_hand_committed_pick_
+range_is_refused`); the abandoned range is refused with `--quit` named and the
+remedy proven to work; no site says the entry adds no coverage or that a stopped
+range always carries a `*_HEAD` marker; `shipped_conventions` fails from either
+side; `manager.rs:5696`'s string promises only what is true; both D-4 artifacts
+re-authored in the same commit with `cmd`/`expect-red` byte-unchanged. The one
+criterion I read as met-by-letter-not-by-intent is "no site explains the abort
+outcome with a mechanism that is false for the operation it is asserted over" —
+F-1 is an *outcome* clause, so it slips the wording.
+
+---
+
+## Verification notes
+
+**Ran (independently, on the merged tree):**
+- `cargo test -p orgasmic-cli --test shipped_conventions` → **5 passed**,
+  including `the_sequencer_list_matches_the_guards_array`.
+- Five targeted `--bin orgasmic --exact` runs, all **1 passed**:
+  `an_interrupted_pick_sequence_is_refused_and_a_finished_one_is_not`,
+  `a_close_inside_a_hand_committed_pick_range_is_refused`,
+  `a_close_after_an_abandoned_pick_range_is_refused_and_names_quit`,
+  `a_close_inside_a_conflicted_merge_keeps_the_record_and_persists_nothing`,
+  `a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working`.
+- `git apply --check` on all four `verify/TASK-QGWK7*/injection.patch` → clean.
+- `git diff` of the injected (`+`) side of each patch, old vs new.
+- Four scratch-repo probe scripts in my own temp dir (git 2.52.0), reproducing:
+  the D-1 hand-commit counterexample and `--continue` resumption; the abandoned-
+  range latch and `--quit`; `merge --abort` / `am --abort` / single-pick
+  `revert --abort` in production shape; which `.git` marker each of the seven
+  operations really writes; cross-operation `--continue`/`--quit` behaviour.
+- A standalone `rustc` replica of the pin's parse+compare (`:476-519`) driven
+  over mutated copies of the real `.org` and mutated copies of the array.
+
+**Did NOT run / check:**
+- `--test dispatch` in any form (brief: zero runs). So `verify/TASK-QGWK7.1.1`'s
+  red signature is unverified by me — I checked only that its patch applies and
+  its injected content is byte-identical bar one blank line. Same for the two
+  load-sensitive reviewer-close tests; I took the manager's classification and
+  answered only the registry question.
+- `orgasmic verify` on any artifact — it mutates the working tree, and the brief
+  is read-only on this repo's source. All four PASS results are the manager's.
+- Full `manager::tests` (59), `fmt`, `clippy`. Manager's, not re-derived.
+- `rebase --abort` destroying the record — inherited from round 3, untouched
+  this round, and the detached-HEAD refusal catches rebase first regardless.
+- The `.orgasmic` graph beyond the dispatch records; the implementer report at
+  `tx-20260807-orgasmic-5253/last.txt` is not on disk (dispatch still open — the
+  same promote-at-close timing the assignment already recorded as F-5's false
+  alarm), so this review is from the diff, the tests and my own measurements
+  rather than from the report.
+
+**Repro pointers** (scratch dir, this session):
+`scratchpad/probe.sh` (merge/am abort in production shape), `probe2.sh` (am
+post-state, revert resolution discard), `probe3.sh` (marker census, cross-op
+`--quit`), `probe4.sh` (D-1 counterexample, cross-op `--continue`),
+`pin.rs` (+ `base.org`, `reword.org`, `droprevert.org`, `reorder.org`,
+`paren.org`, `nobold.org`).
+
+## Open questions
+
+1. F-2's table test — worth a task now, or is behavioural coverage of
+   merge/revert/sequencer plus the label pin enough for four operations nobody
+   has seen a close land inside? My lean: file it, low priority; the cost of
+   being wrong is a silent regression to a shipped promise.
+2. Do you want F-1/F-3 as a manager edit before the next merge, or as a filed
+   polish node? I would not open a `FIX_SUBTASK` for them.
+
+## Fix directions
+
+- **F-1:** replace the "Either way" clause at `manager-dispatch.org:351-352`,
+  `manager.rs:5789` and `verify/TASK-QGWK7.1.1.1.1/README.md:27` with the scoped
+  form: rewinding aborts (revert, cherry-pick, merge) discard the working-tree
+  resolution; the `am` abort, having declined to rewind, leaves it in place.
+- **F-3:** `verify/TASK-QGWK7.1.1.1.1/README.md:44` and `:56` — say "removes the
+  `REVERT_HEAD` row, reproducing the blindness `TASK-QGWK7.1.1.1` shipped"
+  instead of "the five-marker set" / "the same set"; same for the INJECTED
+  comment in `injection.patch:12`. `expect-red` stays byte-unchanged.
+- **F-4:** in the `STOPPED_PICK_RANGE` remedy at `manager.rs:5702-5705`, point at
+  `cat .git/sequencer/todo` as the discriminator and note that `--quit` abandons
+  whatever it lists.
+- **F-2 (follow-up node, not this round):** a table test over
+  `SEQUENCER_MARKERS` that builds each operation's state and asserts
+  `sequencer_operation_in_progress` returns that row's refusal name — pins
+  fields 1 and 2 for all seven rows and makes the shipped promise behavioural
+  rather than lexical.
