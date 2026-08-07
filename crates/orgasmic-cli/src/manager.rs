@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::daemon_client::DaemonClient;
 use crate::home::Home;
+use crate::sequencer_markers::SEQUENCER_MARKERS;
 
 /// The kinds `orgasmic manager dispatch --kind` will start.
 ///
@@ -5691,10 +5692,25 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
     // pre-existing class, not a regression). Skipping persistence keeps the
     // files, and the re-run of the close puts them into history.
     if let Some(operation) = sequencer_operation_in_progress(&git_dir) {
+        // orgasmic:TASK-QGWK7.1.1.1.1.1.1 — D-4: promise only what is true. An
+        // `--abort` discards the record commit for `rebase` ALONE; for revert,
+        // cherry-pick, merge and am the abort exits 0 with the record intact
+        // (measured). What the refusal actually buys is the record not landing
+        // mid-operation. D-1: the leftover todo list needs its own remedy,
+        // because `--continue` is wrong for a range already abandoned.
+        let remedy = if operation == crate::sequencer_markers::STOPPED_PICK_RANGE {
+            "it is a `.git/sequencer` todo list with no pick stopped beside it, so finish the \
+             range with `git revert --continue` (or `git cherry-pick --continue`) — or, if you \
+             already abandoned it with `git reset --hard`, clear the leftover todo list with \
+             `git revert --quit` — and re-run this close"
+                .to_string()
+        } else {
+            format!("re-run this close once the {operation} finishes")
+        };
         return Err(format!(
             "a git {operation} is in progress, so the record was promoted to disk but not \
-             committed (an --abort would discard the commit and the promoted file with it); \
-             re-run this close once the {operation} finishes"
+             committed — it must not land in the middle of an operation you have not finished, \
+             on a branch whose shape you are still deciding; {remedy}"
         ));
     }
     // orgasmic:TASK-QGWK7.1.1.1 — F-5: on a detached HEAD `update-ref HEAD`
@@ -5764,11 +5780,16 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
 /// exits 0 and clears `REVERT_HEAD`. The exit-128 `Untracked working tree file
 /// … would be overwritten by merge` wedge reproduces only when that real-index
 /// `git add` is skipped, which production never does. `merge --abort`,
-/// `cherry-pick --abort` and `am --abort` behave the same way: git declines to
-/// rewind a HEAD that moved. `rebase --abort` is the one guarded operation
-/// whose abort really does destroy the commit and the promoted file — and a
-/// rebase detaches HEAD (both backends), so the detached-HEAD refusal above
-/// catches that case first.
+/// `cherry-pick --abort` and `am --abort` end the same way — exit 0, record
+/// still in `HEAD` and on disk — but do NOT share one mechanism
+/// (TASK-QGWK7.1.1.1.1.1.1 D-3): a single-pick `revert`/`cherry-pick` abort and
+/// `merge --abort` are a `reset --merge` to the CURRENT HEAD, so they rewind
+/// and the record survives only because it already IS that HEAD; only `am`
+/// declines outright (`You seem to have moved HEAD … Not rewinding`). Either
+/// way the abort discards the manager's own conflict resolution. `rebase
+/// --abort` is the one guarded operation whose abort really does destroy the
+/// commit and the promoted file — and a rebase detaches HEAD (both backends),
+/// so the detached-HEAD refusal above catches that case first.
 ///
 /// What the refusal buys, then, is not rescue from an abort: it is that the
 /// record does not land in the middle of an operation the manager has not
@@ -5778,23 +5799,18 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
 /// — the ordinary way to stage a revert before editing it — leaves
 /// `REVERT_HEAD` present with `CHERRY_PICK_HEAD` absent (measured).
 ///
-/// There is deliberately NO `.git/sequencer` entry (TASK-QGWK7.1.1.1.1.1 C-2).
-/// It adds no coverage — a revert/cherry-pick range stopped between picks
-/// always carries its own `*_HEAD` marker alongside the todo list, so the
-/// marker above already refuses it — and it latches: `.git/sequencer` SURVIVES
-/// the `git reset --hard` that ordinarily abandons such a range, while
-/// `REVERT_HEAD`/`CHERRY_PICK_HEAD` do not (measured), so the entry would
-/// refuse every close indefinitely while telling the manager to wait for a
-/// sequence that will never finish.
+/// The `.git/sequencer` entry covers the stopped range that has NO `*_HEAD`
+/// marker (TASK-QGWK7.1.1.1.1.1.1 D-1); see [`SEQUENCER_MARKERS`] for the
+/// measurement and for why it is checked last. It does latch — `.git/sequencer`
+/// survives the `git reset --hard` that abandons such a range, while
+/// `REVERT_HEAD`/`CHERRY_PICK_HEAD` do not (measured) — and TASK-QGWK7.1.1.1.1.1
+/// C-2 removed the entry for that reason. But the latch was never the entry's
+/// fault: it was the MESSAGE, which told the manager to wait for a sequence
+/// that could not finish. The refusal above now names `git revert --quit` for
+/// exactly that state, which is a one-command fix rather than a permanent
+/// refusal.
 fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
-    for (marker, operation) in [
-        ("rebase-merge", "rebase"),
-        ("rebase-apply", "rebase or am"),
-        ("MERGE_HEAD", "merge"),
-        ("CHERRY_PICK_HEAD", "cherry-pick"),
-        ("REVERT_HEAD", "revert"),
-        ("BISECT_LOG", "bisect"),
-    ] {
+    for &(marker, operation, _) in SEQUENCER_MARKERS {
         if git_dir.join(marker).exists() {
             return Some(operation);
         }
@@ -9913,10 +9929,12 @@ mod tests {
     /// the missing marker cost, and it is what the verify artifact's red run
     /// trips on. The `git revert --abort` assertion at the end is a REGRESSION
     /// FENCE, not the discriminator: re-measured in the production shape, the
-    /// abort exits 0 with the marker or without it (TASK-QGWK7.1.1.1.1.1 C-1),
-    /// because git declines to rewind a HEAD that moved. It stays because a
-    /// close that ever starts wedging the operator's own abort must fail
-    /// something.
+    /// abort exits 0 with the marker or without it (TASK-QGWK7.1.1.1.1.1 C-1)
+    /// — the single-pick abort is a `reset --merge` to the CURRENT HEAD, which
+    /// IS the record commit, so it rewinds without touching the record
+    /// (TASK-QGWK7.1.1.1.1.1.1 D-3; the manager's conflict resolution does not
+    /// survive it). It stays because a close that ever starts wedging the
+    /// operator's own abort must fail something.
     ///
     /// The name predates C-1 and is kept only because
     /// `verify/TASK-QGWK7.1.1.1.1/expect-red` pins it verbatim and is immutable
@@ -10047,18 +10065,23 @@ mod tests {
         );
     }
 
-    /// TASK-QGWK7.1.1.1.1 B-1, narrowed by TASK-QGWK7.1.1.1.1.1 C-2. A
-    /// multi-commit revert/cherry-pick range stopped between picks keeps its
-    /// todo list in `.git/sequencer` — but it ALWAYS keeps its `*_HEAD` marker
-    /// too, which is what refuses the close. `.git/sequencer` is therefore not
-    /// in the guard's array: it would add no coverage, and it LATCHES, because
-    /// `git reset --hard` — the ordinary way to abandon a stopped range —
-    /// clears the marker and leaves the todo list behind.
+    /// TASK-QGWK7.1.1.1.1 B-1, narrowed by TASK-QGWK7.1.1.1.1.1 C-2 and
+    /// corrected back by TASK-QGWK7.1.1.1.1.1.1 D-1. A multi-commit
+    /// revert/cherry-pick range stopped between picks keeps its todo list in
+    /// `.git/sequencer`, and USUALLY its `*_HEAD` marker too — but not always:
+    /// resolve the conflict and `git commit` instead of `git revert --continue`
+    /// and git clears the marker while leaving the todo list, from which
+    /// `--continue` still resumes the range (measured, git 2.52.0). C-2 dropped
+    /// the `sequencer` entry on the belief that no such state exists. It does,
+    /// so the entry is back — checked last, so an ordinary stopped pick is
+    /// still reported by its own marker.
     ///
-    /// So this pins three states: a real stopped range is refused, a completed
-    /// range is not, and an abandoned range is not either. The last row is the
-    /// one that used to fail.
-    // orgasmic:TASK-QGWK7.1.1.1.1,TASK-QGWK7.1.1.1.1.1
+    /// So this pins four states: a real stopped range is refused by its marker,
+    /// a completed range is not refused, a range whose conflict was committed
+    /// by hand IS refused by the todo list alone, and an abandoned range is
+    /// refused too (its remedy is `git revert --quit`, pinned through the close
+    /// in `a_close_after_an_abandoned_pick_range_is_refused_and_names_quit`).
+    // orgasmic:TASK-QGWK7.1.1.1.1,TASK-QGWK7.1.1.1.1.1,TASK-QGWK7.1.1.1.1.1.1
     #[test]
     fn an_interrupted_pick_sequence_is_refused_and_a_finished_one_is_not() {
         let fixture = dispatch_cleanup_fixture("task-sequencer");
@@ -10090,7 +10113,28 @@ mod tests {
         assert_eq!(
             sequencer_operation_in_progress(&git_dir),
             Some("revert"),
-            "a stopped range is refused by its own marker, with no `sequencer` entry needed"
+            "a stopped range carries its own marker, and `sequencer` is checked last so the \
+             refusal names the pick, not the range"
+        );
+
+        // TASK-QGWK7.1.1.1.1.1.1 D-1: resolving the conflict and committing by
+        // hand — an ordinary, documented route — clears `REVERT_HEAD` and
+        // leaves the todo list. The range is LIVE: `git revert --continue`
+        // resumes it from here. Nothing but the `sequencer` entry refuses this.
+        std::fs::write(fixture.root.join("base.txt"), "resolved\n").unwrap();
+        git_ok(&fixture.root, &["add", "base.txt"]);
+        git_ok(&fixture.root, &["commit", "-qm", "resolved by hand"]);
+        assert!(
+            git_dir.join("sequencer").is_dir()
+                && !git_dir.join("REVERT_HEAD").exists()
+                && !git_dir.join("CHERRY_PICK_HEAD").exists(),
+            "the fixture must be the hand-committed stopped range: todo list, no marker"
+        );
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            Some(crate::sequencer_markers::STOPPED_PICK_RANGE),
+            "a stopped range whose conflict was committed by hand keeps NO `*_HEAD` marker, \
+             so only the todo list can refuse it"
         );
 
         git_ok(&fixture.root, &["revert", "--quit"]);
@@ -10110,12 +10154,13 @@ mod tests {
             "a COMPLETED sequence must not look like one in progress"
         );
 
-        // TASK-QGWK7.1.1.1.1.1 C-2, the latch. Abandoning a stopped range with
-        // `git reset --hard` clears the marker and leaves `.git/sequencer`
-        // behind (measured) — so a `sequencer` entry in the guard would refuse
-        // every close from here on, forever, while telling the manager to wait
-        // for a sequence that has no way to finish. Back to the stacked tip
-        // first, so this is the SAME stopped range the top of the test built.
+        // TASK-QGWK7.1.1.1.1.1 C-2, the latch, kept by TASK-QGWK7.1.1.1.1.1.1
+        // D-1. Abandoning a stopped range with `git reset --hard` clears the
+        // marker and leaves `.git/sequencer` behind (measured), and this state
+        // is indistinguishable from the hand-committed LIVE range above — so
+        // the guard refuses both, and the refusal names `git revert --quit` as
+        // the one-command way out. Back to the stacked tip first, so this is
+        // the SAME stopped range the top of the test built.
         git_ok(&fixture.root, &["reset", "-q", "--hard", &stacked]);
         let stopped = Command::new("git")
             .args(["revert", "--no-edit", "HEAD~1", "HEAD~2"])
@@ -10135,19 +10180,34 @@ mod tests {
         );
         assert_eq!(
             sequencer_operation_in_progress(&git_dir),
+            Some(crate::sequencer_markers::STOPPED_PICK_RANGE),
+            "an abandoned range is not distinguishable from a live hand-committed one, so it \
+             is refused too — with `git revert --quit` named as the way out"
+        );
+        git_ok(&fixture.root, &["revert", "--quit"]);
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
             None,
-            "an abandoned range must not latch the guard on: nothing owns HEAD any more"
+            "and `git revert --quit` — the remedy the refusal names — really does clear it"
         );
     }
 
-    /// TASK-QGWK7.1.1.1.1.1 C-2, through the close rather than the predicate.
-    /// The state the dropped `("sequencer", …)` entry produced was not academic:
-    /// `git reset --hard` after a stopped range leaves `.git/sequencer` on disk
-    /// for good, and every close from then on refused to persist ANY record.
-    /// A close standing in that state must persist normally.
-    // orgasmic:TASK-QGWK7.1.1.1.1.1
+    /// TASK-QGWK7.1.1.1.1.1 C-2, through the close rather than the predicate,
+    /// re-aimed by TASK-QGWK7.1.1.1.1.1.1 D-1. `git reset --hard` after a
+    /// stopped range leaves `.git/sequencer` on disk for good — `git status`
+    /// says nothing, an ordinary commit does not clear it, and only
+    /// `git revert --quit` does (measured). C-2 read that as a reason to stop
+    /// refusing the state; but on disk it is the SAME state as a live range
+    /// whose conflict was committed by hand, which must be refused, so the
+    /// guard cannot tell them apart and refuses both.
+    ///
+    /// What makes that acceptable is the MESSAGE. This pins it: the refusal
+    /// must name `git revert --quit`, or an abandoned range becomes a permanent
+    /// unexplained refusal of every close — which is the trap C-2 was right
+    /// about.
+    // orgasmic:TASK-QGWK7.1.1.1.1.1,TASK-QGWK7.1.1.1.1.1.1
     #[test]
-    fn a_close_after_an_abandoned_pick_range_persists_the_record() {
+    fn a_close_after_an_abandoned_pick_range_is_refused_and_names_quit() {
         let fixture = dispatch_cleanup_fixture("task-abandoned");
         stack_three_revisions(&fixture.root);
         let stopped = Command::new("git")
@@ -10174,9 +10234,35 @@ mod tests {
         let error = cleanup.error.clone().unwrap_or_default();
         assert_eq!(
             cleanup.status,
-            CleanupStatus::Ok,
-            "a leftover todo list owns nothing and must not refuse the close: {error}"
+            CleanupStatus::Partial,
+            "a leftover todo list is a range `git revert --continue` still resumes, so the \
+             close must stand down: {error}"
         );
+        assert!(
+            error.contains("git revert --quit"),
+            "and it must name the ONE command that clears a todo list `git status` does not \
+             even show, or the refusal is permanent and unexplained: {error}"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-abandoned/last.txt")
+                .exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-abandoned"),
+            "",
+            "a refusal must stage nothing"
+        );
+
+        // The remedy the message names must actually unblock the persist the
+        // close was standing down from — otherwise the advice is a dead end.
+        // Straight through the guarded function, since the promoted files are
+        // already on disk and that is all it needs.
+        git_ok(&fixture.root, &["revert", "--quit"]);
+        commit_promoted_dispatch_record(&fixture.root, "tx-start-task-abandoned")
+            .expect("`git revert --quit` must leave the record persistable");
         let in_history = Command::new("git")
             .args([
                 "cat-file",
@@ -10188,8 +10274,85 @@ mod tests {
             .unwrap();
         assert!(
             in_history.status.success(),
-            "and the record must really be in history, not merely unrefused: {}",
+            "and after `--quit` the record must really reach history, not merely stop being \
+             refused: {}",
             String::from_utf8_lossy(&in_history.stderr)
+        );
+    }
+
+    /// TASK-QGWK7.1.1.1.1.1.1 D-1, through the close. The state that made the
+    /// `sequencer` entry load-bearing, built the ordinary way: a stopped
+    /// multi-pick range whose conflict the manager resolved and committed with
+    /// `git commit` rather than `git revert --continue`. git clears
+    /// `REVERT_HEAD` and leaves the todo list, so NO `*_HEAD` marker refuses
+    /// this — and the range is live, because `git revert --continue` resumes it
+    /// from here (measured, git 2.52.0).
+    ///
+    /// Without the `sequencer` entry the close commits the record mid-range, at
+    /// a point the manager did not choose; if they then abandon the range with
+    /// `git reset --hard <pre-range>` the record dies with it.
+    // orgasmic:TASK-QGWK7.1.1.1.1.1.1
+    #[test]
+    fn a_close_inside_a_hand_committed_pick_range_is_refused() {
+        let fixture = dispatch_cleanup_fixture("task-handcommit");
+        stack_three_revisions(&fixture.root);
+        let stopped = Command::new("git")
+            .args(["revert", "--no-edit", "HEAD~1", "HEAD~2"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            !stopped.status.success(),
+            "the fixture must really stop between picks: {}{}",
+            String::from_utf8_lossy(&stopped.stdout),
+            String::from_utf8_lossy(&stopped.stderr)
+        );
+        // Resolve and commit by hand — not `git revert --continue`.
+        std::fs::write(fixture.root.join("base.txt"), "resolved\n").unwrap();
+        git_ok(&fixture.root, &["add", "base.txt"]);
+        git_ok(&fixture.root, &["commit", "-qm", "resolved by hand"]);
+        assert!(
+            fixture.root.join(".git/sequencer").is_dir()
+                && !fixture.root.join(".git/REVERT_HEAD").exists()
+                && !fixture.root.join(".git/CHERRY_PICK_HEAD").exists(),
+            "the fixture must be the live range with NO marker: the todo list alone"
+        );
+        let tip = git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-HANDCOMMIT");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(
+            cleanup.status,
+            CleanupStatus::Partial,
+            "a range `git revert --continue` still resumes must refuse the close, marker or \
+             no marker: {error}"
+        );
+        assert!(
+            error.contains("revert or cherry-pick sequence"),
+            "the refusal must name the leftover range, not a pick that is not stopped: {error}"
+        );
+        assert!(
+            error.contains("git revert --continue"),
+            "and it must name the command that finishes this range: {error}"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-handcommit/last.txt")
+                .exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-handcommit"),
+            "",
+            "a refusal must stage nothing"
+        );
+        assert_eq!(
+            git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]),
+            tip,
+            "and the close must not commit into the middle of the range"
         );
     }
 

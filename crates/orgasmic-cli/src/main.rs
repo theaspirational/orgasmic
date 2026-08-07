@@ -25,6 +25,7 @@ mod manager;
 mod member;
 mod node;
 mod path_env;
+mod sequencer_markers;
 #[cfg(test)]
 mod test_support;
 mod update;

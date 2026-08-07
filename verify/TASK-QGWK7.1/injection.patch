@@ -1,6 +1,6 @@
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -5677,77 +5677,15 @@
+@@ -5678,94 +5678,18 @@ fn promote_and_persist_dispatch_record(
  /// orgasmic's own bookkeeping, under a path no worker change can occupy.
  // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
  fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
@@ -18,10 +18,25 @@
 -    // pre-existing class, not a regression). Skipping persistence keeps the
 -    // files, and the re-run of the close puts them into history.
 -    if let Some(operation) = sequencer_operation_in_progress(&git_dir) {
+-        // orgasmic:TASK-QGWK7.1.1.1.1.1.1 — D-4: promise only what is true. An
+-        // `--abort` discards the record commit for `rebase` ALONE; for revert,
+-        // cherry-pick, merge and am the abort exits 0 with the record intact
+-        // (measured). What the refusal actually buys is the record not landing
+-        // mid-operation. D-1: the leftover todo list needs its own remedy,
+-        // because `--continue` is wrong for a range already abandoned.
+-        let remedy = if operation == crate::sequencer_markers::STOPPED_PICK_RANGE {
+-            "it is a `.git/sequencer` todo list with no pick stopped beside it, so finish the \
+-             range with `git revert --continue` (or `git cherry-pick --continue`) — or, if you \
+-             already abandoned it with `git reset --hard`, clear the leftover todo list with \
+-             `git revert --quit` — and re-run this close"
+-                .to_string()
+-        } else {
+-            format!("re-run this close once the {operation} finishes")
+-        };
 -        return Err(format!(
 -            "a git {operation} is in progress, so the record was promoted to disk but not \
--             committed (an --abort would discard the commit and the promoted file with it); \
--             re-run this close once the {operation} finishes"
+-             committed — it must not land in the middle of an operation you have not finished, \
+-             on a branch whose shape you are still deciding; {remedy}"
 -        ));
 -    }
 -    // orgasmic:TASK-QGWK7.1.1.1 — F-5: on a detached HEAD `update-ref HEAD`
@@ -86,4 +101,7 @@
 +    Ok(())
  }
  
++
  /// The git sequencer operation in progress in this worktree, if any
+ /// (TASK-QGWK7.1.1.1 F-3). A handful of `exists()` calls close the whole class:
+ /// only `rebase --abort` was measured to destroy a record, but `--continue`,

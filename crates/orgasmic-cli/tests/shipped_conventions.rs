@@ -5,6 +5,12 @@
 
 use std::path::PathBuf;
 
+/// The guard's own marker table, reached the only way an integration test can
+/// reach it: `orgasmic-cli` is a bin-only crate, so the array lives in a
+/// dependency-free module both targets include (TASK-QGWK7.1.1.1.1.1.1 D-2).
+#[path = "../src/sequencer_markers.rs"]
+mod sequencer_markers;
+
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
@@ -436,12 +442,9 @@ fn manager_convention_names_post_close_report_path() {
     // TASK-QGWK7.1.1.1.1 B-1/B-2: the sequencer list was prose only — nothing
     // pinned it, so it could drift from `sequencer_operation_in_progress` and
     // did (it promised a guarantee for `revert` the code did not provide).
-    // Every operation the code refuses must be nameable off the convention.
+    // The list itself is now compared against the code array, in order and both
+    // ways, by `the_sequencer_list_matches_the_guards_array` below.
     for phrase in [
-        // The list itself, verbatim and in order — the whole set the code
-        // refuses on, so dropping one from either side fails here.
-        "rebase, am, merge, cherry-pick, revert, bisect",
-        "revert/cherry-pick sequence",
         // A CLEAN staged revert is refused too, not only a conflicted one.
         "A staged",
         "=git revert -n= counts",
@@ -455,4 +458,63 @@ fn manager_convention_names_post_close_report_path() {
              missing {phrase:?}"
         );
     }
+}
+
+/// TASK-QGWK7.1.1.1.1.1.1 D-2. The list of operations a close stands down from
+/// is a promise the convention makes on the code's behalf, so it has to be
+/// checked against the code — BOTH ways.
+///
+/// The pin this replaces asserted `text.contains("rebase, am, merge, \
+/// cherry-pick, revert, bisect")` and claimed in its own comment that "dropping
+/// one from either side fails here". It did not: nothing read the code array at
+/// all, so TASK-QGWK7.1.1.1.1.1 dropped the `sequencer` entry from the guard
+/// and every convention test stayed green while the prose went on promising the
+/// refusal. Comparing the parsed prose list against
+/// [`sequencer_markers::SEQUENCER_MARKERS`] as an ordered sequence fails on a
+/// drop from either side, and on a reorder.
+#[test]
+fn the_sequencer_list_matches_the_guards_array() {
+    let text = manager_dispatch_convention();
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // The convention wraps, so read the parenthetical off whitespace-collapsed
+    // prose. The anchor is the sentence's own claim, not a line number.
+    const ANCHOR: &str = "A close does not persist while a sequencer operation owns HEAD* (";
+    let after = flat.split_once(ANCHOR).unwrap_or_else(|| {
+        panic!("the convention must still say {ANCHOR:?} and follow it with the operation list")
+    });
+    let listed = after
+        .1
+        .split_once(')')
+        .unwrap_or_else(|| panic!("the operation list after {ANCHOR:?} must be closed by `)`"))
+        .0
+        .split(", ")
+        .map(|item| item.trim_start_matches("or ").trim())
+        .collect::<Vec<_>>();
+
+    let expected = sequencer_markers::SEQUENCER_MARKERS
+        .iter()
+        .map(|&(_, _, in_prose)| in_prose)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        listed, expected,
+        "the convention's operation list and `sequencer_operation_in_progress`'s marker array \
+         must name the same operations in the same order — dropping one from EITHER side, or \
+         reordering, fails here"
+    );
+
+    // `sequencer` is checked last on purpose (every stopped pick carries the
+    // todo list too), and it is the entry whose refusal branches to its own
+    // remedy. Pin the position so a reorder cannot silently make an ordinary
+    // stopped pick report as a leftover range.
+    let (_, last_operation, _) = sequencer_markers::SEQUENCER_MARKERS
+        .last()
+        .copied()
+        .expect("the guard must refuse on at least one marker");
+    assert_eq!(
+        last_operation,
+        sequencer_markers::STOPPED_PICK_RANGE,
+        "the coarse `.git/sequencer` marker must stay last, so a stopped pick is still named \
+         by its own `*_HEAD` marker"
+    );
 }
