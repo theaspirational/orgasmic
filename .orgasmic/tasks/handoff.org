@@ -287,39 +287,39 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1.1 (P1, the =REVERT_HEAD= fix round).
-=tx-20260807-orgasmic-5212=, run =run-20260807T122004-291e71a165344602b8544d5e16ad7d35=,
-worker =implementer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1=, dispatched
-[2026-08-07 Fri 12:20:04] on =tmux / claude / claude-opus-5 / high=.
+ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1.1 REVIEW.
+=tx-20260807-orgasmic-5218=, run =run-20260807T124524-254152065ca341288edfb213c614ffc8=,
+worker =reviewer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1-review=, dispatched
+[2026-08-07 Fri 12:45:24] on =tmux / claude / claude-opus-5 / high=. Reviews merge
+=8e56b86=.
 
-*THE BLOCK SHIP IS ONE LINE OF CODE AND ONE WORD OF PROSE.*
-=sequencer_operation_in_progress= guards five markers and misses =REVERT_HEAD=,
-so a close during a revert COMMITS a record that then wedges
-=git revert --abort= at exit 128 with a mangled index — measured against two
-controls, and strictly worse than both. The manager reproduced independently that
-a CLEAN =git revert -n= leaves =REVERT_HEAD= with =CHERRY_PICK_HEAD= ABSENT, so
-the exposure is ANY staged revert. The convention prose enumerates the same
-incomplete set and =shipped_conventions.rs= PINS it, so *the prose and its
-assertion must move together* or the test will enforce the error.
+*THE ASK IS COMPLETENESS FROM THE OTHER SIDE.* The last round's guard was one
+marker short. The brief tells the reviewer NOT to re-check the six markers it now
+has, but to enumerate the GIT OPERATIONS that leave a state where a HEAD-moving
+commit is harmful and check each against the guard — naming =git merge --squash=
+(believed to leave NO =MERGE_HEAD=), =stash pop= conflicts, =am --3way=,
+=checkout -m=, and mid-range =rebase --continue= as the places to start. *This is
+the third time in two chains that a guard has been one case short.*
 
-The brief tells it explicitly this is a SMALL round and not to redesign the
-parent's mechanisms, all of which the reviewer confirmed correct.
+WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 8e56b86=),
+committing the staged records after each close.
 
-ONE JUDGEMENT CALL IS DELEGATED: B-2 (the re-persist commits to whichever branch
-you are standing on) has two acceptable answers — stamp the resolved ref and
-refuse a mismatch, or document it. *The reviewer flagged its own B-2 analysis as
-source-derived, NOT measured through the binary*, so the brief requires the worker
-to measure it first and let the observation choose.
-
-WHEN IT REPORTS: merge, gate, review, close reviewer then implementer with
-=--merge-sha=, committing the staged records after each close.
-
-*IF THE REVIEW HAS NO BLOCK SHIP, THE WHOLE QGWK7 CHAIN CLOSES AND THE RUNTIME
-REINSTALL IS UNBLOCKED* — that is the next action, and it retires preamble item 1.
-Close =.1.1.1.1= then =.1.1.1=, checking =DEPENDS_ON= on each.
+*IF THERE IS NO BLOCK SHIP THE WHOLE QGWK7 CHAIN CLOSES.* Close
+=.1.1.1.1= then =.1.1.1= then =.1.1= (check =DEPENDS_ON= on each first; each was
+held open only by its successor's BLOCK SHIP). *THEN THE RUNTIME REINSTALL IS
+UNBLOCKED* — it is the next action and it retires preamble item 1.
 
 NOTHING ELSE IS OPEN.
+
+MANAGER ERROR WORTH KNOWING, because it shows the failure mode of trusting a
+review: the TASK-QGWK7.1.1.1.1 heading asserted =shipped_conventions.rs= PINNED
+the sequencer prose, so the prose was "pinned wrong". *That was FALSE* — the
+manager inherited it from the review's F-1 and passed it on without checking.
+The list was UNPINNED prose, which is HOW it drifted from the code. The
+implementer grepped, said so, and wrote the assertion that should have existed.
+Verified after the fact: zero matches at =f6c6c4d=, four on the fix branch.
+*Verify a review's incidental claims too, not only its findings.*
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
