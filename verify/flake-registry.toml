@@ -32,19 +32,21 @@
 # — grep it before you trust it.
 
 # --------------------------------------------------------------------------
-# TASK-STWVB — daemon tests that fail under full-suite parallelism, pass alone
+# TASK-X0PV1 — daemon tests that fail under full-suite parallelism, pass alone
+# (owned by TASK-STWVB until 2026-08-07; transferred when that round closed with
+# these modes still unfixed, rather than deleting live entries to green --check)
 # --------------------------------------------------------------------------
 
 [[flake]]
 test = "supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling"
-owner = "TASK-STWVB"
+owner = "TASK-X0PV1"
 signature = "fake cursor-agent did not start children"
 evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs:10321. Green alone here 2026-07-28 (1 passed, 548 filtered out); NOT reproduced in 6 runs in this worktree, including 3 under induced load."
 filed = "2026-07-28"
 
 [[flake]]
 test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
-owner = "TASK-STWVB"
+owner = "TASK-X0PV1"
 signature = "tmux test session should start"
 evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, and identically inside the TASK-1T3FZ dispatched worker, where the daemon error was 'tmux new-session failed (exit 1): server exited unexpectedly'. Assertion is crates/orgasmic-daemon/src/api.rs:23885. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
 filed = "2026-07-28"
@@ -60,14 +62,14 @@ filed = "2026-07-28"
 # done. Registered afterwards, with the panic it actually produced.
 [[flake]]
 test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
-owner = "TASK-STWVB"
+owner = "TASK-X0PV1"
 signature = "left: \"interrupted\""
 evidence = "Measured here 2026-07-28: full cargo test --workspace under 10 cpu hogs, 1 failure in the whole workspace, crates/orgasmic-daemon/src/api.rs:23908 assertion left == right, left 'interrupted' right 'reattached'. Green alone on the same tree. TASK-STWVB's own body records this mode: 'it is tmux session REATTACH, and it lands on interrupted rather than reattached', pointing at cross-test contention over shared tmux state."
 filed = "2026-07-28"
 
 [[flake]]
 test = "api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim"
-owner = "TASK-STWVB"
+owner = "TASK-X0PV1"
 signature = "resume_native_fork recover: 500"
 evidence = "Manager measurement 2026-07-28 on the merged TASK-5HBST tree at load ~10: still failed, with mode 2 (recovery 500) and not the env race. Assertion is crates/orgasmic-daemon/src/api.rs:25580. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
 filed = "2026-07-28"
