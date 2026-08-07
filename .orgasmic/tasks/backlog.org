@@ -4057,181 +4057,137 @@ Two small consequences of TASK-G64ZH.1.1's write-time fallback:
   count toward it, it does not.
 - =--no-log-mirror='s help states the durable-handle exception.
 
-* BACKLOG TASK-STWVB.1.1.1.1 fix-round: a crashed test binary reads as GREEN whenever a registered flake fires    :testing:daemon:flake:
+* BACKLOG TASK-QGWK7.1.1.1 follow-up: a failed record persist is unrecoverable, and the update-ref CAS can pass on the wrong branch    :dispatch:evidence:manager:
 :PROPERTIES:
-:ID: TASK-STWVB.1.1.1.1
+:ID: TASK-QGWK7.1.1.1
 :PRIORITY: P1
-:WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
 :FIX_SUBTASK: t
 :END:
 
 === READ THIS FIRST — STATUS ===
-Round 5 of the TASK-STWVB chain. Fix round for the TASK-STWVB.1.1.1 review
-(merged =1add6fd=, REJECT). *ONE ROOT CAUSE IN TWO FORMS (R-1, R-2), ONE FIX*,
-plus two LOW.
+Follow-up round for the TASK-QGWK7.1.1 review (merged =5b734a1=, verdict
+*approve-with-follow-ups*, NO BLOCK SHIP). The M-0 mechanism — a =dispatch-close=
+that COMMITS the promoted record through a throwaway index — is CORRECT and its
+happy path survived every probe. Do not re-open it.
 
-*ROUND 4's FOUR FIXES ARE ALL CORRECT AND CORRECTLY PINNED — DO NOT RE-OPEN
-THEM.* The reviewer attacked the rate arithmetic, the window floor and the load
-annotation empirically and could not break any of them. In particular:
-*DO NOT RE-DROP THE =FAIL_COUNT= GUARD* — that recreates M-1 exactly, and this
-chain has already spent one round on that mistake.
+*THE REVIEW IS THE MOST VALUABLE ARTIFACT HERE. READ IT FIRST:*
+=.orgasmic/dispatch-records/tx-20260807-orgasmic-5129/last.txt=. It carries 14
+scratch-repo git probes with verbatim output; nothing below should be re-derived.
 
-Also settled: part A (mechanism-justified, effect size unmeasured), and B1's
-rate shape. Do not probe either.
-
-The full review is preserved at
-=.orgasmic/dispatch-records/tx-20260806-orgasmic-5084/last.txt=.
+*SETTLED — DO NOT RE-MEASURE:* the real-index =git add= is load-bearing (without
+it the manager's next =git commit= DELETES the record from history); =update-ref
+HEAD <new> <old>= really is a compare-and-swap on the branch through the symref;
+a fully-ignored record dir cannot report false success; =partial= costs nothing
+downstream (all three consumers treat it as they treated =worktree_failed=); the
+flipped rename order in =paths.rs= preserves the fd-anchored invariant; the new
+tests DO enter the production call path. Each was measured.
 === END STATUS ===
 
-** The headline: a demonstrated FALSE GREEN, and it is the worst category yet
-Every prior round of this chain produced a false RED or a missing verdict. This
-one is a *false GREEN on the live path*, and CI gates on the exit code alone.
+** F-1 — MEDIUM — a failed record persist is UNRECOVERABLE, and re-running the close refuses
+=crates/orgasmic-core/src/paths.rs:317= (tmp unlink) ->
+=crates/orgasmic-cli/src/manager.rs:5636=. MANAGER-VERIFIED IN SOURCE.
 
-=FAIL_COUNT= counts *LISTED* per-test failures. A test binary that aborts or
-segfaults contributes ZERO listed failures — libtest dies with the process, so
-there is no =---- name ----= block. So a run with BOTH (a) a crashed binary and
-(b) any classified failure has =FAIL_COUNT > 0=, the crash arm is skipped, and
-the run falls through to =GREEN modulo N registered flake(s)= at *exit 0*.
+=promote_validated_dispatch_attempt= unlinks the tmp artifacts as soon as the
+COPIES succeed — before =commit_promoted_dispatch_record= is ever called. So a
+failed commit leaves: record on disk untracked, tmp gone, =CLEANUP_ERROR= set,
+status =partial=. There is then no way back into git:
+=promote_dispatch_artifacts_in_place= bails on =last_path missing= (tmp is gone);
+re-running =dispatch-close= hits =CloseTarget::AlreadyClosed= and returns a no-op
+by design (=manager.rs:960-983=, verified); and there is no =--repersist= verb.
 
-MANAGER-VERIFIED, and it is worse than the guard alone: =BUILD_BROKE= matches
-only =^error: could not compile= and =^error\[E[0-9]+\]= (=:724=), so it does NOT
-catch =error: N targets failed=; and =grep -c= for =signal:= /
-=didn't exit successfully= / =targets failed= across the whole script returns
-*ZERO*. There is no crash detection anywhere.
+*The one path where the guarantee fails is the one path with no repair*, and its
+only signal is a =warning:= line. That is the regression back to "manager habit"
+that F-1 of the parent existed to remove, narrowed to the error path.
 
-=FAIL_COUNT -eq 0= is exactly the condition that FAILS on this board whenever a
-registered flake fires — and this chain exists because registered flakes fire.
-Round 3 traded a live-dead =EXIT_INCONCLUSIVE= for a working one; round 4 traded
-a live-dead crash detector back. Round 3's demonstrations missed the flake path;
-round 4's missed the crash-plus-flake path.
+Worse, the rollback is unguarded: =manager.rs:5689= runs =git restore --staged=
+behind =let _ =, so if the index lock is held at THAT moment the restore fails
+silently and the record is left STAGED — which is M-0's symptom back verbatim.
 
-*CLASSIFICATION: PRE-EXISTING, NOT A REGRESSION.* At =4788e1f= the arm sat BELOW
-=FAIL_COUNT > 0= and was equally unreachable. Round 3's reorder plus its dropped
-guard accidentally closed it; restoring the guard reopened it. The reviewer filed
-it BLOCK SHIP anyway because it is a demonstrated false green on the live path,
-and the manager concurs.
+*Fix:* make persistence idempotent and re-entrant. =commit_promoted_dispatch_record=
+already works from =dest_dir= alone; only its CALLER is gated on tmp. Route the
+already-closed no-op into it when the recorded =CLEANUP_STATUS= was non-ok.
+Minimum viable: stop discarding the =git restore= result.
 
-** R-1 — HIGH — BLOCK SHIP — a crashed binary is swallowed whenever any failure classifies
-=scripts/run-tests.sh:1078=.
+** F-2 — MEDIUM — the =update-ref= CAS can pass on the WRONG BRANCH
+=crates/orgasmic-cli/src/manager.rs:5800-5812=.
 
-REVIEWER REPRODUCTION WITH VERBATIM CARGO OUTPUT. A two-target crate — one
-=assert!= failure whose panic matches a registry signature, one
-=std::process::abort()= — real =cargo test --no-fail-fast=, log replayed through
-the live path:
+The CAS compares OIDs, not ref identity. Reviewer measured: with a sibling
+branch at the same OID, =git branch other && git checkout other= between the
+=rev-parse= and the =update-ref= makes the check PASS and the record commit land
+on =other=. Millisecond window, requires a concurrent checkout.
 
-#+begin_example
-  failures : 1
-  host     : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
-FLAKE (1) — green in isolation, registered signature matched:
-verdict: GREEN modulo 1 registered flake(s). No unexplained red.      exit 0
-#+end_example
+*Fix:* resolve =git symbolic-ref -q HEAD= alongside the OID and CAS that specific
+ref instead of =HEAD=, falling back to =HEAD= when detached — which also gives
+F-5 a place to refuse.
 
-What the SAME log says, verbatim, from cargo:
+** F-3 — MEDIUM (PRE-EXISTING, not a regression) — a close inside a conflicted rebase is discarded by =rebase --abort=
+Measured in four scratch repos. Conflicted merge -> close -> resolve -> commit is
+SAFE (=MERGE_HEAD= survives, both parents intact). =rebase --continue= is SAFE.
+=cherry-pick --abort= is SAFE and the record survives on disk. Only
+=rebase --abort= destroys the record — and *the staged-only baseline loses it
+identically*, which is why this is classified pre-existing from TASK-QGWK7.1 and
+was NOT the BLOCK SHIP the brief pre-authorised.
 
-#+begin_example
-error: test failed, to rerun pass `--bin crashdemo`
-Caused by:
-  process didn't exit successfully: `.../crashdemo-...` (signal: 6, SIGABRT: process abort signal)
-error: 2 targets failed:
-    `--lib`
-    `--bin crashdemo`
-#+end_example
+*Fix:* refuse persistence (or skip it and say so through =CLEANUP_ERROR=) when
+=.git/rebase-merge=, =.git/rebase-apply=, =.git/MERGE_HEAD=,
+=.git/CHERRY_PICK_HEAD= or =.git/BISECT_LOG= exists. Four =exists()= calls close
+the whole class.
 
-WHY THIS REACHES CI: =ci.yml:197= runs the live path and gates on the exit code
-alone. *Exit 0 merges.* And the verdict block a human might read does not mention
-the crash AT ALL — not in =failures :=, not in any REAL/LOAD/FLAKE section, not
-in the verdict line.
+** F-4 — LOW — =commit-tree= ignores =commit.gpgsign=, and one stated residual is FALSE
+Measured: with =commit.gpgsign=true= and a garbage =user.signingkey=,
+=git commit-tree= exits 0 and produces an UNSIGNED commit — so a repo enforcing
+signatures gets unpushable history silently. Correctly named by the implementer.
 
-*FIX DIRECTION — detect the crash FROM THE LOG*, independent of both
-=SUITE_EXIT= and =FAIL_COUNT=:
-- =error: test failed, to rerun pass `<target>`= is printed once per failing
-  target. Diff that target set against the set of binaries that produced a parsed
-  failure block. A target in the first set and not the second is an UNACCOUNTED
-  CRASH.
-- Corroborate with =process didn't exit successfully:= / =(signal: N, SIG...)=,
-  which is crash-specific — an ordinary red does not emit it.
-- Report it as its own section (=CRASHED (n)=) and its own RED arm, placed ABOVE
-  =FAIL_COUNT > 0= and ABOVE =HOST_DEGRADED=. A crashed binary is a code fact
-  whatever else the run found — the same argument F4 made for =REAL_COUNT=.
+But the implementer's residual "if =user.name=/=user.email= are unset the commit
+fails" is WRONG: =commit-tree= succeeds using git's derived =user@host= ident.
+Harmless in effect; remove it rather than carry a false failure mode.
 
-Pin it with a live-path case whose stub cargo emits *a failure list AND an
-unaccounted crashed target* and exits 101 -> RED, exit 1. No such case exists
-today, and its absence is why R-1 shipped.
+** F-5 — LOW — detached HEAD persists the record to no branch
+Measured: on a detached HEAD, =update-ref HEAD= moves only the detached HEAD;
+=refs/heads/*= is untouched, so the record commit is on NO branch and the
+manager's next =git checkout= orphans it. The close still reports =ok=.
 
-** R-2 — HIGH — BLOCK SHIP — "same verdict for the same log" is unmet
-=scripts/run-tests.sh:1078= (reads =SUITE_EXIT=) vs =:604= (=SUITE_EXIT="?"=).
+Unborn HEAD is SAFE by contrast — =rev-parse --verify HEAD^{commit}= fails before
+the real =git add=, so nothing is staged. The two unusual shapes are not
+symmetric; only one is guarded.
 
-Byte-identical log, both modes:
-| mode | verdict | exit |
-| live | =RED — cargo exited 101 with no per-test failure list.= | 1 |
-| =--classify= | =GREEN — no failures.= | 0 |
+** F-6 — LOW — M-5's refusal was inserted AHEAD of the torn-close recovery
+=crates/orgasmic-cli/src/manager.rs:951= vs =:957=. MANAGER-VERIFIED IN SOURCE.
 
-The log the human is holding contains =error: test failed, to rerun pass ...=,
-and =--classify= prints =GREEN — no failures= over it.
+=normalize_report_path_property= now runs above =reconcile_torn_closes_best_effort=,
+whose own comment says it must run "before anything else, including the
+already-closed no-op below". So re-running a torn close with a command line
+carrying an absolute =REPORT_PATH= bails BEFORE the stranded transition is
+reconciled. Refusing is still right; the ORDERING silently demoted a path that
+was explicitly ordered first. *Fix:* move the call below the reconcile.
 
-*RULING ON "is =--classify= inherently a weaker mode?" — NO, not on this point.*
-The information exists at write time and is simply not written down. That is the
-IDENTICAL situation this chain already resolved once: STWVB.1's F3 found
-=--classify= sampling host state at reclassify time, and the answer was not
-"accept a weaker mode", it was =write_host_stamp=. The suite exit deserves the
-same treatment, by the same mechanism.
+** F-7 — LOW (docs) — the sidecar now has two meanings and the convention documents one
+=crates/orgasmic-core/src/paths.rs:394-460=, convention at
+=manager-dispatch.org:334-340=. A =stdout.log.bytes= with NO =stdout.log= means
+either "the harness printed nothing" (value =0=) or "the promote failed partway"
+(value non-zero) — distinguishable only by reading the value, and the prose
+documents only the first. Also: the promoted excerpt is =64 KiB + ~180= bytes
+(the banners ride on top of the cap) while the convention still says "64 KB".
 
-*Fix:* append =# orgasmic-suite-exit: <n>= alongside the existing
-=# orgasmic-host-state:= stamp; under =--classify=, read it and use it instead of
-=?=, falling back to =?= only when the stamp is absent (pre-stamp logs). R-1's
-log-derived detector covers those legacy logs anyway.
-
-** R-3 — LOW — docs — =project.org= overstates round 4's coverage
-=.orgasmic/project.org:23=, added by =deffb1e=: "A non-zero cargo exit with no
-per-test failure list is also a code fact... on the live path and under
-=--classify= alike." The first half is FALSE under =--classify= (R-2); the second
-is true only of failures that were LISTED — a crashed target contributes nothing
-to classify and is dropped (R-1). Resolves with R-1/R-2; otherwise qualify the
-sentence.
-
-** R-4 — LOW — design note, NO CHANGE REQUESTED — the floor leaves scoped runs unjudged
-=scripts/run-tests.sh:111=. The floor itself is RIGHT. But the reviewer measured
-the everyday warm scoped invocation at *=wall_s=3=, not the 11 the round-4 report
-recorded* (that was a colder run). So the host machinery is inert for scoped runs
-ALWAYS, not marginally.
-
-The reviewer traced what =unknown= does to the VERDICT and it is sound:
-LOAD-SENSITIVE is correctly suppressed (=classify_one:811= requires
-=HOST_DEGRADED -eq 1=, so an unregistered iso-green failure stays REAL at exit 1
-— unknown does not mint an excuse); the exit code for an otherwise-green short
-run is unchanged at 0. The accepted cost is that INCONCLUSIVE is unreachable
-below the floor, which is M-3's own stated fix direction, the reason is named in
-the output, and CI's workspace run is never near the floor.
-
-*If host judgment on scoped runs is ever wanted, widen the MEASUREMENT window —
-sample syspolicyd over a fixed >=10s window bracketing the run — do NOT lower the
-floor.* Lowering it walks straight back into M-3.
-
-** R-5 — LOW — test — two selftest cases can silently not run
-=scripts/run-tests-selftest.sh:768,793=. Both =--classify=-agreement companion
-cases sit behind =if [ -f "$live_log" ]; then ... else rm -rf "$TMP/work"; fi=.
-If the live run ever fails to write =suite.log=, the case VANISHES with no
-failure and no message, and nothing asserts the expected total of 44. Low risk
-today. *Fix:* fail when the log is absent, or pin the case count.
-
-** Recorded, not a defect — M-5's regex covers the realistic shape
-The reviewer verified the old and new assertions against the live sampler and
-synthetic phantoms; together they cover the shapes =ps -o time== actually emits
-on macOS (=0:00.00=, =0:00=, bare =0.0=). No change requested.
+Fold in the two other doc gaps: record commits are UNSIGNED (F-4), and
+*promote-only =--no-worktree-remove= closes advance the branch too* — the
+convention says "a close moves the branch you are on by one commit" without
+saying it applies to those as well.
 
 ** Acceptance
-- A run containing a crashed/aborted target returns RED at exit 1, *whatever
-  else the run classified*, and the crash is NAMED in the verdict block (its own
-  =CRASHED (n)= section). Pinned by a live-path case emitting a failure list AND
-  an unaccounted crashed target.
-- The crash is detected from the LOG, not from =SUITE_EXIT= or =FAIL_COUNT=, so
-  it survives both modes and legacy logs.
-- =--classify= and the live path return the SAME verdict for the same log, for
-  the crashed-binary population too. The suite exit is stamped into the log,
-  mirroring =write_host_stamp=, with a documented fallback for unstamped logs.
-- The =FAIL_COUNT= guard is STILL THERE and a registered flake still returns
-  =GREEN modulo N=, exit 0. Do not regress M-1 while fixing R-1 — pin both in the
-  same run.
-- =.orgasmic/project.org:23= says what is actually true.
-- The two conditional selftest cases cannot silently vanish.
-- =verify/flake-registry.toml= byte-unchanged, as in all four prior rounds.
+- A failed record persist is RECOVERABLE without hand-repair, or the failure is
+  loud enough that a manager cannot miss it — and the =git restore= result is
+  reported rather than discarded. Pinned by a test that fails the commit and then
+  recovers the record into history.
+- The record commit cannot land on a branch the close did not resolve (F-2),
+  pinned by a test that repoints HEAD to a same-OID sibling.
+- A close during any sequencer operation cannot lose the record (F-3).
+- Detached HEAD either persists to something durable or refuses and says so (F-5).
+- =normalize_report_path_property= runs BELOW =reconcile_torn_closes_best_effort=,
+  pinned by a torn-close re-run carrying an absolute =REPORT_PATH= (F-6).
+- The convention states: what a non-zero =stdout.log.bytes= with no =stdout.log=
+  means, that record commits are unsigned, that promote-only closes advance the
+  branch, and the real excerpt size (F-7, F-4).
+- The false residual about unset =user.name= is removed, not carried forward.
+- =verify/TASK-QGWK7.1.1/= and =verify/TASK-QGWK7.1/= still PASS unchanged.

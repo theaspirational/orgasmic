@@ -18774,3 +18774,211 @@
 :REASON:       Make the blocker machine-readable. This round (merge 1add6fd) was reviewed and its findings produced TASK-STWVB.1.1.1.1 (the crashed-binary false green, PRE-EXISTING rather than introduced here). Per the goal, this round does not close until that fix round lands and passes a fresh review — recorded in depends_on rather than prose, because prose is what the board cannot read.
 :DEPENDS_ON:   TASK-STWVB.1.1.1.1
 :END:
+
+* TX 2026-08-07 Fri 10:25:58 task.state_transitioned TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5135
+:TIME:         [2026-08-07 Fri 10:25:58]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Pulled forward as the next P1: the chain's live tip TASK-STWVB.1.1.1 depends on it, and it is a demonstrated false GREEN on the live path that CI gates on by exit code alone.
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-07 Fri 10:25:59 task.state_transitioned TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5136
+:TIME:         [2026-08-07 Fri 10:25:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB.1.1.1.1 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 10:25:59 manager.dispatch_started TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5137
+:TIME:         [2026-08-07 Fri 10:25:59]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1
+:BRANCH:       task-stwvb.1.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb.1.1.1.1/task-stwvb.1.1.1.1-brief.md
+:STARTED_AT:   [2026-08-07 Fri 10:25:59]
+:LIVENESS:     8b96b17f39f7093789a61ac2ee65a2e374f0e366
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: round 5: detect a crashed target from the log; a crashed binary currently reads as GREEN modulo N flakes at exit 0 whenever any registered flake fires
+:END:
+
+* TX 2026-08-07 Fri 10:26:00 run.created TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5138
+:TIME:         [2026-08-07 Fri 10:26:00]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-STWVB.1.1.1.1-implementer-20260807T102559.jsonl
+:REASON:       round 5: detect a crashed target from the log; a crashed binary currently reads as GREEN modulo N flakes at exit 0 whenever any registered flake fires
+:RUN_ID:       run-20260807T102559-ad748854eb72437c9682e26c93e854f6
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb.1.1.1.1/task-stwvb.1.1.1.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-stwvb.1.1.1.1/task-stwvb.1.1.1.1-9e6130eacc7d403f90e31ee2f1f94caf-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-stwvb.1.1.1.1/task-stwvb.1.1.1.1-9e6130eacc7d403f90e31ee2f1f94caf-stdout.log
+:DISPATCH_ATTEMPT: 9e6130eacc7d403f90e31ee2f1f94caf
+:DISPATCH_TX:  tx-20260807-orgasmic-5137
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-07 Fri 10:33:17 reviewer.reported TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5139
+:TIME:         [2026-08-07 Fri 10:33:17]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:RUN_ID:       run-20260807T102151-653c3dff7f254b39a6121bd2c33cff81
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5129/last.txt
+:END:
+
+* TX 2026-08-07 Fri 10:34:34 reviewer.done TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5140
+:TIME:         [2026-08-07 Fri 10:34:34]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:REASON:       APPROVE WITH FOLLOW-UPS, no BLOCK SHIP. M-0's mechanism holds under measurement: the real-index git add is load-bearing, update-ref is a real CAS on the branch through the symref, and a fully-ignored record cannot report success. The pre-authorised BLOCK SHIP (a close corrupting a rebase) did NOT trigger — rebase --continue, merge and cherry-pick --abort all complete, and the one lossy case (rebase --abort) loses the record identically on the pre-change staged-only baseline, so it is pre-existing. Seven findings carry to TASK-QGWK7.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260807-orgasmic-5129
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5129/last.txt
+:END:
+
+* TX 2026-08-07 Fri 10:34:35 task.state_transitioned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5141
+:TIME:         [2026-08-07 Fri 10:34:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 10:34:52 implementer.done TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5142
+:TIME:         [2026-08-07 Fri 10:34:52]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:REASON:       Implementer round 3 (attempts 1 and 2 died to tmux/cursor-agent). Merged 5b734a1; manager re-ran every gate on the merged tree and independently measured the load-bearing M-0 premise. Reviewed approve-with-follow-ups; seven findings carry to TASK-QGWK7.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    5b734a1024fcda890f178cbfc9afec24e4a2ca8a
+:BRANCH:       task-qgwk7.1.1-impl3
+:CLOSED_TX:    tx-20260807-orgasmic-5117
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5117/last.txt
+:END:
+
+* TX 2026-08-07 Fri 10:34:52 task.state_transitioned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5143
+:TIME:         [2026-08-07 Fri 10:34:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 10:36:06 task.created TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5144
+:TIME:         [2026-08-07 Fri 10:36:06]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Seven findings from the TASK-QGWK7.1.1 review (approve-with-follow-ups, no BLOCK SHIP). F-1 and F-2 are the teeth: a failed persist has no recovery path and the CAS compares OIDs rather than ref identity.
+:END:
+
+* TX 2026-08-07 Fri 10:36:07 task.property_updated TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5145
+:TIME:         [2026-08-07 Fri 10:36:07]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from reviewer findings
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-07 Fri 10:36:17 task.state_transitioned TASK-QGWK7.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5146
+:TIME:         [2026-08-07 Fri 10:36:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged 5b734a1, gates re-run by the manager on the merged tree, reviewed approve-with-follow-ups with NO BLOCK SHIP. The pre-authorised BLOCK SHIP condition (a close corrupting a rebase) was measured and did not trigger; the one lossy interleaving loses the record identically on the pre-change baseline, so it is pre-existing. M-0's mechanism holds under 14 scratch-repo probes. Seven follow-up findings carry to TASK-QGWK7.1.1.1 (P1).
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
