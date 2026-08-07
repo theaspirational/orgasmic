@@ -1,13 +1,12 @@
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -5680,92 +5680,23 @@ fn promote_and_persist_dispatch_record(
+@@ -5678,97 +5678,18 @@ fn promote_and_persist_dispatch_record(
+ /// orgasmic's own bookkeeping, under a path no worker change can occupy.
+ // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
  fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
-     use std::ffi::OsStr;
- 
-+    // INJECTED (TASK-QGWK7.1.1 M-0): stage the promoted record and stop there,
-+    // exactly as TASK-QGWK7.1 shipped it. A staged path makes the `git merge`
-+    // that the review gate tells the manager to run next refuse.
-     let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+-    use std::ffi::OsStr;
+-
+-    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
 -    let git_dir = PathBuf::from(git_capture(
 -        project_root,
 -        ["rev-parse", "--absolute-git-dir"],
@@ -26,10 +25,13 @@
 -        // mid-operation. D-1: the leftover todo list needs its own remedy,
 -        // because `--continue` is wrong for a range already abandoned.
 -        let remedy = if operation == crate::sequencer_markers::STOPPED_PICK_RANGE {
--            "it is a `.git/sequencer` todo list with no pick stopped beside it, so finish the \
--             range with `git revert --continue` (or `git cherry-pick --continue`) — or, if you \
--             already abandoned it with `git reset --hard`, clear the leftover todo list with \
--             `git revert --quit` — and re-run this close"
+-            "it is a `.git/sequencer` todo list with no pick stopped beside it — `cat \
+-             .git/sequencer/todo` shows what is still pending, and tells you whether this is a \
+-             revert or a cherry-pick. If those picks still matter, finish the range with `git \
+-             revert --continue` (or `git cherry-pick --continue`; the wrong verb errors and \
+-             names the right one). If you already abandoned it with `git reset --hard`, clear \
+-             the leftover list with `git revert --quit` — which ABANDONS whatever that todo \
+-             lists. Then re-run this close"
 -                .to_string()
 -        } else {
 -            format!("re-run this close once the {operation} finishes")
@@ -52,10 +54,10 @@
 -            .to_string()
 -    })?;
 -    let head = git_capture(project_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
-     git_capture(
-         project_root,
-         [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
-     )?;
+-    git_capture(
+-        project_root,
+-        [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
+-    )?;
 -    // A thinned record is worth keeping and worth naming; it is not a reason to
 -    // keep nothing. Commit either way and report the delta.
 -    let thinned = verify_dispatch_record_staged(project_root, &dest_dir);
@@ -91,6 +93,9 @@
 -            }
 -        }
 -    }
++    // INJECTED (TASK-QGWK7.1.1 M-0): stage the promoted record and stop there,
++    // exactly as TASK-QGWK7.1 shipped it. A staged path makes the `git merge`
++    // that the review gate tells the manager to run next refuse.
 +    let _ = (
 +        verify_dispatch_record_staged,
 +        write_dispatch_record_commit,
