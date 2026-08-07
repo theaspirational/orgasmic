@@ -315,7 +315,12 @@ check_owner_lifecycle() {
             fi
         done
         if [ -n "$state" ]; then
-            printf 'registry: %s is owned by %s, which is %s. A registry that only grows is a graveyard: delete the entry, or reopen the task.\n' \
+            # TASK-STWVB.1.1.1.1.1 / F-5: name the transfer route. Following
+            # the two-route message literally at 2am with CI red means
+            # DELETING live entries, which converts measured flakes into
+            # unexplained REAL failures. Transfer to an open owner is a
+            # sanctioned route and was the one actually taken in a8edf93.
+            printf 'registry: %s is owned by %s, which is %s. A registry that only grows is a graveyard: delete the entry, transfer it to an open owner that will fix it, or reopen the task.\n' \
                 "$_test" "$owner" "$state"
             problems=$((problems + 1))
             continue
@@ -791,34 +796,71 @@ FAIL_COUNT=$(wc -l < "$FAILURES_TSV" | tr -d ' ')
 # over a log saying SIGABRT.
 #
 # So detect it from the LOG, independent of both SUITE_EXIT and FAIL_COUNT.
-# That is also what makes it survive `--classify` and pre-stamp logs. Two
-# independent derivations, unioned:
+# That is also what makes it survive `--classify` and pre-stamp logs.
 #
-#   NAMED       cargo prints, for a target that did not exit through libtest:
-#                 error: test failed, to rerun pass `<target>`
-#                 Caused by:
-#                   process didn't exit successfully: `<bin>` (signal: 6, ...)
-#               The cause line is crash-specific. `(exit status: 101)` is
-#               explicitly NOT counted here: 101 is libtest's own "tests
-#               failed" code, and treating it as a crash would redden every
-#               ordinary red — M-1 by another route.
-#   UNACCOUNTED cargo prints one `error: test failed, to rerun pass` per failing
-#               target. A failing target that produced no parsed failure block
-#               is unaccounted for, whatever cargo said about why.
+# orgasmic:TASK-STWVB.1.1.1.1.1
+# F-2/F-3. Round 5 unioned two derivations by CARDINALITY — `max(named,
+# failed-minus-accounted)`. Two defects followed: the cause line DECIDED a
+# crash instead of merely explaining one (so a target that printed its whole
+# failure list but exited non-101 was called a crash — a false RED), and the
+# two sets can describe DIFFERENT targets, so `max` could name the target that
+# reported while the one that actually died appeared nowhere.
 #
-# Doctests are excluded from both sides of the cardinality diff: a failing
-# doctest target prints `error: doctest failed`, which is not counted as a
-# failing test target, so its parsed block must not be counted as accounting
-# for one either.
+# Union by TARGET IDENTITY instead. One row per target cargo named as failed:
+#
+#   target   the `error: <kind> failed, to rerun pass `<target>`` spec
+#   matchbin the binary from the `Running …(bin)` / `Doc-tests` line that
+#            preceded it. This is the key the failure blocks are filed under,
+#            so it is the ONLY key the two sets can be joined on — MEASURED:
+#            cargo prints that path RELATIVE while the `Caused by:` line
+#            prints the same binary ABSOLUTE, so joining on the cause line
+#            would miss every match and call every target a crash.
+#   showbin  the cause line's path when cargo printed one, else matchbin.
+#            Display only.
+#   cause    cargo's `process didn't exit successfully: …` text, or empty
+#
+# A target is CRASHED iff its binary produced NO parsed failure block. The
+# cause line only explains the crash; it never decides it, so no exit status
+# can invent a red on a target that reported. Each reporting binary accounts
+# for at most one target, which keeps round 5's cardinality floor: N failing
+# targets against A reporting binaries still leaves N-A crashes even when
+# cargo printed no cause at all. Doctests need no special case — a failing
+# doctest target's block carries bin `doctests` and matches by identity.
+#
+# MEASURED on cargo 1.94.1 (TASK-STWVB.1.1.1.1.1, throwaway two-target crate):
+# an ordinary failing target gets a BARE `error: test failed, to rerun pass
+# `--lib``, with NO `Caused by:` block at all; only the aborting target got
+# one, `(signal: 6, SIGABRT: process abort signal)`. So on this cargo the
+# reporting/non-reporting split is the only signal that exists, and a cause
+# line is a bonus rather than the load-bearing test.
+TARGETS_TSV="$WORK/failing-targets.tsv"
 CRASH_TSV="$WORK/crashed.tsv"
+: > "$TARGETS_TSV"
 : > "$CRASH_TSV"
 
-awk -v out="$CRASH_TSV" '
+awk -v out="$TARGETS_TSV" '
+    function flush() {
+        if (pending != "") {
+            printf("%s\t%s\t%s\t%s\n", pending, pendbin,
+                   (pendshow == "" ? pendbin : pendshow), pendcause) >> out
+        }
+        pending = ""; pendbin = ""; pendshow = ""; pendcause = ""
+    }
+    /^[ \t]+Running / {
+        bin = $0; sub(/^.*\(/, "", bin); sub(/\).*$/, "", bin)
+        in_cause = 0
+        next
+    }
+    /^[ \t]+Doc-tests / { bin = "doctests"; in_cause = 0; next }
     /^error: [a-z]+ failed, to rerun pass `/ {
+        flush()
         t = $0
         sub(/^error: [a-z]+ failed, to rerun pass `/, "", t)
         sub(/`.*$/, "", t)
         pending = t
+        pendbin = (bin == "" ? "?" : bin)
+        pendshow = ""
+        pendcause = ""
         in_cause = 0
         next
     }
@@ -826,40 +868,74 @@ awk -v out="$CRASH_TSV" '
     in_cause && /^[ \t]+process didn.t exit successfully:/ {
         body = $0
         sub(/^[ \t]+process didn.t exit successfully:[ \t]*/, "", body)
-        binp = "?"
         cause = body
         if (body ~ /^`/) {
             binp = body
             sub(/^`/, "", binp)
             sub(/`.*$/, "", binp)
-            cause = body
+            pendshow = binp
             sub(/^`[^`]*`[ \t]*/, "", cause)
         }
-        # libtest exits 101 when tests fail; that is a reported red, not a
-        # crash. Anything else (a signal, or any other status) means the
-        # target died without reporting.
-        if (cause !~ /^\(exit status: 101\)/) {
-            printf("%s\t%s\t%s\n", pending, binp, cause) >> out
-        }
-        pending = ""
+        pendcause = cause
+        flush()
         in_cause = 0
         next
     }
     { in_cause = 0 }
+    END { flush() }
 ' "$SUITE_LOG"
 
-CRASH_NAMED=$(wc -l < "$CRASH_TSV" | tr -d ' ')
-TARGETS_FAILED=$(grep -c '^error: test failed, to rerun pass `' "$SUITE_LOG")
-TARGETS_ACCOUNTED=$(awk -F'\t' '
-    $2 != "" && $2 != "doctests" { if (!($2 in seen)) { seen[$2] = 1; n++ } }
+awk -F'\t' -v fails="$FAILURES_TSV" -v out="$CRASH_TSV" '
+    BEGIN {
+        while ((getline line < fails) > 0) {
+            n = split(line, f, "\t")
+            if (n >= 2 && f[2] != "") { reported[f[2]] = 1 }
+        }
+        close(fails)
+    }
+    {
+        matchbin = ($2 == "" ? "?" : $2)
+        if (matchbin != "?" && (matchbin in reported) && !(matchbin in claimed)) {
+            claimed[matchbin] = 1
+            next
+        }
+        printf("%s\t%s\t%s\n", $1, ($3 == "" ? matchbin : $3), $4) >> out
+    }
+' "$TARGETS_TSV"
+
+CRASH_COUNT=$(wc -l < "$CRASH_TSV" | tr -d ' ')
+TARGETS_FAILED=$(wc -l < "$TARGETS_TSV" | tr -d ' ')
+TARGETS_REPORTED=$(awk -F'\t' '
+    $2 != "" { if (!($2 in seen)) { seen[$2] = 1; n++ } }
     END { print n + 0 }' "$FAILURES_TSV")
-CRASH_UNACCOUNTED=$((TARGETS_FAILED - TARGETS_ACCOUNTED))
-[ "$CRASH_UNACCOUNTED" -gt 0 ] || CRASH_UNACCOUNTED=0
-if [ "$CRASH_NAMED" -ge "$CRASH_UNACCOUNTED" ]; then
-    CRASH_COUNT=$CRASH_NAMED
-else
-    CRASH_COUNT=$CRASH_UNACCOUNTED
-fi
+
+# ---------------------------------------------------------------------------
+# anomalous suite exit
+# ---------------------------------------------------------------------------
+#
+# orgasmic:TASK-STWVB.1.1.1.1.1
+# F-1. The B2 arm below guards on `FAIL_COUNT -eq 0`, and its own comment says
+# why: "cargo exits 101 whenever any test fails". That justifies exempting
+# 101 — it does NOT justify exempting every non-zero code, and `FAIL_COUNT` is
+# a leaky proxy for it. A cargo killed by the OS (jetsam under memory
+# pressure) or by an operator ^C exits 137/130 with the suite truncated; one
+# registered flake lifting FAIL_COUNT off zero then swallowed that exit
+# entirely and the run read `GREEN modulo 1 registered flake(s)` at exit 0.
+#
+# That is a crashed SUITE, not a crashed TARGET: cargo itself died, so there
+# is no failing target to diff and no cause line to read — CRASH_COUNT is 0 by
+# construction and the detector above cannot see it. The only witness is the
+# exit code. So guard on the CODE, not on FAIL_COUNT:
+#
+#   0, 101  ordinary. 101 is libtest's "tests failed", the flake path; it
+#           stays exempt, which is the whole of M-1.
+#   ?       pre-stamp `--classify` log; there is no exit to judge. Skip.
+#   else    the suite did not finish. RED whatever else classified.
+SUITE_EXIT_ANOMALOUS=0
+case "$SUITE_EXIT" in
+    '?' | 0 | 101) ;;
+    *) SUITE_EXIT_ANOMALOUS=1 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # classify
@@ -1128,6 +1204,18 @@ if [ "$CRASH_COUNT" -eq 0 ]; then
 else
     printf '  crashed  : %s target(s) died without reporting a failure list\n' "$CRASH_COUNT"
 fi
+# F-1: cargo's own exit gets a line of its own, always present, for the same
+# reason `crashed :` does — a truncated suite must not be something a reader
+# has to infer from a silence. 0 and 101 are the two ordinary codes; anything
+# else means the run did not finish.
+if [ "$SUITE_EXIT" = "?" ]; then
+    printf '  cargo    : exit not recorded (log predates the suite-exit stamp)\n'
+elif [ "$SUITE_EXIT_ANOMALOUS" -eq 1 ]; then
+    printf '  cargo    : exited %s — ANOMALOUS: neither 0 nor libtest 101, the suite did not finish\n' \
+        "$SUITE_EXIT"
+else
+    printf '  cargo    : exited %s (0 all green, 101 libtest reported failures)\n' "$SUITE_EXIT"
+fi
 printf '  ignored  : %s test(s) carrying #[ignore]\n' "$IGNORED_COUNT"
 if [ -z "$SKIPPED_TOOLS" ]; then
     printf '  environ  : complete — no tool requirement was waived\n'
@@ -1191,18 +1279,20 @@ if [ "$CRASH_COUNT" -gt 0 ]; then
         [ -n "$target" ] || continue
         printf '  %s\n' "$target"
         printf '      binary   : %s\n' "$binp"
-        printf '      why      : process did not exit successfully %s\n' "$cause"
+        if [ -n "$cause" ]; then
+            printf '      why      : process did not exit successfully %s\n' "$cause"
+        else
+            # Measured on cargo 1.94.1: an ordinary failing target gets no
+            # `Caused by:` block at all, so absence of a cause is normal and
+            # the reporting/non-reporting split is what identifies the crash.
+            printf '      why      : cargo named this target as failed and printed no cause\n'
+        fi
         printf '      note     : libtest dies with the process, so this target reported NO\n'
         printf '                 failures. It cannot be classified, registered, or excused.\n'
         printf '      next     : re-run this target alone and read %s\n' "$SUITE_LOG"
     done < "$CRASH_TSV"
-    if [ "$CRASH_UNACCOUNTED" -gt "$CRASH_NAMED" ]; then
-        printf '  %s further failing target(s) produced no parsed failure block:\n' \
-            "$((CRASH_UNACCOUNTED - CRASH_NAMED))"
-        printf '      failing  : %s target(s) per cargo; %s produced a failure list\n' \
-            "$TARGETS_FAILED" "$TARGETS_ACCOUNTED"
-        grep '^error: test failed, to rerun pass `' "$SUITE_LOG" | sed 's/^/      /'
-    fi
+    printf '  failing  : %s target(s) per cargo; %s produced a failure list\n' \
+        "$TARGETS_FAILED" "$TARGETS_REPORTED"
 fi
 
 if [ "$REAL_COUNT" -gt 0 ]; then
@@ -1240,6 +1330,22 @@ elif [ "$CRASH_COUNT" -gt 0 ]; then
     printf '. A binary died without reporting; nothing here is a trusted green. Read %s.\n' \
         "$SUITE_LOG"
     STATUS=$EXIT_REAL
+elif [ "$SUITE_EXIT_ANOMALOUS" -eq 1 ]; then
+    # orgasmic:TASK-STWVB.1.1.1.1.1
+    # F-1: cargo exited neither 0 nor 101, so the suite did not finish — a
+    # jetsam kill, an operator ^C, a truncated run. Fires WHATEVER ELSE
+    # classified, beside the crash arm and above HOST_DEGRADED, because a run
+    # that did not finish has no trusted green in it to modulo away. This is
+    # the arm B2's `FAIL_COUNT -eq 0` guard was silently standing in for, and
+    # getting wrong the moment one registered flake fired.
+    printf '\nverdict: RED — cargo exited %s: neither 0 nor libtest 101, so the suite did not finish' \
+        "$SUITE_EXIT"
+    if [ "$FAIL_COUNT" -gt 0 ]; then
+        printf ' (%s failure(s) classified above; a truncated run is not a trusted green)' \
+            "$FAIL_COUNT"
+    fi
+    printf '. Read %s.\n' "$SUITE_LOG"
+    STATUS=$EXIT_REAL
 elif [ "$REAL_COUNT" -gt 0 ]; then
     # F4: an alone-red failure is a code fact whatever the host was doing.
     # The host stamp above is reported alongside this verdict, not instead of it.
@@ -1262,6 +1368,12 @@ elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0
     # argument, the runner died before printing). Crashed targets are caught
     # above, from the log. Under --classify SUITE_EXIT is the stamped exit
     # when the log carries one, and `?` only for pre-stamp logs.
+    # TASK-STWVB.1.1.1.1.1 / F-1: the anomalous-exit arm above now owns every
+    # code outside {0, 101, ?} unconditionally, so the population that still
+    # reaches HERE is exactly `SUITE_EXIT == 101 && FAIL_COUNT == 0` — cargo
+    # said tests failed and listed none. The condition is left as written
+    # rather than narrowed to 101, so this stays a backstop and not a hole if
+    # the arm above is ever moved.
     printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
         "$SUITE_EXIT" "$SUITE_LOG"
     STATUS=$EXIT_REAL

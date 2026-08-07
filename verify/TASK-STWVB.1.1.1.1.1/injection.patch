@@ -1,0 +1,18 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -1330,7 +1330,13 @@
+     printf '. A binary died without reporting; nothing here is a trusted green. Read %s.\n' \
+         "$SUITE_LOG"
+     STATUS=$EXIT_REAL
+-elif [ "$SUITE_EXIT_ANOMALOUS" -eq 1 ]; then
++elif [ "$SUITE_EXIT_ANOMALOUS" -eq 1 ] && [ "$FAIL_COUNT" -eq 0 ]; then
++    # INJECTED (TASK-STWVB.1.1.1.1.1): put the anomalous suite exit back behind
++    # the FAIL_COUNT guard — F-1's exact shape, and the third round in which
++    # this guard produced the defect. One registered flake lifts FAIL_COUNT off
++    # zero, the arm is skipped, and a cargo killed at 137 falls through to
++    # `GREEN modulo N registered flake(s)` at exit 0 over a log the same run
++    # stamped `# orgasmic-suite-exit: 137`.
+     # orgasmic:TASK-STWVB.1.1.1.1.1
+     # F-1: cargo exited neither 0 nor 101, so the suite did not finish — a
+     # jetsam kill, an operator ^C, a truncated run. Fires WHATEVER ELSE

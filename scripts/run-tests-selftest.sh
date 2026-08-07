@@ -32,7 +32,14 @@ CASE=""
 # instead of failing it, and nothing noticed. Two tripwires now: the helper
 # below FAILS the started case when the log is missing, and the run asserts
 # the total case count so a case cannot go missing any other way either.
-EXPECTED_CASES=50
+#
+# orgasmic:TASK-STWVB.1.1.1.1.1
+# F-6: DERIVED, not declared. A constant ~1000 lines from the cases it counts
+# has to be edited to add one, and its failure message ("a case was added or
+# vanished") reads as an invitation to bump the number. Counting the `start`
+# calls in this file instead means the expectation moves with the cases and
+# only a case that STOPS RUNNING can trip it.
+EXPECTED_CASES=$(grep -c '^start "' "${BASH_SOURCE[0]}")
 live_log=""
 
 start() {
@@ -619,7 +626,13 @@ EOF
 # signature matches the registry, and the binary path is the green fixture
 # so isolation passes. The thirteen --classify flake cases cannot see M-1
 # (SUITE_EXIT="?" short-circuits the crashed-binary arm).
+# orgasmic:TASK-STWVB.1.1.1.1.1
+# The exit code is a parameter (default 101) so F-1's pair can be driven by
+# the SAME stub with only the code changed: 101 -> GREEN modulo 1 exit 0,
+# 137 -> RED exit 1. Same output, same flake, opposite verdict, and nothing
+# but the exit code differs between them.
 install_stub_cargo_registered_flake() {
+    local code="${1:-101}"
     mkdir -p "$TMP/bin"
     cat > "$TMP/bin/cargo" <<EOF
 #!/bin/sh
@@ -640,7 +653,7 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 LOG
-exit 101
+exit $code
 EOF
     chmod +x "$TMP/bin/cargo"
 }
@@ -1110,13 +1123,170 @@ check 1 "$RUN_EXIT" "$TMP/out.txt" \
     "(signal: 11, SIGSEGV: invalid memory reference)" \
     "verdict: RED — 1 crashed test target(s)"
 
+# -- TASK-STWVB.1.1.1.1.1 ---------------------------------------------------
+# orgasmic:TASK-STWVB.1.1.1.1.1
+#
+# F-1: `FAIL_COUNT -eq 0` guarded the B2 arm as a PROXY for "the exit is 101".
+# A cargo killed by the OS or by ^C exits 137/130 with the suite truncated,
+# and one registered flake lifting FAIL_COUNT off zero swallowed it whole:
+# `GREEN modulo 1 registered flake(s)`, exit 0, over a log stamped
+# `# orgasmic-suite-exit: 137`. The pair below is the same stub with only the
+# exit code changed, so the two verdicts cannot be explained by anything else.
+
+start "live path: same flake stub at exit 101 -> GREEN modulo flake, exit 0"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_registered_flake 101
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "cargo    : exited 101 (0 all green, 101 libtest reported failures)" \
+    "crashed  : none" \
+    "FLAKE (1)" \
+    "verdict: GREEN modulo 1 registered flake"
+
+start "live path: same flake stub at exit 137 -> RED exit 1, the exit is named"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_registered_flake 137
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+live_log="$TMP/work/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "cargo    : exited 137 — ANOMALOUS" \
+    "crashed  : none" \
+    "FLAKE (1)" \
+    "host     : calm" \
+    "verdict: RED — cargo exited 137"
+
+# The classified flake must not be able to excuse the truncation.
+start "a killed cargo never reads as GREEN modulo flake"
+if grep -qF 'verdict: GREEN modulo' "$TMP/out.txt"; then
+    fail_case "a cargo killed at exit 137 read as GREEN modulo a registered flake"
+else
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+fi
+
+start "killed-cargo log via --classify agrees: RED exit 1 (exit 137 is stamped)"
+if take_live_log; then
+    grep -qE '^# orgasmic-suite-exit: 137$' "$TMP/suite.log" \
+        || fail_case "live run wrote no suite-exit stamp for 137"
+    run --classify "$TMP/suite.log"
+    check 1 "$RUN_EXIT" "$TMP/out.txt" \
+        "FLAKE (1)" \
+        "verdict: RED — cargo exited 137"
+fi
+
+# The one population whose verdict this arm CHANGES rather than fixes: a
+# degraded host used to make a killed cargo INCONCLUSIVE (exit 4). The arm
+# sits above HOST_DEGRADED, beside the crash arm, for the reason settled
+# there — a truncated run has no trusted green in it to be inconclusive
+# about, and exit 4 and exit 1 both fail CI, so only the diagnosis differs.
+# Runs AFTER the --classify companion above: it reuses $TMP/work.
+start "killed cargo outranks a degraded host: RED exit 1, not INCONCLUSIVE"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_registered_flake 137
+PATH="$TMP/bin:$PATH" ORGASMIC_HOST_STATE_SAMPLE='load=9.0,syspolicyd_cpu=50.0,wall_s=10' \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "host     : DEGRADED" \
+    "verdict: RED — cargo exited 137"
+
+# F-4: the `(exit status: …)` cause shape had ZERO fixture coverage across all
+# 50 prior cases, and it is the shape the crash detector reads on the real
+# suite. Both forms, on a target that DID report its failures.
+#
+# The cause line names the binary by ABSOLUTE path while the `Running` line
+# names it relative — measured on cargo 1.94.1 — so these fixtures also pin
+# that the accounted/crashed join uses the `Running` path.
+
+start "ordinary flake red WITH an (exit status: 101) cause -> GREEN modulo 1, exit 0"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+cat >> "$TMP/suite.log" <<EOF
+
+Caused by:
+  process didn't exit successfully: \`/abs/target/debug/deps/stub-1234\` (exit status: 101)
+EOF
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : none" \
+    "FLAKE (1)" \
+    "verdict: GREEN modulo 1 registered flake"
+
+# F-2: the exclusion was `(exit status: 101)` ONLY, and it DECIDED the crash
+# rather than explaining one — so this same log with the status changed to 1
+# returned `RED — 1 crashed test target(s)` and printed "this target reported
+# NO failures" about a target whose failures are listed three lines above.
+start "same log with an (exit status: 1) cause is still GREEN modulo 1 — it reported"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+cat >> "$TMP/suite.log" <<EOF
+
+Caused by:
+  process didn't exit successfully: \`/abs/target/debug/deps/stub-1234\` (exit status: 1)
+EOF
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : none" \
+    "FLAKE (1)" \
+    "verdict: GREEN modulo 1 registered flake"
+
+# F-3: NAMED and UNACCOUNTED can describe DIFFERENT targets. `-p … --lib`
+# reported its failures and carries a non-101 cause; `--bin crashdemo`
+# genuinely vanished and carries no cause at all. Unioned by cardinality this
+# printed `--lib` — the target that DID report — and `--bin crashdemo`
+# appeared nowhere.
+start "reporting target + a different vanished target -> only the vanished one is named"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+write_log "$TMP/green" "tests::recovery_inventory_waits_for_atomic_claim_commit" "$LOAD_PANIC"
+cat >> "$TMP/suite.log" <<EOF
+
+Caused by:
+  process didn't exit successfully: \`/abs/target/debug/deps/stub-1234\` (exit status: 1)
+     Running unittests src/main.rs (target/debug/deps/crashdemo-0cce3376237212be)
+
+running 1 test
+error: test failed, to rerun pass \`--bin crashdemo\`
+
+error: 2 targets failed:
+    \`-p orgasmic-daemon --lib\`
+    \`--bin crashdemo\`
+EOF
+run --classify "$TMP/suite.log"
+check 1 "$RUN_EXIT" "$TMP/out.txt" \
+    "crashed  : 1 target(s) died without reporting a failure list" \
+    "CRASHED (1)" \
+    "--bin crashdemo" \
+    "cargo named this target as failed and printed no cause" \
+    "failing  : 2 target(s) per cargo; 1 produced a failure list" \
+    "verdict: RED — 1 crashed test target(s)"
+
+start "the reporting target is not named as a crash"
+if grep -qF '  -p orgasmic-daemon --lib' "$TMP/out.txt"; then
+    fail_case "a target that reported its failure list was printed as crashed"
+else
+    printf 'ok   %s\n' "$CASE"
+    PASSED=$((PASSED + 1))
+fi
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
 # R-5: a case that stops running must not be able to look like a pass.
+# F-6: the expectation is the number of `start` calls in this file, so adding
+# a case needs no bookkeeping and this can only fire on a case that started
+# and never reported.
 TOTAL_CASES=$((PASSED + FAILED))
 if [ "$TOTAL_CASES" -ne "$EXPECTED_CASES" ]; then
-    printf 'FAIL case count: ran %s, expected %s — a case was added or vanished\n' \
+    printf 'FAIL case count: %s case(s) reported, but this file opens %s of them — a case started and never reported\n' \
         "$TOTAL_CASES" "$EXPECTED_CASES"
     exit 1
 fi
