@@ -966,6 +966,39 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     let _ = review_last;
 
     let review_started_tx = started_tx_from_dispatch_stdout(&review_dispatch_stdout);
+    // TASK-QGWK7.1.1 M-5: `:REPORT_PATH:` is committed to the tx log, so an
+    // absolute path with no project-relative form is refused HERE, in
+    // `cmd_dispatch_close`, before anything is destroyed — not silently written
+    // into history for every other clone to read.
+    let absolute_report_path = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-REVIEW",
+            "--started-tx",
+            &review_started_tx,
+            "--status",
+            "done",
+            "--property",
+            "VERDICT=clean",
+            "--property",
+            "REPORT_PATH=/tmp/task-review-report.md",
+            "--reviewed-diff",
+            "abc123..def456",
+            "--reason",
+            "review clean",
+        ],
+    );
+    assert!(
+        absolute_report_path.contains("project-relative"),
+        "an absolute REPORT_PATH outside the project must be refused by name: \
+         {absolute_report_path}"
+    );
     let review_close_stdout = run_orgasmic(
         &home,
         &running,
@@ -985,7 +1018,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "--property",
             "FINDINGS_TOTAL=0",
             "--property",
-            "REPORT_PATH=/tmp/task-review-report.md",
+            &format!(
+                "REPORT_PATH={}",
+                project_root.join("docs/task-review-report.md").display()
+            ),
             "--reviewed-diff",
             "abc123..def456",
             "--reason",
@@ -998,8 +1034,20 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(tx_raw.contains(":TYPE:         reviewer.done"));
     assert!(tx_raw.contains(":VERDICT:      clean"));
     assert!(tx_raw.contains(":FINDINGS_TOTAL: 0"));
-    assert!(tx_raw.contains(":REPORT_PATH:  /tmp/task-review-report.md"));
+    // Relativized on the way in, not committed as the manager typed it.
+    assert!(tx_raw.contains(":REPORT_PATH:  docs/task-review-report.md"));
     assert!(tx_raw.contains(":REVIEWED_DIFF: abc123..def456"));
+    // TASK-QGWK7.1.1 M-5/M-8: the acceptance sentence is "project-relative on
+    // EVERY emitter", so assert it across the whole ledger this run produced —
+    // finalize, close and the manager-supplied property alike — rather than
+    // only on the helper in isolation.
+    for line in tx_raw.lines().filter(|line| line.contains(":REPORT_PATH:")) {
+        let value = line.split_once(":REPORT_PATH:").unwrap().1.trim();
+        assert!(
+            !value.starts_with('/'),
+            "no emitter may commit a machine-specific absolute REPORT_PATH: {line}"
+        );
+    }
 
     let second_brief = codex_dir.join("task-dispatch-second-brief.md");
     write(&second_brief, "second implementer brief");
@@ -2660,7 +2708,7 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
             "--property",
             "VERDICT=has-issues",
             "--property",
-            "REPORT_PATH=/tmp/task-review-issues.md",
+            "REPORT_PATH=docs/task-review-issues.md",
             "--property",
             "RECOMMENDED_SUBTASKS=TASK-REVIEW-ISSUES.1",
         ],
@@ -2742,7 +2790,7 @@ async fn reviewer_close_verdict_ship_closes_done() {
             "--property",
             "VERDICT=ship",
             "--property",
-            "REPORT_PATH=/tmp/task-ship-clean.md",
+            "REPORT_PATH=docs/task-ship-clean.md",
             "--property",
             "RECOMMENDED_SUBTASKS=-",
         ],
@@ -2819,7 +2867,7 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
             "--property",
             "VERDICT=has-issues",
             "--property",
-            "REPORT_PATH=/tmp/task-has-issues.md",
+            "REPORT_PATH=docs/task-has-issues.md",
         ],
     );
     assert_task_stage(
@@ -4474,6 +4522,50 @@ async fn exact_close_refuses_destructive_cleanup_beneath_an_unassociated_live_ru
     assert!(
         live_run_ids(&home, &running, &project_root, &path_env).contains(&live_run_id),
         "the refused close must not have released the live run either"
+    );
+
+    // TASK-QGWK7.1 F-3, wired: `--no-worktree-remove` is not an escape hatch.
+    // It promotes, and promotion UNLINKS the tmp artifacts, so it takes the
+    // same fence. TASK-QGWK7.1.1 M-8: the predicate had only an in-isolation
+    // test, which cannot fail if the call site stops consulting it — this
+    // enters `cmd_dispatch_close` and watches the artifacts survive.
+    assert!(PathBuf::from(&last_path).exists());
+    let no_remove = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-CLEANUP",
+            "--started-tx",
+            "tx-start-ghost",
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--no-worktree-remove",
+            "--reason",
+            "promote-only close against a stale run id",
+        ],
+    );
+    let no_remove_stderr = String::from_utf8_lossy(&no_remove.stderr);
+    assert!(
+        !no_remove.status.success(),
+        "--no-worktree-remove still unlinks tmp artifacts, so it must take the same fence\
+         \nstdout={}\nstderr={no_remove_stderr}",
+        String::from_utf8_lossy(&no_remove.stdout)
+    );
+    assert!(
+        no_remove_stderr.contains("refusing to clean up dispatch")
+            && no_remove_stderr.contains(&live_run_id),
+        "the promote-only refusal must name the live run that blocked it: {no_remove_stderr}"
+    );
+    assert!(
+        PathBuf::from(&last_path).exists(),
+        "the refused promote-only close must not have unlinked the live worker's report"
     );
 
     let _ = running.shutdown.send(());

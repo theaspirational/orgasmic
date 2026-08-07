@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-QGWK7.1.1`.
+#
+# Pins M-0: a `dispatch-close` followed by `git merge --no-ff` — the order the
+# review gate's own refusal message prescribes — must still merge. Under the
+# injection the promoted record is left staged and the merge refuses.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch -- --exact reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge

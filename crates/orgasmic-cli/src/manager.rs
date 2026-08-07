@@ -735,7 +735,15 @@ struct SalvageCommit {
 struct WorktreeRemovalOutcome {
     removed: bool,
     salvage: Option<SalvageCommit>,
+    /// A failure of the REMOVAL itself. Callers may classify the close as
+    /// `worktree_failed` on this — and only on this.
     error: Option<String>,
+    /// A failure of promoting/persisting the worker report AFTER a successful
+    /// removal (TASK-QGWK7.1.1 M-1). It rides its own channel because folding
+    /// it into `error` made a `git add` failure report `worktree_failed` for a
+    /// worktree that WAS removed, which then silently suppressed every
+    /// `--branch-delete` arm and kept the branch with nothing naming it.
+    report_error: Option<String>,
     report_path: Option<String>,
 }
 
@@ -935,9 +943,12 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
+pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-close")?;
     let project_id = read_project_id(&project_root)?;
+    // orgasmic:TASK-QGWK7.1.1 — M-5: refuse before anything is destroyed, so a
+    // fixable typo costs nothing.
+    normalize_report_path_property(&project_root, &mut args.properties)?;
     let tasks = normalize_tasks(args.task.clone())?;
     // orgasmic:task_EP3H1 — before anything else, including the already-closed
     // no-op below: a re-run of a torn close must finish the transition it lost
@@ -2183,6 +2194,51 @@ fn durable_report_path_for_finalize(
         .find(|record| record.run_ids.iter().any(|id| id == run_id))
         .map(|record| record.tx_id)?;
     orgasmic_core::dispatch_record_report_rel(&started_tx).ok()
+}
+
+/// Make a manager-supplied `--property REPORT_PATH=` project-relative, or
+/// refuse the close (TASK-QGWK7.1.1 M-5).
+///
+/// This is the fourth `:REPORT_PATH:` emitter and the one the F-6 fix missed:
+/// the other three relativize or emit nothing, while this one won over them
+/// unvalidated, so a manager who pasted an absolute path wrote a
+/// machine-specific `/Users/...` into a committed tx that other clones read.
+/// A path under the project root is rewritten; one outside it has no relative
+/// form, so the close says so rather than committing it or silently dropping
+/// the manager's curated pointer.
+fn normalize_report_path_property(
+    project_root: &Path,
+    properties: &mut [(String, String)],
+) -> Result<()> {
+    for (key, value) in properties.iter_mut() {
+        if key != "REPORT_PATH" {
+            continue;
+        }
+        let path = Path::new(value.as_str());
+        if path.is_relative() {
+            continue;
+        }
+        // Through `normalize_path` on both sides: a manager pastes the path a
+        // shell printed, and on macOS that is `/var/...` for a project root
+        // resolved as `/private/var/...`.
+        let rel = path
+            .strip_prefix(project_root)
+            .map(Path::to_path_buf)
+            .or_else(|_| {
+                normalize_path(path)
+                    .strip_prefix(normalize_path(project_root))
+                    .map(Path::to_path_buf)
+            });
+        match rel {
+            Ok(rel) => *value = rel.display().to_string(),
+            Err(_) => bail!(
+                "--property REPORT_PATH={value} is outside the project root ({}); :REPORT_PATH: \
+                 is committed to the tx log, so it must be project-relative",
+                project_root.display()
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// Project-relative fallback for finalize `:REPORT_PATH:` (TASK-QGWK7.1 F-6).
@@ -3491,6 +3547,7 @@ fn reclaim_managed_worktree(
         removed: false,
         salvage: None,
         error: Some(error),
+        report_error: None,
         report_path: None,
     };
 
@@ -3521,6 +3578,7 @@ fn reclaim_managed_worktree(
                 removed: true,
                 salvage: None,
                 error: None,
+                report_error: None,
                 report_path: None,
             },
             Err(err) => kept(err.to_string()),
@@ -3545,6 +3603,7 @@ fn reclaim_managed_worktree(
                             removed: false,
                             salvage: None,
                             error: Some(format!("salvage failed, worktree kept: {err}")),
+                            report_error: None,
                             report_path: None,
                         };
                     }
@@ -3559,6 +3618,7 @@ fn reclaim_managed_worktree(
                          cannot be salvaged; kept"
                             .to_string(),
                     ),
+                    report_error: None,
                     report_path: None,
                 };
             }
@@ -3568,6 +3628,7 @@ fn reclaim_managed_worktree(
                 removed: false,
                 salvage: None,
                 error: Some(format!("could not read worktree status: {err}")),
+                report_error: None,
                 report_path: None,
             };
         }
@@ -3587,6 +3648,7 @@ fn reclaim_managed_worktree(
                 removed: false,
                 salvage,
                 error: Some(format!("git worktree remove: {err}")),
+                report_error: None,
                 report_path: None,
             };
         }
@@ -3600,6 +3662,7 @@ fn reclaim_managed_worktree(
                 String::from_utf8_lossy(&output.stderr).trim(),
                 String::from_utf8_lossy(&output.stdout).trim()
             )),
+            report_error: None,
             report_path: None,
         };
     }
@@ -3610,6 +3673,7 @@ fn reclaim_managed_worktree(
         removed: true,
         salvage,
         error: None,
+        report_error: None,
         report_path: None,
     }
 }
@@ -3818,6 +3882,7 @@ fn worktree_prune_ungated(home: &Home, args: WorktreePruneArgs) -> Result<()> {
                 removed: false,
                 salvage: None,
                 error: Some("the managed worktree root was not anchored".to_string()),
+                report_error: None,
                 report_path: None,
             },
         };
@@ -4273,6 +4338,22 @@ fn worktree_reservation_task_id(name: &str) -> String {
     }
 }
 
+/// Whether this close mutates dispatch artifacts and therefore needs the
+/// daemon-owned close guard (TASK-1T3FZ, TASK-QGWK7.1 F-3).
+///
+/// The guard reserves a WORKTREE, so a record without one cannot be fenced by
+/// it and this must not claim otherwise (TASK-QGWK7.1.1 M-6): the predicate
+/// used to be true for a `LAST_PATH` + `STDOUT_PATH` record with no `WORKTREE`
+/// while [`reserve_close_guard`] returned `Ok(None)` for exactly that shape —
+/// the fence was requested, silently absent, and the promote arm unlinked
+/// anyway. Promotion for such a record still takes the in-process cleanup lock
+/// (`promote_dispatch_artifacts_in_place`); what it cannot have is the
+/// cross-process reservation, and saying so is the honest state.
+fn close_needs_artifact_fence(remove_worktree: bool, open: &DispatchRecord) -> bool {
+    open.worktree.is_some()
+        && (remove_worktree || (open.last_path.is_some() && open.stdout_path.is_some()))
+}
+
 /// Take the daemon-owned worktree reservation a destructive `dispatch-close`
 /// must hold across its liveness decision and its removal (TASK-1T3FZ), and
 /// turn a refusal into the operator-facing error.
@@ -4280,12 +4361,6 @@ fn worktree_reservation_task_id(name: &str) -> String {
 /// `Ok(None)` means there is no worktree to reserve — the record has no
 /// `WORKTREE` property, so cleanup will report `worktree_missing` and destroy
 /// nothing.
-/// Whether this close mutates dispatch artifacts and therefore needs the
-/// daemon-owned close guard (TASK-1T3FZ, TASK-QGWK7.1 F-3).
-fn close_needs_artifact_fence(remove_worktree: bool, open: &DispatchRecord) -> bool {
-    remove_worktree || (open.last_path.is_some() && open.stdout_path.is_some())
-}
-
 async fn reserve_close_guard(
     client: &DaemonClient,
     project_id: &str,
@@ -5092,6 +5167,7 @@ fn remove_worktree_if_present(
             removed: false,
             salvage: None,
             error: None,
+            report_error: None,
             report_path: None,
         });
     }
@@ -5182,6 +5258,7 @@ fn remove_worktree_required_with_hook(
                 removed: false,
                 salvage,
                 error: Some(format!("git worktree remove {}: {err}", path.display())),
+                report_error: None,
                 report_path: None,
             });
         }
@@ -5195,6 +5272,7 @@ fn remove_worktree_required_with_hook(
                 String::from_utf8_lossy(&output.stderr),
                 String::from_utf8_lossy(&output.stdout)
             )),
+            report_error: None,
             report_path: None,
         });
     }
@@ -5204,20 +5282,22 @@ fn remove_worktree_required_with_hook(
     // orgasmic:TASK-QGWK7 — promote the report into a tracked path keyed by
     // the dispatch generation, rather than deleting it with the tmp artifacts.
     // Failed-dispatch rollback passes `started_tx: None` and still deletes.
-    let (report_path, error) = match started_tx {
+    let (report_path, report_error, error) = match started_tx {
         Some(started_tx) => {
-            match promote_and_stage_dispatch_record(&artifacts, project_root, started_tx, path) {
-                Ok(outcome) => (outcome.report_path, outcome.error),
+            match promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, path) {
+                Ok(outcome) => (outcome.report_path, outcome.error, None),
                 Err(err) => (
                     None,
                     Some(format!(
                         "promote dispatch report for {}: {err}",
                         path.display()
                     )),
+                    None,
                 ),
             }
         }
         None => (
+            None,
             None,
             orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
                 .err()
@@ -5228,6 +5308,7 @@ fn remove_worktree_required_with_hook(
         removed: true,
         salvage,
         error,
+        report_error,
         report_path,
     })
 }
@@ -5424,6 +5505,15 @@ fn cleanup_dispatch(
                             worktree_failed = true;
                             errors.push(format!("worktree: {err}"));
                         }
+                        // orgasmic:TASK-QGWK7.1.1 — M-1: a report that could
+                        // not be promoted or committed is reported, never
+                        // classified as a worktree failure. Both cleanup arms
+                        // now agree on this: `report: <why>` in `CLEANUP_ERROR`
+                        // and a `partial` status, with `--branch-delete` left
+                        // free to fire on the worktree that really was removed.
+                        if let Some(err) = outcome.report_error {
+                            errors.push(format!("report: {err}"));
+                        }
                     }
                     Err(err) => {
                         worktree_failed = true;
@@ -5530,14 +5620,14 @@ fn promote_dispatch_artifacts_in_place(
             Some(stdout_path),
         )?,
     };
-    promote_and_stage_dispatch_record(&artifacts, project_root, started_tx, last_path)
+    promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, last_path)
 }
 
-/// Promote validated artifacts, then `git add` the destination directory so
-/// durability does not depend on which `git add` form a manager happens to use
-/// (TASK-QGWK7.1 F-1). Staging failure is reported through `CLEANUP_ERROR` and
-/// never fails the close.
-fn promote_and_stage_dispatch_record(
+/// Promote validated artifacts, then put the promoted directory into git
+/// history so a fresh clone can read it (TASK-QGWK7.1 F-1) without leaving the
+/// index dirty (TASK-QGWK7.1.1 M-0). A failure here is reported through
+/// `CLEANUP_ERROR` and never fails the close.
+fn promote_and_persist_dispatch_record(
     artifacts: &orgasmic_core::DispatchAttemptArtifacts,
     project_root: &Path,
     started_tx: &str,
@@ -5546,39 +5636,224 @@ fn promote_and_stage_dispatch_record(
     let mut outcome =
         orgasmic_core::promote_validated_dispatch_attempt(artifacts, project_root, started_tx)?;
     if outcome.report_path.is_some() {
-        if let Err(err) = stage_promoted_dispatch_record(project_root, started_tx) {
-            let stage_err = format!(
-                "stage promoted dispatch record for {}: {err}",
+        if let Err(err) = commit_promoted_dispatch_record(project_root, started_tx) {
+            let commit_err = format!(
+                "commit promoted dispatch record for {}: {err}",
                 label_path.display()
             );
             outcome.error = Some(match outcome.error.take() {
-                Some(prior) => format!("{prior}; {stage_err}"),
-                None => stage_err,
+                Some(prior) => format!("{prior}; {commit_err}"),
+                None => commit_err,
             });
         }
     }
     Ok(outcome)
 }
 
-/// Stage `.orgasmic/dispatch-records/<started_tx>/` into the git index.
-/// Staging only — when to commit stays with the manager.
-// orgasmic:TASK-QGWK7.1
-fn stage_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+/// Put `.orgasmic/dispatch-records/<started_tx>/` into git history as a
+/// dedicated, path-scoped commit.
+///
+/// TASK-QGWK7.1 shipped this as `git add` alone. That met "in the index" but
+/// broke the very next step of the flow the review gate prescribes: a staged
+/// path — ANY staged path, not just one the merge touches — makes `git merge`
+/// refuse with "your local changes would be overwritten", so a close followed
+/// by a merge failed (TASK-QGWK7.1.1 M-0). Committing is what makes the
+/// promised property real: a fresh clone can read the record, and the index is
+/// clean afterwards so the merge that follows the close still runs.
+///
+/// The commit is built through a THROWAWAY index seeded from `HEAD`, so it can
+/// contain nothing but the record directory — whatever else the manager has
+/// staged is neither committed nor disturbed. Deciding when to commit the
+/// manager's own change still belongs to the manager; this commits only
+/// orgasmic's own bookkeeping, under a path no worker change can occupy.
+// orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
+fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+
     let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
-    let output = Command::new("git")
-        .args(["add", "--"])
-        .arg(&dest_dir)
-        .current_dir(project_root)
-        .output()
-        .map_err(|err| err.to_string())?;
+    let head = git_capture(project_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
+    git_capture(
+        project_root,
+        [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
+    )?;
+    // A thinned record is worth keeping and worth naming; it is not a reason to
+    // keep nothing. Commit either way and report the delta.
+    let thinned = verify_dispatch_record_staged(project_root, &dest_dir);
+    match write_dispatch_record_commit(project_root, &dest_dir, &head) {
+        Ok(()) => thinned,
+        Err(err) => {
+            // Never leave the record staged-but-uncommitted: that is exactly
+            // the state that blocks the manager's next merge. Put the index
+            // back to HEAD for this path. The promoted files stay on disk
+            // either way — the close reports why they are not in history yet.
+            let _ = git_capture(
+                project_root,
+                [
+                    OsStr::new("restore"),
+                    OsStr::new("--staged"),
+                    OsStr::new("--"),
+                    dest_dir.as_os_str(),
+                ],
+            );
+            Err(err)
+        }
+    }
+}
+
+/// Prove every promoted file actually reached the index (TASK-QGWK7.1.1 M-2).
+///
+/// `git add -- <dir>` exits 0 on a directory that is only PARTIALLY ignored and
+/// silently stages the rest, so a project rule as ordinary as `*.log` would
+/// drop `stdout.log` from the record while the close reported success. Compare
+/// what is on disk against what `git ls-files` reports and name the delta.
+fn verify_dispatch_record_staged(project_root: &Path, dest_dir: &Path) -> Result<(), String> {
+    let rel_dir = dest_dir
+        .strip_prefix(project_root)
+        .map_err(|_| "promoted record is not under the project root".to_string())?;
+    let mut expected: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(dest_dir).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        if entry.file_type().map_err(|err| err.to_string())?.is_file() {
+            expected.push(
+                rel_dir
+                    .join(entry.file_name())
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    let listed = git_capture(
+        project_root,
+        [
+            std::ffi::OsStr::new("ls-files"),
+            std::ffi::OsStr::new("--"),
+            dest_dir.as_os_str(),
+        ],
+    )?;
+    let tracked: std::collections::HashSet<&str> = listed.lines().collect();
+    let mut missing: Vec<&str> = expected
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !tracked.contains(path))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    missing.sort_unstable();
+    Err(format!(
+        "git add did not stage every promoted file (a project ignore rule is thinning the \
+         record): {}",
+        missing.join(", ")
+    ))
+}
+
+/// Write the record-only commit and advance the current branch to it.
+///
+/// Plumbing rather than `git commit` so the commit can be scoped to one
+/// directory without touching the manager's staged work, and so no hook-owning
+/// porcelain path runs inside a close. `update-ref` is given the old value, so
+/// a HEAD that moved underneath this close refuses instead of clobbering.
+fn write_dispatch_record_commit(
+    project_root: &Path,
+    dest_dir: &Path,
+    head: &str,
+) -> Result<(), String> {
+    use std::ffi::OsStr;
+
+    let head_tree_rev = format!("{head}^{{tree}}");
+    let head_tree = git_capture(
+        project_root,
+        ["rev-parse", "--verify", head_tree_rev.as_str()],
+    )?;
+    let git_dir = git_capture(project_root, ["rev-parse", "--absolute-git-dir"])?;
+    let index_path =
+        PathBuf::from(git_dir).join(format!("orgasmic-record-index-{}", std::process::id()));
+    let _ = std::fs::remove_file(&index_path);
+    let built = (|| {
+        let scratch = [("GIT_INDEX_FILE", index_path.as_os_str())];
+        git_capture_env(project_root, ["read-tree", head], scratch)?;
+        git_capture_env(
+            project_root,
+            [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
+            scratch,
+        )?;
+        let tree = git_capture_env(project_root, ["write-tree"], scratch)?;
+        if tree == head_tree {
+            // A replayed close of the same generation: the record is already
+            // in history. Committing again would only add an empty commit.
+            return Ok(());
+        }
+        let message = format!(
+            "chore(orgasmic): dispatch record {}",
+            dest_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        );
+        let commit = git_capture(
+            project_root,
+            [
+                "commit-tree",
+                "-p",
+                head,
+                "-m",
+                message.as_str(),
+                tree.as_str(),
+            ],
+        )?;
+        git_capture(
+            project_root,
+            [
+                "update-ref",
+                "-m",
+                "orgasmic dispatch record",
+                "HEAD",
+                commit.as_str(),
+                head,
+            ],
+        )?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&index_path);
+    built
+}
+
+fn git_capture<I, S>(project_root: &Path, args: I) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let no_env: [(&str, &std::ffi::OsStr); 0] = [];
+    git_capture_env(project_root, args, no_env)
+}
+
+fn git_capture_env<'a, I, S, E>(project_root: &Path, args: I, env: E) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+    E: IntoIterator<Item = (&'a str, &'a std::ffi::OsStr)>,
+{
+    let mut command = Command::new("git");
+    command.current_dir(project_root);
+    let mut label = String::new();
+    for (index, arg) in args.into_iter().enumerate() {
+        if index == 0 {
+            label = arg.as_ref().to_string_lossy().into_owned();
+        }
+        command.arg(arg);
+    }
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(format!(
-            "git add failed: {}{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
+            "git {label} failed: {}{}",
+            String::from_utf8_lossy(&output.stderr).trim(),
+            String::from_utf8_lossy(&output.stdout).trim()
         ));
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn push_cleanup_extra(extra: &mut Vec<(String, String)>, cleanup: &CleanupOutcome) {
@@ -9164,6 +9439,197 @@ mod tests {
         );
     }
 
+    fn git_ok(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    /// TASK-QGWK7.1.1 M-0. TASK-QGWK7.1 met "the record is in the index" with
+    /// `git add` alone, and a staged path — any staged path — makes `git merge`
+    /// refuse. That broke the exact order the review gate's refusal message
+    /// prescribes: close the reviewer, then merge. A record in HISTORY is what
+    /// a fresh clone can read AND what leaves the following merge able to run.
+    // orgasmic:TASK-QGWK7.1.1
+    #[test]
+    fn dispatch_close_commits_promoted_record_so_the_next_merge_still_runs() {
+        let fixture = dispatch_cleanup_fixture("task-merge");
+        let base = String::from_utf8_lossy(
+            &Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .current_dir(&fixture.root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        git_ok(&fixture.root, &["checkout", "-q", "-b", "task-merge-side"]);
+        std::fs::write(fixture.root.join("side.txt"), "side\n").unwrap();
+        git_ok(&fixture.root, &["add", "side.txt"]);
+        git_ok(&fixture.root, &["commit", "-qm", "side"]);
+        git_ok(&fixture.root, &["checkout", "-q", &base]);
+        std::fs::write(&fixture.last, "merge-safe report\n").unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-MERGE");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
+        let report_path = cleanup
+            .report_path
+            .as_deref()
+            .expect("close must name a promoted REPORT_PATH");
+
+        // Criterion 2 of the parent: a FRESH CLONE can read the record, which
+        // needs it in a commit reachable from the branch, not merely staged.
+        let in_history = Command::new("git")
+            .args(["cat-file", "-e", &format!("HEAD:{report_path}")])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            in_history.status.success(),
+            "the promoted record must be committed so a fresh clone can read it: {}",
+            String::from_utf8_lossy(&in_history.stderr)
+        );
+
+        let merge = Command::new("git")
+            .args(["merge", "--no-ff", "-m", "merge worker", "task-merge-side"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            merge.status.success(),
+            "a close must leave the merge that follows it able to run; git merge said: {}{}",
+            String::from_utf8_lossy(&merge.stderr),
+            String::from_utf8_lossy(&merge.stdout)
+        );
+    }
+
+    /// TASK-QGWK7.1.1 M-1. A `git add` that loses to a concurrent state chore
+    /// holding `.git/index.lock` used to set `worktree_failed` for a worktree
+    /// that WAS removed, and every `--branch-delete` arm requires
+    /// `!worktree_failed` — so no arm fired, the branch was silently retained,
+    /// and `branch_failed` stayed false with no error naming it.
+    // orgasmic:TASK-QGWK7.1.1
+    #[test]
+    fn record_persist_failure_is_reported_without_mis_classifying_the_close() {
+        let fixture = dispatch_cleanup_fixture("task-lockout");
+        let open = dispatch_cleanup_record(&fixture, "TASK-LOCKOUT");
+        // The concrete trigger from the review: a lock this close does not own.
+        std::fs::write(fixture.root.join(".git/index.lock"), "").unwrap();
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, true);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_ne!(
+            cleanup.status,
+            CleanupStatus::WorktreeFailed,
+            "a record-persist failure must not be reported as a worktree failure: {error}"
+        );
+        assert_eq!(cleanup.status, CleanupStatus::Partial, "{error}");
+        assert!(
+            error.starts_with("report:"),
+            "both cleanup arms report this class of failure as `report:`: {error}"
+        );
+        assert!(
+            !fixture.worktree.exists(),
+            "the worktree really was removed; the close must say so"
+        );
+        assert!(
+            resolve_branch_oid(&fixture.root, &fixture.branch)
+                .unwrap()
+                .is_none(),
+            "--branch-delete must still fire: silently keeping the branch is what M-1 cost"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-lockout/last.txt")
+                .exists(),
+            "the report itself is never the casualty of a failed persist"
+        );
+    }
+
+    /// TASK-QGWK7.1.1 M-2. `git add -- <dir>` exits 0 on a directory that is
+    /// only PARTIALLY ignored and stages the rest, so a rule as ordinary as
+    /// `*.log` would thin the record while the close reported success.
+    // orgasmic:TASK-QGWK7.1.1
+    #[test]
+    fn partially_ignored_record_directory_is_reported_not_silently_thinned() {
+        let fixture = dispatch_cleanup_fixture("task-ignored");
+        std::fs::write(fixture.root.join(".gitignore"), "*.log\n").unwrap();
+        git_ok(&fixture.root, &["add", ".gitignore"]);
+        git_ok(&fixture.root, &["commit", "-qm", "ignore logs"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-IGNORED");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(cleanup.status, CleanupStatus::Partial, "{error}");
+        assert!(
+            error.contains("stdout.log") && error.contains("ignore"),
+            "the close must name the entry the ignore rule dropped: {error}"
+        );
+        // What did land is still committed — a thinned record is worth keeping
+        // and worth naming, not worth discarding.
+        let in_history = Command::new("git")
+            .args([
+                "cat-file",
+                "-e",
+                "HEAD:.orgasmic/dispatch-records/tx-start-task-ignored/last.txt",
+            ])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            in_history.status.success(),
+            "the entries that were not ignored must still reach history"
+        );
+    }
+
+    /// TASK-QGWK7.1.1 M-5: `:REPORT_PATH:` is committed to the tx log, so the
+    /// manager-supplied route must be project-relative like the other three.
+    // orgasmic:TASK-QGWK7.1.1
+    #[test]
+    fn manager_supplied_report_path_property_is_project_relative() {
+        let project_root = PathBuf::from("/tmp/orgasmic-report-path-probe");
+        let mut inside = vec![(
+            "REPORT_PATH".to_string(),
+            project_root
+                .join(".orgasmic/dispatch-records/tx-1/last.txt")
+                .display()
+                .to_string(),
+        )];
+        normalize_report_path_property(&project_root, &mut inside).unwrap();
+        assert_eq!(
+            inside[0].1, ".orgasmic/dispatch-records/tx-1/last.txt",
+            "an absolute path under the project must be relativized, not committed as-is"
+        );
+
+        let mut already_relative = vec![("REPORT_PATH".to_string(), "docs/review.md".to_string())];
+        normalize_report_path_property(&project_root, &mut already_relative).unwrap();
+        assert_eq!(already_relative[0].1, "docs/review.md");
+
+        let mut outside = vec![(
+            "REPORT_PATH".to_string(),
+            "/var/tmp/elsewhere/report.md".to_string(),
+        )];
+        let err = normalize_report_path_property(&project_root, &mut outside)
+            .expect_err("a path with no project-relative form must be refused, not committed");
+        assert!(
+            err.to_string().contains("project-relative"),
+            "the refusal must say why: {err}"
+        );
+    }
+
     // orgasmic:TASK-QGWK7.1
     #[test]
     fn no_worktree_remove_with_artifacts_needs_close_guard() {
@@ -9181,6 +9647,16 @@ mod tests {
             !close_needs_artifact_fence(false, &bare),
             "a no-op close with nothing to promote must not take the guard"
         );
+        // TASK-QGWK7.1.1 M-6: the guard reserves a WORKTREE, so a record
+        // without one cannot have it. Claiming the fence for that shape made
+        // it requested and silently absent.
+        let mut worktreeless = open.clone();
+        worktreeless.worktree = None;
+        assert!(
+            !close_needs_artifact_fence(false, &worktreeless),
+            "the predicate must not claim a fence reserve_close_guard cannot take"
+        );
+        assert!(!close_needs_artifact_fence(true, &worktreeless));
     }
 
     // orgasmic:TASK-QGWK7.1

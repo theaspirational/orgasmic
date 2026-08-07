@@ -1,17 +1,18 @@
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -5668,36 +5668,11 @@ fn promote_and_persist_dispatch_record(
- /// orgasmic's own bookkeeping, under a path no worker change can occupy.
- // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
+@@ -5670,34 +5670,16 @@ fn promote_and_persist_dispatch_record(
  fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
--    use std::ffi::OsStr;
--
--    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+     use std::ffi::OsStr;
+ 
++    // INJECTED (TASK-QGWK7.1.1 M-0): stage the promoted record and stop there,
++    // exactly as TASK-QGWK7.1 shipped it. A staged path makes the `git merge`
++    // that the review gate tells the manager to run next refuse.
+     let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
 -    let head = git_capture(project_root, ["rev-parse", "--verify", "HEAD^{commit}"])?;
--    git_capture(
--        project_root,
--        [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
--    )?;
+     git_capture(
+         project_root,
+         [OsStr::new("add"), OsStr::new("--"), dest_dir.as_os_str()],
+     )?;
 -    // A thinned record is worth keeping and worth naming; it is not a reason to
 -    // keep nothing. Commit either way and report the delta.
 -    let thinned = verify_dispatch_record_staged(project_root, &dest_dir);
@@ -34,9 +35,6 @@
 -            Err(err)
 -        }
 -    }
-+    // INJECTED (TASK-QGWK7.1): skip persistence so the promoted directory
-+    // stays untracked -- F-1's defect, whichever mechanism persistence uses.
-+    let _ = (project_root, started_tx);
 +    let _ = (verify_dispatch_record_staged, write_dispatch_record_commit);
 +    Ok(())
  }

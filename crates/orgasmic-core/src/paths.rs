@@ -126,8 +126,21 @@ fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
 
 /// Max bytes of harness `stdout.log` promoted into permanent git history
 /// (TASK-QGWK7.1). The original byte count is recorded beside the promoted
-/// tail so truncation is visible.
-pub const STDOUT_PROMOTE_TAIL_BYTES: u64 = 64 * 1024;
+/// excerpt so truncation is visible.
+pub const STDOUT_PROMOTE_MAX_BYTES: u64 = 64 * 1024;
+
+/// A truncated excerpt keeps this many bytes from the HEAD of the log and
+/// spends the rest of [`STDOUT_PROMOTE_MAX_BYTES`] on the tail
+/// (TASK-QGWK7.1.1 M-4). A tail-only excerpt keeps the wrong end for the case
+/// that matters most — a harness that dies early and then emits retry noise
+/// puts its evidence at the head. Year-one arithmetic is unchanged: the cap is
+/// the same, only its split moved.
+const STDOUT_PROMOTE_HEAD_BYTES: u64 = STDOUT_PROMOTE_MAX_BYTES / 2;
+
+/// First line of a truncated promoted `stdout.log`, so truncation is visible
+/// IN the file rather than only by comparing it against `stdout.log.bytes`
+/// (TASK-QGWK7.1.1 M-3).
+const STDOUT_TRUNCATION_BANNER: &str = "[orgasmic] stdout.log truncated by dispatch-close";
 
 /// Outcome of promoting a validated attempt's artifacts (TASK-QGWK7.1).
 ///
@@ -264,10 +277,13 @@ pub fn prune_validated_dispatch_attempt(
 /// unlink the tmp copies when every intended copy succeeded.
 ///
 /// `last.txt` is always promoted in full. `stdout.log` keeps falsifiability
-/// without unbounded git growth (TASK-QGWK7.1): empty files are skipped; larger
-/// files promote only the last [`STDOUT_PROMOTE_TAIL_BYTES`] and record the
-/// original byte count in `stdout.log.bytes` beside them. Retention numbers
-/// live in the manager-dispatch convention.
+/// without unbounded git growth (TASK-QGWK7.1): empty files promote no
+/// `stdout.log`; larger files promote a [`STDOUT_PROMOTE_MAX_BYTES`] excerpt
+/// (head + tail, with a banner naming the truncation). `stdout.log.bytes` is
+/// written for EVERY promoted attempt, including the empty one, so "the
+/// harness printed nothing" is distinguishable from "stdout was never
+/// promoted" (TASK-QGWK7.1.1 M-3). Retention numbers live in the
+/// manager-dispatch convention.
 // orgasmic:TASK-QGWK7,TASK-QGWK7.1
 pub fn promote_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
@@ -290,11 +306,11 @@ pub fn promote_validated_dispatch_attempt(
 
         let stdout_dest = dest_dir.join("stdout.log");
         let stdout_bytes_dest = dest_dir.join("stdout.log.bytes");
-        match copy_validated_stdout_tail_to(
+        match copy_validated_stdout_excerpt_to(
             &stdout_dest,
             &stdout_bytes_dest,
             &artifacts.stdout_file,
-            STDOUT_PROMOTE_TAIL_BYTES,
+            STDOUT_PROMOTE_MAX_BYTES,
         ) {
             Ok(_) => {
                 // Unlink tmp only after every intended copy succeeded so a
@@ -378,50 +394,69 @@ fn copy_validated_artifact_to(dest: &Path, source: &std::fs::File) -> Result<(),
     result
 }
 
-/// Promote a bounded tail of `stdout.log`. Returns the original byte count.
-/// A 0-byte source is skipped entirely (no dest, no sidecar).
+/// Promote a bounded excerpt of `stdout.log`. Returns the original byte count.
+///
+/// A 0-byte source promotes no `stdout.log` — but it still writes
+/// `stdout.log.bytes` (`0`), so a reader can tell "the harness printed nothing"
+/// from "stdout was never promoted" (TASK-QGWK7.1.1 M-3). Over the cap, the
+/// excerpt is `banner + first half + elision marker + last half`
+/// (TASK-QGWK7.1.1 M-4): the banner makes truncation visible in the file
+/// itself, and keeping the head as well keeps the evidence of a harness that
+/// died early and then printed retry noise.
+///
+/// The sidecar is renamed into place BEFORE `stdout.log`, so a failure between
+/// the two renames can leave a byte count with no excerpt but never a
+/// truncated excerpt with no byte count.
 #[cfg(unix)]
-fn copy_validated_stdout_tail_to(
+fn copy_validated_stdout_excerpt_to(
     dest: &Path,
     bytes_sidecar: &Path,
     source: &std::fs::File,
-    max_tail: u64,
+    max_bytes: u64,
 ) -> Result<u64, String> {
     use std::io::Write;
-    use std::os::unix::fs::FileExt;
 
     let original_len = source.metadata().map_err(|err| err.to_string())?.len();
-    if original_len == 0 {
-        // Empty tmux panes are the common case; do not track a useless blob.
-        return Ok(0);
-    }
-
-    let start = original_len.saturating_sub(max_tail);
     let tmp = dest.with_extension("promoting");
     let bytes_tmp = bytes_sidecar.with_extension("promoting");
     let result = (|| {
-        let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
-        let mut offset = start;
-        loop {
-            let mut chunk = [0u8; 64 * 1024];
-            let n = source
-                .read_at(&mut chunk, offset)
-                .map_err(|err| err.to_string())?;
-            if n == 0 {
-                break;
-            }
-            out.write_all(&chunk[..n]).map_err(|err| err.to_string())?;
-            offset += n as u64;
-        }
-        out.sync_all().map_err(|err| err.to_string())?;
-        drop(out);
         {
             let mut bytes_out = std::fs::File::create(&bytes_tmp).map_err(|err| err.to_string())?;
             write!(bytes_out, "{original_len}").map_err(|err| err.to_string())?;
             bytes_out.sync_all().map_err(|err| err.to_string())?;
         }
-        std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
+        if original_len == 0 {
+            // Empty tmux panes are the common case; do not track a useless
+            // blob. The sidecar alone says the attempt was promoted.
+            std::fs::rename(&bytes_tmp, bytes_sidecar).map_err(|err| err.to_string())?;
+            return Ok(0);
+        }
+
+        let mut out = std::fs::File::create(&tmp).map_err(|err| err.to_string())?;
+        if original_len > max_bytes {
+            let head_len = STDOUT_PROMOTE_HEAD_BYTES.min(max_bytes);
+            let tail_len = max_bytes - head_len;
+            let elided = original_len - max_bytes;
+            writeln!(
+                out,
+                "{STDOUT_TRUNCATION_BANNER}: {original_len} bytes total, kept the first \
+                 {head_len} and the last {tail_len}."
+            )
+            .map_err(|err| err.to_string())?;
+            copy_range(source, &mut out, 0, head_len)?;
+            writeln!(
+                out,
+                "\n{STDOUT_TRUNCATION_BANNER}: {elided} bytes elided here."
+            )
+            .map_err(|err| err.to_string())?;
+            copy_range(source, &mut out, original_len - tail_len, tail_len)?;
+        } else {
+            copy_range(source, &mut out, 0, original_len)?;
+        }
+        out.sync_all().map_err(|err| err.to_string())?;
+        drop(out);
         std::fs::rename(&bytes_tmp, bytes_sidecar).map_err(|err| err.to_string())?;
+        std::fs::rename(&tmp, dest).map_err(|err| err.to_string())?;
         Ok(original_len)
     })();
     if result.is_err() {
@@ -429,6 +464,36 @@ fn copy_validated_stdout_tail_to(
         let _ = std::fs::remove_file(&bytes_tmp);
     }
     result
+}
+
+/// Copy `len` bytes of `source` starting at `offset` into `out`, without
+/// buffering the whole range in RSS (TASK-QGWK7.1 F-7).
+#[cfg(unix)]
+fn copy_range(
+    source: &std::fs::File,
+    out: &mut std::fs::File,
+    offset: u64,
+    len: u64,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::FileExt;
+
+    let mut offset = offset;
+    let mut remaining = len;
+    while remaining > 0 {
+        let mut chunk = [0u8; 64 * 1024];
+        let want = remaining.min(chunk.len() as u64) as usize;
+        let n = source
+            .read_at(&mut chunk[..want], offset)
+            .map_err(|err| err.to_string())?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&chunk[..n]).map_err(|err| err.to_string())?;
+        offset += n as u64;
+        remaining -= n as u64;
+    }
+    Ok(())
 }
 
 fn validate_dispatch_worktree(worktree_path: &Path) -> Result<std::fs::File, String> {
@@ -823,7 +888,7 @@ mod tests {
         assert!(!stdout.exists(), "tmp stdout.log must be moved, not copied");
     }
 
-    // orgasmic:TASK-QGWK7.1
+    // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
     #[test]
     fn promote_skips_empty_stdout_and_bounds_tail_with_visible_byte_count() {
         let tmp = tempfile::tempdir().unwrap();
@@ -849,7 +914,14 @@ mod tests {
             !record_dir.join("stdout.log").exists(),
             "0-byte stdout.log must not be promoted"
         );
-        assert!(!record_dir.join("stdout.log.bytes").exists());
+        // TASK-QGWK7.1.1 M-3: "the harness printed nothing" must be readable
+        // off the record, not inferred from an absent file that also means
+        // "stdout was never promoted".
+        assert_eq!(
+            std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
+            "0",
+            "an empty promoted stdout must still be distinguishable from an unpromoted one"
+        );
 
         // Fresh attempt for the bounded-tail case.
         let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-tail");
@@ -858,8 +930,9 @@ mod tests {
         let last = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
         let stdout = stem_dir.join("task-tail-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
         std::fs::write(&last, "summary").unwrap();
-        let original_len = STDOUT_PROMOTE_TAIL_BYTES + 100;
+        let original_len = STDOUT_PROMOTE_MAX_BYTES + 100;
         let mut body = vec![b'a'; original_len as usize];
+        body[..4].copy_from_slice(b"HEAD");
         body[original_len as usize - 4..].copy_from_slice(b"TAIL");
         std::fs::write(&stdout, &body).unwrap();
         let artifacts =
@@ -871,8 +944,30 @@ mod tests {
         assert_eq!(outcome.error, None);
         let record_dir = project_root.join(".orgasmic/dispatch-records/tx-tail-stdout");
         let promoted = std::fs::read(record_dir.join("stdout.log")).unwrap();
-        assert_eq!(promoted.len() as u64, STDOUT_PROMOTE_TAIL_BYTES);
-        assert!(promoted.ends_with(b"TAIL"));
+        let text = String::from_utf8_lossy(&promoted);
+        // TASK-QGWK7.1.1 M-3: truncation is stated IN the excerpt, not only
+        // recoverable by comparing its length against the sidecar.
+        assert!(
+            text.starts_with(STDOUT_TRUNCATION_BANNER),
+            "a truncated excerpt must say so on its first line: {:?}",
+            &text[..text.len().min(120)]
+        );
+        assert!(
+            text.contains("100 bytes elided here."),
+            "the elision marker must name how much was dropped"
+        );
+        // TASK-QGWK7.1.1 M-4: both ends survive, so an early death keeps its
+        // evidence instead of only the retry noise that followed it.
+        assert!(promoted.starts_with(STDOUT_TRUNCATION_BANNER.as_bytes()));
+        assert!(text.contains("HEAD"), "the head of the log must be kept");
+        assert!(promoted.ends_with(b"TAIL"), "the tail must still be kept");
+        // Excerpt content stays within the cap; only the two banner lines are
+        // added on top, so the retention arithmetic is unchanged.
+        let banner_bytes = promoted.len() as u64 - STDOUT_PROMOTE_MAX_BYTES;
+        assert!(
+            banner_bytes < 200,
+            "banners must not meaningfully widen the 64 KB cap: {banner_bytes}"
+        );
         assert_eq!(
             std::fs::read_to_string(record_dir.join("stdout.log.bytes")).unwrap(),
             original_len.to_string(),

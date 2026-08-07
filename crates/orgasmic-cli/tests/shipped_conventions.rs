@@ -403,4 +403,15 @@ fn manager_convention_names_post_close_report_path() {
         text.contains(":REPORT_PATH:"),
         "the prose must say the close tx names the promoted path"
     );
+    // TASK-QGWK7.1.1: the durability mechanism moved from staging to a
+    // dedicated commit, and the reason it moved (staging blocks the merge the
+    // gate prescribes next) is the part a manager has to be able to read.
+    assert!(
+        text.contains("chore(orgasmic): dispatch record"),
+        "the prose must name the record commit the close writes"
+    );
+    assert!(
+        text.contains("makes =git merge= refuse"),
+        "the prose must say why staging alone was not enough"
+    );
 }
