@@ -19651,3 +19651,149 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-07 Fri 11:38:45 task.state_transitioned TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5188
+:TIME:         [2026-08-07 Fri 11:38:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       next P1: the close's error path is unrecoverable, and it gates the runtime reinstall
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-07 Fri 11:38:47 task.state_transitioned TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5189
+:TIME:         [2026-08-07 Fri 11:38:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1.1 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 11:38:49 manager.dispatch_started TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5190
+:TIME:         [2026-08-07 Fri 11:38:49]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1
+:BRANCH:       task-qgwk7.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1/task-qgwk7.1.1.1-brief.md
+:STARTED_AT:   [2026-08-07 Fri 11:38:49]
+:LIVENESS:     18bddfe50aeceb99bbbc4495ec0a2b396a6bcb96
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: make a failed record persist recoverable (tmp is unlinked before the commit is attempted and the already-closed no-op refuses a retry) and CAS the branch ref rather than the OID; gates the runtime reinstall
+:END:
+
+* TX 2026-08-07 Fri 11:38:50 run.created TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5191
+:TIME:         [2026-08-07 Fri 11:38:50]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QGWK7.1.1.1-implementer-20260807T113849.jsonl
+:REASON:       make a failed record persist recoverable (tmp is unlinked before the commit is attempted and the already-closed no-op refuses a retry) and CAS the branch ref rather than the OID; gates the runtime reinstall
+:RUN_ID:       run-20260807T113849-5e9b43357eb74a61afbb655d8755a4b4
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qgwk7.1.1.1/task-qgwk7.1.1.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qgwk7.1.1.1/task-qgwk7.1.1.1-c43b840bf03a48878a265d9752978faf-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qgwk7.1.1.1/task-qgwk7.1.1.1-c43b840bf03a48878a265d9752978faf-stdout.log
+:DISPATCH_ATTEMPT: c43b840bf03a48878a265d9752978faf
+:DISPATCH_TX:  tx-20260807-orgasmic-5190
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-07 Fri 11:39:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5192
+:TIME:         [2026-08-07 Fri 11:39:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 11:39:38 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5193
+:TIME:         [2026-08-07 Fri 11:39:38]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 11:40:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5194
+:TIME:         [2026-08-07 Fri 11:40:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 11:40:22 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5195
+:TIME:         [2026-08-07 Fri 11:40:22]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-07 Fri 11:40:23 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5196
+:TIME:         [2026-08-07 Fri 11:40:23]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

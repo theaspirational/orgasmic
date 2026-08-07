@@ -5,64 +5,57 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         c36decd
+:LIVENESS:         18bddfe
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-07, fifth block, continuing 08-06/07. TASK-QGWK7.1.1 is DONE and
-the QGWK7 chain has moved from "a report survives by habit" to "a report is
-COMMITTED by the close itself".
+Session 2026-08-07, fifth block. *THE STWVB CHAIN IS CLOSED* — six rounds, from
+"the gate cannot return a verdict" to a verdict ladder proven TOTAL over its whole
+input space. TASK-QGWK7.1.1 is DONE. The QGWK7 chain now commits worker reports
+into git history by construction.
 
 THE FIVE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
-1. *THE AUTO-PROMOTE IS NOW PROVEN, AND IT LEAVES THE RECORD STAGED — SO COMMIT
-   IT IMMEDIATELY AFTER EVERY CLOSE.* Measured this block, on a real close: the
-   reviewer close promoted =tx-20260807-orgasmic-5129/last.txt= into
-   =.orgasmic/dispatch-records/= and STAGED it (=A = in the index) instead of
-   deleting it. *The hand-copy workaround is RETIRED* — proven by behaviour, not
-   by a version string.
-
-   But the installed binary carries =da88c19= + =955c8d6= (stage) and NOT
-   =960caea= (commit), which merged today. So until the next runtime reinstall,
-   *every close leaves a staged record, and a staged path — ANY staged path —
-   makes =git merge= REFUSE.* That is M-0 itself, live in your working tree.
-   Commit the record before your next merge or the merge fails. After a
-   reinstall this rule disappears, because the close will commit it for you.
+1. *A CLOSE STAGES THE PROMOTED RECORD — SO COMMIT IT IMMEDIATELY AFTER EVERY
+   CLOSE, OR YOUR NEXT MERGE REFUSES.* Proven on six real closes this block. The
+   auto-promote WORKS (the hand-copy workaround is RETIRED, verified by behaviour
+   rather than by a version string), but the installed binary carries =da88c19= +
+   =955c8d6= (stage) and NOT =960caea= (commit). A staged path — ANY staged path —
+   makes =git merge= REFUSE. That is M-0 itself, live in your tree.
+   *This rule disappears after the next runtime reinstall — see item 5.*
 
 2. NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.
    =ensure_running= -> =start_via_selected_adapter= -> =daemon_service::start=
-   writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
-   not scope; a staged home restarts the real daemon and kills every live
-   dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
-   the safe pattern. TASK-48SFW carries the source chain.
+   writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does not
+   scope; a staged home restarts the real daemon and kills every live dispatch.
+   Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is the safe
+   pattern. TASK-48SFW carries the source chain.
 
 3. CLAUDE IS THE ONLY RELIABLE HARNESS ON THIS HOST. =tmux/cursor-agent= killed
-   two consecutive workers with the cause undetermined (TASK-VD0VB), and codex is
-   out of credits. *SAME-FAMILY REVIEW IS THEREFORE ACCEPTED, with the reason
-   stated on each dispatch* — say it, do not route around the router's
-   independence rule silently. Restoring codex credits retires the exception and
-   is the cheapest thing the operator can do for review quality.
+   two consecutive workers, cause undetermined (TASK-VD0VB); codex is out of
+   credits. *SAME-FAMILY REVIEW IS THEREFORE ACCEPTED, with the reason stated on
+   each dispatch.* Say it; do not route around the router's independence rule
+   silently. Restoring codex credits retires the exception.
 
-4. A PASSING GATE PROVES LESS THAN IT LOOKS, and a NON-DISCRIMINATING PROBE
-   proves nothing at all. =orgasmic verify=: a pass proves the red HAPPENS, not
-   that it is the RIGHT red — open the red log and confirm the pinned message is
-   the FIRST failure. Done again this block on TASK-QGWK7.1.1 and correct.
-   Contrast the retired =dispatch-close --help= reinstall probe, which returned 0
-   both before AND after: pre-test a probe against the old state or a null result
-   will read as a verdict.
+4. *A DEAD WATCHER IS NOT A DEAD WORKER, AND =[pid-gone]= IS NOT A DEATH SIGNAL.*
+   One watcher was killed mid-block by a session-level group-kill while its worker
+   stayed perfectly healthy; =dispatch-status= prints =[pid-gone]= for EVERY tmux
+   run always, because =WORKER_PID=-=. Before concluding a worker died, check
+   =tmux ls=, =[run-live]=, and =last.txt=. A watcher keyed on =[pid-gone]= fires
+   instantly and falsely.
 
-5. =scripts/run-tests.sh= HAS AN OPEN FALSE GREEN and TASK-STWVB.1.1.1.1 IS
-   FIXING IT RIGHT NOW (in flight). Manager-confirmed at =:1078=: the crash arm
-   is guarded by =FAIL_COUNT -eq 0=, so any registered flake firing skips it and
-   the run prints =GREEN modulo N registered flake(s)= at *exit 0* over a log
-   containing SIGABRT. Until it lands, prefer plain scoped =cargo test= for
-   gates, and never read a wrapper GREEN as proof nothing crashed.
+5. *THE NEXT RUNTIME REINSTALL IS GATED ON TASK-QGWK7.1.1.1* (in flight). Do NOT
+   reinstall before it lands: you would install a close that COMMITS the record
+   while its error path is still unrecoverable (tmp is unlinked before the commit
+   is attempted, and re-running the close hits the already-closed no-op by
+   design). Land it, then reinstall, and item 1 retires itself.
 
 ALSO STILL TRUE, from the 08-05 measurements: SHARED =CARGO_TARGET_DIR= IS
 UNSOUND, and STABLE WORKTREE SLOTS DO NOT FIX THE TCC PROMPTS. Do not implement
-either.
+either. And =scripts/run-tests.sh='s false green is FIXED — a crashed target, and
+now any anomalous cargo exit, reds whatever else classified.
 
 ** Done so far
 SESSION 2026-08-06/07. SEVEN MERGES, SIX REVIEWS (five REJECT, one approve), and
@@ -191,95 +184,132 @@ this block (previous reviewers filed them). Its findings live in the promoted
 report and in TASK-QGWK7.1.1.1, so nothing is lost, but the tx channel is empty
 for this review and manager-authored entries would misattribute authorship.
 
+LATER IN THE FIFTH BLOCK: *THE STWVB CHAIN CLOSED AT SIX ROUNDS.* Merges
+=060b84d= (round 5) and =6402f2d= (round 6), plus the manager's =a8edf93=.
+
+ROUND 5 fixed the crashed-TARGET false green: a crashed binary contributes zero
+LISTED failures, so whenever any registered flake classified, the crash arm was
+skipped and the run printed =GREEN modulo N= at exit 0 over a log carrying
+SIGABRT. Detection is now derived from the LOG, in its own =CRASHED (n)= section
+and its own RED arm. Reviewed REJECT.
+
+ROUND 6 fixed the crashed-SUITE false green the round-5 review found — *the same
+guard, the third time.* =FAIL_COUNT -eq 0= was a PROXY for "the exit is 101", and
+the arm's own comment said so. A cargo killed at exit 137 plus any registered
+flake returned =GREEN modulo 1= at exit 0 on the LIVE path. The suite exit is now
+classified from the CODE ({0,101} ordinary, =?= skipped, anything else anomalous)
+in its own arm, and the crash detector unions by TARGET IDENTITY — =max()=,
+=CRASH_NAMED=, =CRASH_UNACCOUNTED= and the doctest special-case are all gone.
+
+*THE ONE SANCTIONED REAL-CARGO MEASUREMENT CHANGED THE FIX, WHICH IS THE WHOLE
+ARGUMENT FOR AUTHORISING IT.* Cargo 1.94.1 emits NO =Caused by:= block for an
+ordinary failing target (so round 5's =(exit status: 101)= exclusion was DEAD
+CODE, not the load-bearing guard everyone assumed), and it prints the binary
+RELATIVE on =Running= but ABSOLUTE in =Caused by:=. The reviewer's suggested join
+key was the cause-line binary — it would have matched NOTHING and called every
+target a crash. The implementer said it would have shipped that without the
+measurement. Two rounds had guessed at this log shape.
+
+*THE ROUND-6 REVIEW ESTABLISHED THE LADDER IS TOTAL* — a 72-cell =--classify=
+sweep plus a live exit-139 run (a code the selftest does not use), showing the
+if/elif/else chain leaves no cell unowned or double-owned, with every owner
+correct except two that require a log real cargo cannot emit. It also OVERRULED
+the manager's objection to round 6's self-directed verdict change, with an
+argument neither side had made: =HOST_DEGRADED= is measured from syspolicyd CPU
+CONTENTION, which is not evidence of a jetsam MEMORY kill, so routing a truncated
+suite's diagnosis through it would attribute the verdict to an unrelated
+measurement — the founding sin in its other direction. *The manager was right to
+raise it and wrong on the merits.*
+
+MANAGER-CAUSED REGRESSION, CAUGHT AND FIXED (=a8edf93=). Closing TASK-STWVB left
+four live =flake-registry.toml= entries owned by a done task, so
+=check_owner_lifecycle= REJECTED the registry and =run-tests.sh --check= — which
+=ci.yml:191= runs as its FIRST step — exited 2. *The guard worked exactly as
+designed*; its own comment says its purpose is to make filing the next failure
+against a closed task impossible. The round-5 implementer found it, correctly
+refused to touch the registry inside its invariants, and reported instead.
+Ownership transferred to TASK-X0PV1 (filed to own them) rather than deleting the
+entries, which would have converted four MEASURED flakes into unexplained REAL
+failures. The reviewer attacked that call and it held.
+
+TASK-STWVB.1.1.1, =.1.1.1.1= and =.1.1.1.1.1= all CLOSED: each was held open only
+by its successor's BLOCK SHIP, and the last is discharged. Three LOW follow-ups
+carry to TASK-STWVB.1.1.1.1.1.1 — F-6 is the one worth taking, being the only
+parser dependency whose breakage fails GREEN rather than loudly.
+
 ** Next likely actions
 ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START. Nothing
 enforces resolution and the harness default wins SILENTLY (TASK-A55J7). The
 2026-08-07 answer, which is NOT a standing setting: *=tmux / claude /
-claude-opus-5 / high= for both implementers and reviewers*, with same-family
-review accepted and its reason stated on each dispatch (preamble item 3).
+claude-opus-5 / high= for both implementers and reviewers*, same-family review
+accepted with the reason stated on each dispatch. It went 8 for 8 this block with
+zero transport trouble.
 
 THE ORDER FROM HERE
-1. INTEGRATE TASK-STWVB.1.1.1.1 when it reports (see In flight). Merge, gate,
-   review, close — committing the staged dispatch record BEFORE the merge.
-   Landing it also unblocks TASK-STWVB.1.1.1, which depends on it and is the
-   STWVB chain's last open node.
-2. TASK-QGWK7.1.1.1 (P1) — the seven review findings. F-1 is the one that
-   matters: persistence is unrecoverable on the error path. The fix is known and
-   cheap — =commit_promoted_dispatch_record= already works from =dest_dir= alone;
-   only its CALLER is gated on the tmp files it no longer has.
-3. REINSTALL THE RUNTIME once QGWK7.1.1.1 lands, and only then. That is what
-   retires preamble item 1's commit-after-every-close rule. Do not reinstall
-   before it — you would install a close that commits AND still has F-1's
-   unrecoverable error path.
-4. TASK-VD0VB (P1) — =cursor-agent= documents =--trust=/=--yolo=/=-f=. Prefer
+1. INTEGRATE TASK-QGWK7.1.1.1 when it reports (see In flight). Merge, gate,
+   review, close.
+2. *THEN REINSTALL THE RUNTIME* — and only then (preamble item 5). That is what
+   retires the commit-after-every-close rule. The recipe and its four traps are in
+   the runtime-reinstall memory; verify by INODE, never by version string, and do
+   it in a zero-worker window.
+3. TASK-VD0VB (P1) — =cursor-agent= documents =--trust=/=--yolo=/=-f=. Prefer
    =--trust= (it names the property we need) but VERIFY what each does. This is
-   what would make cursor-agent dispatchable again and end the same-family-review
+   what makes cursor-agent dispatchable again and ends the same-family-review
    exception from the other side.
-5. TASK-RMA18 (P1) — worktree-reclamation redesign, six BLOCK SHIP from two prune
-   reviews. =worktree-prune= stays refusing until it lands.
-6. TASK-3HR8R — surface a task parked in =in_review= with no reviewer dispatch.
-   This block cleared the four STWVB instances by hand; the verb is what stops
-   them recurring.
-7. TASK-A1KJW (P3), TASK-37WN7 (P3).
-8. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
+4. TASK-RMA18 (P1) — worktree-reclamation redesign, six BLOCK SHIP from two prune
+   reviews. =worktree-prune= stays refusing until it lands, and TASK-QGWK7.1
+   deferred its F-5 onto it.
+5. TASK-3HR8R — surface a task parked in =in_review= with no reviewer dispatch.
+   Four were cleared by hand this block; the verb is what stops them recurring.
+6. TASK-X0PV1 (P2) — the four daemon-parallelism flakes now have an accountable
+   owner. Its acceptance forbids deleting an entry merely to green =--check=.
+7. TASK-STWVB.1.1.1.1.1.1 (P2) — F-6, the green-ward parser dependency.
+8. TASK-A1KJW (P3), TASK-37WN7 (P3).
+9. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
    TASK-ADHWZ, TASK-NTNK0, TASK-5M45A.
 
-PRACTICES THAT PAID OFF AGAIN THIS BLOCK, keep them:
-- *Measure the premise the whole design rests on, personally, before accepting
-  it.* One scratch repo settled M-0 in under a minute.
-- Every brief named SPECIFIC CLAIMS to attack, by number, and carried an
-  explicit do-not-re-derive list. The reviewer spent its entire budget on the
-  unknowns (14 git probes) instead of re-running gates the manager had already
-  run — and said so plainly, including the residual risk that it therefore did
-  not independently reproduce the green suite.
-- Every brief carried an EXECUTION BUDGET. Test execution is this host's
-  syspolicyd trigger.
-- The manager verified every finding against source before acting on it,
-  including the ones it intended to accept. Both F-1 and F-6 held.
-- CHECK WHETHER A CAUTION ACTUALLY APPLIES before paying for it. The second
-  dispatch was held back over syspolicyd risk until the manager checked and found
-  the selftest uses a STUB cargo — the concern was real in general and absent
-  here.
+PRACTICES THAT PAID OFF, and this block is the evidence:
+- *AUTHORISE THE ONE CHEAP MEASUREMENT THAT SETTLES A GUESS.* One throwaway cargo
+  crate changed round 6's fix from wrong to right. Two rounds had reasoned about
+  that log shape instead of looking at it.
+- *ASK FOR A COMPLETENESS ARGUMENT, NOT SPOT CHECKS*, once a defect has recurred.
+  Five rounds of spot checks each missed one cell; one 72-cell sweep closed the
+  question.
+- *NAME THE SPECIFIC CLAIMS TO ATTACK, BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST.*
+  Every review this block answered by number and came back with measurements.
+- *STATE YOUR OWN OBJECTION AND LET THE REVIEWER RULE ON IT.* The manager's row-7
+  objection was overruled on better evidence — which is the review working.
+- *ASK THE REVIEWER TO ATTACK THE MANAGER'S OWN COMMITS.* =a8edf93= was reviewed
+  because it was named in the brief; nobody else would have looked at it.
+- *VERIFY EVERY FINDING AGAINST SOURCE BEFORE ACTING*, including ones you intend
+  to accept, and re-measure a worker's numbers when they are cheap: a report's
+  shellcheck COUNTS were wrong this block while its CLAIM was right.
+- Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: the ROUND 6 REVIEW.
-=tx-20260807-orgasmic-5175=, run =run-20260807T112343-4859f3b913a443678fb01d1d20928485=,
-worker =reviewer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1.1-review=, dispatched
-[2026-08-07 Fri 11:23:43] on =tmux / claude / claude-opus-5 / high=. Reviews
-merge =6402f2d=.
+ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1 (P1).
+=tx-20260807-orgasmic-5190=, run =run-20260807T113849-5e9b43357eb74a61afbb655d8755a4b4=,
+worker =implementer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1=, dispatched
+[2026-08-07 Fri 11:38:49] on =tmux / claude / claude-opus-5 / high=.
 
-*THE ASK IS A COMPLETENESS ARGUMENT, NOT SPOT CHECKS.* Five rounds have each
-fixed the mechanism handed to them and left an adjacent cell unowned. The brief
-asks the reviewer to enumerate the whole input space — suite exit {0,101,other,?}
-x failure list {empty,non-empty} x crash {none,some} x host {calm,degraded,
-unknown} x mode {live,--classify} — and show which arm owns each cell, and that
-none is unowned or double-owned. If a cell has no verdict, that is round 7 and I
-want it named now.
+It fixes the ERROR PATHS of the close that now commits the record — the mechanism
+itself is correct and the brief tells it not to redesign it. F-1 is the one that
+matters: a failed persist is unrecoverable because tmp is unlinked before the
+commit is attempted and the already-closed no-op refuses a retry. The route in is
+cheap: =commit_promoted_dispatch_record= ALREADY works from =dest_dir= alone —
+only its caller is gated on the tmp files it no longer has.
 
-TWO THINGS I FLAGGED THAT THE MANAGER DOES NOT CONSIDER SETTLED:
-1. *Row 7 — the implementer CHANGED a verdict and said so.* An anomalous exit on
-   a DEGRADED host was INCONCLUSIVE (4) and is now RED (1). It generalised the
-   crash arm's ordering. The manager is NOT convinced the two are analogous: a
-   SIGABRT inside a test binary is a code fact, but a SIGKILLed *cargo* on a
-   degraded host is most likely jetsam — the HOST — and INCONCLUSIVE means
-   exactly "re-run when calm". This chain's founding sin is attributing host
-   state to code. Counter-argument is also real (a truncated run holds no trusted
-   green, and both codes fail CI). The reviewer rules; the arm is one line.
-2. *Row 4 — exit 0 WITH listed failures still returns GREEN modulo N.*
-   Contradictory input, pre-existing, untouched. Possibly the next adjacent
-   branch.
+*THIS TASK GATES THE RUNTIME REINSTALL* (preamble item 5).
 
-WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 6402f2d=), and
-*COMMIT THE STAGED DISPATCH RECORDS AFTER EVERY CLOSE* (preamble item 1).
+WHEN IT REPORTS: merge, gate, review, close reviewer then implementer with
+=--merge-sha=, committing the staged record after each close. Watch the two
+verify artifacts: if the change moves a function an injection targets, a
+re-authoring is legitimate ONLY if =expect-red= and the pinned assertion stay
+byte-unchanged. A prior worker was REJECTED for rewriting a test and an artifact
+to match a WEAKENED property.
 
-IF THE VERDICT IS APPROVE: TASK-STWVB.1.1.1.1.1 closes, and then the whole chain
-unwinds — =.1.1.1.1= and =.1.1.1= both close, because each was held open only by
-its successor's BLOCK SHIP. Check =DEPENDS_ON= on each before closing it.
-
-NOTE ON WATCHERS: one was KILLED mid-block by a session-level group-kill while
-the worker stayed perfectly healthy. *A DEAD WATCHER IS NOT A DEAD WORKER* —
-re-check =tmux ls=, =[run-live]= and =last.txt= before concluding anything.
+NOTHING ELSE IS OPEN. Every other dispatch this block is closed.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
