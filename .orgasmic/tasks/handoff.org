@@ -287,29 +287,41 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1 (P1).
-=tx-20260807-orgasmic-5190=, run =run-20260807T113849-5e9b43357eb74a61afbb655d8755a4b4=,
-worker =implementer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1=, dispatched
-[2026-08-07 Fri 11:38:49] on =tmux / claude / claude-opus-5 / high=.
+ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1 REVIEW.
+=tx-20260807-orgasmic-5199=, run =run-20260807T120753-a3269dda4e1e4f52aedd71dce1926049=,
+worker =reviewer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1-review=, dispatched
+[2026-08-07 Fri 12:07:53] on =tmux / claude / claude-opus-5 / high=. Reviews merge
+=f6c6c4d=.
 
-It fixes the ERROR PATHS of the close that now commits the record — the mechanism
-itself is correct and the brief tells it not to redesign it. F-1 is the one that
-matters: a failed persist is unrecoverable because tmp is unlinked before the
-commit is attempted and the already-closed no-op refuses a retry. The route in is
-cheap: =commit_promoted_dispatch_record= ALREADY works from =dest_dir= alone —
-only its caller is gated on the tmp files it no longer has.
+*THE CHANGE THAT DESERVES SUSPICION: re-running an ALREADY-CLOSED dispatch-close
+can now WRITE A COMMIT.* The =AlreadyClosed= no-op re-persists a record whose
+original close failed to commit it — a behavioural change to a path whose code
+comment says "deliberately NOT re-running cleanup" and "no-op is the contract".
+The brief asks for a STATE TABLE — commit outcome x HEAD shape x sequencer state
+x re-run count -> where the record ends up — rather than spot checks. That
+framing is what closed the STWVB chain after five rounds of spot checks each
+missed a cell.
 
-*THIS TASK GATES THE RUNTIME REINSTALL* (preamble item 5).
+THE SHARPEST SUB-CASE I FLAGGED: =dispatch_record_is_in_history= tests HEAD's
+tree, so *if the re-run happens on a DIFFERENT branch than the close ran on*, the
+record is legitimately absent from HEAD there — does the re-run then commit it
+onto a branch that never ran the dispatch, or onto the operator's unrelated
+feature branch?
 
-WHEN IT REPORTS: merge, gate, review, close reviewer then implementer with
-=--merge-sha=, committing the staged record after each close. Watch the two
-verify artifacts: if the change moves a function an injection targets, a
-re-authoring is legitimate ONLY if =expect-red= and the pinned assertion stay
-byte-unchanged. A prior worker was REJECTED for rewriting a test and an artifact
-to match a WEAKENED property.
+ALREADY VERIFIED BY THE MANAGER, do not re-derive: fmt, clippy, =manager::tests=
+54, =--test dispatch= 67/0/9, core 165, conventions 4, and ALL THREE verify
+artifacts PASS with the new one's red log carrying EXACTLY ONE panic at the
+pinned assertion. *The two re-authored injection patches are legitimate* —
+=expect-red= and =cmd= are byte-unchanged in both (zero lines of diff), so the
+property did not move, only the mechanism it injects into.
 
-NOTHING ELSE IS OPEN. Every other dispatch this block is closed.
+WHEN IT REPORTS: close reviewer then implementer (=--merge-sha f6c6c4d=), and
+COMMIT THE STAGED RECORDS AFTER EACH CLOSE. *If the verdict has no BLOCK SHIP,
+TASK-QGWK7.1.1.1 closes and THE RUNTIME REINSTALL IS UNBLOCKED* — that is the
+next action, and it retires preamble item 1.
+
+NOTHING ELSE IS OPEN.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
