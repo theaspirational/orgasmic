@@ -20589,3 +20589,129 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-07 Fri 13:42:08 reviewer.reported TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5243
+:TIME:         [2026-08-07 Fri 13:42:08]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:RUN_ID:       run-20260807T133236-e799aa632c134debb34644aaa246e8f3
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5239/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:43:23 reviewer.done TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5244
+:TIME:         [2026-08-07 Fri 13:43:23]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:REASON:       REJECT on one BLOCK SHIP, and it lands against a MANAGER RULING. I ordered the sequencer entry dropped on the strength of 'every stopped range carries its own *_HEAD marker' — a universal two workers had measured. It is FALSE, and the reviewer built the counterexample by an ordinary documented route: resolve the conflict and 'git commit' instead of 'git revert --continue', leaving .git/sequencer with a pending todo and NO marker. Manager reproduced it exactly. The guard used to refuse that state and no longer does, so my ruling caused a coverage regression while fixing what was really a MESSAGE problem. F-2 (the convention pin is unidirectional, so the prose still promises coverage the code dropped), F-3 (the replacement mechanism claim is false for 3 of 4 operations, stamped 'measured'), F-4 (the runtime CLEANUP_ERROR still carries the disproven claim). F-5 is a FALSE ALARM — the report was unpromoted because this dispatch was still open, not lost. Carries to TASK-QGWK7.1.1.1.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260807-orgasmic-5239
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5239/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:43:24 task.state_transitioned TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5245
+:TIME:         [2026-08-07 Fri 13:43:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 13:43:27 implementer.done TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5246
+:TIME:         [2026-08-07 Fri 13:43:27]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:REASON:       Merged 091d62a. The C-1 correction is right and independently re-measured by the reviewer; C-3 and C-4 are correct; expect-red stayed byte-unchanged and the re-authored injection restores the identical marker set. The worker also escalated a self-contradiction in the manager's own acceptance list rather than resolving it unilaterally, and separated what it measured from what it inherited. Reviewed REJECT for the sequencer removal the MANAGER ordered.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    091d62a1f42f956ae70d3527de6beabdcdaf13b9
+:BRANCH:       task-qgwk7.1.1.1.1.1-impl
+:CLOSED_TX:    tx-20260807-orgasmic-5232
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5232/last.txt
+:END:
+
+* TX 2026-08-07 Fri 13:43:27 task.state_transitioned TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5247
+:TIME:         [2026-08-07 Fri 13:43:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1.1.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 13:44:14 task.created TASK-QGWK7.1.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5248
+:TIME:         [2026-08-07 Fri 13:44:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       BLOCK SHIP against a manager ruling: I ordered the sequencer entry dropped on a universal that is false. A stopped range resolved with a plain git commit leaves .git/sequencer with a pending todo and no *_HEAD marker; the guard used to refuse that and no longer does. Manager reproduced. Plus a unidirectional pin that let the drift through, a false mechanism claim, and the runtime error string.
+:END:
+
+* TX 2026-08-07 Fri 13:44:26 task.property_updated TASK-QGWK7.1.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5249
+:TIME:         [2026-08-07 Fri 13:44:26]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from reviewer findings
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-07 Fri 13:44:27 task.property_updated TASK-QGWK7.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5250
+:TIME:         [2026-08-07 Fri 13:44:27]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       BLOCK SHIP D-1 is unactioned until the fix round lands and passes a fresh review.
+:DEPENDS_ON:   TASK-QGWK7.1.1.1.1.1.1
+:END:

@@ -7,6 +7,7 @@
 :PRIORITY: P2
 :WRITE_SCOPE: crates/**,shipped/**,verify/**
 :FIX_SUBTASK: t
+:DEPENDS_ON:  TASK-QGWK7.1.1.1.1.1.1
 :END:
 
 === READ THIS FIRST — STATUS ===
