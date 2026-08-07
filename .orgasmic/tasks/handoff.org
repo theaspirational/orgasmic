@@ -242,36 +242,44 @@ PRACTICES THAT PAID OFF AGAIN THIS BLOCK, keep them:
   here.
 
 ** In flight
-ONE DISPATCH IS LIVE: TASK-STWVB.1.1.1.1.1 (ROUND 6).
-=tx-20260807-orgasmic-5170=, run =run-20260807T110322-dd7d3e3cfc6d4b4cab05a6df8111ed5d=,
-worker =implementer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1.1=, dispatched
-[2026-08-07 Fri 11:03:22] on =tmux / claude / claude-opus-5 / high=.
+ONE DISPATCH IS LIVE: the ROUND 6 REVIEW.
+=tx-20260807-orgasmic-5175=, run =run-20260807T112343-4859f3b913a443678fb01d1d20928485=,
+worker =reviewer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1.1-review=, dispatched
+[2026-08-07 Fri 11:23:43] on =tmux / claude / claude-opus-5 / high=. Reviews
+merge =6402f2d=.
 
-*THE SAME GUARD HAS NOW PRODUCED THE DEFECT THREE ROUNDS RUNNING* — r3 dropped
-=FAIL_COUNT -eq 0= and reddened the live gate, r4 restored it and reopened the
-crashed-target hole, r5 fixed crashed TARGETS and left every other anomalous exit
-behind it. The brief says so explicitly and tells the worker to replace the PROXY
-with the fact it stands in for ("the exit is 101"), not to add a fourth arm.
+*THE ASK IS A COMPLETENESS ARGUMENT, NOT SPOT CHECKS.* Five rounds have each
+fixed the mechanism handed to them and left an adjacent cell unowned. The brief
+asks the reviewer to enumerate the whole input space — suite exit {0,101,other,?}
+x failure list {empty,non-empty} x crash {none,some} x host {calm,degraded,
+unknown} x mode {live,--classify} — and show which arm owns each cell, and that
+none is unowned or double-owned. If a cell has no verdict, that is round 7 and I
+want it named now.
 
-Its brief permits ONE real cargo run — on a THROWAWAY two-target crate in its own
-temp dir, never this workspace — to settle whether cargo emits
-=Caused by: … (exit status: 101)= for an ordinary failing target. Two rounds have
-now guessed at that log shape. If it took the measurement, PRESERVE the verbatim
-lines: they outlive the round.
+TWO THINGS I FLAGGED THAT THE MANAGER DOES NOT CONSIDER SETTLED:
+1. *Row 7 — the implementer CHANGED a verdict and said so.* An anomalous exit on
+   a DEGRADED host was INCONCLUSIVE (4) and is now RED (1). It generalised the
+   crash arm's ordering. The manager is NOT convinced the two are analogous: a
+   SIGABRT inside a test binary is a code fact, but a SIGKILLed *cargo* on a
+   degraded host is most likely jetsam — the HOST — and INCONCLUSIVE means
+   exactly "re-run when calm". This chain's founding sin is attributing host
+   state to code. Counter-argument is also real (a truncated run holds no trusted
+   green, and both codes fail CI). The reviewer rules; the arm is one line.
+2. *Row 4 — exit 0 WITH listed failures still returns GREEN modulo N.*
+   Contradictory input, pre-existing, untouched. Possibly the next adjacent
+   branch.
 
-WHEN IT REPORTS: merge, gate (=run-tests-selftest.sh=, =run-tests.sh --check=,
-shellcheck, =orgasmic verify=), review, close reviewer then implementer with
-=--merge-sha=. *COMMIT THE STAGED DISPATCH RECORDS AFTER EVERY CLOSE* (preamble
-item 1) — three closes this block each staged one, and a staged path blocks the
-next merge.
+WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 6402f2d=), and
+*COMMIT THE STAGED DISPATCH RECORDS AFTER EVERY CLOSE* (preamble item 1).
 
-NOTHING ELSE IS OPEN. TASK-QGWK7.1.1 and both its dispatches are closed;
-TASK-STWVB.1.1.1.1's two dispatches are closed.
+IF THE VERDICT IS APPROVE: TASK-STWVB.1.1.1.1.1 closes, and then the whole chain
+unwinds — =.1.1.1.1= and =.1.1.1= both close, because each was held open only by
+its successor's BLOCK SHIP. Check =DEPENDS_ON= on each before closing it.
 
-BOARD SHAPE OF THE CHAIN: TASK-STWVB, .1 and .1.1 are DONE. =.1.1.1= depends on
-=.1.1.1.1=, which depends on =.1.1.1.1.1= (live). Each open node names its
-blocker in =DEPENDS_ON=, so the chain reads correctly off the board without prose.
+NOTE ON WATCHERS: one was KILLED mid-block by a session-level group-kill while
+the worker stayed perfectly healthy. *A DEAD WATCHER IS NOT A DEAD WORKER* —
+re-check =tmux ls=, =[run-live]= and =last.txt= before concluding anything.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
