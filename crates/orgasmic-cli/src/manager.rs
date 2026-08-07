@@ -5751,17 +5751,35 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
 }
 
 /// The git sequencer operation in progress in this worktree, if any
-/// (TASK-QGWK7.1.1.1 F-3). Four `exists()` calls close the whole class: only
-/// `rebase --abort` was measured to destroy a record, but `--continue`,
-/// `--skip` and the merge/cherry-pick equivalents all rewrite HEAD out from
-/// under a commit this close just wrote.
+/// (TASK-QGWK7.1.1.1 F-3). A handful of `exists()` calls close the whole class:
+/// only `rebase --abort` was measured to destroy a record, but `--continue`,
+/// `--skip` and the merge/cherry-pick/revert equivalents all rewrite HEAD out
+/// from under a commit this close just wrote.
+///
+/// `REVERT_HEAD` is here because leaving it out was WORSE than the loss the
+/// guard prevents (TASK-QGWK7.1.1.1.1 B-1, measured): a record commit written
+/// inside a revert makes the operator's `git revert --abort` exit 128 with
+/// `Untracked working tree file … would be overwritten by merge` / `fatal:
+/// Could not reset index file`, leaving the revert still in progress and the
+/// index mangled — where the guarded operations merely abort cleanly. And the
+/// window is not only a CONFLICTED revert: a clean `git revert -n` — the
+/// ordinary way to stage a revert before editing it — leaves `REVERT_HEAD`
+/// present with `CHERRY_PICK_HEAD` absent (measured).
+///
+/// `sequencer` is belt and braces for a multi-commit revert/cherry-pick range
+/// stopped between picks. Measured: an interrupted range has `.git/sequencer`
+/// alongside its `*_HEAD` marker, a completed one has NEITHER, and `--quit`
+/// clears both — so it cannot latch on after a sequence finishes. It is listed
+/// last so the specific marker names the operation when both are present.
 fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
     for (marker, operation) in [
         ("rebase-merge", "rebase"),
         ("rebase-apply", "rebase or am"),
         ("MERGE_HEAD", "merge"),
         ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
         ("BISECT_LOG", "bisect"),
+        ("sequencer", "revert or cherry-pick sequence"),
     ] {
         if git_dir.join(marker).exists() {
             return Some(operation);
@@ -5783,8 +5801,23 @@ fn sequencer_operation_in_progress(git_dir: &Path) -> Option<&'static str> {
 ///
 /// Best-effort and silent when there is nothing to do: this runs on every
 /// re-run of every close, and a close that persisted fine must stay a no-op.
-// orgasmic:TASK-QGWK7.1.1.1
+///
+/// The repair lands on the branch the RE-RUN is standing on, not the one the
+/// failed close resolved (TASK-QGWK7.1.1.1.1 B-2, measured through the binary:
+/// close on `feature-x` with the index locked, `git checkout main`, re-run —
+/// the record commit lands on `main`, `feature-x` never moves, and going back
+/// to `feature-x` afterwards removes the now-tracked files from the working
+/// tree, so further re-runs there are silent no-ops). Refusing that would trade
+/// a record that IS in history for one that is in none until the manager
+/// remembers which branch they were on, and the record's home branch is not a
+/// property anything downstream reads. So it is allowed, documented in the
+/// convention, and the print below names the ref it landed on.
+// orgasmic:TASK-QGWK7.1.1.1,TASK-QGWK7.1.1.1.1
 fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchRecord) {
+    // Reachability is load-bearing on `close_tx_ran_cleanup` (see its
+    // definition) setting `cleanup_already_run` for `ok`/`worktree_missing`
+    // ONLY: that is what stops a staggered multi-task close stamping
+    // `cleanup_already_run` over the `partial` this repair keys on.
     let Some(status) = closed_dispatch_cleanup_status(project_root, &closed.tx_id) else {
         return;
     };
@@ -5812,10 +5845,29 @@ fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchR
         }
     };
     match commit_promoted_dispatch_record(project_root, &closed.tx_id) {
-        Ok(()) => println!(
-            "re-persisted: dispatch record {} committed (the close that promoted it reported \
-             cleanup status={status})",
-            closed.tx_id
+        // orgasmic:TASK-QGWK7.1.1.1.1 — B-3: `Ok(())` is not proof that
+        // anything was committed. If `promote last.txt` fails AFTER
+        // `create_dir_all` succeeds (`paths.rs`), `dest_dir` exists but is
+        // EMPTY, and every step downstream reports success over nothing
+        // (measured): `git add -- <empty dir>` exits 0, the throwaway index's
+        // `write-tree` equals `head_tree` so the commit takes its early
+        // return, and `verify_dispatch_record_staged` finds no file to miss.
+        // The one line a manager would trust has to be gated on the record
+        // really being in `HEAD` afterwards, or every future re-run repeats
+        // the same false claim.
+        Ok(()) if dispatch_record_is_in_history(project_root, &dest_dir) => println!(
+            "re-persisted: dispatch record {} committed onto {} (the close that promoted it \
+             reported cleanup status={status})",
+            closed.tx_id,
+            git_capture(project_root, ["symbolic-ref", "-q", "HEAD"])
+                .unwrap_or_else(|_| "HEAD".to_string())
+        ),
+        Ok(()) => eprintln!(
+            "warning: dispatch record {} is promoted at {} but had nothing to commit and is \
+             still not in git history — the directory holds no files, so the close reporting \
+             cleanup status={status} failed between creating it and promoting into it",
+            closed.tx_id,
+            dest_dir.display()
         ),
         Err(err) => eprintln!(
             "warning: dispatch record {} is promoted at {} but still not in git history \
@@ -9819,6 +9871,217 @@ mod tests {
         assert!(
             fixture.root.join(".git/MERGE_HEAD").exists(),
             "the close must leave the operator's merge intact"
+        );
+    }
+
+    /// Put `base.txt` through three commits so a revert of the middle one
+    /// conflicts against the tip. Returns nothing: every caller reads the repo.
+    fn stack_three_revisions(root: &Path) {
+        for content in ["two\n", "three\n"] {
+            std::fs::write(root.join("base.txt"), content).unwrap();
+            git_ok(root, &["commit", "-qam", content.trim()]);
+        }
+    }
+
+    /// TASK-QGWK7.1.1.1.1 B-1. `git revert` is the same sequencer machinery as
+    /// `cherry-pick`, and the guard did not check `REVERT_HEAD`. Measured, the
+    /// resulting state was strictly WORSE than the loss the guard exists to
+    /// prevent: with a record commit sitting on the branch, the operator's
+    /// `git revert --abort` exits 128 (`Untracked working tree file … would be
+    /// overwritten by merge` / `fatal: Could not reset index file`), leaving the
+    /// revert still in progress with a mangled index — where a refused close
+    /// leaves an abort that exits 0 with the record still on disk.
+    ///
+    /// So this pins the abort too, not only the refusal: the abort exiting 0 is
+    /// the property the missing marker cost.
+    // orgasmic:TASK-QGWK7.1.1.1.1
+    #[test]
+    fn a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working() {
+        let fixture = dispatch_cleanup_fixture("task-revert");
+        stack_three_revisions(&fixture.root);
+        let conflicted = Command::new("git")
+            .args(["revert", "--no-edit", "HEAD~1"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            !conflicted.status.success() && fixture.root.join(".git/REVERT_HEAD").exists(),
+            "the fixture must really be mid-revert: {}{}",
+            String::from_utf8_lossy(&conflicted.stdout),
+            String::from_utf8_lossy(&conflicted.stderr)
+        );
+        let tip = git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-REVERT");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(
+            cleanup.status,
+            CleanupStatus::Partial,
+            "a close inside a revert must stand down instead of committing: {error}"
+        );
+        assert!(
+            error.contains("a git revert is in progress"),
+            "the refusal must name the sequencer operation that caused it: {error}"
+        );
+        let promoted = fixture
+            .root
+            .join(".orgasmic/dispatch-records/tx-start-task-revert/last.txt");
+        assert!(
+            promoted.exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-revert"),
+            "",
+            "a refusal must stage nothing — a staged path is what blocks the resolve+commit"
+        );
+        assert_eq!(
+            git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]),
+            tip,
+            "the close must not move HEAD out from under the revert"
+        );
+        assert!(
+            fixture.root.join(".git/REVERT_HEAD").exists(),
+            "the close must leave the operator's revert intact"
+        );
+
+        // The measured symptom, pinned: the operator's own abort still works.
+        let aborted = Command::new("git")
+            .args(["revert", "--abort"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            aborted.status.success(),
+            "a close must never wedge `git revert --abort`: {}{}",
+            String::from_utf8_lossy(&aborted.stdout),
+            String::from_utf8_lossy(&aborted.stderr)
+        );
+        assert!(
+            !fixture.root.join(".git/REVERT_HEAD").exists(),
+            "the abort must really have finished the revert"
+        );
+        assert!(
+            promoted.exists(),
+            "and it must not take the promoted record with it — the re-run needs it"
+        );
+    }
+
+    /// TASK-QGWK7.1.1.1.1 B-1, the wider half. The exposure is not only a
+    /// CONFLICTED revert: a clean `git revert -n` — the ordinary way to stage a
+    /// revert before editing it — leaves `REVERT_HEAD` present and
+    /// `CHERRY_PICK_HEAD` absent (measured), so an ordinary manager move put a
+    /// close in the unguarded state.
+    // orgasmic:TASK-QGWK7.1.1.1.1
+    #[test]
+    fn a_close_with_a_cleanly_staged_revert_persists_nothing() {
+        let fixture = dispatch_cleanup_fixture("task-revert-n");
+        stack_three_revisions(&fixture.root);
+        git_ok(&fixture.root, &["revert", "-n", "--no-edit", "HEAD"]);
+        assert!(
+            fixture.root.join(".git/REVERT_HEAD").exists()
+                && !fixture.root.join(".git/CHERRY_PICK_HEAD").exists(),
+            "the fixture must be the CLEAN staged revert: REVERT_HEAD alone"
+        );
+        let tip = git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]);
+        let open = dispatch_cleanup_record(&fixture, "TASK-REVERT-N");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, false, false);
+
+        let error = cleanup.error.clone().unwrap_or_default();
+        assert_eq!(
+            cleanup.status,
+            CleanupStatus::Partial,
+            "a close inside a staged revert must stand down instead of committing: {error}"
+        );
+        assert!(
+            error.contains("a git revert is in progress"),
+            "a staged revert is refused by the same name as a conflicted one: {error}"
+        );
+        assert!(
+            fixture
+                .root
+                .join(".orgasmic/dispatch-records/tx-start-task-revert-n/last.txt")
+                .exists(),
+            "the promoted report is never the casualty: it stays on disk for the re-run"
+        );
+        assert_eq!(
+            staged_record_paths(&fixture.root, "tx-start-task-revert-n"),
+            "",
+            "the record must not join the manager's staged revert in the index"
+        );
+        assert_eq!(
+            git_capture_ok(&fixture.root, &["rev-parse", "HEAD"]),
+            tip,
+            "the close must not commit on top of a revert the manager has not finished"
+        );
+    }
+
+    /// TASK-QGWK7.1.1.1.1 B-1, belt and braces. A multi-commit
+    /// revert/cherry-pick range stopped between picks keeps its todo list in
+    /// `.git/sequencer`. Measured: an interrupted range has that directory
+    /// ALONGSIDE its `*_HEAD` marker, a completed range has neither, and
+    /// `--quit` clears both — so the entry adds cover without latching on after
+    /// a sequence finishes. Git always pairs the two in practice, so the
+    /// isolated state is fabricated here; the real interrupted and completed
+    /// ranges below are what guard against a false positive.
+    // orgasmic:TASK-QGWK7.1.1.1.1
+    #[test]
+    fn an_interrupted_pick_sequence_is_refused_and_a_finished_one_is_not() {
+        let fixture = dispatch_cleanup_fixture("task-sequencer");
+        let git_dir = fixture.root.join(".git");
+        stack_three_revisions(&fixture.root);
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            None,
+            "a clean worktree must not look like an operation in progress"
+        );
+
+        // A real interrupted range: the first pick conflicts, and git writes
+        // both the marker and the todo list.
+        let interrupted = Command::new("git")
+            .args(["revert", "--no-edit", "HEAD~1", "HEAD~2"])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            !interrupted.status.success() && git_dir.join("sequencer").is_dir(),
+            "the fixture must really be a stopped multi-pick sequence: {}{}",
+            String::from_utf8_lossy(&interrupted.stdout),
+            String::from_utf8_lossy(&interrupted.stderr)
+        );
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            Some("revert"),
+            "the specific marker names the operation while both are present"
+        );
+
+        git_ok(&fixture.root, &["revert", "--quit"]);
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            None,
+            "`--quit` clears the sequencer state, so the guard must let go of it"
+        );
+
+        // A range that completes cleanly leaves nothing behind either: the
+        // `sequencer` entry must not refuse every close after a normal
+        // multi-commit revert.
+        git_ok(&fixture.root, &["reset", "-q", "--hard", "HEAD"]);
+        git_ok(&fixture.root, &["revert", "--no-edit", "HEAD", "HEAD~1"]);
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            None,
+            "a COMPLETED sequence must not look like one in progress"
+        );
+
+        // And the todo list alone — no `*_HEAD` marker — is still refused.
+        std::fs::create_dir_all(git_dir.join("sequencer")).unwrap();
+        assert_eq!(
+            sequencer_operation_in_progress(&git_dir),
+            Some("revert or cherry-pick sequence"),
+            "a pending todo list is an operation in progress even with no marker"
         );
     }
 

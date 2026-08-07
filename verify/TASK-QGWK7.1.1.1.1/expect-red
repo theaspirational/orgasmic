@@ -1,0 +1,21 @@
+# Pinned from the real red run of 2026-08-07 with the injection applied.
+#
+# B-1: `sequencer_operation_in_progress` shipped five markers and `REVERT_HEAD`
+# was not one of them, so a close inside a `git revert` committed the record and
+# reported `ok` — and the operator's `git revert --abort` then exited 128
+# (`Untracked working tree file ... would be overwritten by merge` / `fatal:
+# Could not reset index file`), leaving the revert in progress with a mangled
+# index. Strictly worse than the loss the guard exists to prevent.
+#
+# The FIRST failing assertion is the refusal below: the close reported `ok`
+# where it must report `partial`. The abort claim in the same test sits behind
+# it and is never reached under the injection, which is the correct order — a
+# close that stands down cannot wedge the abort in the first place.
+
+exit: 101
+
+contains: a close inside a revert must stand down instead of committing
+
+contains: test result: FAILED. 0 passed; 1 failed
+
+contains: manager::tests::a_close_inside_a_conflicted_revert_keeps_the_record_and_leaves_the_abort_working ... FAILED

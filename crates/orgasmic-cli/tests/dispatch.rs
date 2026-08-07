@@ -10099,3 +10099,461 @@ async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// A `git` shim that fails the named subcommands outright and forwards
+/// everything else to the real git.
+///
+/// TASK-QGWK7.1.1.1.1 B-4 needs a record-commit failure that happens AFTER the
+/// real-index `git add` at the top of `commit_promoted_dispatch_record`, which
+/// is the only way to reach the rollback below it. Every commit-failure fixture
+/// in this file injects with a held `.git/index.lock`, and that makes the `add`
+/// itself fail — so the rollback was unreachable in the whole suite.
+fn write_failing_git_shim(bin_dir: &Path, failing: &[&str]) {
+    let output = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("locate git");
+    assert!(output.status.success(), "command -v git failed");
+    let git = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = bin_dir.join("git");
+    let cases = failing.join("|");
+    write(
+        &path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    {cases})\n      \
+             echo \"fatal: injected $arg failure\" >&2\n      exit 1\n      ;;\n  esac\ndone\n\
+             exec {git} \"$@\"\n"
+        ),
+    );
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+    }
+}
+
+/// TASK-QGWK7.1.1.1.1 B-4. TASK-QGWK7.1.1.1 F-1 made the record-commit rollback
+/// REPORT itself instead of dropping the result behind `let _ =`, because a
+/// silently left-staged record is M-0's symptom verbatim — the manager's next
+/// merge refuses with no clue why. Nothing reached either arm: every
+/// commit-failure fixture holds `.git/index.lock`, which makes the real-index
+/// `git add` fail before `write_dispatch_record_commit` is ever called.
+///
+/// A shim that fails `update-ref` with the lock FREE gets past the `add` and
+/// into the rollback. The first close takes the arm where the rollback works
+/// (the index must come back clean); the re-run takes the arm where the
+/// rollback fails too (the record really is left staged, and the message has to
+/// say so and name the command that clears it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_record_commit_rollback_reports_both_the_clean_and_the_failed_arm() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "rollback brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "rollback regression",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+
+    let close_args = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        &started_tx,
+        "--status",
+        "done",
+        "--merge-sha",
+        &head,
+        "--codex-commit",
+        &head,
+        "--no-worktree-remove",
+        "--reason",
+        "rollback regression",
+    ];
+    let staged_record = |root: &Path| {
+        run_git(
+            root,
+            &[
+                "diff",
+                "--cached",
+                "--name-only",
+                "--",
+                ".orgasmic/dispatch-records",
+            ],
+        )
+    };
+
+    // Arm one: the commit fails at `update-ref`, and the rollback works.
+    write_failing_git_shim(&bin_dir, &["update-ref"]);
+    let first = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    let first_stderr = String::from_utf8_lossy(&first.stderr).to_string();
+    assert!(
+        first.status.success(),
+        "a failed record persist must never fail the close: {first_stderr}"
+    );
+    assert!(
+        first_stderr.contains("injected update-ref failure"),
+        "the fixture must really fail INSIDE the commit, past the real-index `git add`: \
+         {first_stderr}"
+    );
+    assert!(
+        !first_stderr.contains("left STAGED"),
+        "the rollback succeeded here, so the close must not claim it did not: {first_stderr}"
+    );
+    assert_eq!(
+        staged_record(&project_root),
+        "",
+        "the working arm of the rollback must really unstage the record, or the manager's \
+         next merge refuses: {first_stderr}"
+    );
+
+    // Arm two: the rollback fails too, on the re-run that tries to repair.
+    write_failing_git_shim(&bin_dir, &["update-ref", "restore"]);
+    let second = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    let second_stderr = String::from_utf8_lossy(&second.stderr).to_string();
+    assert!(
+        second.status.success(),
+        "a failed re-persist must never fail the close either: {second_stderr}"
+    );
+    assert!(
+        second_stderr.contains("the record is left STAGED because the rollback failed too")
+            && second_stderr.contains("injected restore failure"),
+        "the failed arm must name BOTH failures, not just the first: {second_stderr}"
+    );
+    assert!(
+        second_stderr.contains("run `git restore --staged -- ")
+            && second_stderr.contains(&format!(
+                ".orgasmic/dispatch-records/{started_tx}` before your next"
+            )),
+        "and it must hand over the exact command that clears the state: {second_stderr}"
+    );
+    // The claim in that message has to be true, or it is the M-0 symptom with
+    // a warning bolted on.
+    std::fs::remove_file(bin_dir.join("git")).unwrap();
+    assert!(
+        staged_record(&project_root).contains(&started_tx),
+        "the message says the record is left staged, so it had better be"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-QGWK7.1.1.1.1 B-2. The re-persist re-resolves `symbolic-ref -q HEAD` at
+/// RE-RUN time, and the branch the failed close resolved is recorded nowhere.
+/// Measured through the binary: close on `feature-x` with the index locked,
+/// `git checkout main` (untracked files survive), re-run — the record lands on
+/// `main`, `feature-x` never moves, and checking `feature-x` back out REMOVES
+/// the now-tracked files from the working tree, so a further re-run there is a
+/// silent no-op.
+///
+/// Refusing the mismatch would trade a record that IS in history for one that
+/// is in none until the manager remembers which branch they were on, and no
+/// consumer reads the record's home branch. So the behaviour stands, the
+/// convention states it, the `re-persisted:` line names the ref — and this pins
+/// all three, because an undocumented version of it is what made it a finding.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_re_persist_lands_on_the_branch_the_re_run_is_standing_on() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "re-persist branch brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "re-persist branch regression",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+
+    // The close runs while the manager stands on `feature-x`.
+    run_git(&project_root, &["checkout", "-b", "feature-x"]);
+    let close_args = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        &started_tx,
+        "--status",
+        "done",
+        "--merge-sha",
+        &head,
+        "--codex-commit",
+        &head,
+        "--no-worktree-remove",
+        "--reason",
+        "re-persist branch regression",
+    ];
+    let index_lock = project_root.join(".git/index.lock");
+    write(&index_lock, "");
+    let first = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        first.status.success(),
+        "a failed record persist must never fail the close: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    std::fs::remove_file(&index_lock).unwrap();
+    let feature_before = run_git(&project_root, &["rev-parse", "refs/heads/feature-x"]);
+    let main_before = run_git(&project_root, &["rev-parse", "refs/heads/main"]);
+
+    // ...and the manager has moved on to `main` before re-running it.
+    run_git(&project_root, &["checkout", "main"]);
+    let promoted_last =
+        project_root.join(format!(".orgasmic/dispatch-records/{started_tx}/last.txt"));
+    assert!(
+        promoted_last.exists(),
+        "an untracked promoted record survives the checkout, which is what makes the re-run \
+         on another branch possible at all"
+    );
+    let second = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        second.contains(&format!(
+            "re-persisted: dispatch record {started_tx} committed onto refs/heads/main"
+        )),
+        "the repair lands on the branch the RE-RUN resolved, and must name it: {second}"
+    );
+    assert_ne!(
+        run_git(&project_root, &["rev-parse", "refs/heads/main"]),
+        main_before,
+        "`main` is the branch that advances by the record commit"
+    );
+    assert_eq!(
+        run_git(&project_root, &["rev-parse", "refs/heads/feature-x"]),
+        feature_before,
+        "the branch the failed close resolved is NOT retro-fitted with the record"
+    );
+
+    // The tail of that trade, measured and worth stating: back on `feature-x`
+    // the now-tracked record leaves the working tree, so the re-run there has
+    // nothing on disk to repair and stays silent.
+    run_git(&project_root, &["checkout", "feature-x"]);
+    assert!(
+        !promoted_last.exists(),
+        "checking out a branch without the record commit removes the tracked files"
+    );
+    let third = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        !third.contains("re-persisted:"),
+        "and with nothing on disk the repair must stay a silent no-op: {third}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-QGWK7.1.1.1.1 B-3. `Ok(())` from the record commit is not proof that a
+/// commit happened. If `promote last.txt` fails after `create_dir_all`
+/// succeeds, the destination directory exists and is EMPTY, and every step
+/// downstream reports success over nothing (measured): `git add -- <empty dir>`
+/// exits 0, the throwaway index's `write-tree` equals `head_tree` so the commit
+/// takes its early return, and `verify_dispatch_record_staged` finds no file to
+/// miss. The close then printed `re-persisted: dispatch record <tx> committed`
+/// with nothing committed — and every future re-run repeated the same false
+/// claim, because the record never entered `HEAD`.
+///
+/// The empty directory is produced here the short way, by emptying it after a
+/// persist that really failed; the state it puts the repair in is identical.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_empty_promoted_record_directory_is_never_reported_as_committed() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "empty record brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "empty record regression",
+        ],
+    );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+
+    let close_args = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        &started_tx,
+        "--status",
+        "done",
+        "--merge-sha",
+        &head,
+        "--codex-commit",
+        &head,
+        "--no-worktree-remove",
+        "--reason",
+        "empty record regression",
+    ];
+    let index_lock = project_root.join(".git/index.lock");
+    write(&index_lock, "");
+    let first = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        first.status.success(),
+        "a failed record persist must never fail the close: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    std::fs::remove_file(&index_lock).unwrap();
+
+    // The torn-promote shape: the directory is there, the files are not.
+    let dest_dir = project_root
+        .join(".orgasmic/dispatch-records")
+        .join(&started_tx);
+    for entry in std::fs::read_dir(&dest_dir).unwrap() {
+        std::fs::remove_file(entry.unwrap().path()).unwrap();
+    }
+    assert!(
+        dest_dir.is_dir() && std::fs::read_dir(&dest_dir).unwrap().next().is_none(),
+        "the fixture must be an EMPTY promoted directory, which is what git add accepts"
+    );
+    let head_before = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let second = run_orgasmic_output(&home, &running, &project_root, &path_env, &close_args);
+    let second_stdout = String::from_utf8_lossy(&second.stdout).to_string();
+    let second_stderr = String::from_utf8_lossy(&second.stderr).to_string();
+    assert!(
+        !second_stdout.contains("re-persisted:"),
+        "a repair that committed nothing must not claim it committed: {second_stdout}"
+    );
+    assert!(
+        second_stderr.contains("had nothing to commit and is still not in git history"),
+        "and it must say what it found instead, once per re-run: {second_stderr}{second_stdout}"
+    );
+    assert_eq!(
+        run_git(&project_root, &["rev-parse", "HEAD"]),
+        head_before,
+        "nothing was committed, so HEAD must not have moved"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

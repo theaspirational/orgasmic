@@ -433,4 +433,26 @@ fn manager_convention_names_post_close_report_path() {
         text.contains("64 KiB excerpt"),
         "the prose must state the real excerpt size"
     );
+    // TASK-QGWK7.1.1.1.1 B-1/B-2: the sequencer list was prose only — nothing
+    // pinned it, so it could drift from `sequencer_operation_in_progress` and
+    // did (it promised a guarantee for `revert` the code did not provide).
+    // Every operation the code refuses must be nameable off the convention.
+    for phrase in [
+        // The list itself, verbatim and in order — the whole set the code
+        // refuses on, so dropping one from either side fails here.
+        "rebase, am, merge, cherry-pick, revert, bisect",
+        "revert/cherry-pick sequence",
+        // A CLEAN staged revert is refused too, not only a conflicted one.
+        "A staged",
+        "=git revert -n= counts",
+        // B-2: which branch the repair lands on.
+        "*The repair lands on",
+        "the branch you are standing on when you re-run*",
+    ] {
+        assert!(
+            text.contains(phrase),
+            "the prose must state the persistence guarantee the code provides, and it is \
+             missing {phrase:?}"
+        );
+    }
 }
