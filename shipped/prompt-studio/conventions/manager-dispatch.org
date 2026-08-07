@@ -344,15 +344,26 @@ check the rest of the invocation too.
    aborts actually destroys a record — =rebase --abort= takes the commit and the
    promoted file with it (measured), and a rebase detaches HEAD, so the
    detached-HEAD refusal catches that case first. A record commit written inside
-   a revert or cherry-pick is NOT destroyed: git declines to rewind a HEAD that
-   moved, so =git revert --abort= and =git cherry-pick --abort= exit 0 and the
-   record survives in =HEAD= and on disk (measured). Standing down is still the
+   a revert or cherry-pick is NOT destroyed: =git revert --abort= and
+   =git cherry-pick --abort= exit 0 and the record survives in =HEAD= and on
+   disk (measured) — for revert and cherry-pick because the abort rewinds to the
+   CURRENT HEAD, which is the record commit itself; for =am= because git refuses
+   to rewind past a HEAD that moved. Either way the abort discards the conflict
+   resolution you had in the working tree. Standing down is still the
    right move, for a different reason: the record would otherwise land in the
    middle of an operation you have not finished, on a branch whose shape you are
    still deciding — and one written on a detached HEAD is on no branch at all.
    Skipping the commit costs a promote plus a re-run, and buys a record that
    enters history once, cleanly, at a point you chose. A staged
    =git revert -n= counts: it leaves =REVERT_HEAD= just as a conflicted one does.
+   So does a range with no pick currently stopped: resolve a conflict and
+   =git commit= it by hand instead of =git revert --continue= and git clears
+   =REVERT_HEAD= while leaving the =.git/sequencer= todo list, from which
+   =git revert --continue= still resumes the range (measured). =git reset --hard=
+   leaves that same todo list behind with nothing live to resume — =git status=
+   does not show it and an ordinary commit does not clear it — and the two are
+   indistinguishable on disk, so the close refuses both and its message names
+   =git revert --quit=, the one command that clears the leftovers.
    Re-run the same close once the operation finishes or you are back on a
    branch; a re-run repairs any record its close promoted but could not commit,
    printing =re-persisted:=, and is otherwise still a no-op. *The repair lands on
