@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         8de8ecd
+:LIVENESS:         11620d6
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -287,37 +287,38 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1.1.1.1 (P1, restoring a guard the MANAGER
-wrongly ordered removed). =tx-20260807-orgasmic-5253=,
-run =run-20260807T134510-c014d128dd89499fa94689c99561f729=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1.1=, dispatched
-[2026-08-07 Fri 13:45:10] on =tmux / claude / claude-opus-5 / high=.
+ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1.1.1.1 REVIEW.
+=tx-20260807-orgasmic-5259=, run =run-20260807T141553-e44a8f44189c47ee86bbf8f08e63ecab=,
+worktree =~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1.1-review=, dispatched
+[2026-08-07 Fri 14:15:53] on =tmux / claude / claude-opus-5 / high=. Reviews merge
+=11620d6=.
 
-*THE MISTAKE WAS THE MANAGER'S, NOT THE WORKER'S.* I ordered
-=("sequencer", …)= dropped on a universal two workers had measured — "every
-stopped revert/cherry-pick range carries its own =*_HEAD= marker" — which is
-FALSE. Resolve a stopped range's conflict with a plain =git commit= instead of
-=git revert --continue= and you get =.git/sequencer= with a pending todo and NO
-marker. Manager reproduced it. The guard used to refuse that; now it commits a
-record mid-range. The entry returns WITH THE MESSAGE FIXED, which is what the
-latch problem actually needed.
+*THE ASK IS EXPLICIT: DOES THIS ROUND CLOSE THE CHAIN?* Six rounds deep, and
+rounds 4/5/6 were each caused by a CLAIM rather than by code. The argument for
+closure is structural — =the_sequencer_list_matches_the_guards_array= makes
+prose/code drift FAIL A TEST rather than ship. The brief tells the reviewer to
+attack that argument, not to endorse it.
 
-*D-2 IS THE ITEM THAT MATTERS MOST, not D-1.* =shipped_conventions.rs:436-438=
-CLAIMS "dropping one from either side fails here" but every assertion is
-=text.contains= over the =.org= prose — the code array is never read. That
-blindness is precisely why the bad instruction shipped: the prose kept promising
-a refusal the code had stopped providing. Making the pin bidirectional is what
-ends this class.
+*MANAGER-VERIFIED, so it is not re-derived:* I dropped the =REVERT_HEAD= row from
+=sequencer_markers.rs= ALONE and ran =shipped_conventions= — it FAILED, exit 101,
+=left= the prose list, =right= the code array. The pin is genuinely
+bidirectional. That is the thing that ends this class.
 
-WHEN IT REPORTS: merge, gate, review, close reviewer then implementer, commit the
-staged records. *THEN REINSTALL THE RUNTIME* (Next likely actions item 2) —
-retires preamble item 1.
+*TWO LOAD-SENSITIVE FAILURES ON MY SUITE RUN, CLASSIFIED, NOT REAL.*
+=reviewer_close_non_clean_verdict_flags_stay_in_progress= and
+=reviewer_close_refuses_verdict_flag_alongside_property_verdict= died on
+=daemon request timed out after 10s (1m load average 14.11)= — a TIMEOUT, not an
+assertion. Alone: *2 passed in 7.00s*. The load is EXTERNAL (a Python process at
+96% CPU, Cursor's file watcher at 76%), not this change, and neither test is in
+the flake registry. One occurrence with an external cause does not earn a
+registry entry — the registry's own warning is that it must not become a
+graveyard. *Watch whether they recur on a calm host; if they do, they need an
+owner, not an excuse.*
 
-A RECURRING SHAPE WORTH NAMING, three times this session: *a claim gets measured
-once, restated as a universal, and then acted on.* The =(exit status: 101)=
-exclusion, the =revert --abort= wedge, and now the =*_HEAD= universal. Each was
-true of the case measured and false as stated. When a report says ALWAYS or
-NEVER, ask which cases were actually run.
+WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 11620d6=), commit
+the staged records. If no BLOCK SHIP, close TASK-QGWK7.1.1.1.1.1.1 and then
+=.1.1.1.1.1= (check =DEPENDS_ON=), *THEN REINSTALL THE RUNTIME* — Next likely
+actions item 2, which retires preamble item 1.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
