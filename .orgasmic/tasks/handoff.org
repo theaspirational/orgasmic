@@ -242,29 +242,33 @@ PRACTICES THAT PAID OFF AGAIN THIS BLOCK, keep them:
   here.
 
 ** In flight
-ONE DISPATCH IS LIVE. TASK-STWVB.1.1.1.1, =tx-20260807-orgasmic-5137=,
-run =run-20260807T102559-ad748854eb72437c9682e26c93e854f6=, worker
-=implementer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1=, dispatched
-[2026-08-07 Fri 10:25:59] on =tmux / claude / claude-opus-5 / high=. Round 5 of
-the STWVB chain: detect a crashed target FROM THE LOG so it cannot read as GREEN.
+ONE DISPATCH IS LIVE: the TASK-STWVB.1.1.1.1 REVIEW.
+=tx-20260807-orgasmic-5157=, run =run-20260807T104701-3d63164e806444aaaa08931e1739a875=,
+worker =reviewer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1-review=, dispatched
+[2026-08-07 Fri 10:47:01] on =tmux / claude / claude-opus-5 / high=.
 
-Its gate costs almost no real test execution — =run-tests-selftest.sh= installs a
-STUB cargo on =PATH= (=:517=) and =install_stub_cargo_abort= (=:532=) already
-emits the SIGABRT shape — so this dispatch is NOT a syspolicyd risk and did not
-need to wait for the reviewer. Its brief caps it at ZERO full-suite runs and at
-most one real scoped run with a stated justification.
+It reviews merge =060b84d= AND the manager's own =a8edf93= (the registry
+ownership fix), because nobody else has looked at the latter. Its brief asks one
+question above the rest: *which adjacent branch did round 5 leave wrong* — the
+chain has broken itself that way four times running. The sharpest specific claim
+it carries: the new crash arm outranks =HOST_DEGRADED=, so a crash on a degraded
+host is RED rather than INCONCLUSIVE — but a SIGKILL under memory pressure is a
+HOST artifact that presents exactly as a crashed target, and this whole chain
+exists to stop attributing host state to code.
 
-WHEN IT REPORTS: merge, gate, review, close — and *COMMIT THE STAGED DISPATCH
-RECORD BEFORE THE MERGE* (preamble item 1), or the merge will refuse. The brief
-told it to expect a =verify/TASK-STWVB.1.1.1.1/= artifact; read the red log
-yourself rather than trusting the PASS.
+THE IMPLEMENTER DISPATCH IS STILL OPEN AND MUST BE CLOSED AFTER THE REVIEWER:
+=tx-20260807-orgasmic-5137=, =[reported]=, branch =task-stwvb.1.1.1.1-impl=,
+merged at =060b84d=. The default-branch gate refuses a merge-sha close until a
+reviewer verdict exists for that generation, so the order is reviewer close
+first, then implementer close with =--merge-sha 060b84d=.
 
-WATCHERS: two were armed this block, one per dispatch, keyed on a non-empty
-=last.txt= OR the tmux session vanishing — never on =[pid-gone]=, which tmux
-reports always. The reviewer's fired correctly at 19,115 bytes.
+*COMMIT THE STAGED DISPATCH RECORD AFTER EVERY CLOSE* (preamble item 1) — the
+installed binary stages rather than commits, and a staged path blocks the next
+merge. This bit once already this block and was handled; it will bite again.
 
-NOTHING ELSE IS OPEN. Both TASK-QGWK7.1.1 dispatches are closed.
+WATCHERS: one per dispatch, keyed on a non-empty =last.txt= OR the tmux session
+vanishing, never on =[pid-gone]=. Three armed this block, three behaved.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
