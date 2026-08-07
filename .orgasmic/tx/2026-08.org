@@ -19180,3 +19180,129 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-07 Fri 11:00:04 reviewer.reported TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5160
+:TIME:         [2026-08-07 Fri 11:00:04]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:RUN_ID:       run-20260807T104701-3d63164e806444aaaa08931e1739a875
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5157/last.txt
+:END:
+
+* TX 2026-08-07 Fri 11:01:18 reviewer.done TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5161
+:TIME:         [2026-08-07 Fri 11:01:18]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:REASON:       REJECT on one BLOCK SHIP (F-1), and it is the adjacent branch the brief asked for. Round 5's own acceptance is fully met and correctly pinned; the reviewer reproduced the fix independently. But the B2 arm's FAIL_COUNT guard is a LEAKY PROXY for 'the exit is 101': a cargo killed by the OS (exit 137) is still swallowed the moment any registered flake classifies, returning GREEN modulo 1 at exit 0 — demonstrated on the LIVE path with the log carrying orgasmic-suite-exit: 137. Same mechanism as R-1 one level up: R-1 fixed the crashed TARGET, this is the crashed SUITE. Manager confirmed in source at :1254. F-2 and F-3 are NEW in 0e2ba6a. Carries to TASK-STWVB.1.1.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260807-orgasmic-5157
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5157/last.txt
+:END:
+
+* TX 2026-08-07 Fri 11:01:19 task.state_transitioned TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5162
+:TIME:         [2026-08-07 Fri 11:01:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 11:01:26 implementer.done TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5163
+:TIME:         [2026-08-07 Fri 11:01:26]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:REASON:       Merged 060b84d. Round 5's acceptance is fully met: crash detected from the log, own CRASHED section, own RED arm above FAIL_COUNT and HOST_DEGRADED, FAIL_COUNT guard untouched, suite exit stamped so --classify agrees, registry byte-unchanged. Manager re-ran the gates. Reviewed REJECT for a PRE-EXISTING adjacent defect (F-1) plus two new ones in this commit (F-2, F-3); all carry to TASK-STWVB.1.1.1.1.1. The worker also caught a manager-caused CI breakage and correctly refused to fix it inside its invariants.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    060b84d46203362f561f58a3136eeababd48087e
+:BRANCH:       task-stwvb.1.1.1.1-impl
+:CLOSED_TX:    tx-20260807-orgasmic-5137
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5137/last.txt
+:END:
+
+* TX 2026-08-07 Fri 11:01:26 task.state_transitioned TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5164
+:TIME:         [2026-08-07 Fri 11:01:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-STWVB.1.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 11:02:22 task.created TASK-STWVB.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5165
+:TIME:         [2026-08-07 Fri 11:02:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round 6. One BLOCK SHIP (F-1): FAIL_COUNT -eq 0 is a proxy for 'the exit is 101' and leaks for every other non-zero code, so a killed cargo plus any registered flake returns GREEN modulo N at exit 0 on the live path. Plus two defects new in 0e2ba6a and a zero-coverage regex.
+:END:
+
+* TX 2026-08-07 Fri 11:02:34 task.property_updated TASK-STWVB.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5166
+:TIME:         [2026-08-07 Fri 11:02:34]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from reviewer findings
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-07 Fri 11:02:34 task.property_updated TASK-STWVB.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5167
+:TIME:         [2026-08-07 Fri 11:02:34]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       BLOCK SHIP F-1 is unactioned until round 6 lands and passes a fresh review; the goal's bar keeps this round open until then. Machine-readable so the board shows the blocker.
+:DEPENDS_ON:   TASK-STWVB.1.1.1.1.1
+:END:

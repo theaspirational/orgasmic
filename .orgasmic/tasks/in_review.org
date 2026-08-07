@@ -248,6 +248,7 @@ the reviewer should rule on whether it belongs here.
 :PRIORITY: P1
 :WRITE_SCOPE: crates/**,scripts/**,verify/**,.github/**,.orgasmic/project.org
 :FIX_SUBTASK: t
+:DEPENDS_ON:  TASK-STWVB.1.1.1.1.1
 :END:
 
 === READ THIS FIRST — STATUS ===
