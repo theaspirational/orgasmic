@@ -19891,3 +19891,129 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-07 Fri 12:17:11 reviewer.reported TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5202
+:TIME:         [2026-08-07 Fri 12:17:11]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:RUN_ID:       run-20260807T120753-a3269dda4e1e4f52aedd71dce1926049
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5199/last.txt
+:END:
+
+* TX 2026-08-07 Fri 12:18:18 reviewer.done TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5203
+:TIME:         [2026-08-07 Fri 12:18:18]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:REASON:       REJECT on one BLOCK SHIP: sequencer_operation_in_progress omits REVERT_HEAD, so this task's own acceptance ('a close during ANY sequencer operation cannot lose the record') is unmet. Worse than the loss it was meant to prevent — the reviewer measured three controls and a record commit written during a revert WEDGES git revert --abort at exit 128 with a mangled index, a failure mode the guarded operations do not have. Manager verified the 5-marker array in source AND independently reproduced that a CLEAN 'git revert -n' leaves REVERT_HEAD with CHERRY_PICK_HEAD absent, so the window is any staged revert, not just a conflicted one. The convention prose pins the same incomplete set. Three LOW follow-ups. Carries to TASK-QGWK7.1.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260807-orgasmic-5199
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5199/last.txt
+:END:
+
+* TX 2026-08-07 Fri 12:18:22 task.state_transitioned TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5204
+:TIME:         [2026-08-07 Fri 12:18:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QGWK7.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-07 Fri 12:18:25 implementer.done TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5205
+:TIME:         [2026-08-07 Fri 12:18:25]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:REASON:       Merged f6c6c4d. All seven findings addressed and every new test proven red against injected parent behaviour; the two re-authored injection patches keep expect-red and cmd byte-unchanged (manager-verified, zero diff). Reviewed REJECT for one unmet acceptance criterion (REVERT_HEAD) plus three LOW; all carry to TASK-QGWK7.1.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    f6c6c4de38015e7e83c2624b46e66156f9e6738b
+:BRANCH:       task-qgwk7.1.1.1-impl
+:CLOSED_TX:    tx-20260807-orgasmic-5190
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260807-orgasmic-5190/last.txt
+:END:
+
+* TX 2026-08-07 Fri 12:18:26 task.state_transitioned TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5206
+:TIME:         [2026-08-07 Fri 12:18:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QGWK7.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-07 Fri 12:19:11 task.created TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5207
+:TIME:         [2026-08-07 Fri 12:19:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       One BLOCK SHIP: sequencer_operation_in_progress omits REVERT_HEAD, so a close during any revert (conflicted OR a clean -n) commits a record that then wedges git revert --abort at exit 128 with a mangled index. Manager verified in source and reproduced the clean -n window independently.
+:END:
+
+* TX 2026-08-07 Fri 12:19:21 task.property_updated TASK-QGWK7.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5208
+:TIME:         [2026-08-07 Fri 12:19:21]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       fix round minted from reviewer findings
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-07 Fri 12:19:22 task.property_updated TASK-QGWK7.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260807-orgasmic-5209
+:TIME:         [2026-08-07 Fri 12:19:22]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QGWK7.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       BLOCK SHIP B-1 is unactioned until the fix round lands and passes a fresh review; the goal's bar keeps this round open until then.
+:DEPENDS_ON:   TASK-QGWK7.1.1.1.1
+:END:
