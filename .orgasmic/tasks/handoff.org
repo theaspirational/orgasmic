@@ -5,57 +5,65 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         11620d6
+:LIVENESS:         572c30a
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-07, fifth block. *THE STWVB CHAIN IS CLOSED* — six rounds, from
-"the gate cannot return a verdict" to a verdict ladder proven TOTAL over its whole
-input space. TASK-QGWK7.1.1 is DONE. The QGWK7 chain now commits worker reports
-into git history by construction.
+Session 2026-08-07, fifth block. *TWO CHAINS CLOSED* — STWVB at six rounds and
+QGWK7 at seven nodes — and *THE RUNTIME IS REINSTALLED AT =572c30a=*, which
+retires the workaround that governed the whole session.
 
 THE FIVE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
-1. *A CLOSE STAGES THE PROMOTED RECORD — SO COMMIT IT IMMEDIATELY AFTER EVERY
-   CLOSE, OR YOUR NEXT MERGE REFUSES.* Proven on six real closes this block. The
-   auto-promote WORKS (the hand-copy workaround is RETIRED, verified by behaviour
-   rather than by a version string), but the installed binary carries =da88c19= +
-   =955c8d6= (stage) and NOT =960caea= (commit). A staged path — ANY staged path —
-   makes =git merge= REFUSE. That is M-0 itself, live in your tree.
-   *This rule disappears after the next runtime reinstall — see item 5.*
+1. *THE CLOSE NOW COMMITS THE RECORD BY ITSELF — the commit-after-every-close rule
+   is RETIRED.* Reinstalled 2026-08-07 at =572c30a=, verified BEHAVIOURALLY
+   because the version string proves nothing (every local build is
+   =0.0.15-dev.1=): the running daemon's =txt= inode is =533819939=, matching the
+   installed binary and differing from the pre-reinstall =529321123=; a
+   pre-tested string probe went 0 -> 1; codesigned
+   =com.theaspirational.orgasmic=, so TCC survived (6 projects, =parse_errors 0=,
+   630 task lines read from the Documents-hosted project, zero permission
+   errors). Rollback: =~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260807b=.
+
+   *STILL UNPROVEN: no close has run on this binary.* The next one is the proof —
+   check that =.orgasmic/dispatch-records/<started_tx>/= appears AND is COMMITTED
+   rather than staged. Until then, glance at =git status= after a close.
 
 2. NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.
    =ensure_running= -> =start_via_selected_adapter= -> =daemon_service::start=
    writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does not
    scope; a staged home restarts the real daemon and kills every live dispatch.
-   Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is the safe
-   pattern. TASK-48SFW carries the source chain.
+   Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is safe.
+   TASK-48SFW carries the source chain.
 
 3. CLAUDE IS THE ONLY RELIABLE HARNESS ON THIS HOST. =tmux/cursor-agent= killed
-   two consecutive workers, cause undetermined (TASK-VD0VB); codex is out of
-   credits. *SAME-FAMILY REVIEW IS THEREFORE ACCEPTED, with the reason stated on
-   each dispatch.* Say it; do not route around the router's independence rule
-   silently. Restoring codex credits retires the exception.
+   two consecutive workers (TASK-VD0VB); codex is out of credits. *SAME-FAMILY
+   REVIEW IS ACCEPTED, with the reason stated on each dispatch.* Nine reviews ran
+   this session and every one found something real — but the failure they kept
+   catching was a shared prior about what "measured" means, which is exactly what
+   a same-family reviewer is worst placed to catch. *Restoring codex credits is
+   the cheapest quality win available.*
 
-4. *A DEAD WATCHER IS NOT A DEAD WORKER, AND =[pid-gone]= IS NOT A DEATH SIGNAL.*
-   One watcher was killed mid-block by a session-level group-kill while its worker
-   stayed perfectly healthy; =dispatch-status= prints =[pid-gone]= for EVERY tmux
-   run always, because =WORKER_PID=-=. Before concluding a worker died, check
-   =tmux ls=, =[run-live]=, and =last.txt=. A watcher keyed on =[pid-gone]= fires
-   instantly and falsely.
+4. *A CLAIM MEASURED ON SOME CASES AND WRITTEN DOWN AS A UNIVERSAL IS THIS
+   PROJECT'S MOST EXPENSIVE DEFECT.* Four rounds this session were caused by one:
+   the =(exit status: 101)= exclusion, the =revert --abort= wedge, the =*_HEAD=
+   universal (the MANAGER's own ruling), and "either way the abort discards the
+   resolution". Every one was true of the cases actually run. *When a report says
+   ALWAYS or NEVER, ask which cases were run* — and verify the claim that makes
+   something BLOCK SHIP, not just the ones that are easy to check.
 
-5. *THE NEXT RUNTIME REINSTALL IS GATED ON TASK-QGWK7.1.1.1* (in flight). Do NOT
-   reinstall before it lands: you would install a close that COMMITS the record
-   while its error path is still unrecoverable (tmp is unlinked before the commit
-   is attempted, and re-running the close hits the already-closed no-op by
-   design). Land it, then reinstall, and item 1 retires itself.
+5. *ENUMERATE FROM THE FILESYSTEM, NOT FROM WHAT A WORKER NAMED.* The manager ran
+   FOUR verify artifacts and reported "all four PASS" when there were FIVE. A
+   =git apply --check= sweep then found *17 of 90 artifacts stale* (TASK-8Q92K) —
+   =verify/README.md= calls that a FAILURE, so ~19% of the repo's regression
+   proofs are failing silently and no channel reports it.
 
 ALSO STILL TRUE, from the 08-05 measurements: SHARED =CARGO_TARGET_DIR= IS
 UNSOUND, and STABLE WORKTREE SLOTS DO NOT FIX THE TCC PROMPTS. Do not implement
-either. And =scripts/run-tests.sh='s false green is FIXED — a crashed target, and
-now any anomalous cargo exit, reds whatever else classified.
+either. And =scripts/run-tests.sh='s false greens are FIXED — a crashed target,
+and any anomalous cargo exit, now red whatever else classified.
 
 ** Done so far
 SESSION 2026-08-06/07. SEVEN MERGES, SIX REVIEWS (five REJECT, one approve), and
@@ -237,30 +245,72 @@ by its successor's BLOCK SHIP, and the last is discharged. Three LOW follow-ups
 carry to TASK-STWVB.1.1.1.1.1.1 — F-6 is the one worth taking, being the only
 parser dependency whose breakage fails GREEN rather than loudly.
 
+*THE QGWK7 CHAIN CLOSED AT SEVEN NODES* [2026-08-07]. Merges =11620d6= (round 7)
+plus manager-direct =17315e0= and the two artifact repairs =7ddae6b= / the
+stage-and-stop rebuild. A worker report is now COMMITTED into git history by the
+close itself — recoverably, on the branch the close resolved, never inside an
+operation that owns HEAD — and the convention documenting all of it can no longer
+drift from the code without failing a test.
+
+ROUNDS 4-7 WERE EACH CAUSED BY A CLAIM, NOT BY CODE, and that is the durable
+lesson: *a property measured on some cases, written down as a universal, then
+acted on.* The =(exit status: 101)= exclusion, the =revert --abort= wedge, and the
+=*_HEAD= universal — all three true of the cases actually run and false as
+stated. *THE MANAGER MADE THE THIRD ONE*, ordering the =sequencer= entry dropped
+on two workers' honest measurement of the wrong state. Reproduced later: resolve
+a stopped range with a plain =git commit= and you get =.git/sequencer= with a
+pending todo and NO marker — a live range the guard had stopped refusing.
+
+THE STRUCTURAL FIX IS =SEQUENCER_MARKERS= + =the_sequencer_list_matches_the_guards_array=
+(round 7). The manager verified it independently by dropping a code row and
+watching =shipped_conventions= fail; the reviewer could not make it false-pass in
+five mutation attempts. Round 5's defect class is closed. *TASK-QNE3R carries what
+is NOT closed*: the pin compares field 3 only, so a typo'd marker FILE or a wrong
+refusal NAME both pass, and four of seven operations have no behavioural coverage.
+
+MANAGER-DIRECT EDITS, on the reviewer's explicit recommendation and its empirical
+reason — twice running, a round convened to remove a false claim introduced a new
+one. Measured before writing: =git am --abort= prints =Not rewinding to
+ORIG_HEAD=, exits 0, and leaves the resolution STAGED, so "either way the abort
+discards it" was false. *That edit then staled two coupled artifacts, and the
+first regeneration of one dropped the =git add= its injection depends on* — which
+made its red produce NONE of its five pinned signatures. The artifact contract
+caught both, loudly. It is the single best evidence this session that the
+red-then-green replay is worth its cost.
+
+ALSO FOUND AND FILED: *TASK-8Q92K — 17 OF 90 VERIFY ARTIFACTS CANNOT REPLAY*
+(=e851eab=). Found because a worker mentioned ONE stale chain-root artifact in
+passing; a =git apply --check= sweep found sixteen more. =verify/README.md= calls
+a stale artifact a FAILURE, so ~19% of the repo's regression proofs are failing
+silently, and nothing reports it. The manager had been running FOUR artifacts and
+saying "all four PASS" when there were FIVE — enumerated from what workers named
+rather than from =ls verify/=. *Enumerate from the filesystem.*
+
 ** Next likely actions
 ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START. Nothing
 enforces resolution and the harness default wins SILENTLY (TASK-A55J7). The
 2026-08-07 answer, which is NOT a standing setting: *=tmux / claude /
 claude-opus-5 / high= for both implementers and reviewers*, same-family review
-accepted with the reason stated on each dispatch. It went 8 for 8 this block with
-zero transport trouble.
+accepted with the reason stated on each dispatch. It went 13 for 13 this session
+with zero transport trouble.
 
 THE ORDER FROM HERE
-1. INTEGRATE TASK-QGWK7.1.1.1 when it reports (see In flight). Merge, gate,
-   review, close.
-2. *THEN REINSTALL THE RUNTIME* — and only then (preamble item 5). That is what
-   retires the commit-after-every-close rule. The recipe and its four traps are in
-   the runtime-reinstall memory; verify by INODE, never by version string, and do
-   it in a zero-worker window.
-3. TASK-VD0VB (P1) — =cursor-agent= documents =--trust=/=--yolo=/=-f=. Prefer
+1. TASK-VD0VB (P1) — =cursor-agent= documents =--trust=/=--yolo=/=-f=. Prefer
    =--trust= (it names the property we need) but VERIFY what each does. This is
    what makes cursor-agent dispatchable again and ends the same-family-review
    exception from the other side.
-4. TASK-RMA18 (P1) — worktree-reclamation redesign, six BLOCK SHIP from two prune
+2. TASK-RMA18 (P1) — worktree-reclamation redesign, six BLOCK SHIP from two prune
    reviews. =worktree-prune= stays refusing until it lands, and TASK-QGWK7.1
    deferred its F-5 onto it.
+3. TASK-8Q92K (P2) — 17 of 90 verify artifacts cannot replay, and nothing reports
+   it. The systemic half (a sweep wired in beside =run-tests.sh --check=) is worth
+   more than the 17 repairs. *Do not mass-regenerate*: an artifact re-authored
+   without reading what it pins is worse than a stale one, because it looks green.
+4. TASK-QNE3R (P2) — the sequencer marker table is pinned by LABEL, not behaviour;
+   4 of 7 rows unexercised. The reviewer called this the guard that would actually
+   pay, because it closes the chain's generating cause rather than an instance.
 5. TASK-3HR8R — surface a task parked in =in_review= with no reviewer dispatch.
-   Four were cleared by hand this block; the verb is what stops them recurring.
+   Four were cleared by hand this session; the verb stops them recurring.
 6. TASK-X0PV1 (P2) — the four daemon-parallelism flakes now have an accountable
    owner. Its acceptance forbids deleting an entry merely to green =--check=.
 7. TASK-STWVB.1.1.1.1.1.1 (P2) — F-6, the green-ward parser dependency.
@@ -268,57 +318,40 @@ THE ORDER FROM HERE
 9. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
    TASK-ADHWZ, TASK-NTNK0, TASK-5M45A.
 
-PRACTICES THAT PAID OFF, and this block is the evidence:
+WATCH FOR, not yet a task: =reviewer_close_non_clean_verdict_flags_stay_in_progress=
+and =reviewer_close_refuses_verdict_flag_alongside_property_verdict= both failed
+once on a =daemon request timed out after 10s= at load 14, and passed alone in 7s.
+External load (a Python process at 96% CPU), so NOT registered — one occurrence
+with an identified external cause is environment-blocked, not flaky. *If they
+recur on a calm host that is a real finding about the 10s daemon budget and
+deserves a task, not a registry excuse.*
+
+PRACTICES THAT PAID OFF, with this session as the evidence:
 - *AUTHORISE THE ONE CHEAP MEASUREMENT THAT SETTLES A GUESS.* One throwaway cargo
-  crate changed round 6's fix from wrong to right. Two rounds had reasoned about
-  that log shape instead of looking at it.
-- *ASK FOR A COMPLETENESS ARGUMENT, NOT SPOT CHECKS*, once a defect has recurred.
-  Five rounds of spot checks each missed one cell; one 72-cell sweep closed the
-  question.
-- *NAME THE SPECIFIC CLAIMS TO ATTACK, BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST.*
-  Every review this block answered by number and came back with measurements.
-- *STATE YOUR OWN OBJECTION AND LET THE REVIEWER RULE ON IT.* The manager's row-7
-  objection was overruled on better evidence — which is the review working.
-- *ASK THE REVIEWER TO ATTACK THE MANAGER'S OWN COMMITS.* =a8edf93= was reviewed
-  because it was named in the brief; nobody else would have looked at it.
-- *VERIFY EVERY FINDING AGAINST SOURCE BEFORE ACTING*, including ones you intend
-  to accept, and re-measure a worker's numbers when they are cheap: a report's
-  shellcheck COUNTS were wrong this block while its CLAIM was right.
-- Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
+  crate changed a fix from wrong to right; two rounds had reasoned about that log
+  shape instead of looking at it.
+- *ASK FOR A COMPLETENESS ARGUMENT ONCE A DEFECT RECURS* — and ask it from the
+  OTHER side. "Enumerate the git operations that are harmful" found what
+  "re-check the six markers" could not.
+- *NAME THE CLAIMS TO ATTACK BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST*, and state
+  your own objection so the reviewer can overrule it. Mine was overruled twice on
+  better evidence, which is the review working.
+- *ASK THE REVIEWER TO ATTACK THE MANAGER'S OWN COMMITS.* Two were reviewed only
+  because the brief named them.
+- *A SMALL PROSE ROUND MAY BE CHEAPER DONE DIRECTLY.* Twice, a round convened to
+  remove a false claim introduced a new one; the seventh was taken manager-direct
+  on the reviewer's recommendation and closed cleanly.
+- Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all session.
 
 ** In flight
-ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1.1.1.1 REVIEW.
-=tx-20260807-orgasmic-5259=, run =run-20260807T141553-e44a8f44189c47ee86bbf8f08e63ecab=,
-worktree =~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1.1-review=, dispatched
-[2026-08-07 Fri 14:15:53] on =tmux / claude / claude-opus-5 / high=. Reviews merge
-=11620d6=.
+*NOTHING IS IN FLIGHT.* No dispatch is open, no worktree is live, =tmux ls= is
+empty, and the tree is clean.
 
-*THE ASK IS EXPLICIT: DOES THIS ROUND CLOSE THE CHAIN?* Six rounds deep, and
-rounds 4/5/6 were each caused by a CLAIM rather than by code. The argument for
-closure is structural — =the_sequencer_list_matches_the_guards_array= makes
-prose/code drift FAIL A TEST rather than ship. The brief tells the reviewer to
-attack that argument, not to endorse it.
-
-*MANAGER-VERIFIED, so it is not re-derived:* I dropped the =REVERT_HEAD= row from
-=sequencer_markers.rs= ALONE and ran =shipped_conventions= — it FAILED, exit 101,
-=left= the prose list, =right= the code array. The pin is genuinely
-bidirectional. That is the thing that ends this class.
-
-*TWO LOAD-SENSITIVE FAILURES ON MY SUITE RUN, CLASSIFIED, NOT REAL.*
-=reviewer_close_non_clean_verdict_flags_stay_in_progress= and
-=reviewer_close_refuses_verdict_flag_alongside_property_verdict= died on
-=daemon request timed out after 10s (1m load average 14.11)= — a TIMEOUT, not an
-assertion. Alone: *2 passed in 7.00s*. The load is EXTERNAL (a Python process at
-96% CPU, Cursor's file watcher at 76%), not this change, and neither test is in
-the flake registry. One occurrence with an external cause does not earn a
-registry entry — the registry's own warning is that it must not become a
-graveyard. *Watch whether they recur on a calm host; if they do, they need an
-owner, not an excuse.*
-
-WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 11620d6=), commit
-the staged records. If no BLOCK SHIP, close TASK-QGWK7.1.1.1.1.1.1 and then
-=.1.1.1.1.1= (check =DEPENDS_ON=), *THEN REINSTALL THE RUNTIME* — Next likely
-actions item 2, which retires preamble item 1.
+THE ONE OUTSTANDING BEHAVIOURAL PROOF: the reinstalled runtime's close has never
+run (preamble item 1). The next dispatch you close is the proof — check that
+=.orgasmic/dispatch-records/<started_tx>/= appears and is COMMITTED, not staged.
+If it is committed, the commit-after-every-close rule is dead for good; if it is
+staged, the reinstall did not take and the inode check needs redoing.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
