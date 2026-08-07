@@ -62,7 +62,7 @@ pub use paths::{
     prune_validated_dispatch_attempt, task_file_path, task_file_rel,
     validate_dispatch_cleanup_targets, validate_dispatch_promote_targets,
     verify_dispatch_worktree_identity, DispatchAttemptArtifacts, PromoteOutcome, DEFAULT_TASK_FILE,
-    DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_TAIL_BYTES, TASKS_DIR,
+    DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, STDOUT_PROMOTE_MAX_BYTES, TASKS_DIR,
     TASK_FILE_NAMES,
 };
 pub use retired::{RetiredContent, RETIRED_CONTENT};

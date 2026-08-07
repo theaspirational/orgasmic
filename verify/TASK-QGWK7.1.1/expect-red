@@ -1,0 +1,20 @@
+# Pinned from the real pre-fix red run of 2026-08-07 on the unfixed tree
+# (eb772a6), reproduced by the injection on the fixed tree.
+#
+# M-0: TASK-QGWK7.1 made close `git add` the promoted record and stop. Staging
+# ANY path — not only one the merge touches — makes `git merge` refuse, so the
+# close-then-merge order the review gate prescribes stopped working. The FIRST
+# failing assertion is the merge below, in `run_git`, before the test reaches
+# any later claim.
+
+exit: 101
+
+contains: Your local changes to the following files would be overwritten by merge
+
+contains: .orgasmic/dispatch-records/
+
+contains: "merge", "--no-ff", "-m", "merge reviewed worker", "task-dispatch-test-impl"
+
+contains: test result: FAILED. 0 passed; 1 failed
+
+contains: reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge ... FAILED

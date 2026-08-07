@@ -316,13 +316,30 @@ check the rest of the invocation too.
    the dispatch GENERATION (=started_tx=), not the task — so a chain of six
    dispatches keeps six distinct records. The close tx (and the worker's
    =*.reported= tx) carries =:REPORT_PATH:= naming that =last.txt=. Close also
-   =git add=s the promoted directory into the index (staging, not committing)
-   so durability does not depend on which =git add= form a later state chore
-   uses; when to commit stays with the manager. The harness =stdout.log= sits
-   beside the summary as falsifiable evidence: empty files are skipped; larger
-   files promote only the last 64 KB, with the original byte count in
-   =stdout.log.bytes= so truncation is visible. =:REPORT_PATH:= always points
-   at the summary. *Retention: keep forever, with measured year-one growth.*
+   *commits* that directory, on its own, as =chore(orgasmic): dispatch record
+   <started_tx>= (TASK-QGWK7.1.1). Durability then does not depend on which
+   =git add= form a later state chore uses, nor on the manager remembering to
+   commit: a fresh clone reads the record because it is in history. The commit
+   is built through a throwaway index seeded from =HEAD=, so it contains the
+   record directory and nothing else — whatever you have staged is neither
+   committed nor disturbed, and when to commit YOUR change is still yours.
+   *It is deliberately not just =git add=.* Staging alone breaks the very next
+   step of this flow: a staged path — any staged path, not only one the merge
+   touches — makes =git merge= refuse with "your local changes would be
+   overwritten", and the review gate's own refusal message prescribes close
+   first, merge second. Two consequences worth knowing: a close moves the
+   branch you are on by one commit, and =orgasmic update= / =install.sh=
+   (=git stash push --include-untracked= in the source repo, which for this
+   project IS the orgasmic project) can no longer un-persist a record between a
+   close and your next commit — a committed file is not stashed. The harness
+   =stdout.log= sits beside the summary as falsifiable evidence: empty files
+   promote no =stdout.log= (but still a =stdout.log.bytes= of =0=, so "printed
+   nothing" is distinguishable from "never promoted"); larger files promote a
+   64 KB excerpt, half from the head and half from the tail, with a banner line
+   naming the truncation and the original byte count in =stdout.log.bytes=.
+   =:REPORT_PATH:= always points at the summary, and is always
+   project-relative — a =--property REPORT_PATH== outside the project root is
+   refused rather than committed as a machine-specific path. *Retention: keep forever, with measured year-one growth.*
    At ~5,200–6,500 generations/year on this project: =last.txt= ≈ 24–30 MB/yr
    (mean ~4.6 KB); =stdout.log= ≈ 0 typical on tmux (empty panes skipped) and
    ≤ ~400 MB/yr worst case at the 64 KB cap. There is no silent age-out at
