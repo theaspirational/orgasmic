@@ -242,33 +242,36 @@ PRACTICES THAT PAID OFF AGAIN THIS BLOCK, keep them:
   here.
 
 ** In flight
-ONE DISPATCH IS LIVE: the TASK-STWVB.1.1.1.1 REVIEW.
-=tx-20260807-orgasmic-5157=, run =run-20260807T104701-3d63164e806444aaaa08931e1739a875=,
-worker =reviewer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1-review=, dispatched
-[2026-08-07 Fri 10:47:01] on =tmux / claude / claude-opus-5 / high=.
+ONE DISPATCH IS LIVE: TASK-STWVB.1.1.1.1.1 (ROUND 6).
+=tx-20260807-orgasmic-5170=, run =run-20260807T110322-dd7d3e3cfc6d4b4cab05a6df8111ed5d=,
+worker =implementer-claude-tmux=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-stwvb.1.1.1.1.1=, dispatched
+[2026-08-07 Fri 11:03:22] on =tmux / claude / claude-opus-5 / high=.
 
-It reviews merge =060b84d= AND the manager's own =a8edf93= (the registry
-ownership fix), because nobody else has looked at the latter. Its brief asks one
-question above the rest: *which adjacent branch did round 5 leave wrong* — the
-chain has broken itself that way four times running. The sharpest specific claim
-it carries: the new crash arm outranks =HOST_DEGRADED=, so a crash on a degraded
-host is RED rather than INCONCLUSIVE — but a SIGKILL under memory pressure is a
-HOST artifact that presents exactly as a crashed target, and this whole chain
-exists to stop attributing host state to code.
+*THE SAME GUARD HAS NOW PRODUCED THE DEFECT THREE ROUNDS RUNNING* — r3 dropped
+=FAIL_COUNT -eq 0= and reddened the live gate, r4 restored it and reopened the
+crashed-target hole, r5 fixed crashed TARGETS and left every other anomalous exit
+behind it. The brief says so explicitly and tells the worker to replace the PROXY
+with the fact it stands in for ("the exit is 101"), not to add a fourth arm.
 
-THE IMPLEMENTER DISPATCH IS STILL OPEN AND MUST BE CLOSED AFTER THE REVIEWER:
-=tx-20260807-orgasmic-5137=, =[reported]=, branch =task-stwvb.1.1.1.1-impl=,
-merged at =060b84d=. The default-branch gate refuses a merge-sha close until a
-reviewer verdict exists for that generation, so the order is reviewer close
-first, then implementer close with =--merge-sha 060b84d=.
+Its brief permits ONE real cargo run — on a THROWAWAY two-target crate in its own
+temp dir, never this workspace — to settle whether cargo emits
+=Caused by: … (exit status: 101)= for an ordinary failing target. Two rounds have
+now guessed at that log shape. If it took the measurement, PRESERVE the verbatim
+lines: they outlive the round.
 
-*COMMIT THE STAGED DISPATCH RECORD AFTER EVERY CLOSE* (preamble item 1) — the
-installed binary stages rather than commits, and a staged path blocks the next
-merge. This bit once already this block and was handled; it will bite again.
+WHEN IT REPORTS: merge, gate (=run-tests-selftest.sh=, =run-tests.sh --check=,
+shellcheck, =orgasmic verify=), review, close reviewer then implementer with
+=--merge-sha=. *COMMIT THE STAGED DISPATCH RECORDS AFTER EVERY CLOSE* (preamble
+item 1) — three closes this block each staged one, and a staged path blocks the
+next merge.
 
-WATCHERS: one per dispatch, keyed on a non-empty =last.txt= OR the tmux session
-vanishing, never on =[pid-gone]=. Three armed this block, three behaved.
+NOTHING ELSE IS OPEN. TASK-QGWK7.1.1 and both its dispatches are closed;
+TASK-STWVB.1.1.1.1's two dispatches are closed.
+
+BOARD SHAPE OF THE CHAIN: TASK-STWVB, .1 and .1.1 are DONE. =.1.1.1= depends on
+=.1.1.1.1=, which depends on =.1.1.1.1.1= (live). Each open node names its
+blocker in =DEPENDS_ON=, so the chain reads correctly off the board without prose.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
