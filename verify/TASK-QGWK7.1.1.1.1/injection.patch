@@ -7,7 +7,7 @@
      ("MERGE_HEAD", "merge", "merge"),
      ("CHERRY_PICK_HEAD", "cherry-pick", "cherry-pick"),
 -    ("REVERT_HEAD", "revert", "revert"),
-+    // INJECTED (TASK-QGWK7.1.1.1.1 B-1): the five-marker set TASK-QGWK7.1.1.1
++    // INJECTED (TASK-QGWK7.1.1.1.1 B-1): the REVERT_HEAD row TASK-QGWK7.1.1.1
 +    // shipped. `git revert` is the same sequencer machinery as cherry-pick,
 +    // so a close inside a revert committed the record and reported `ok`.
      ("BISECT_LOG", "bisect", "bisect"),

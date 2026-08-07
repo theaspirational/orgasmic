@@ -24,8 +24,9 @@ way — exit 0, record intact — but not by one mechanism (TASK-QGWK7.1.1.1.1.1
 D-3): the single-pick `revert`/`cherry-pick` abort and `merge --abort` are a
 `reset --merge` to the CURRENT HEAD, so they rewind and the record survives only
 because it already *is* that HEAD; only `am` declines outright (`You seem to have
-moved HEAD … Not rewinding`). Either way the abort discards the manager's own
-conflict resolution. `rebase --abort` is the one guarded operation whose abort
+moved HEAD … Not rewinding`). The rewinding aborts discard the manager's own
+conflict resolution; the `am` abort, having declined to rewind, leaves it staged
+(measured). `rebase --abort` is the one guarded operation whose abort
 really destroys the record, and a rebase detaches HEAD, so the detached-HEAD
 refusal catches it first.
 
@@ -41,7 +42,8 @@ this file, not that comment, for why the guard exists. It also names the test
 `…_and_leaves_the_abort_working`, which is why the test keeps that name even
 though the abort assertion is a regression fence rather than the discriminator.
 
-The injection restores the five-marker set. The red run's first failing
+The injection removes the `REVERT_HEAD` row, reproducing the blindness
+TASK-QGWK7.1.1.1 shipped. Six rows remain. The red run's first failing
 assertion is the refusal itself — the close reports `ok` where it must report
 `partial`. The `git revert --abort` assertion lives in the same test, further
 down, and is never reached under the injection: a close that stands down never
@@ -53,7 +55,7 @@ gets that far.
 `manager.rs`, so that `tests/shipped_conventions.rs` — an integration test
 against a bin-only crate — can compare it against the shipped convention in both
 directions. The injection deletes the `REVERT_HEAD` row there instead. It
-produces the same set the old patch produced, so the guard misses the same state
+leaves the guard blind to `REVERT_HEAD` exactly as the old patch did, so it misses the same state
 and the test fails on the same assertion. `cmd` and `expect-red` are unchanged.
 
 TASK-QGWK7.1.1.1.1 also added a `("sequencer", …)` entry to the guard.

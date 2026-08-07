@@ -348,8 +348,9 @@ check the rest of the invocation too.
    =git cherry-pick --abort= exit 0 and the record survives in =HEAD= and on
    disk (measured) — for revert and cherry-pick because the abort rewinds to the
    CURRENT HEAD, which is the record commit itself; for =am= because git refuses
-   to rewind past a HEAD that moved. Either way the abort discards the conflict
-   resolution you had in the working tree. Standing down is still the
+   to rewind past a HEAD that moved. The rewinding aborts (revert, cherry-pick,
+   merge) discard the conflict resolution you had in the working tree; the =am=
+   abort, having declined to rewind, leaves it in place (measured). Standing down is still the
    right move, for a different reason: the record would otherwise land in the
    middle of an operation you have not finished, on a branch whose shape you are
    still deciding — and one written on a detached HEAD is on no branch at all.

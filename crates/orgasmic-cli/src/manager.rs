@@ -5699,10 +5699,13 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
         // mid-operation. D-1: the leftover todo list needs its own remedy,
         // because `--continue` is wrong for a range already abandoned.
         let remedy = if operation == crate::sequencer_markers::STOPPED_PICK_RANGE {
-            "it is a `.git/sequencer` todo list with no pick stopped beside it, so finish the \
-             range with `git revert --continue` (or `git cherry-pick --continue`) — or, if you \
-             already abandoned it with `git reset --hard`, clear the leftover todo list with \
-             `git revert --quit` — and re-run this close"
+            "it is a `.git/sequencer` todo list with no pick stopped beside it — `cat \
+             .git/sequencer/todo` shows what is still pending, and tells you whether this is a \
+             revert or a cherry-pick. If those picks still matter, finish the range with `git \
+             revert --continue` (or `git cherry-pick --continue`; the wrong verb errors and \
+             names the right one). If you already abandoned it with `git reset --hard`, clear \
+             the leftover list with `git revert --quit` — which ABANDONS whatever that todo \
+             lists. Then re-run this close"
                 .to_string()
         } else {
             format!("re-run this close once the {operation} finishes")
@@ -5785,8 +5788,9 @@ fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Res
 /// (TASK-QGWK7.1.1.1.1.1.1 D-3): a single-pick `revert`/`cherry-pick` abort and
 /// `merge --abort` are a `reset --merge` to the CURRENT HEAD, so they rewind
 /// and the record survives only because it already IS that HEAD; only `am`
-/// declines outright (`You seem to have moved HEAD … Not rewinding`). Either
-/// way the abort discards the manager's own conflict resolution. `rebase
+/// declines outright (`You seem to have moved HEAD … Not rewinding`). The
+/// rewinding aborts discard the manager's own conflict resolution; the `am`
+/// abort, having declined to rewind, leaves it staged (measured). `rebase
 /// --abort` is the one guarded operation whose abort really does destroy the
 /// commit and the promoted file — and a rebase detaches HEAD (both backends),
 /// so the detached-HEAD refusal above catches that case first.
