@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         e851eab
+:LIVENESS:         8de8ecd
 :LIVENESS_AT:      [2026-08-07 Fri]
 :UPDATED_AT:       [2026-08-07 Fri]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -287,36 +287,37 @@ PRACTICES THAT PAID OFF, and this block is the evidence:
 - Every brief carried an EXECUTION BUDGET. Zero syspolicyd incidents all block.
 
 ** In flight
-ONE DISPATCH IS LIVE: the TASK-QGWK7.1.1.1.1.1 REVIEW.
-=tx-20260807-orgasmic-5239=, run =run-20260807T133236-e799aa632c134debb34644aaa246e8f3=,
-worker =reviewer-claude-tmux=, worktree
-=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1-review=, dispatched
-[2026-08-07 Fri 13:32:36] on =tmux / claude / claude-opus-5 / high=. Reviews merge
-=091d62a=.
+ONE DISPATCH IS LIVE: TASK-QGWK7.1.1.1.1.1.1 (P1, restoring a guard the MANAGER
+wrongly ordered removed). =tx-20260807-orgasmic-5253=,
+run =run-20260807T134510-c014d128dd89499fa94689c99561f729=, worktree
+=~/.orgasmic/worktrees/orgasmic/task-qgwk7.1.1.1.1.1.1=, dispatched
+[2026-08-07 Fri 13:45:10] on =tmux / claude / claude-opus-5 / high=.
 
-This round CORRECTS a false claim, so the brief asks the narrow question: *is the
-replacement TRUE, and does it overstate in the other direction?* A correction
-that overstates the opposite way is the same defect wearing different clothes.
+*THE MISTAKE WAS THE MANAGER'S, NOT THE WORKER'S.* I ordered
+=("sequencer", …)= dropped on a universal two workers had measured — "every
+stopped revert/cherry-pick range carries its own =*_HEAD= marker" — which is
+FALSE. Resolve a stopped range's conflict with a plain =git commit= instead of
+=git revert --continue= and you get =.git/sequencer= with a pending todo and NO
+marker. Manager reproduced it. The guard used to refuse that; now it commits a
+record mid-range. The entry returns WITH THE MESSAGE FIXED, which is what the
+latch problem actually needed.
 
-MANAGER RULING RECORDED IN THE BRIEF, so it is not re-litigated: the acceptance
-list was SELF-CONTRADICTORY — C-3 asked for a test rename while =expect-red= was
-ruled immutable, and =expect-red:21= pins the test NAME in a =contains:=
-directive. *The old name stands permanently.* The doc overclaim (what C-3 was
-actually about) is fixed. My original REASON for immutability was wrong; the
-conclusion holds for a better one.
+*D-2 IS THE ITEM THAT MATTERS MOST, not D-1.* =shipped_conventions.rs:436-438=
+CLAIMS "dropping one from either side fails here" but every assertion is
+=text.contains= over the =.org= prose — the code array is never read. That
+blindness is precisely why the bad instruction shipped: the prose kept promising
+a refusal the code had stopped providing. Making the pin bidirectional is what
+ends this class.
 
-WHEN IT REPORTS: close reviewer then implementer (=--merge-sha 091d62a=), commit
-the staged records, close TASK-QGWK7.1.1.1.1.1 if no BLOCK SHIP — *THEN REINSTALL
-THE RUNTIME* (Next likely actions item 2), which retires preamble item 1.
+WHEN IT REPORTS: merge, gate, review, close reviewer then implementer, commit the
+staged records. *THEN REINSTALL THE RUNTIME* (Next likely actions item 2) —
+retires preamble item 1.
 
-FOUND THIS BLOCK AND FILED, do not re-discover: *TASK-8Q92K — 17 OF 90 VERIFY
-ARTIFACTS CANNOT REPLAY* (=git apply --check= sweep, =e851eab=).
-=verify/README.md= calls a stale artifact a FAILURE, so ~19% of this repo's
-regression proofs are failing silently. =verify/TASK-QGWK7= (chain root) is among
-them and was ALREADY stale at =eb772a6=, this session's start — pre-existing, not
-caused by today's merges. *The manager had been running FOUR artifacts and
-reporting "all four PASS" when there are FIVE*, having enumerated them from what
-workers named rather than from =ls verify/=. Enumerate from the filesystem.
+A RECURRING SHAPE WORTH NAMING, three times this session: *a claim gets measured
+once, restated as a universal, and then acted on.* The =(exit status: 101)=
+exclusion, the =revert --abort= wedge, and now the =*_HEAD= universal. Each was
+true of the case measured and false as stated. When a report says ALWAYS or
+NEVER, ask which cases were actually run.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
