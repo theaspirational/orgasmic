@@ -4936,3 +4936,86 @@ and the same refusal on both dispatches.
    as a distinct terminal state (worker stopped) from an unresponsive subtree,
    and the reason names which.
 
+* BACKLOG TASK-52NJS a provider content filter blocks cross-family review of parser, deletion and permission code — the class where independent review is worth most    :dispatch:review:
+:PROPERTIES:
+:ID: TASK-52NJS
+:PRIORITY: P2
+:END:
+
+** Description
+*MEASURED THREE TIMES ON 2026-08-08, COSTING THREE FULL REVIEW BUDGETS.* Every
+codex/gpt-5.6-sol dispatch of the TASK-RMA18.1.1 review died identically: an
+OpenAI content filter refused mid-turn ("This content can't be shown ... We take
+extra caution with cybersecurity requests ... Trusted Access"), *the turn ENDED*,
+codex returned to its idle input placeholder at 0.0% CPU, and orgasmic's stall
+detector killed the run at 600s with =last.txt= 0 bytes.
+
+*THE THIRD DEATH IS THE INFORMATIVE ONE.* The first two followed a web search
+(=site:github.com/git/git read-cache.c verify_hdr index checksum hashfile=), so
+the manager removed the search from the brief and pointed the reviewer at the
+local =git= binary as an executable oracle instead. *The third dispatch was
+refused with NO web search at all* — the pane shows the refusal landing after
+purely local work: reading =manager.rs=, =dispatch.rs=, =cli_parity.rs= and a
+prior review document.
+
+So the trigger is not the search. *It is the subject matter plus the review's own
+adversarial framing.* The manager's brief said the parser was "attack surface",
+called its input "attacker-influenceable", instructed "Attack it", asked the
+reviewer to "construct an index that parses successfully but yields the wrong
+path set", and asked whether a pathname resolution was "exploitable". Combined
+with the actual subject — a hand-written binary parser for git's index, symlink
+handling via =openat(O_NOFOLLOW)=, and a recursive delete path — that reads as
+offensive-security tasking.
+
+*IT IS NOT. The work is the exact opposite:* verifying that a data-loss guard
+FAILS CLOSED so a directory git refuses to remove is never deleted. The
+adversarial vocabulary was a manager stylistic choice for rigour, and it made an
+accurate description of defensive work look like something else.
+
+** What was done about it
+The brief was recast in terms that describe the work accurately — "does the
+parser derive an incomplete path set from a real index git accepts", "confirm
+anything it cannot fully account for is a refusal rather than a short list" —
+with the substance unchanged and nothing hidden. *The round was then dispatched
+same-family (claude) with the reason stated on the dispatch*, because three
+failures is enough evidence that a fourth cross-family attempt is not worth
+45 more minutes with the board stalled behind it.
+
+Whether the reframing alone would have satisfied the filter is UNTESTED. It is
+one hypothesis; the subject matter alone may be sufficient to trigger it.
+
+** Why this matters beyond one round
+1. *IT SILENTLY REVOKES THE CROSS-FAMILY REVIEW POLICY FOR A WHOLE CLASS OF
+   WORK* — and that class is disproportionately the safety-critical kind:
+   parsers, deletion paths, permission checks, credential handling. Precisely
+   where an independent reviewer is worth the most, the independent reviewer
+   cannot participate.
+2. *IT IS INDISTINGUISHABLE FROM A HANG* without the pane. See [[TASK-8VBXR]] —
+   the first death was permanently unknowable; the second and third were
+   diagnosed in one read each from an external snapshotter the manager had armed
+   in the meantime.
+3. *IT IS DETERMINISTIC.* Same brief, same investigative path, same refusal. A
+   manager who re-dispatches without changing the brief burns the budget again,
+   which is exactly what happened between deaths one and two.
+
+** Recommended
+1. *Record the constraint where dispatch decisions are made*, so a manager
+   choosing a reviewer for a parser/deletion/permission task knows cross-family
+   may not be available and budgets for it. Already added to =gotchas.org=.
+2. *Write briefs in the register the work actually occupies.* Defensive work
+   described defensively is both more accurate and more portable across
+   harnesses. Adversarial phrasing bought no rigour that "does this fail closed,
+   and what input makes it fail open" does not.
+3. *Consider a pre-dispatch dry-run probe* for cross-family reviews of this
+   class — one cheap turn that asks the harness to restate the assignment. A
+   refusal there costs a minute rather than a budget. Speculative; not measured.
+4. If a stall-kill's pane shows a provider refusal, orgasmic should classify it
+   as such rather than as "no work evidence" — [[TASK-8VBXR]] acceptance item 5.
+
+** Evidence
+Preserved pane frames:
+- =.orgasmic/tmp/dispatch/task-rma18-1-1-review/pane-at-stall-kill-run-20260808T124951.txt=
+  (death 2, refusal after the web search)
+- =.orgasmic/tmp/dispatch/task-rma18-1-1-review/pane-at-stall-kill-run-20260808T130710.txt=
+  (death 3, refusal with NO web search — the decisive one)
+Aborted dispatches: =tx-20260808-orgasmic-5361=, =-5372=, =-5393=.

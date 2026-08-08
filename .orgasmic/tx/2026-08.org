@@ -23219,3 +23219,101 @@
 :DISPATCH_TX:  tx-20260808-orgasmic-5393
 :MODEL_OVERRIDE: gpt-5.6-sol
 :END:
+
+* TX 2026-08-08 Sat 13:22:11 manager.dispatch_orphaned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5395
+:TIME:         [2026-08-08 Sat 13:22:11]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T130710.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260808T130710-c2061e0c43764ef7bba76d4e446423f7
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:END:
+
+* TX 2026-08-08 Sat 13:23:12 manager.dispatch_aborted TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5396
+:TIME:         [2026-08-08 Sat 13:23:12]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       THIRD identical stall-kill. Pane snapshot shows the provider refusal fired with NO web search this time, after purely local reading of manager.rs/dispatch.rs/cli_parity.rs — so the trigger is the review's own adversarial framing, not the search. Switching reviewer to claude and recasting the brief in accurate defensive terms.
+:CLOSED_TX:    tx-20260808-orgasmic-5393
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5393/last.txt
+:END:
+
+* TX 2026-08-08 Sat 13:24:21 manager.dispatch_started TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5397
+:TIME:         [2026-08-08 Sat 13:24:21]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRANCH:       task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 13:24:21]
+:LIVENESS:     b225616953a7b3561348a6040923192a7ce91a97
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5328
+:REASON_INITIAL: SAME-FAMILY REVIEW, reason stated: the cross-family reviewer (codex/gpt-5.6-sol) was killed three times by a provider content filter that reads a robustness review of a binary parser on a deletion path as a security request — the third time with no web search, purely from reading the diff. Brief recast in accurate defensive terms and tells the reviewer it is the only one this round gets.
+:END:
+
+* TX 2026-08-08 Sat 13:24:21 run.created TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5398
+:TIME:         [2026-08-08 Sat 13:24:21]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T132421.jsonl
+:REASON:       SAME-FAMILY REVIEW, reason stated: the cross-family reviewer (codex/gpt-5.6-sol) was killed three times by a provider content filter that reads a robustness review of a binary parser on a deletion path as a security request — the third time with no web search, purely from reading the diff. Brief recast in accurate defensive terms and tells the reviewer it is the only one this round gets.
+:RUN_ID:       run-20260808T132421-a2f64221023d4c56b10b639ce0f2af07
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-af7b201c930b414dbd650b08c72e7836-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-af7b201c930b414dbd650b08c72e7836-stdout.log
+:DISPATCH_ATTEMPT: af7b201c930b414dbd650b08c72e7836
+:DISPATCH_TX:  tx-20260808-orgasmic-5397
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 13:24:55 task.created TASK-52NJS
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5399
+:TIME:         [2026-08-08 Sat 13:24:55]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-52NJS
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Three identical dispatch deaths on 2026-08-08. The third proves the trigger is subject matter plus adversarial framing, not a web search, so the cross-family review policy silently does not hold for safety-critical code.
+:END:
