@@ -570,6 +570,16 @@ mod admission {
         /// it — `worktree-prune` — has a directory and only a guess at a task.
         /// Liveness cannot be proven absent here, so naming the run is enough:
         /// every caller refuses on it.
+        ///
+        /// RESIDUAL, stated rather than left to be re-found (TASK-RMA18.1
+        /// finding 6): a lease whose admission carried NO worktree — neither
+        /// `worktree_identity` nor `worktree_key` — cannot be matched by any
+        /// question about a directory, so such a lease is invisible here. No
+        /// dispatch path produces one today (`admit_live_run` is always called
+        /// with the worktree the run was dispatched into), which is why this is
+        /// a note and not a fix; closing it means putting the worktree on
+        /// `RunRecord` itself, which is TASK-RMA18 finding 5's own task and was
+        /// explicitly ruled out of this round.
         pub(super) fn pending_admission_in_worktree(
             &self,
             worktree_key: &Path,
@@ -4131,9 +4141,15 @@ impl Supervisor {
         // One lock section, no awaits, from the fence to the verdict.
         let mut g = self.inner.lock().await;
         drop_abandoned_cleanup_reservations(&mut g);
+        // `same_worktree`, not string equality: two normalized pathnames that
+        // differ can still name the SAME directory, and this is the check that
+        // decides whether another cleanup already owns it. `admit_live_run` was
+        // upgraded for exactly that reason and this one was left behind
+        // (TASK-RMA18.1 finding 6). The shared cleanup lock made it survivable,
+        // not correct.
         if g.cleanup_reservations
             .keys()
-            .any(|held| held.worktree_key == worktree_key)
+            .any(|held| same_worktree(&held.worktree_key, &worktree_key))
         {
             return DispatchCloseGuardOutcome::ReservationHeld;
         }

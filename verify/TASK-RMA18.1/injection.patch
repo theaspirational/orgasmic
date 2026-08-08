@@ -1,0 +1,36 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 41555d5..7bdbe4f 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -3935,7 +3935,8 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
+ // orgasmic:TASK-RMA18.1
+ #[cfg(unix)]
+ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<String> {
+-    if worktree_admin_dir_holds_modules(worktree, path) {
++    // INJECTION: reproduce only the two refusals TASK-RMA18 reproduced.
++    if false && worktree_admin_dir_holds_modules(worktree, path) {
+         return Some(format!(
+             "{} contains an initialized submodule (its worktree admin directory holds a \
+              `modules` directory), and `git worktree remove` refuses such a worktree outright \
+@@ -3946,7 +3947,7 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
+         ));
+     }
+     for module in gitmodules_paths(worktree) {
+-        if nonempty_dir_under(worktree, &module) {
++        if false && nonempty_dir_under(worktree, &module) {
+             return Some(format!(
+                 "{} contains an initialized submodule at {module}, and `git worktree remove` \
+                  refuses such a worktree outright — no salvage can capture what is inside a \
+@@ -4160,10 +4161,10 @@ fn git_would_remove_worktree(
+     // it a committed `submodule.<name>.ignore = all` hides a dirty submodule and
+     // this reads CLEAN (measured on git 2.52.0).
+     let status = Command::new("git")
+-        .args(["status", "--porcelain", "--ignore-submodules=none"])
++        .args(["status", "--porcelain"])
+         .current_dir(worktree)
+         .output()
+-        .context("git status --porcelain --ignore-submodules=none")?;
++        .context("git status --porcelain")?;
+     if !status.status.success() {
+         bail!(
+             "git status failed: {}",

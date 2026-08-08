@@ -482,9 +482,13 @@ your nose. So the leak is reported for you and reclaimed only when you say so
   not touch.
 - *Reclamation is an explicit verb.* =orgasmic manager worktree-prune=
   ( =--dry-run= to measure only, =--task TASK-NNN= to narrow). It salvages a
-  dirty tree to =refs/orgasmic/salvage/<sha>= first and then removes WITHOUT
-  =--force=, exactly as =dispatch-close= does, and it runs =git worktree prune=
-  so stale =.git/worktrees= metadata does not accumulate.
+  dirty tree to =refs/orgasmic/salvage/<sha>= first and then removes it through
+  its own anchored directory handle, refusing what a non-forced =git worktree
+  remove= refuses — locked, still dirty after salvage, or containing an
+  initialized submodule — and it runs =git worktree prune= so stale
+  =.git/worktrees= metadata does not accumulate. =dispatch-close= still shells
+  out to =git worktree remove=, so the two take the same decisions by different
+  routes; do not read one as literally calling the other.
 - *It never ends a dispatch.* A worktree an OPEN dispatch names is skipped
   whatever its run health, and an abandoned one is reported with the verb that
   releases it — =dispatch-close=, or =dispatch-status --cleanup-failed= for the
