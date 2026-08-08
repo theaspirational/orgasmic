@@ -220,6 +220,78 @@ fn disarm_authority_key_fault(home: &Home) {
     }
 }
 
+/// Homes whose `authority_key` reached [`crate::auth::load_or_generate`].
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F5 — the acceptance is "assert `load_or_generate`
+/// was NOT reached", and "the token bytes are unchanged" is a weaker proxy: a
+/// mint that happened to reproduce identical bytes would pass it. This records
+/// the call itself.
+#[cfg(test)]
+static LOAD_OR_GENERATE_REACHED: std::sync::Mutex<Option<BTreeMap<PathBuf, u32>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn record_load_or_generate_reached(home: &Home) {
+    *LOAD_OR_GENERATE_REACHED
+        .lock()
+        .expect("load_or_generate probe lock")
+        .get_or_insert_with(BTreeMap::new)
+        .entry(home.auth_token())
+        .or_insert(0) += 1;
+}
+
+#[cfg(test)]
+fn load_or_generate_reached_count(home: &Home) -> u32 {
+    LOAD_OR_GENERATE_REACHED
+        .lock()
+        .expect("load_or_generate probe lock")
+        .as_ref()
+        .and_then(|map| map.get(&home.auth_token()).copied())
+        .unwrap_or(0)
+}
+
+/// Fail the `nth` (1-based) `readdir` in [`ClaimDirectory::names`] under this
+/// home's state root with `errno`, then stop.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F2 — a real mid-listing `EIO` cannot be produced
+/// from a test, so the seam reproduces its exact observable shape: `readdir`
+/// returns NULL with a non-zero `errno`. That is precisely the shape the old
+/// loop could not tell from end-of-directory.
+#[cfg(test)]
+static READDIR_FAULTS: std::sync::Mutex<Option<BTreeMap<PathBuf, (u32, i32)>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn arm_readdir_fault(home: &Home, nth: u32, code: i32) {
+    assert!(nth >= 1, "iterations are counted from one");
+    let key = home.state().canonicalize().unwrap_or_else(|_| home.state());
+    READDIR_FAULTS
+        .lock()
+        .expect("readdir fault lock")
+        .get_or_insert_with(BTreeMap::new)
+        .insert(key, (nth, code));
+}
+
+#[cfg(test)]
+fn disarm_readdir_fault(home: &Home) {
+    let key = home.state().canonicalize().unwrap_or_else(|_| home.state());
+    if let Some(map) = READDIR_FAULTS.lock().expect("readdir fault lock").as_mut() {
+        map.remove(&key);
+    }
+}
+
+#[cfg(test)]
+fn readdir_fault(state_root: &Path, iteration: u32) -> Option<i32> {
+    let mut slot = READDIR_FAULTS.lock().expect("readdir fault lock");
+    let map = slot.as_mut()?;
+    let (nth, code) = *map.get(state_root)?;
+    if iteration != nth {
+        return None;
+    }
+    map.remove(state_root);
+    Some(code)
+}
+
 #[cfg(test)]
 fn authority_key_fault(home: &Home) -> Result<(), RecoveryClaimError> {
     let mut slot = AUTHORITY_KEY_FAULTS
@@ -311,7 +383,7 @@ pub enum ResolvedRecoveryClaim {
     /// handler finds no pending plan, and it mints a second replacement beside
     /// the one already running. Unknown completeness is not invalid evidence.
     /// A caller must fail closed and retry, never act and never destroy.
-    Unobserved(UnobservedSession),
+    Unobserved(UnobservedEvidence),
 }
 
 #[derive(Debug, Clone)]
@@ -419,11 +491,24 @@ fn recovery_claim_has_complete_plan(claim: &RecoveryClaim) -> bool {
 fn authority_key(home: &Home) -> Result<Vec<u8>, RecoveryClaimError> {
     #[cfg(test)]
     authority_key_fault(home)?;
-    if !home
-        .auth_token()
-        .try_exists()
-        .map_err(RecoveryClaimError::Io)?
-    {
+    // orgasmic:TASK-2QK4P.1.1.1.1 F5 — THE EXISTENCE PROBE IS ITS OWN
+    // OBSERVATION AND IT IS OBSERVED SEPARATELY.
+    //
+    // Every `authority_key` test injected through `authority_key_fault` above,
+    // which returns BEFORE control reaches this branch — including the
+    // five-case behavioural pin. So the whole suite stayed green when
+    // `try_exists` was swapped back for `exists()` plus `load_or_generate`, and
+    // the host-token remint defect came straight back. A hook that shadows the
+    // branch it is meant to protect is a test that cannot fail.
+    //
+    // `token_is_present` is therefore reached by a real stat failure, not by a
+    // hook: `authority_key_stat_is_not_shadowed_by_the_read_fault_hook` removes
+    // search permission from the token's parent directory, so `try_exists`
+    // returns `Err(EACCES)` while the token bytes survive untouched. Under
+    // `exists()` that same fixture answers `false` and MINTS.
+    if !token_is_present(home)? {
+        #[cfg(test)]
+        record_load_or_generate_reached(home);
         crate::auth::load_or_generate(home).map_err(|_| RecoveryClaimError::CorruptClaim)?;
     }
     #[cfg(unix)]
@@ -446,6 +531,25 @@ fn authority_key(home: &Home) -> Result<Vec<u8>, RecoveryClaimError> {
         return Err(RecoveryClaimError::CorruptClaim);
     }
     Ok(key)
+}
+
+/// Is the host auth token THERE? Three answers, not two.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F5 — split out of [`authority_key`] so the stat
+/// can be reasoned about and regressed on its own. `Path::exists()` answers
+/// `false` for "not there" AND for "I could not stat it", and the `false`
+/// branch WRITES a fresh token that invalidates every `authority_tag` on the
+/// host. `try_exists` keeps first-boot generation and turns an unreadable
+/// parent into a refusal — and the refusal is `Unobserved`, never
+/// `CorruptClaim`, so nothing downstream quarantines on it.
+fn token_is_present(home: &Home) -> Result<bool, RecoveryClaimError> {
+    home.auth_token().try_exists().map_err(|err| {
+        claim_io_error(
+            err,
+            UnobservedSession::AuthorityKeyUnreadable,
+            Some("auth/token".to_string()),
+        )
+    })
 }
 
 fn authority_payload(claim: &RecoveryClaim) -> Result<Vec<u8>, RecoveryClaimError> {
@@ -507,7 +611,18 @@ fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> ClaimEvidenc
     };
     let key = match authority_key(home) {
         Ok(key) => key,
-        Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::AuthorityKeyUnreadable),
+        // orgasmic:TASK-2QK4P.1.1.1.1 F3 — the evidence the leaf produced is
+        // forwarded, subject and remediation intact, instead of being flattened
+        // back to a bare tag one hop above the failure.
+        Err(RecoveryClaimError::Unobserved(evidence)) => {
+            return ClaimEvidence::Unobserved(evidence)
+        }
+        Err(_) => {
+            return ClaimEvidence::Unobserved(UnobservedEvidence::about(
+                UnobservedSession::AuthorityKeyUnreadable,
+                "auth/token",
+            ))
+        }
     };
     // A claim that cannot be canonicalized cannot be the value this daemon
     // minted, because minting serializes it — so this is a decided negative
@@ -540,10 +655,31 @@ fn claim_path(
 #[cfg(unix)]
 struct ClaimDirectory {
     file: File,
+    /// Canonical state root this handle was opened under. Identity for the
+    /// per-home `readdir` fault seam, so two tests running concurrently in one
+    /// process cannot arm each other's directory.
+    #[cfg_attr(not(test), allow(dead_code))]
+    state_root: PathBuf,
 }
 
 #[cfg(unix)]
 impl ClaimDirectory {
+    /// Open the per-project claim directory, or state that it is absent.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F1 — THIS FUNCTION SAT ONE CALL OUTSIDE
+    /// ROUND FOUR'S HAND-DRAWN BOUNDARY and it carried the defect the boundary
+    /// existed to hunt. Every component-open error other than `NotFound` became
+    /// `CorruptClaim`, a bucket that held `EACCES`, `EIO` and descriptor
+    /// exhaustion — observation failures — beside `ELOOP`/`ENOTDIR`, which are
+    /// observed path facts. `load_recovery_claim` propagated it and
+    /// `resolve_authoritative_recovery_claim` read it as invalid evidence:
+    /// quarantine, then reconstruct or `Missing`. For a PENDING claim there is
+    /// no committed `RecoveryOrigin` to reconstruct from, so a failed inventory
+    /// read removed the pending claim and the next POST saw a complete origin
+    /// enumeration plus no claim and minted a competitor beside a live rescue.
+    ///
+    /// The split is now [`classify_observation`]'s, made once, and every arm
+    /// below names which of the three answers it is giving.
     fn open(
         home: &Home,
         project_id: &str,
@@ -557,15 +693,20 @@ impl ClaimDirectory {
         // Canonicalize only the daemon-owned state root. Every untrusted
         // component below it is opened relative to retained directory handles
         // with O_NOFOLLOW, so a symlink swap cannot redirect a transaction.
-        let state = home
+        //
+        // orgasmic:TASK-2QK4P.1.1.1.1 F4 — the state root is the daemon's own,
+        // so a failure to canonicalize or open it says nothing about any claim.
+        // It used to arrive at the API as a raw `Io` and therefore a 500.
+        let state_root = home
             .state()
             .canonicalize()
-            .map_err(RecoveryClaimError::Io)?;
+            .map_err(|err| claim_io_error(err, UnobservedSession::ClaimStoreUnreadable, None))?;
+        let state = state_root.clone();
         let mut current = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(state)
-            .map_err(RecoveryClaimError::Io)?;
+            .map_err(|err| claim_io_error(err, UnobservedSession::ClaimStoreUnreadable, None))?;
         for component in ["recovery-claims", project_id] {
             let name = std::ffi::CString::new(component)
                 .map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
@@ -579,41 +720,88 @@ impl ClaimDirectory {
             let mut fd = open();
             if fd < 0 {
                 let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::NotFound && create {
-                    if unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-                        let mkdir_err = std::io::Error::last_os_error();
-                        if mkdir_err.kind() != std::io::ErrorKind::AlreadyExists {
-                            return Err(RecoveryClaimError::Io(mkdir_err));
+                match classify_observation(&err) {
+                    // Absent, and we were asked to create it.
+                    ObservationClass::Absent if create => {
+                        if unsafe { libc::mkdirat(current.as_raw_fd(), name.as_ptr(), 0o700) } != 0
+                        {
+                            let mkdir_err = std::io::Error::last_os_error();
+                            if mkdir_err.kind() != std::io::ErrorKind::AlreadyExists {
+                                return Err(claim_io_error(
+                                    mkdir_err,
+                                    UnobservedSession::ClaimStoreUnreadable,
+                                    Some(component.to_string()),
+                                ));
+                            }
                         }
+                        current.sync_all().map_err(|err| {
+                            claim_io_error(err, UnobservedSession::ClaimStoreUnreadable, None)
+                        })?;
+                        recovery_failpoint("parent_fsync");
+                        fd = open();
                     }
-                    current.sync_all().map_err(RecoveryClaimError::Io)?;
-                    recovery_failpoint("parent_fsync");
-                    fd = open();
-                } else if err.kind() == std::io::ErrorKind::NotFound {
-                    return Ok(None);
-                } else {
-                    return Err(RecoveryClaimError::CorruptClaim);
+                    // Absent, and absence is the answer: no claims here.
+                    ObservationClass::Absent => return Ok(None),
+                    // The kernel described the path and the description
+                    // disqualifies it — a symlink or a non-directory where a
+                    // daemon-owned directory must be. Decided about evidence.
+                    ObservationClass::Decided => return Err(RecoveryClaimError::CorruptClaim),
+                    // EACCES / EIO / EMFILE. NOTHING is known about any claim
+                    // under this directory, so nothing may be quarantined.
+                    ObservationClass::Unobserved => {
+                        return Err(RecoveryClaimError::Unobserved(UnobservedEvidence::about(
+                            UnobservedSession::ClaimStoreUnreadable,
+                            component,
+                        )))
+                    }
                 }
             }
             if fd < 0 {
-                return Err(RecoveryClaimError::CorruptClaim);
+                // Only reachable from the create-then-reopen path above.
+                return Err(claim_io_error(
+                    std::io::Error::last_os_error(),
+                    UnobservedSession::ClaimStoreUnreadable,
+                    Some(component.to_string()),
+                ));
             }
             current = unsafe { File::from_raw_fd(fd) };
-            if !current.metadata().map_err(RecoveryClaimError::Io)?.is_dir() {
+            if !current
+                .metadata()
+                .map_err(|err| {
+                    claim_io_error(
+                        err,
+                        UnobservedSession::ClaimStoreUnreadable,
+                        Some(component.to_string()),
+                    )
+                })?
+                .is_dir()
+            {
+                // Observed, and it is not a directory. A decided fact.
                 return Err(RecoveryClaimError::CorruptClaim);
             }
         }
-        Ok(Some(Self { file: current }))
+        Ok(Some(Self {
+            file: current,
+            state_root: state_root.clone(),
+        }))
     }
 
+    /// Open a member by its raw directory-entry NAME.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F2 — the name is `OsStr`, not `str`. A
+    /// directory entry is bytes; requiring it to decode as UTF-8 first is what
+    /// let [`Self::names`] silently drop an entry, and a lossy re-encoding
+    /// would be worse still because the mangled name opens as `NotFound`, which
+    /// every caller reads as "absent".
     fn open_file(
         &self,
-        name: &str,
+        name: impl AsRef<std::ffi::OsStr>,
         flags: libc::c_int,
         mode: libc::mode_t,
     ) -> std::io::Result<File> {
         use std::os::fd::{AsRawFd, FromRawFd};
-        let name = std::ffi::CString::new(name)
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(name.as_ref().as_bytes())
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
         let fd = unsafe {
             libc::openat(
@@ -630,28 +818,49 @@ impl ClaimDirectory {
         }
     }
 
-    fn read_regular(&self, name: &str) -> Result<String, RecoveryClaimError> {
+    /// Read one claim file whole.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F1 — the second function outside round
+    /// four's boundary. `_ => CorruptClaim` on the open error swept `EACCES`,
+    /// `EIO` and `EMFILE` into the bucket the resolver QUARANTINES on, and the
+    /// `metadata`/`read_to_string` failures below stayed raw `Io` and therefore
+    /// became 500s (F4). All three now go through the one policy.
+    fn read_regular(
+        &self,
+        name: impl AsRef<std::ffi::OsStr>,
+    ) -> Result<String, RecoveryClaimError> {
         use std::io::Read;
-        let mut file = self
-            .open_file(name, libc::O_RDONLY, 0)
-            .map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => RecoveryClaimError::Io(err),
-                _ => RecoveryClaimError::CorruptClaim,
-            })?;
-        if !file.metadata().map_err(RecoveryClaimError::Io)?.is_file() {
+        let name = name.as_ref();
+        let subject = || Some(sanitized_subject(Path::new(""), Path::new(name)));
+        let mut file = self.open_file(name, libc::O_RDONLY, 0).map_err(|err| {
+            claim_io_error(err, UnobservedSession::ClaimFileUnreadable, subject())
+        })?;
+        if !file
+            .metadata()
+            .map_err(|err| claim_io_error(err, UnobservedSession::ClaimFileUnreadable, subject()))?
+            .is_file()
+        {
+            // Observed, and it is not a regular file. Decided.
             return Err(RecoveryClaimError::CorruptClaim);
         }
         let mut raw = String::new();
-        file.read_to_string(&mut raw)
-            .map_err(RecoveryClaimError::Io)?;
+        file.read_to_string(&mut raw).map_err(|err| {
+            claim_io_error(err, UnobservedSession::ClaimFileUnreadable, subject())
+        })?;
         Ok(raw)
     }
 
-    fn rename(&self, from: &str, to: &str) -> Result<(), RecoveryClaimError> {
+    fn rename(
+        &self,
+        from: impl AsRef<std::ffi::OsStr>,
+        to: impl AsRef<std::ffi::OsStr>,
+    ) -> Result<(), RecoveryClaimError> {
         use std::os::fd::AsRawFd;
-        let from =
-            std::ffi::CString::new(from).map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
-        let to = std::ffi::CString::new(to).map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
+        use std::os::unix::ffi::OsStrExt;
+        let from = std::ffi::CString::new(from.as_ref().as_bytes())
+            .map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
+        let to = std::ffi::CString::new(to.as_ref().as_bytes())
+            .map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
         if unsafe {
             libc::renameat(
                 self.file.as_raw_fd(),
@@ -666,10 +875,11 @@ impl ClaimDirectory {
         Ok(())
     }
 
-    fn remove(&self, name: &str) -> Result<bool, RecoveryClaimError> {
+    fn remove(&self, name: impl AsRef<std::ffi::OsStr>) -> Result<bool, RecoveryClaimError> {
         use std::os::fd::AsRawFd;
-        let name =
-            std::ffi::CString::new(name).map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(name.as_ref().as_bytes())
+            .map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
         if unsafe { libc::unlinkat(self.file.as_raw_fd(), name.as_ptr(), 0) } == 0 {
             return Ok(true);
         }
@@ -681,32 +891,120 @@ impl ClaimDirectory {
         }
     }
 
-    fn names(&self) -> Result<Vec<String>, RecoveryClaimError> {
-        use std::ffi::CStr;
+    /// Every entry name in the claim directory, or the statement that the
+    /// listing did not complete.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F2 — THE THIRD FUNCTION OUTSIDE ROUND FOUR'S
+    /// BOUNDARY, and it collapsed the same distinction THREE separate ways in
+    /// one loop:
+    ///
+    /// 1. `readdir` returns NULL at end-of-directory AND on error, and the only
+    ///    way to tell is to clear `errno` before the call and read it after.
+    ///    This did neither, so a mid-listing `EIO` was returned as
+    ///    `Ok(a complete directory)`.
+    /// 2. `closedir`'s return was discarded, so a deferred error surfaced at
+    ///    close was thrown away.
+    /// 3. `if let Ok(name) = name.to_str()` SILENTLY DROPPED any entry whose
+    ///    name is not UTF-8, making the set smaller — the unsafe direction, for
+    ///    the same reason it was unsafe in round three.
+    ///
+    /// The caller that matters is `pending_recovery_claim_owns_session`, which
+    /// trusts this vector as complete: hide the pending claim owning a boot
+    /// candidate and it answers `Invalid`, boot enters generic reattach, and
+    /// `Supervisor::reattach` appends `Reattach` into the immutable prefix that
+    /// pending recovery owns. That write is not undoable.
+    ///
+    /// # What a non-UTF-8 entry name means, decided deliberately
+    ///
+    /// It means THERE IS AN ENTRY WHOSE NAME IS THOSE BYTES. It does not mean
+    /// absence, and it is not an error either — an unrelated file with a Latin-1
+    /// name in the claim directory must not freeze the project's recovery. So
+    /// the whole API works in `OsString` and the bytes are carried through
+    /// unchanged; a name that is not valid UTF-8 simply fails the `.json`
+    /// filter its callers apply, which is a DECIDED answer about that entry
+    /// rather than a silent shrink of the set. (Lossy conversion was rejected:
+    /// the mangled name opens as `NotFound`, which reads as "absent" — the
+    /// exact collapse, one layer down.)
+    fn names(&self) -> Result<Vec<std::ffi::OsString>, RecoveryClaimError> {
+        use std::ffi::{CStr, OsStr};
         use std::os::fd::AsRawFd;
+        use std::os::unix::ffi::OsStrExt;
+
         let duplicate = unsafe { libc::dup(self.file.as_raw_fd()) };
         if duplicate < 0 {
-            return Err(RecoveryClaimError::Io(std::io::Error::last_os_error()));
+            return Err(claim_io_error(
+                std::io::Error::last_os_error(),
+                UnobservedSession::ClaimStoreUnreadable,
+                None,
+            ));
         }
         let dir = unsafe { libc::fdopendir(duplicate) };
         if dir.is_null() {
+            let err = std::io::Error::last_os_error();
             unsafe { libc::close(duplicate) };
-            return Err(RecoveryClaimError::Io(std::io::Error::last_os_error()));
+            return Err(claim_io_error(
+                err,
+                UnobservedSession::ClaimStoreUnreadable,
+                None,
+            ));
         }
-        let mut names = Vec::new();
-        loop {
-            let entry = unsafe { libc::readdir(dir) };
-            if entry.is_null() {
-                break;
+        // `closedir` also closes `duplicate`; it must run on every exit below.
+        let close = |dir: *mut libc::DIR| -> Result<(), RecoveryClaimError> {
+            if unsafe { libc::closedir(dir) } != 0 {
+                return Err(claim_io_error(
+                    std::io::Error::last_os_error(),
+                    UnobservedSession::ClaimStoreUnreadable,
+                    None,
+                ));
             }
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
-            if let Ok(name) = name.to_str() {
-                if name != "." && name != ".." {
-                    names.push(name.to_string());
+            Ok(())
+        };
+        let mut names = Vec::new();
+        #[cfg(test)]
+        let mut iteration = 0u32;
+        loop {
+            // The whole point: NULL alone cannot distinguish EOF from failure.
+            errno::set_errno(errno::Errno(0));
+            #[cfg(test)]
+            {
+                iteration += 1;
+                if let Some(code) = readdir_fault(&self.state_root, iteration) {
+                    // Reproduce the real shape exactly: an errno-bearing NULL,
+                    // which the pre-fix loop `break`s on and reports as a
+                    // COMPLETE directory.
+                    errno::set_errno(errno::Errno(code));
                 }
             }
+            let entry = unsafe {
+                #[cfg(test)]
+                if errno::errno().0 != 0 {
+                    std::ptr::null_mut()
+                } else {
+                    libc::readdir(dir)
+                }
+                #[cfg(not(test))]
+                libc::readdir(dir)
+            };
+            if entry.is_null() {
+                let code = errno::errno().0;
+                if code != 0 {
+                    let err = std::io::Error::from_raw_os_error(code);
+                    let _ = close(dir);
+                    return Err(claim_io_error(
+                        err,
+                        UnobservedSession::ClaimStoreUnreadable,
+                        None,
+                    ));
+                }
+                break;
+            }
+            let raw = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if raw == b"." || raw == b".." {
+                continue;
+            }
+            names.push(OsStr::from_bytes(raw).to_os_string());
         }
-        unsafe { libc::closedir(dir) };
+        close(dir)?;
         Ok(names)
     }
 
@@ -984,7 +1282,7 @@ fn reconcile_stale_claim_temp(
     for name in dir
         .names()?
         .into_iter()
-        .filter(|name| name.starts_with(&prefix))
+        .filter(|name| name.as_encoded_bytes().starts_with(prefix.as_bytes()))
     {
         // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — the `else` arm below DELETES,
         // so a predicate that could not look may not reach it. The authority
@@ -1190,10 +1488,14 @@ pub fn pending_recovery_claim_owns_session(
 ) -> ClaimEvidence {
     #[cfg(unix)]
     {
+        let candidate = sanitized_subject(project_root, session_path);
         let session_dir = match SessionDirectory::open(project_root) {
             Ok(dir) => dir,
             Err(err) => {
-                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+                return evidence_about(
+                    session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable),
+                    candidate,
+                )
             }
         };
         let candidate_name = match session_dir.name_for_path(session_path) {
@@ -1203,7 +1505,10 @@ pub fn pending_recovery_claim_owns_session(
             Err(RecoveryClaimError::ForeignSessionPath)
             | Err(RecoveryClaimError::InvalidIdentifier) => return ClaimEvidence::Invalid,
             Err(err) => {
-                return session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable)
+                return evidence_about(
+                    session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable),
+                    candidate,
+                )
             }
         };
         let dir = match ClaimDirectory::open(home, project_id, false) {
@@ -1211,17 +1516,33 @@ pub fn pending_recovery_claim_owns_session(
             // No claim directory at all is a decided absence.
             Ok(None) => return ClaimEvidence::Invalid,
             Err(err) => {
-                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+                return evidence_about(
+                    session_read_evidence(&err, UnobservedSession::ClaimStoreUnreadable),
+                    format!("recovery-claims/{project_id}"),
+                )
             }
         };
+        // orgasmic:TASK-2QK4P.1.1.1.1 F2 — this is the caller the finding names.
+        // A failed `readdir` used to arrive here as `Ok(a complete directory)`,
+        // and a pending claim hidden by it makes this function answer `Invalid`,
+        // which lets boot append `Reattach` into the prefix that pending
+        // recovery owns. That write is irreversible; a skipped reattach is not.
         let names = match dir.names() {
             Ok(names) => names,
             Err(err) => {
-                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+                return evidence_about(
+                    session_read_evidence(&err, UnobservedSession::ClaimStoreUnreadable),
+                    format!("recovery-claims/{project_id}"),
+                )
             }
         };
         for name in names {
-            if !name.ends_with(".json") {
+            // orgasmic:TASK-2QK4P.1.1.1.1 F2 — entry names are BYTES. An entry
+            // whose name is not UTF-8 is decidably not a claim file (every name
+            // this daemon writes is a `validate_safe_component` id plus
+            // `.json`, which is ASCII), and saying so here is a decision about
+            // that entry rather than the silent drop `names()` used to do.
+            if !name.as_encoded_bytes().ends_with(b".json") {
                 continue;
             }
             let raw = match dir.read_regular(&name) {
@@ -1230,7 +1551,10 @@ pub fn pending_recovery_claim_owns_session(
                     continue
                 }
                 Err(err) => {
-                    return session_read_evidence(&err, UnobservedSession::SessionUnreadable)
+                    return evidence_about(
+                        session_read_evidence(&err, UnobservedSession::ClaimFileUnreadable),
+                        format!("recovery-claims/{}", name.to_string_lossy()),
+                    )
                 }
             };
             let Ok(claim) = serde_json::from_str::<RecoveryClaim>(&raw) else {
@@ -1253,7 +1577,10 @@ pub fn pending_recovery_claim_owns_session(
                 | Err(RecoveryClaimError::ForeignSessionPath)
                 | Err(RecoveryClaimError::InvalidIdentifier) => continue,
                 Err(err) => {
-                    return session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable)
+                    return evidence_about(
+                        session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable),
+                        sanitized_subject(project_root, &claim.replacement_session_path),
+                    )
                 }
             }
         }
@@ -1269,17 +1596,25 @@ pub fn pending_recovery_claim_owns_session(
                 return ClaimEvidence::Invalid
             }
             Err(_) => {
-                return ClaimEvidence::Unobserved(UnobservedSession::SessionDirectoryUnavailable)
+                return ClaimEvidence::Unobserved(UnobservedEvidence::new(
+                    UnobservedSession::SessionDirectoryUnavailable,
+                ))
             }
         };
         for entry in entries {
             let Ok(entry) = entry else {
-                return ClaimEvidence::Unobserved(UnobservedSession::SessionDirectoryUnavailable);
+                return ClaimEvidence::Unobserved(UnobservedEvidence::new(
+                    UnobservedSession::SessionDirectoryUnavailable,
+                ));
             };
             let raw = match std::fs::read_to_string(entry.path()) {
                 Ok(raw) => raw,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::SessionUnreadable),
+                Err(_) => {
+                    return ClaimEvidence::Unobserved(UnobservedEvidence::new(
+                        UnobservedSession::SessionUnreadable,
+                    ))
+                }
             };
             let Ok(claim) = serde_json::from_str::<RecoveryClaim>(&raw) else {
                 continue;
@@ -1403,6 +1738,214 @@ pub enum UnobservedSession {
     /// sessions directory because the resolution itself failed — not because
     /// the path resolved elsewhere, which is a decidable answer.
     SessionPathUnresolvable,
+    /// The daemon-owned claim store — the state root, `recovery-claims/`, or
+    /// the per-project directory under it — could not be opened or listed.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F1/F2 — [`ClaimDirectory::open`] used to
+    /// answer `CorruptClaim` for every non-`NotFound` component-open error and
+    /// [`ClaimDirectory::names`] used to answer `Ok(complete set)` for a failed
+    /// `readdir`. Both are observation failures wearing a decided answer's
+    /// clothes, and both sat one call outside round four's hand-drawn boundary.
+    ClaimStoreUnreadable,
+    /// A claim file inside the store could not be opened, stat'd or read.
+    ClaimFileUnreadable,
+}
+
+/// What an operator would have to DO about an unobserved answer.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F3 — a permanent refusal that names no file and
+/// no action is not shippable, and that is what main carries today: one junk
+/// line in one session file refuses every recovery in the project forever, and
+/// the 503 says only `SessionUnreadable`. The reason tag says what the daemon
+/// could not do; this says what would make it able to. Every class is ALSO
+/// retryable — a 503 always permits a retry — so there is no `Retry` variant to
+/// mistake for "and nothing else will help".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Remediation {
+    /// A named session file under the project's `sessions/` directory holds
+    /// content the strict scanner rejects, or cannot be read. Repair or move
+    /// that one file aside; recovery resumes on the next request.
+    RepairSessionFile,
+    /// The project's `sessions/` directory itself could not be opened or a
+    /// member path could not be resolved against it.
+    RepairSessionStore,
+    /// The daemon's own host auth material is unreadable, so no `authority_tag`
+    /// can be recomputed. Restore read access to `<home>/auth/token`; do NOT
+    /// delete it — a regenerated token invalidates every live claim's tag.
+    RepairAuthKey,
+    /// The daemon-owned claim store under `<home>/state/recovery-claims/` could
+    /// not be opened, listed or read.
+    RepairClaimStore,
+}
+
+impl Remediation {
+    /// Stable machine-readable class for the API body and the operator UI.
+    pub fn class(self) -> &'static str {
+        match self {
+            Self::RepairSessionFile => "repair_session_file",
+            Self::RepairSessionStore => "repair_session_store",
+            Self::RepairAuthKey => "repair_auth_key",
+            Self::RepairClaimStore => "repair_claim_store",
+        }
+    }
+
+    /// The documented repair, in one sentence an operator can act on.
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::RepairSessionFile => {
+                "The named session file could not be read as a complete event log. \
+                 Restore read access to it, or move that one file out of the \
+                 project's .orgasmic/sessions/ directory to quarantine it; \
+                 recovery resumes on the next request."
+            }
+            Self::RepairSessionStore => {
+                "The project's .orgasmic/sessions/ directory could not be opened. \
+                 Restore read and execute access to it and retry."
+            }
+            Self::RepairAuthKey => {
+                "The daemon could not read its host auth material at <home>/auth/token. \
+                 Restore read access to that file — do not delete or regenerate it, \
+                 which would invalidate every live recovery claim."
+            }
+            Self::RepairClaimStore => {
+                "The daemon-owned claim store under <home>/state/recovery-claims/ \
+                 could not be opened, listed or read. Restore read and execute \
+                 access to it and retry."
+            }
+        }
+    }
+}
+
+impl UnobservedSession {
+    /// The remediation class for this reason — derived ONCE, here, so no call
+    /// site re-decides what an operator should do about it.
+    pub fn remediation(self) -> Remediation {
+        match self {
+            Self::SessionUnreadable | Self::OriginSessionUnreadable => {
+                Remediation::RepairSessionFile
+            }
+            Self::SessionDirectoryUnavailable | Self::SessionPathUnresolvable => {
+                Remediation::RepairSessionStore
+            }
+            Self::AuthorityKeyUnreadable => Remediation::RepairAuthKey,
+            Self::ClaimStoreUnreadable | Self::ClaimFileUnreadable => Remediation::RepairClaimStore,
+        }
+    }
+
+    /// Stable machine-readable tag, so the API body is not a `Debug` string.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::SessionDirectoryUnavailable => "session_directory_unavailable",
+            Self::SessionUnreadable => "session_unreadable",
+            Self::OriginSessionUnreadable => "origin_session_unreadable",
+            Self::AuthorityKeyUnreadable => "authority_key_unreadable",
+            Self::SessionPathUnresolvable => "session_path_unresolvable",
+            Self::ClaimStoreUnreadable => "claim_store_unreadable",
+            Self::ClaimFileUnreadable => "claim_file_unreadable",
+        }
+    }
+}
+
+/// One failed observation, WITH the identity of what it failed on.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F3 — [`UnobservedSession`] is a bare tag, so
+/// `enumerate_recovery_origin_links` knew exactly which file it stopped on and
+/// then threw that away at the first hop. Every recovery in the project then
+/// answered 503 with a reason and no subject, which an operator can neither
+/// diagnose nor clear.
+///
+/// # The design question, answered
+///
+/// The reviewer asked whether a permanently malformed session should be
+/// ISOLATED as a per-file authority fault instead of refusing project-wide.
+/// **It should not, and the refusal stays project-wide.** The enumeration's
+/// only job is to prove that a claim's replacement link is UNIQUE across the
+/// project; dropping one unreadable file from the set and calling the remainder
+/// complete is bit-for-bit the defect rounds one through three closed — a
+/// failed observation reported as a successful one that found nothing. A second
+/// authenticated replacement could be in exactly the file that could not be
+/// read, which is the arrangement that ends with two daemons holding one lease.
+///
+/// What was actually wrong is that the refusal was ANONYMOUS and had no exit.
+/// So the subject and the [`Remediation`] travel with the reason from the leaf
+/// that failed, through the inventory and the 503, into the operator UI — and
+/// the repair is a documented single-file action ([`Remediation::hint`]) that
+/// clears the refusal for the whole project on the next request, which the
+/// `f3_*` regressions exercise end to end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnobservedEvidence {
+    pub reason: UnobservedSession,
+    /// Sanitized, project-relative identity of the file the observation failed
+    /// on — never an absolute host path, and never raw operator-supplied bytes.
+    pub subject: Option<String>,
+    pub remediation: Remediation,
+}
+
+impl UnobservedEvidence {
+    pub fn new(reason: UnobservedSession) -> Self {
+        Self {
+            reason,
+            subject: None,
+            remediation: reason.remediation(),
+        }
+    }
+
+    pub fn about(reason: UnobservedSession, subject: impl Into<String>) -> Self {
+        Self::new(reason).with_subject(Some(subject.into()))
+    }
+
+    pub fn with_subject(mut self, subject: Option<String>) -> Self {
+        if self.subject.is_none() {
+            self.subject = subject;
+        }
+        self
+    }
+
+    /// Fill in a subject only if one was not established deeper in the stack.
+    pub fn or_subject(self, subject: impl Into<String>) -> Self {
+        self.with_subject(Some(subject.into()))
+    }
+}
+
+/// Render a path as a sanitized, project-relative identifier fit for a log
+/// line, an API body and an operator UI.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F3 — session file names come from run ids the
+/// daemon minted, but this is the boundary where a path becomes operator-facing
+/// text, so it is sanitized here rather than trusted: every byte outside
+/// `[A-Za-z0-9._-]` becomes `_`, the host prefix above the project root is
+/// dropped, and the result is length-capped. A name that sanitizes to nothing
+/// still yields a stable placeholder, because "which file" must never be blank.
+pub fn sanitized_subject(project_root: &Path, path: &Path) -> String {
+    const MAX: usize = 120;
+    let relative = path.strip_prefix(project_root).unwrap_or_else(|_| {
+        Path::new(
+            path.file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("unnamed")),
+        )
+    });
+    let mut out = String::new();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        if !out.is_empty() {
+            out.push('/');
+        }
+        for byte in part.as_encoded_bytes() {
+            out.push(match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' => *byte as char,
+                _ => '_',
+            });
+        }
+    }
+    if out.is_empty() {
+        out.push_str("unnamed");
+    }
+    if out.len() > MAX {
+        out.truncate(MAX);
+    }
+    out
 }
 
 /// What one predicate on the recovery-authority path actually established.
@@ -1434,7 +1977,7 @@ pub enum UnobservedSession {
 /// The one question to ask of every predicate that returns this: *what does a
 /// caller conclude from the negative, and is that conclusion still right when
 /// the reason was "I could not look"?*
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use = "a fallible predicate states its own observability; dropping it \
               turns `I could not check` back into `I checked and it is false`"]
 pub enum ClaimEvidence {
@@ -1442,8 +1985,10 @@ pub enum ClaimEvidence {
     Valid,
     /// Observed, and the property does not hold. The evidence itself is bad.
     Invalid,
-    /// NOT observed. Deliberately carries no boolean to mistake for an answer.
-    Unobserved(UnobservedSession),
+    /// NOT observed. Deliberately carries no boolean to mistake for an answer —
+    /// but it DOES carry which file and what would repair it
+    /// (orgasmic:TASK-2QK4P.1.1.1.1 F3).
+    Unobserved(UnobservedEvidence),
 }
 
 impl ClaimEvidence {
@@ -1473,13 +2018,24 @@ fn session_read_evidence(err: &RecoveryClaimError, reason: UnobservedSession) ->
         RecoveryClaimError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
             ClaimEvidence::Invalid
         }
-        RecoveryClaimError::Io(_) => ClaimEvidence::Unobserved(reason),
+        // orgasmic:TASK-2QK4P.1.1.1.1 acceptance 2 — the errno policy lives in
+        // exactly one place now, so this site applies it instead of restating
+        // "every non-NotFound io error is unobserved" and drifting from it.
+        RecoveryClaimError::Io(io) => match classify_observation(io) {
+            ObservationClass::Absent => ClaimEvidence::Invalid,
+            ObservationClass::Decided => ClaimEvidence::Invalid,
+            ObservationClass::Unobserved => {
+                ClaimEvidence::Unobserved(UnobservedEvidence::new(reason))
+            }
+        },
         // The strict whole-file envelope parse rejects a file it cannot read as
         // envelopes, and a swapped device/inode means the bytes just read
         // belong to a different file. Neither states that the file lacks the
         // link, so both are the observer failing.
-        RecoveryClaimError::CorruptClaim => ClaimEvidence::Unobserved(reason),
-        RecoveryClaimError::Unobserved(reason) => ClaimEvidence::Unobserved(*reason),
+        RecoveryClaimError::CorruptClaim => {
+            ClaimEvidence::Unobserved(UnobservedEvidence::new(reason))
+        }
+        RecoveryClaimError::Unobserved(evidence) => ClaimEvidence::Unobserved(evidence.clone()),
         // The path the claim carries does not name a regular file directly
         // inside this project's pinned sessions directory. That is decided, and
         // it is decided about content the claim supplied.
@@ -1487,6 +2043,19 @@ fn session_read_evidence(err: &RecoveryClaimError, reason: UnobservedSession) ->
             ClaimEvidence::Invalid
         }
         _ => ClaimEvidence::Invalid,
+    }
+}
+
+/// Attach a subject to an unobserved answer that does not already carry one.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F3 — the leaf that failed knows the errno; the
+/// caller knows the file. Neither alone is a diagnostic.
+fn evidence_about(evidence: ClaimEvidence, subject: impl Into<String>) -> ClaimEvidence {
+    match evidence {
+        ClaimEvidence::Unobserved(unobserved) => {
+            ClaimEvidence::Unobserved(unobserved.or_subject(subject))
+        }
+        other => other,
     }
 }
 
@@ -1532,7 +2101,7 @@ pub enum IndexedRecoveryOrigins {
     /// The file was NOT observed. There is deliberately nothing here to mistake
     /// for a result.
     Unobserved {
-        reason: UnobservedSession,
+        reason: UnobservedEvidence,
         bytes_inspected: u64,
     },
 }
@@ -1585,12 +2154,19 @@ pub fn index_recovery_origins_in_session(
     session_path: &Path,
     containing_project_id: &str,
 ) -> IndexedRecoveryOrigins {
+    // orgasmic:TASK-2QK4P.1.1.1.1 F3 — WHICH FILE. This function knows exactly
+    // which session file it stopped on and used to discard that at the first
+    // hop, which is how a project-wide permanent 503 ended up naming nothing.
+    let subject = sanitized_subject(project_root, session_path);
     #[cfg(unix)]
     let session_dir = match SessionDirectory::open(project_root) {
         Ok(dir) => dir,
         Err(_) => {
             return IndexedRecoveryOrigins::Unobserved {
-                reason: UnobservedSession::SessionDirectoryUnavailable,
+                reason: UnobservedEvidence::about(
+                    UnobservedSession::SessionDirectoryUnavailable,
+                    subject,
+                ),
                 bytes_inspected: 0,
             }
         }
@@ -1603,7 +2179,7 @@ pub fn index_recovery_origins_in_session(
         Ok(scan) => scan,
         Err(_) => {
             return IndexedRecoveryOrigins::Unobserved {
-                reason: UnobservedSession::SessionUnreadable,
+                reason: UnobservedEvidence::about(UnobservedSession::SessionUnreadable, subject),
                 bytes_inspected: 0,
             }
         }
@@ -1665,9 +2241,9 @@ pub fn index_recovery_origins_in_session(
             match claim_has_valid_authority(home, &claim_snapshot) {
                 ClaimEvidence::Valid => {}
                 ClaimEvidence::Invalid => continue,
-                ClaimEvidence::Unobserved(reason) => {
+                ClaimEvidence::Unobserved(evidence) => {
                     return IndexedRecoveryOrigins::Unobserved {
-                        reason,
+                        reason: evidence.or_subject(subject),
                         bytes_inspected,
                     }
                 }
@@ -1697,7 +2273,10 @@ pub fn index_recovery_origins_in_session(
                     Ok(name) => name,
                     Err(_) => {
                         return IndexedRecoveryOrigins::Unobserved {
-                            reason: UnobservedSession::SessionPathUnresolvable,
+                            reason: UnobservedEvidence::about(
+                                UnobservedSession::SessionPathUnresolvable,
+                                subject,
+                            ),
                             bytes_inspected,
                         }
                     }
@@ -1710,7 +2289,10 @@ pub fn index_recovery_origins_in_session(
                     | Err(RecoveryClaimError::InvalidIdentifier) => continue,
                     Err(_) => {
                         return IndexedRecoveryOrigins::Unobserved {
-                            reason: UnobservedSession::SessionPathUnresolvable,
+                            reason: UnobservedEvidence::about(
+                                UnobservedSession::SessionPathUnresolvable,
+                                sanitized_subject(project_root, &replacement_session_path),
+                            ),
                             bytes_inspected,
                         }
                     }
@@ -1752,7 +2334,10 @@ pub fn index_recovery_origins_in_session(
                 Ok(scan) => scan,
                 Err(_) => {
                     return IndexedRecoveryOrigins::Unobserved {
-                        reason: UnobservedSession::OriginSessionUnreadable,
+                        reason: UnobservedEvidence::about(
+                            UnobservedSession::OriginSessionUnreadable,
+                            sanitized_subject(project_root, &origin_session_path),
+                        ),
                         bytes_inspected,
                     }
                 }
@@ -1837,7 +2422,7 @@ pub struct OriginEnumerationCost {
               turns `I did not observe` back into `I observed nothing`"]
 pub enum AuthoritativeOriginLinks {
     Complete(Vec<IndexedRecoveryOrigin>),
-    Unobserved(UnobservedSession),
+    Unobserved(UnobservedEvidence),
 }
 
 /// One complete per-project authoritative snapshot, built at most once per
@@ -1891,23 +2476,36 @@ fn enumerate_recovery_origin_links(
     let mut cost = OriginEnumerationCost::default();
     let entries = match std::fs::read_dir(&dir) {
         Ok(entries) => entries,
-        Err(_) => {
-            return (
-                AuthoritativeOriginLinks::Unobserved(
-                    UnobservedSession::SessionDirectoryUnavailable,
-                ),
-                cost,
-            )
-        }
+        // orgasmic:TASK-2QK4P.1.1.1.1 acceptance 2 — THE SAME DIVERGENCE, ONE
+        // CALL EARLIER, found by applying the policy rather than by reading the
+        // finding list. This site mapped EVERY `read_dir` failure to
+        // `Unobserved`, `ENOENT` included — and an absent sessions directory is
+        // a decided fact: there are no session files, so there are no
+        // `RecoveryOrigin` links, and the enumeration IS complete and empty.
+        // Reporting absence as a failed observation refuses recovery for a
+        // project that has simply never written a session.
+        Err(err) => match classify_observation(&err) {
+            ObservationClass::Absent => return (AuthoritativeOriginLinks::Complete(links), cost),
+            ObservationClass::Decided | ObservationClass::Unobserved => {
+                return (
+                    AuthoritativeOriginLinks::Unobserved(UnobservedEvidence::about(
+                        UnobservedSession::SessionDirectoryUnavailable,
+                        sanitized_subject(project_root, &dir),
+                    )),
+                    cost,
+                )
+            }
+        },
     };
     for entry in entries {
         let path = match entry {
             Ok(entry) => entry.path(),
             Err(_) => {
                 return (
-                    AuthoritativeOriginLinks::Unobserved(
+                    AuthoritativeOriginLinks::Unobserved(UnobservedEvidence::about(
                         UnobservedSession::SessionDirectoryUnavailable,
-                    ),
+                        sanitized_subject(project_root, &dir),
+                    )),
                     cost,
                 )
             }
@@ -1965,8 +2563,8 @@ pub fn resolve_authoritative_recovery_claim(
         // valid committed claim would turn one failed observation into the
         // permanent loss of that rescue's idempotency, and the handler would
         // then mint a second replacement beside the live one.
-        AuthoritativeOriginLinks::Unobserved(reason) => {
-            return Ok(ResolvedRecoveryClaim::Unobserved(*reason))
+        AuthoritativeOriginLinks::Unobserved(evidence) => {
+            return Ok(ResolvedRecoveryClaim::Unobserved(evidence.clone()))
         }
     };
     let loaded = load_recovery_claim(home, project_id, origin_run_id);
@@ -3073,8 +3671,86 @@ pub enum RecoveryClaimError {
     /// A predicate could not observe what it was asked about. Distinct from
     /// [`Self::CorruptClaim`] so no caller can quarantine on it
     /// (orgasmic:TASK-2QK4P.1.1.1 acceptance 2).
-    Unobserved(UnobservedSession),
+    Unobserved(UnobservedEvidence),
     Io(std::io::Error),
+}
+
+/// WHAT ONE `io::Error` SAYS ABOUT THE THING THAT WAS BEING OBSERVED.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 acceptance 2 — THE POLICY IS WRITTEN HERE ONCE
+/// AND NOWHERE ELSE.
+///
+/// Round four wrote the rule down in prose and then let every call site
+/// re-decide it, and the sites diverged exactly as you would expect:
+/// [`ClaimDirectory::open`] mapped every non-`NotFound` component-open error to
+/// `CorruptClaim` (so `EACCES` and `EIO` quarantined a live claim), while
+/// `session_read_evidence` twenty lines away mapped the same `EACCES` to
+/// `Unobserved`. F1 and F4 are that divergence.
+///
+/// Three answers, because an `io::Error` really does carry three different
+/// kinds of news:
+///
+/// - [`Self::Absent`] — `ENOENT`. The thing is NOT THERE, and that is an
+///   observation that succeeded. Refusing to act on it would freeze every
+///   genuinely dead rescue, so absence stays actionable.
+/// - [`Self::Decided`] — the kernel described the path and the description
+///   disqualifies it: `ELOOP` (a symlink where a real file must be),
+///   `ENOTDIR`/`EISDIR` (wrong kind), `ENAMETOOLONG`, and a non-UTF-8 body
+///   where JSON must be. These are FACTS ABOUT THE EVIDENCE, so a caller may
+///   quarantine on them.
+/// - [`Self::Unobserved`] — the observer failed: `EACCES`/`EPERM`, `EIO`,
+///   `EMFILE`/`ENFILE`/`ENOMEM` (descriptor and memory exhaustion), `EINTR`,
+///   `EAGAIN`, `ESTALE`, `EBUSY`, `EOVERFLOW`, and — deliberately — EVERY
+///   ERRNO NOT NAMED ABOVE. Unknown maps to unobserved because that is the
+///   direction whose worst case is a retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationClass {
+    Absent,
+    Decided,
+    Unobserved,
+}
+
+/// Apply the policy above to one `io::Error`.
+pub fn classify_observation(err: &std::io::Error) -> ObservationClass {
+    #[cfg(unix)]
+    if let Some(code) = err.raw_os_error() {
+        return match code {
+            libc::ENOENT => ObservationClass::Absent,
+            libc::ELOOP | libc::ENOTDIR | libc::EISDIR | libc::ENAMETOOLONG => {
+                ObservationClass::Decided
+            }
+            _ => ObservationClass::Unobserved,
+        };
+    }
+    match err.kind() {
+        std::io::ErrorKind::NotFound => ObservationClass::Absent,
+        // `read_to_string` on non-UTF-8 bytes: the file was READ, and what it
+        // holds is not the JSON text a claim is. A decided fact about content.
+        std::io::ErrorKind::InvalidData | std::io::ErrorKind::InvalidInput => {
+            ObservationClass::Decided
+        }
+        _ => ObservationClass::Unobserved,
+    }
+}
+
+/// The single conversion from a raw `io::Error` to a claim-store error.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F1/F4 — every read-side claim IO goes through
+/// this, so no call site gets to invent its own mapping again. `Absent` stays
+/// [`RecoveryClaimError::Io`] because the `NotFound` shape is what callers key
+/// their "no claim here" branches on.
+pub(crate) fn claim_io_error(
+    err: std::io::Error,
+    reason: UnobservedSession,
+    subject: Option<String>,
+) -> RecoveryClaimError {
+    match classify_observation(&err) {
+        ObservationClass::Absent => RecoveryClaimError::Io(err),
+        ObservationClass::Decided => RecoveryClaimError::CorruptClaim,
+        ObservationClass::Unobserved => {
+            RecoveryClaimError::Unobserved(UnobservedEvidence::new(reason).with_subject(subject))
+        }
+    }
 }
 
 pub type RecoveryClaimLocks = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
@@ -4634,7 +5310,10 @@ mod tests {
             matches!(
                 indexed,
                 IndexedRecoveryOrigins::Unobserved {
-                    reason: UnobservedSession::SessionUnreadable,
+                    reason: UnobservedEvidence {
+                        reason: UnobservedSession::SessionUnreadable,
+                        ..
+                    },
                     ..
                 }
             ),
@@ -5145,9 +5824,10 @@ mod tests {
                 assert!(
                     matches!(
                         resolved,
-                        ResolvedRecoveryClaim::Unobserved(
-                            UnobservedSession::AuthorityKeyUnreadable
-                        )
+                        ResolvedRecoveryClaim::Unobserved(UnobservedEvidence {
+                            reason: UnobservedSession::AuthorityKeyUnreadable,
+                            ..
+                        })
                     ) || matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
                     "position {nth} fired and must answer unobserved (or fail closed on the \
                      duplicate it did observe), got {resolved:?}"
@@ -5210,9 +5890,10 @@ mod tests {
                 assert!(
                     matches!(
                         resolved,
-                        ResolvedRecoveryClaim::Unobserved(
-                            UnobservedSession::AuthorityKeyUnreadable
-                        )
+                        ResolvedRecoveryClaim::Unobserved(UnobservedEvidence {
+                            reason: UnobservedSession::AuthorityKeyUnreadable,
+                            ..
+                        })
                     ),
                     "a key read that failed at position {nth} decided nothing, got {resolved:?}"
                 );
@@ -5543,14 +6224,24 @@ mod tests {
         // EVERY type on the authority path that carries the unresolved answer,
         // with the EXACT payload its unresolved variant is allowed to have.
         // Equality, not containment: an added field is a red test.
+        //
+        // orgasmic:TASK-2QK4P.1.1.1.1 F3 — the payload is now
+        // [`UnobservedEvidence`] rather than a bare tag, and the equality above
+        // is what makes that a DELIBERATE widening instead of a drifted one:
+        // the pin had to be edited for it. What the variant may still not carry
+        // is a partial RESULT — links, a claim, a boolean — and that is pinned
+        // by `UnobservedEvidence`'s own field set immediately below.
         let pinned: [(&str, &str); 4] = [
             (
                 "IndexedRecoveryOrigins",
-                "Unobserved { reason: UnobservedSession, bytes_inspected: u64, }",
+                "Unobserved { reason: UnobservedEvidence, bytes_inspected: u64, }",
             ),
-            ("AuthoritativeOriginLinks", "Unobserved(UnobservedSession),"),
-            ("ClaimEvidence", "Unobserved(UnobservedSession),"),
-            ("ResolvedRecoveryClaim", "Unobserved(UnobservedSession),"),
+            (
+                "AuthoritativeOriginLinks",
+                "Unobserved(UnobservedEvidence),",
+            ),
+            ("ClaimEvidence", "Unobserved(UnobservedEvidence),"),
+            ("ResolvedRecoveryClaim", "Unobserved(UnobservedEvidence),"),
         ];
 
         for (name, expected_variant) in pinned {
@@ -5598,6 +6289,77 @@ mod tests {
                  else is a partial result a caller can reach for, which is the collapse wearing \
                  a new field name."
             );
+        }
+
+        // orgasmic:TASK-2QK4P.1.1.1.1 F3 — and the carrier itself holds exactly
+        // three things: WHY the observation failed, WHICH file it failed on, and
+        // WHAT WOULD REPAIR IT. Not a link, not a claim, not a bool. A fourth
+        // field is a red test, because "the unresolved answer carries no partial
+        // result" is the invariant the whole chain rests on.
+        {
+            let start = code
+                .find("pub struct UnobservedEvidence ")
+                .expect("the evidence carrier must exist");
+            let body = enum_body(&code, start);
+            let fields: Vec<&str> = body
+                .trim_matches(|c| c == '{' || c == '}')
+                .split(',')
+                .map(str::trim)
+                .filter(|field| !field.is_empty())
+                .collect();
+            assert_eq!(
+                fields,
+                vec![
+                    "pub reason: UnobservedSession",
+                    "pub subject: Option<String>",
+                    "pub remediation: Remediation"
+                ],
+                "UnobservedEvidence carries the failure's identity and nothing a caller could \
+                 mistake for a result; its body is:\n{body}"
+            );
+        }
+
+        // orgasmic:TASK-2QK4P.1.1.1.1 F4 — NO WILDCARD ARM ON THE RESOLVER ENUM.
+        //
+        // `committed_claim_is_authoritative` had `_ => NotAuthoritative`, which
+        // swept every resolver `Err` — raw `Io` included — into a DECIDED
+        // negative. This pin is here and not only in a behaviour test on
+        // purpose, and the reason is worth stating: after F1, every unobserved
+        // path upstream is converted to `Ok(ResolvedRecoveryClaim::Unobserved)`
+        // before it reaches this helper, so restoring the wildcard TODAY does
+        // not change any observable answer — the behaviour test stays green. It
+        // is the next unobserved variant, added by a later round, that the
+        // wildcard would silently swallow. So the guarantee is compile-time:
+        // exhaustiveness, pinned by forbidding the one construct that defeats
+        // it.
+        {
+            let api = include_str!("api.rs");
+            let api_production = api
+                .split("\nmod tests {")
+                .next()
+                .expect("api.rs has a tests module");
+            let start = api_production
+                .find("fn committed_claim_is_authoritative")
+                .expect("the helper must still exist");
+            // Comments are dropped first, exactly as above: this test's own
+            // explanation of the defect quotes the forbidden spelling.
+            let body: String = enum_body(api_production, start)
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .map(|line| format!("{line}\n"))
+                .collect();
+            // `Err(_)` is the same sweep wearing a constructor: it catches
+            // every current AND future `RecoveryClaimError`, which is exactly
+            // how a later round's new unobserved variant would become a
+            // decided negative without anyone editing this function.
+            for forbidden in ["_ =>", "_ if", "Err(_)", "Ok(_)"] {
+                assert!(
+                    !body.contains(forbidden),
+                    "committed_claim_is_authoritative must match every resolver result \
+                     explicitly; `{forbidden}` is how `I could not decide` becomes `I decided \
+                     no`. Its body is:\n{body}"
+                );
+            }
         }
 
         // And the two predicates the review named must not have gone back to
@@ -5681,5 +6443,521 @@ mod tests {
                 .join(" ")
                 .replace(" ,", ","),
         )
+    }
+
+    // ================================================================
+    // orgasmic:TASK-2QK4P.1.1.1.1 — ROUND FIVE REGRESSIONS
+    //
+    // Every one of these is a REPRODUCTION FIRST: the fixture is built to make
+    // the pre-fix code produce the wrong answer, and the assertion is the
+    // answer the fixed code gives. Where a real errno cannot be produced from a
+    // test the seam reproduces the syscall's exact observable shape, never the
+    // decision that follows it.
+    // ================================================================
+
+    /// Tests that need a real `EACCES` cannot run as root, where permission
+    /// bits do not apply.
+    fn skip_if_root() -> bool {
+        let root = unsafe { libc::geteuid() } == 0;
+        if root {
+            eprintln!("skipping: permission fixtures are meaningless as root");
+        }
+        root
+    }
+
+    struct RestorePermissions(PathBuf, u32);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+        }
+    }
+
+    fn deny_all(path: &Path) -> RestorePermissions {
+        use std::os::unix::fs::PermissionsExt as _;
+        let previous = std::fs::metadata(path).unwrap().permissions().mode() & 0o7777;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        RestorePermissions(path.to_path_buf(), previous)
+    }
+
+    /// F1 — AN UNREADABLE PENDING CLAIM FILE IS NOT A CORRUPT ONE.
+    ///
+    /// `ClaimDirectory::read_regular` mapped every open error other than
+    /// `NotFound` to `CorruptClaim`, which is the bucket
+    /// `resolve_authoritative_recovery_claim` QUARANTINES on. For a PENDING
+    /// claim there is no committed `RecoveryOrigin` to reconstruct from, so the
+    /// quarantine removed the claim outright: the next POST then saw a complete
+    /// origin enumeration plus no claim and reached
+    /// `plan_pending_recovery_claim` — minting a competitor beside a live
+    /// rescue. One `EACCES` destroyed authority and issued permission to mint.
+    ///
+    /// The fixture is a real `chmod 000` on the claim file, not a hook: the
+    /// pre-fix mapping is reached by the genuine syscall error.
+    ///
+    /// Injection to see it red: restore
+    /// `_ => RecoveryClaimError::CorruptClaim` in `read_regular`.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f1_an_unreadable_pending_claim_is_unobserved_and_never_quarantined() {
+        if skip_if_root() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-f1-origin",
+            "req-f1",
+            "boot-f1",
+            false,
+        );
+        write_origin_session(&spec, "rt-f1-origin", "boot-dead");
+        plan_pending_recovery_claim(&home, &spec).unwrap();
+
+        let claim_file = claim_path(&home, "orgasmic", "run-f1-origin").unwrap();
+        let before = std::fs::read(&claim_file).unwrap();
+        assert!(!before.is_empty(), "the fixture must have a pending claim");
+
+        let resolved = {
+            let _restore = deny_all(&claim_file);
+            resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-f1-origin",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .expect("an unreadable claim is an answer, not an error to the caller")
+        };
+
+        // 1. No `Valid`, and no quarantine decision.
+        match &resolved {
+            ResolvedRecoveryClaim::Unobserved(evidence) => {
+                assert_eq!(evidence.reason, UnobservedSession::ClaimFileUnreadable);
+                assert_eq!(evidence.remediation, Remediation::RepairClaimStore);
+                assert!(
+                    evidence.subject.is_some(),
+                    "F3: the refusal must name what it failed on"
+                );
+            }
+            other => panic!("an EACCES on the claim file must be unobserved, got {other:?}"),
+        }
+        // 2. No quarantine on disk.
+        assert!(
+            !quarantine_exists(&home, "orgasmic", "run-f1-origin"),
+            "an observation failure must never rename a live rescue's claim"
+        );
+        // 3. No new replacement minted: the claim file is byte-identical.
+        assert_eq!(
+            std::fs::read(&claim_file).unwrap(),
+            before,
+            "the claim file must survive the failed read untouched"
+        );
+
+        // 4. And after repair, reconciliation is normal.
+        let repaired = resolve_authoritative_recovery_claim(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-f1-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(repaired, ResolvedRecoveryClaim::Valid(ref claim)
+                if claim.status == RecoveryClaimStatus::Pending),
+            "once readable the same claim resolves normally, got {repaired:?}"
+        );
+    }
+
+    /// F1(b) — the same failure one level up: an unreadable claim STORE.
+    ///
+    /// `ClaimDirectory::open` mapped every non-`NotFound` component-open error
+    /// to `CorruptClaim` too, and that one is worse: it is a statement about
+    /// EVERY claim under the directory, made from a single failed `openat`.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f1_an_unreadable_claim_store_is_unobserved_not_corrupt() {
+        if skip_if_root() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-f1b-origin",
+            "req-f1b",
+            "boot-f1b",
+            false,
+        );
+        write_origin_session(&spec, "rt-f1b-origin", "boot-dead");
+        plan_pending_recovery_claim(&home, &spec).unwrap();
+
+        let project_dir = recovery_claims_root(&home).join("orgasmic");
+        let loaded = {
+            let _restore = deny_all(&project_dir);
+            load_recovery_claim(&home, "orgasmic", "run-f1b-origin")
+        };
+        match loaded {
+            Err(RecoveryClaimError::Unobserved(evidence)) => {
+                assert_eq!(evidence.reason, UnobservedSession::ClaimStoreUnreadable);
+                assert_eq!(evidence.remediation, Remediation::RepairClaimStore);
+            }
+            other => panic!("an EACCES opening the claim store must be unobserved: {other:?}"),
+        }
+        assert!(
+            !quarantine_exists(&home, "orgasmic", "run-f1b-origin"),
+            "nothing may be quarantined on a store the daemon could not open"
+        );
+        assert!(
+            load_recovery_claim(&home, "orgasmic", "run-f1b-origin")
+                .unwrap()
+                .is_some(),
+            "and after repair the claim is still there"
+        );
+    }
+
+    /// F2 — A FAILED `readdir` IS NOT A COMPLETE DIRECTORY, ON THE PRODUCTION
+    /// BOOT ROUTING PATH.
+    ///
+    /// `names()` broke out of its loop on a NULL return and answered
+    /// `Ok(names)`. `readdir` returns NULL at end-of-directory AND on error,
+    /// and the only way to tell is to clear `errno` before the call and read it
+    /// after — which it did neither of. `pending_recovery_claim_owns_session`
+    /// trusts that vector as complete, so a listing that stopped early hid the
+    /// pending claim owning a boot candidate, the predicate answered `Invalid`,
+    /// and `boot_reattach_ownership`'s caller let generic reattach append a
+    /// `Reattach` event into the immutable prefix that pending recovery owns.
+    /// That write is not undoable.
+    ///
+    /// The fault reproduces the syscall's exact shape — an errno-bearing NULL
+    /// on the nth iteration — not the decision that follows it, so the pre-fix
+    /// loop reaches its own `break` and returns the short set.
+    ///
+    /// Injection to see it red: drop the `errno` clear/read and return
+    /// `Ok(names)` on the NULL.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f2_a_failed_readdir_is_not_a_complete_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-f2-origin",
+            "req-f2",
+            "boot-f2",
+            false,
+        );
+        write_origin_session(&spec, "rt-f2-origin", "boot-dead");
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let owned_session = plan.claim.replacement_session_path.clone();
+        std::fs::write(&owned_session, b"").unwrap();
+        let session_before = std::fs::read(&owned_session).unwrap();
+
+        // PREMISE: with the directory listing intact, the pending claim IS
+        // found, so the test cannot pass by the predicate being blind.
+        assert_eq!(
+            pending_recovery_claim_owns_session(&home, &project_root, "orgasmic", &owned_session),
+            ClaimEvidence::Valid,
+            "the fixture must start out with the claim discoverable"
+        );
+
+        // Now fail the FIRST readdir. Pre-fix this returns an empty-but-Ok set,
+        // the claim is invisible, and the predicate answers Invalid = "reattach
+        // this session".
+        arm_readdir_fault(&home, 1, libc::EIO);
+        let ownership =
+            pending_recovery_claim_owns_session(&home, &project_root, "orgasmic", &owned_session);
+        disarm_readdir_fault(&home);
+        match &ownership {
+            ClaimEvidence::Unobserved(evidence) => {
+                assert_eq!(evidence.reason, UnobservedSession::ClaimStoreUnreadable);
+                assert_eq!(evidence.remediation, Remediation::RepairClaimStore);
+                assert!(
+                    evidence.subject.is_some(),
+                    "the refusal must name a subject"
+                );
+            }
+            other => panic!(
+                "a mid-listing EIO must not be reported as a complete directory, got {other:?}"
+            ),
+        }
+        // The boot loop reattaches ONLY on `Invalid`; this is the condition it
+        // evaluates (api.rs `boot_reattach_ownership` / `reattach_live_runs_on_boot`).
+        assert!(
+            !matches!(ownership, ClaimEvidence::Invalid),
+            "boot must skip, not reattach, when the claim store could not be listed"
+        );
+        assert_eq!(
+            std::fs::read(&owned_session).unwrap(),
+            session_before,
+            "no session write may happen while the predicate is unobserved"
+        );
+
+        // After repair, routing is normal again.
+        assert_eq!(
+            pending_recovery_claim_owns_session(&home, &project_root, "orgasmic", &owned_session),
+            ClaimEvidence::Valid,
+            "a transient listing failure must not change the answer once it clears"
+        );
+    }
+
+    /// F2 — `closedir` failure and a non-UTF-8 entry name.
+    ///
+    /// The third collapse in the same loop was `if let Ok(name) =
+    /// name.to_str()`, which SILENTLY DROPPED an entry whose name is not UTF-8
+    /// and made the set smaller — the unsafe direction. The decision taken is
+    /// that an entry name is BYTES: it is carried through unchanged, and the
+    /// `.json` filter its callers apply then decides about it. A lossy
+    /// conversion was rejected because the mangled name opens as `NotFound`,
+    /// which reads as "absent" — the same collapse one layer down.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f2_a_non_utf8_entry_name_is_carried_not_dropped() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        ClaimDirectory::open(&home, "orgasmic", true).unwrap();
+        let dir = recovery_claims_root(&home).join("orgasmic");
+        let raw = std::ffi::OsStr::from_bytes(b"not-\xffutf8.json");
+        let non_utf8 = std::fs::write(dir.join(raw), b"{}");
+        std::fs::write(dir.join("plain.json"), b"{}").unwrap();
+
+        // TYPE-LEVEL PIN, and it holds on every platform: the API is `OsString`,
+        // so there is no `to_str()` left to drop an entry at. A future edit that
+        // reintroduces `Vec<String>` is a compile error here.
+        let names: Vec<std::ffi::OsString> = ClaimDirectory::open(&home, "orgasmic", false)
+            .unwrap()
+            .unwrap()
+            .names()
+            .unwrap();
+
+        match non_utf8 {
+            Ok(()) => {
+                assert_eq!(
+                    names.len(),
+                    2,
+                    "no entry may vanish from the set: {names:?}"
+                );
+                assert!(
+                    names
+                        .iter()
+                        .any(|name| name.as_encoded_bytes() == b"not-\xffutf8.json"),
+                    "the undecodable entry must be carried through as its bytes: {names:?}"
+                );
+                assert!(
+                    !names.iter().any(|name| name
+                        .as_encoded_bytes()
+                        .windows(3)
+                        .any(|w| w == [0xEF, 0xBF, 0xBD])),
+                    "and it must NOT be lossily re-encoded (U+FFFD) into a name that \
+                     opens as NotFound"
+                );
+            }
+            // APFS and HFS+ ENFORCE UTF-8 file names and reject this one with
+            // `EILSEQ`, so the byte-level half of this regression is unbuildable
+            // on macOS. Reported rather than hidden: on macOS this test proves
+            // the type-level pin above and nothing more, and the byte assertions
+            // run on Linux (ext4/tmpfs impose no such rule), which is the other
+            // shipped target.
+            Err(err) => {
+                assert_eq!(
+                    err.raw_os_error(),
+                    Some(libc::EILSEQ),
+                    "an unexpected failure creating the fixture: {err:?}"
+                );
+                eprintln!(
+                    "note: this filesystem rejects non-UTF-8 names (EILSEQ); the byte-preservation \
+                     half of f2_a_non_utf8_entry_name_is_carried_not_dropped did not run here"
+                );
+                assert_eq!(names.len(), 1, "the entries that exist are all listed");
+            }
+        }
+    }
+
+    /// F4 — read-side claim IO carries an observation reason.
+    ///
+    /// State-root canonicalize/open failures stayed `RecoveryClaimError::Io`,
+    /// and `recovery_claim_load_error` sent raw `Io` to a 500. A 500 says "the
+    /// daemon is broken"; the truth is "one file could not be read and the
+    /// answer will be decided once it can", which is a retryable 503.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f4_state_root_failures_carry_an_observation_reason() {
+        if skip_if_root() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        ClaimDirectory::open(&home, "orgasmic", true).unwrap();
+
+        let loaded = {
+            let _restore = deny_all(&home.state());
+            load_recovery_claim(&home, "orgasmic", "run-f4")
+        };
+        match loaded {
+            Err(RecoveryClaimError::Unobserved(evidence)) => {
+                assert_eq!(evidence.reason, UnobservedSession::ClaimStoreUnreadable);
+                assert_eq!(evidence.remediation, Remediation::RepairClaimStore);
+            }
+            other => panic!("an unreadable state root must be unobserved, not Io: {other:?}"),
+        }
+    }
+
+    /// The errno policy itself, pinned in one place because it now LIVES in one
+    /// place (acceptance 2). `NotFound` is absence, `ELOOP`/`ENOTDIR` are
+    /// decided path facts, and everything else — named or not — is the observer
+    /// failing.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn the_errno_policy_is_stated_once_and_defaults_to_unobserved() {
+        let class = |code: i32| classify_observation(&std::io::Error::from_raw_os_error(code));
+        assert_eq!(class(libc::ENOENT), ObservationClass::Absent);
+        for decided in [libc::ELOOP, libc::ENOTDIR, libc::EISDIR, libc::ENAMETOOLONG] {
+            assert_eq!(
+                class(decided),
+                ObservationClass::Decided,
+                "errno {decided} describes the path, so it is evidence"
+            );
+        }
+        for unobserved in [
+            libc::EACCES,
+            libc::EPERM,
+            libc::EIO,
+            libc::EMFILE,
+            libc::ENFILE,
+            libc::ENOMEM,
+            libc::EINTR,
+            libc::EAGAIN,
+            libc::EBUSY,
+            libc::EOVERFLOW,
+            // Deliberately unnamed by the policy: the default must be the safe
+            // direction, whose worst case is a retry.
+            libc::EDOM,
+        ] {
+            assert_eq!(
+                class(unobserved),
+                ObservationClass::Unobserved,
+                "errno {unobserved} is the observer failing, not a fact about the file"
+            );
+        }
+    }
+
+    /// F5 — THE STAT OBSERVER IS INJECTED SEPARATELY FROM THE KEY READS, AND
+    /// THE PROOF IS THAT THIS TEST CAN FAIL.
+    ///
+    /// Every `authority_key` test injected through `authority_key_fault`, which
+    /// returns BEFORE control reaches the existence probe — including the
+    /// five-case behavioural pin. So swapping `try_exists` back for `exists()`
+    /// plus `load_or_generate` left the whole suite green and brought the
+    /// host-token remint defect straight back.
+    ///
+    /// This uses no hook at all. Removing search permission from the token's
+    /// parent directory makes the real `stat` fail with `EACCES` while the
+    /// token bytes survive untouched. Under `exists()` that same fixture
+    /// answers `false` and MINTS a new token, invalidating every `authority_tag`
+    /// on the host — so the assertions below are exactly the ones that red.
+    ///
+    /// Injection to see it red (verified for this round):
+    /// `if !home.auth_token().exists() { ... }` in place of
+    /// `if !token_is_present(home)? { ... }`.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f5_authority_key_stat_is_not_shadowed_by_the_read_fault_hook() {
+        if skip_if_root() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        // A real token, whose bytes are the thing a remint would destroy.
+        crate::auth::load_or_generate(&home).unwrap();
+        let token_before = std::fs::read(home.auth_token()).unwrap();
+        assert!(!token_before.is_empty());
+
+        let auth_dir = home.auth_token().parent().unwrap().to_path_buf();
+        let minted_before = load_or_generate_reached_count(&home);
+        let observed = {
+            // No search permission on the parent: `stat` on the token fails,
+            // the token itself is untouched.
+            let _restore = deny_all(&auth_dir);
+            assert!(
+                home.auth_token().try_exists().is_err(),
+                "the fixture must make the real stat fail, not merely be absent"
+            );
+            authority_key(&home)
+        };
+        match observed {
+            Err(RecoveryClaimError::Unobserved(evidence)) => {
+                assert_eq!(evidence.reason, UnobservedSession::AuthorityKeyUnreadable);
+                assert_eq!(evidence.remediation, Remediation::RepairAuthKey);
+                assert_eq!(evidence.subject.as_deref(), Some("auth/token"));
+            }
+            other => panic!("an unstattable token must be unobserved, got {other:?}"),
+        }
+        assert_eq!(
+            load_or_generate_reached_count(&home),
+            minted_before,
+            "THE ACCEPTANCE: load_or_generate must NOT be reached — a mint here \
+             invalidates every authority_tag on the host"
+        );
+        assert_eq!(
+            std::fs::read(home.auth_token()).unwrap(),
+            token_before,
+            "and the token bytes are unchanged"
+        );
+        // And the retry succeeds once the directory is readable again.
+        assert_eq!(
+            authority_key(&home).unwrap(),
+            token_before
+                .iter()
+                .copied()
+                .take_while(|byte| !byte.is_ascii_whitespace())
+                .collect::<Vec<_>>(),
+            "after repair the SAME key is read back"
+        );
+    }
+
+    /// F3 — the subject is sanitized before it becomes operator-facing text.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f3_a_subject_is_project_relative_and_sanitized() {
+        let project = Path::new("/hosts/alice/code/proj");
+        assert_eq!(
+            sanitized_subject(project, &project.join(".orgasmic/sessions/run-1.jsonl")),
+            ".orgasmic/sessions/run-1.jsonl",
+            "the host prefix above the project root is dropped"
+        );
+        let hostile = sanitized_subject(project, Path::new("/etc/pa ss\nwd"));
+        assert_eq!(
+            hostile, "pa_ss_wd",
+            "a path outside the project degrades to its sanitized file name"
+        );
+        assert!(
+            !hostile.contains('/') && !hostile.contains('\n'),
+            "no path separators or control bytes may reach a log line or an API body"
+        );
+        assert_eq!(
+            sanitized_subject(project, Path::new("/")),
+            "unnamed",
+            "which file must never render blank"
+        );
     }
 }

@@ -31,6 +31,9 @@ rand.workspace = true
 sha2.workspace = true
 include_dir.workspace = true
 libc = "0.2"
+# orgasmic:TASK-2QK4P.1.1.1.1 F2 — `readdir` returns NULL for both EOF and
+# error, so the loop must clear errno before the call and read it after.
+errno = "0.3"
 reqwest.workspace = true
 
 [dev-dependencies]

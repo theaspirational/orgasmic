@@ -74,4 +74,14 @@ contains: [authority key unreadable] a predicate that could not look must answer
 # A binary that collapses wholesale, a fifth failure, or a red in the structural
 # pin or in any round-three regression, is a different failure and has not
 # reproduced what this artifact claims.
-contains: test result: FAILED. 27 passed; 4 failed
+# RE-COUNTED for TASK-2QK4P.1.1.1.1: FIVE failures now, not four, and the
+# fifth is that round's `f2_a_failed_readdir_is_not_a_complete_directory`.
+# It is not a different failure — it is THE SAME ONE, caught one call further
+# out. This injection restores "every session read failure answers Invalid",
+# and `pending_recovery_claim_owns_session` reaches that rule through the claim
+# directory listing, so the boot routing predicate answers `Invalid` = "no
+# pending recovery owns this session" and boot would append `Reattach` into a
+# reserved prefix. The paragraph above still holds otherwise: the structural
+# pin and every round-one-through-three regression stay GREEN, and a sixth
+# failure or a red pin is a different failure.
+contains: test result: FAILED. 34 passed; 5 failed

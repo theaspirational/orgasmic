@@ -94,4 +94,9 @@ contains: the project's session files must be scanned ONCE for the whole decisio
 # (`the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative`)
 # still stays GREEN, which is still the point: this injection changes which
 # variant the code CONSTRUCTS, not the shape of the types.
-contains: test result: FAILED. 21 passed; 10 failed
+# RE-COUNTED for TASK-2QK4P.1.1.1.1. Still TEN failures and the same ten test
+# names — the injection reproduces exactly what it did before. Only the PASS
+# count moves, 21 -> 29, because that round adds eight regressions to this
+# filter and all eight stay green under this injection: they are about the
+# claim-store and readdir leaves, which this injection does not touch.
+contains: test result: FAILED. 29 passed; 10 failed
