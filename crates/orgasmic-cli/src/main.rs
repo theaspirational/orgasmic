@@ -934,14 +934,13 @@ enum ManagerCmd {
     Dispatch(DispatchArgs),
     /// Close an open dispatch (done or aborted).
     DispatchClose(DispatchCloseArgs),
-    /// List open dispatches and run health. The managed-worktree report is
-    /// gated off with the verb it advertised (TASK-M47E5.3).
+    /// List open dispatches and run health, ending with the managed-worktree
+    /// report: what `worktree-prune` could reclaim, and what it will not touch.
     DispatchStatus(DispatchStatusArgs),
-    // orgasmic:TASK-M47E5.3
-    /// GATED OFF (TASK-M47E5.3): refuses and reclaims nothing, with or without
-    /// `--dry-run`. Reclamation of managed worktrees under
-    /// `~/.orgasmic/worktrees/<project>/` is being redesigned by TASK-RMA18
-    /// after two review rounds found data loss on the destructive path.
+    // orgasmic:TASK-RMA18
+    /// Reclaim managed worktrees under `~/.orgasmic/worktrees/<project>/`.
+    /// Salvages a dirty tree first and never touches one an open dispatch or a
+    /// live run occupies. `--dry-run` reports without changing anything.
     WorktreePrune(manager::WorktreePruneArgs),
     /// Clear an orphaned dispatch lease (no live run). Never needs a daemon
     /// restart; refuses when a live run still holds the lease.
