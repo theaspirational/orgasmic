@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use orgasmic_core::home::Home;
 use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
-use orgasmic_core::{RuntimeIdentity, SessionLifecycleScan, SessionScanBudget};
+use orgasmic_core::{
+    project_sessions_dir, RuntimeIdentity, SessionLifecycleScan, SessionScanBudget,
+};
 use orgasmic_drivers::modes::tmux::{tmux_session_exists, tmux_session_name};
 use orgasmic_drivers::NativeRuntimeMeta;
 use serde::{Deserialize, Serialize};
@@ -1245,6 +1247,56 @@ pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin) -> RecoveryCl
     link.claim.clone()
 }
 
+fn matching_origin_links<'a>(
+    links: &'a [IndexedRecoveryOrigin],
+    project_root: &Path,
+    project_id: &str,
+    origin_run_id: &str,
+) -> Vec<&'a IndexedRecoveryOrigin> {
+    links
+        .iter()
+        .filter(|link| {
+            link.project_id == project_id
+                && link.origin_run_id == origin_run_id
+                && link.project_root == project_root
+        })
+        .collect()
+}
+
+/// Every recovery-origin link that exists on disk under one project, or `None`
+/// when the enumeration could not be COMPLETED.
+///
+/// orgasmic:TASK-2QK4P.1 — this is the slow path, and it exists because the
+/// fast path cannot state its own completeness. `indexed_origins` is derived
+/// from the run catalog, whose candidate files are the records it happens to
+/// hold; an empty slice is produced both by "the one live record was
+/// temporarily invalidated" and by "the candidate set is incomplete", and
+/// nothing in the slice distinguishes them. This asks the filesystem instead,
+/// so the answer is a statement about what exists rather than about what was
+/// cached.
+///
+/// `None` is the third answer and it is not "nothing found": a sessions
+/// directory that cannot be opened, or a directory entry that cannot be read,
+/// leaves the enumeration incomplete, and an incomplete enumeration is not
+/// permission to decide recovery authority.
+fn enumerate_recovery_origin_links(
+    home: &Home,
+    project_root: &Path,
+    project_id: &str,
+) -> Option<Vec<IndexedRecoveryOrigin>> {
+    let dir = project_sessions_dir(project_root);
+    let mut links = Vec::new();
+    for entry in std::fs::read_dir(&dir).ok()? {
+        let path = entry.ok()?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        links
+            .extend(index_recovery_origins_in_session(home, project_root, &path, project_id).links);
+    }
+    Some(links)
+}
+
 pub fn resolve_authoritative_recovery_claim(
     home: &Home,
     project_root: &Path,
@@ -1256,44 +1308,76 @@ pub fn resolve_authoritative_recovery_claim(
     match loaded {
         Ok(Some(claim)) => {
             if claim.status == RecoveryClaimStatus::Committed {
-                let matching: Vec<_> = indexed_origins
-                    .iter()
-                    .filter(|link| {
-                        link.project_id == project_id
-                            && link.origin_run_id == origin_run_id
-                            && link.project_root == project_root
-                    })
-                    .collect();
-                // orgasmic:TASK-2QK4P — an index that CONTRADICTS the claim is
-                // evidence. An index that is SILENT about it is not.
+                // orgasmic:TASK-2QK4P.1 — recovery authority is decided from a
+                // candidate set that can state its own COMPLETENESS, never from
+                // a silent one.
                 //
-                // `indexed_origins` is derived from the run catalog, and the
-                // catalog is a cache with holes ON PURPOSE: the session writer
-                // calls [`crate::run_catalog::RunCatalog::invalidate_session`]
-                // on every lifecycle append, and that REMOVES the record so the
-                // next refresh rebuilds it from the newer bytes. A replacement
-                // run that is live — which is exactly the state a crash-recovery
-                // replay finds it in, because the replay's whole job is to hand
-                // back the replacement the dead daemon already spawned — is
-                // appending, so its record is missing for the window between the
-                // append and the next refresh, and
-                // `collect_recovery_origin_index` derives its candidate files
-                // from that cache. A replay landing in the window indexes no
-                // link at all.
+                // `indexed_origins` comes from `collect_recovery_origin_index`,
+                // whose candidate files are the run-catalog records that happen
+                // to be loaded. The catalog is a cache with holes ON PURPOSE:
+                // the session writer calls
+                // [`crate::run_catalog::RunCatalog::invalidate_session`] on
+                // every lifecycle append, which REMOVES the record so the next
+                // refresh rebuilds it from the newer bytes. A replacement run
+                // that is live — exactly the state a crash-recovery replay finds
+                // it in, because the replay's whole job is to hand back the
+                // replacement the dead daemon already spawned — is appending, so
+                // its record is missing for the window between the append and
+                // the next refresh, and a replay landing in that window indexes
+                // no link at all. TASK-2QK4P was that window: reading the
+                // silence as disproof quarantined a committed claim this
+                // function had just verified against its own replacement
+                // session, and `/api/runs/<id>/recover` answered 409, blocked by
+                // the very replacement the caller was asking for.
                 //
-                // Reading that silence as disproof quarantined a committed claim
-                // that this function had just verified against its own
-                // replacement session, and the caller then went on to mint a
-                // SECOND replacement — the duplication the uniqueness check
-                // exists to prevent. The session-backed proof stands on its own:
-                // `verify_committed_claim_against_session` re-derives the claim
-                // from the replacement transcript, including the daemon-keyed
-                // authority tag and the `RecoveryOrigin` envelope naming this
-                // origin and request. Only a link that disagrees with the claim,
-                // or more than one link for the same origin, overrules it.
-                let contradicted =
-                    matching.len() > 1 || matching.iter().any(|link| link.claim != claim);
-                if !contradicted
+                // But TREATING the silence as proof of non-contradiction is the
+                // opposite error, and it is the worse one. An empty slice makes
+                // no statement about completeness: the same emptiness is
+                // produced by "one live record was temporarily invalidated" and
+                // by "the candidate set never contained the file", and the
+                // second admits the state
+                // `duplicate_authenticated_replacements_fail_closed` rules is a
+                // safety violation — two daemon-authenticated replacements for
+                // one origin, of which this function would silently pick the one
+                // it happened to load. Unknown is not permission: the cost of a
+                // false quarantine is a retry, the cost of a false `Valid` is
+                // two daemons believing they hold the same lease.
+                //
+                // So `indexed_origins` is not consulted here AT ALL, and that is
+                // deliberate rather than an oversight. A ONE-element fast index
+                // states no more about completeness than an empty one: the
+                // catalog can just as easily hold the record for the replacement
+                // this claim names while a SECOND authenticated replacement's
+                // record sits invalidated, and that is the likelier arrangement
+                // of the two, not the rarer. Enumerating only on a zero match
+                // would close the hole one link wide and leave it open at one.
+                //
+                // The candidate set is therefore always the filesystem's, and it
+                // has three answers, not two: exactly one link equal to this
+                // claim (accept), more than one or one that disagrees (the
+                // duplicate-replacement violation), and `None` — the enumeration
+                // itself did not complete, which is unresolved completeness and
+                // fails closed exactly like multiplicity does.
+                //
+                // The cost is one bounded lifecycle scan per session file under
+                // this ONE project, per committed-claim resolution, on the
+                // inventory path `apply_recovery_claim_to_run` walks. That is
+                // paid knowingly: a committed claim exists only for a
+                // failed-recoverable run mid-rescue, the scan budget caps each
+                // file at `SessionScanBudget::DEFAULT`, and the alternative is
+                // deciding a lease-holder from a cache that cannot say what it
+                // has not looked at.
+                let Some(authoritative) =
+                    enumerate_recovery_origin_links(home, project_root, project_id)
+                else {
+                    quarantine_invalid_claim(home, project_id, origin_run_id)?;
+                    return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
+                };
+                let matching =
+                    matching_origin_links(&authoritative, project_root, project_id, origin_run_id);
+                let uniquely_confirmed =
+                    matches!(matching.as_slice(), [only] if only.claim == claim);
+                if uniquely_confirmed
                     && verify_committed_claim_against_session(home, project_root, &claim)
                 {
                     return Ok(ResolvedRecoveryClaim::Valid(claim));
@@ -1304,7 +1388,7 @@ pub fn resolve_authoritative_recovery_claim(
                     project_root,
                     project_id,
                     origin_run_id,
-                    indexed_origins,
+                    &authoritative,
                 );
             }
             Ok(ResolvedRecoveryClaim::Valid(claim))
@@ -1337,14 +1421,7 @@ fn reconstruct_or_quarantine(
     origin_run_id: &str,
     indexed_origins: &[IndexedRecoveryOrigin],
 ) -> Result<ResolvedRecoveryClaim, RecoveryClaimError> {
-    let matching: Vec<_> = indexed_origins
-        .iter()
-        .filter(|link| {
-            link.project_id == project_id
-                && link.origin_run_id == origin_run_id
-                && link.project_root == project_root
-        })
-        .collect();
+    let matching = matching_origin_links(indexed_origins, project_root, project_id, origin_run_id);
     if matching.len() > 1 {
         return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
     }
@@ -2275,7 +2352,6 @@ pub fn recovery_origin_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orgasmic_core::project_sessions_dir;
 
     fn sample_spec(
         _home: &Home,
@@ -2543,47 +2619,40 @@ mod tests {
         ));
     }
 
-    /// TASK-2QK4P: an index that has not SEEN the replacement is not an index
-    /// that DISPROVES it.
-    ///
-    /// `indexed_origins` is built from the run catalog, and the catalog drops a
-    /// record on purpose every time the session writer appends a lifecycle
-    /// envelope ([`crate::run_catalog::RunCatalog::invalidate_session`]). The
-    /// replacement a crash-recovery replay is asked about is LIVE — the dead
-    /// daemon spawned it before it died, and the next daemon reattaches it — so
-    /// it appends, and for the window until the next refresh the whole-board
-    /// index carries no link for it. That window is what a replay lands in.
-    ///
-    /// Before this fix the silence quarantined the committed claim, the handler
-    /// fell through to a fresh acquire, and `/api/runs/<id>/recover` answered
-    /// 409 `recovery blocked by an active lease` — held by the very replacement
-    /// the caller was asking for.
-    ///
-    /// Injection: restore `matching.len() == 1 && matching[0].claim == claim` as
-    /// the precondition in `resolve_authoritative_recovery_claim` and this
-    /// quarantines a claim its own replacement session verifies.
-    // orgasmic:TASK-2QK4P
-    #[test]
-    fn committed_claim_survives_an_index_blind_to_its_replacement() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        let (spec, _) = sample_spec(
-            &home,
-            &project_root,
-            "run-blind-origin",
-            "req-blind",
-            "boot-blind",
-            false,
-        );
+    /// One project shaped the way `collect_recovery_origin_index` requires it:
+    /// a real `.orgasmic/project.org` whose id matches the board entry's, under
+    /// a canonical root — the collector canonicalizes `entry.path`, and the
+    /// links it emits carry that canonical root.
+    fn seed_indexed_project(
+        root: &Path,
+        project_id: &str,
+    ) -> (PathBuf, Vec<crate::index::BoardEntry>) {
+        let project_root = root.join("proj");
+        std::fs::create_dir_all(project_root.join(".orgasmic")).unwrap();
+        std::fs::write(
+            project_root.join(".orgasmic/project.org"),
+            format!(
+                "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
+            ),
+        )
+        .unwrap();
+        let board = vec![crate::index::BoardEntry {
+            id: project_id.into(),
+            path: project_root.clone(),
+            branch: "main".into(),
+            status: "active".into(),
+        }];
+        (project_root, board)
+    }
+
+    fn write_origin_session(spec: &PendingRecoveryClaimSpec, runtime_id: &str, boot_id: &str) {
         std::fs::remove_file(&spec.origin_session_path).unwrap();
         let mut origin = orgasmic_core::SessionWriter::open(
             &spec.origin_session_path,
             RuntimeIdentity {
-                run_id: "run-blind-origin".into(),
-                runtime_id: "rt-blind-origin".into(),
-                boot_id: "boot-dead".into(),
+                run_id: spec.origin_run_id.clone(),
+                runtime_id: runtime_id.into(),
+                boot_id: boot_id.into(),
             },
         )
         .unwrap();
@@ -2593,7 +2662,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::RunMeta {
                     transport: "tmux".into(),
                     harness: Some("claude".into()),
-                    project_id: Some("orgasmic".into()),
+                    project_id: Some(spec.project_id.clone()),
                     worktree: spec.worktree.clone(),
                     last_path: None,
                     stdout_path: None,
@@ -2606,7 +2675,70 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        drop(origin);
+    }
+
+    /// The PRODUCTION candidate set for one inventory pass: the real collector,
+    /// driven from a board entry and a real [`crate::run_catalog::RunCatalog`].
+    fn collector_links(
+        home: &Home,
+        board: &[crate::index::BoardEntry],
+        catalog: &crate::run_catalog::RunCatalog,
+    ) -> Vec<IndexedRecoveryOrigin> {
+        let mut metrics = crate::api::InventoryStageMetrics::default();
+        crate::api::collect_recovery_origin_index(home, board, Some(catalog), &mut metrics)
+    }
+
+    fn refresh_catalog(catalog: &crate::run_catalog::RunCatalog, project_root: &Path) {
+        catalog.refresh_dir(
+            &project_sessions_dir(project_root),
+            Some("orgasmic"),
+            project_root,
+            SessionScanBudget::DEFAULT,
+        );
+    }
+
+    /// TASK-2QK4P: an index that has not SEEN the replacement is not an index
+    /// that DISPROVES it — driven through the production collector rather than
+    /// a literal empty slice.
+    ///
+    /// `collect_recovery_origin_index` derives its candidate FILES from the run
+    /// catalog, and the catalog drops a record on purpose every time the session
+    /// writer appends a lifecycle envelope
+    /// ([`crate::run_catalog::RunCatalog::invalidate_session`]). The replacement
+    /// a crash-recovery replay is asked about is LIVE — the dead daemon spawned
+    /// it before it died, and the next daemon reattaches it — so it appends, and
+    /// for the window until the next refresh the collector carries no link for
+    /// it. That window is what a replay lands in, and before TASK-2QK4P the
+    /// silence quarantined the committed claim, the handler fell through to a
+    /// fresh acquire, and `/api/runs/<id>/recover` answered 409 `recovery
+    /// blocked by an active lease` — held by the very replacement the caller was
+    /// asking for.
+    ///
+    /// This test is production-shaped on purpose (orgasmic:TASK-2QK4P.1 F2): it
+    /// asserts the collector DOES index the link while the record is loaded, so
+    /// it cannot pass by the collector being accidentally blind everywhere, and
+    /// it then invalidates exactly the matching record to produce the silence.
+    ///
+    /// Injection: restore `matching.len() == 1 && matching[0].claim == claim`
+    /// over the FAST index alone — i.e. delete the slow-path enumeration — and
+    /// this quarantines a claim its own replacement session verifies.
+    // orgasmic:TASK-2QK4P, TASK-2QK4P.1
+    #[test]
+    fn committed_claim_survives_a_catalog_that_invalidated_its_live_replacement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let (project_root, board) = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-blind-origin",
+            "req-blind",
+            "boot-blind",
+            false,
+        );
+        write_origin_session(&spec, "rt-blind-origin", "boot-dead");
 
         let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
         let committed = commit_recovery_claim(
@@ -2624,8 +2756,30 @@ mod tests {
         .unwrap();
         write_committed_replacement(&committed);
 
-        // The claim IS backed by its own replacement transcript, and the index
-        // is empty anyway — the state a live replacement produces.
+        let catalog = crate::run_catalog::RunCatalog::new();
+        refresh_catalog(&catalog, &project_root);
+
+        // PREMISE, and the thing a literal `&[]` cannot state: the production
+        // collector is not globally blind. With the replacement's record loaded
+        // it indexes exactly the one link, so the silence below is the
+        // invalidation and nothing else.
+        let seen = collector_links(&home, &board, &catalog);
+        assert_eq!(
+            seen.len(),
+            1,
+            "the collector must index the replacement while its catalog record is loaded: {seen:?}"
+        );
+        assert_eq!(seen[0].claim, committed);
+
+        // The live replacement appends, the writer invalidates its record, and
+        // the collector's candidate FILES lose the only file carrying the link.
+        catalog.invalidate_session(&committed.replacement_session_path);
+        let blind = collector_links(&home, &board, &catalog);
+        assert!(
+            blind.is_empty(),
+            "an invalidated record must leave the production collector silent: {blind:?}"
+        );
+
         assert!(verify_committed_claim_against_session(
             &home,
             &project_root,
@@ -2636,13 +2790,14 @@ mod tests {
             &project_root,
             "orgasmic",
             "run-blind-origin",
-            &[],
+            &blind,
         )
         .unwrap();
         match resolved {
             ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
             other => panic!(
-                "a session-verified committed claim must survive a silent index, got {other:?}"
+                "a session-verified committed claim with exactly one link on disk must survive a \
+                 silent catalog, got {other:?}"
             ),
         }
 
@@ -2657,6 +2812,197 @@ mod tests {
             .unwrap()
             .with_extension("json.quarantine")
             .exists());
+    }
+
+    struct TwoReplacements {
+        home: Home,
+        project_root: PathBuf,
+        board: Vec<crate::index::BoardEntry>,
+        catalog: crate::run_catalog::RunCatalog,
+        committed: RecoveryClaim,
+        second: RecoveryClaim,
+    }
+
+    /// One origin with TWO daemon-HMAC-authenticated replacements, a real
+    /// `RunCatalog` refreshed over the project's session directory, and the
+    /// premise both hidden-duplicate tests rest on already asserted: while both
+    /// records are loaded the production collector finds BOTH links.
+    fn seed_two_authenticated_replacements(root: &Path, origin_run_id: &str) -> TwoReplacements {
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let (project_root, board) = seed_indexed_project(root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            origin_run_id,
+            "req-hidden",
+            "boot-hidden",
+            false,
+        );
+        write_origin_session(&spec, "rt-hidden-origin", "boot-dead");
+
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let committed = commit_recovery_claim(
+            &home,
+            "orgasmic",
+            origin_run_id,
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-hidden".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: Some("stable draft".into()),
+            },
+        )
+        .unwrap();
+        write_committed_replacement(&committed);
+
+        // A SECOND replacement for the same origin, its transcript equally valid
+        // and its authority tag equally daemon-keyed.
+        let mut second = committed.clone();
+        second.replacement_run_id = "run-hidden-second".into();
+        second.replacement_runtime_id = "rt-hidden-second".into();
+        second.runtime_id = Some(second.replacement_runtime_id.clone());
+        second.replacement_session_path =
+            project_sessions_dir(&project_root).join("recover-hidden-second.jsonl");
+        second.planned_tmux_session = Some("orgasmic-hidden-second".into());
+        second.authority_tag = None;
+        second.authority_tag = Some(authority_tag(&home, &second).unwrap());
+        write_committed_replacement(&second);
+
+        let catalog = crate::run_catalog::RunCatalog::new();
+        refresh_catalog(&catalog, &project_root);
+
+        // PREMISE: both links are real, and the production collector finds both
+        // while their records are loaded. Whatever the collector reports below
+        // is therefore the invalidation and nothing else.
+        let seen = collector_links(&home, &board, &catalog);
+        assert_eq!(
+            seen.len(),
+            2,
+            "both daemon-authenticated links must index while their records are loaded: {seen:?}"
+        );
+
+        // The loaded claim verifies against its OWN replacement transcript,
+        // which is precisely why an index that has not seen the other one must
+        // not be enough. The other replacement is equally authenticated.
+        assert!(verify_committed_claim_against_session(
+            &home,
+            &project_root,
+            &committed
+        ));
+
+        TwoReplacements {
+            home,
+            project_root,
+            board,
+            catalog,
+            committed,
+            second,
+        }
+    }
+
+    /// TASK-2QK4P.1 F1: the paired case, and the one the silence-is-safe rule
+    /// admitted — TWO daemon-authenticated replacements for one origin, with
+    /// BOTH catalog records invalidated.
+    ///
+    /// The collector is silent for exactly the same reason as in
+    /// `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`,
+    /// and the empty slice it returns is byte-identical in both. That is the
+    /// whole finding: an empty slice makes no statement about completeness, so a
+    /// resolver that reads it as "nothing contradicts the claim I loaded" hands
+    /// back one of two replacements and never discovers the other —
+    /// `/api/runs/<id>/recover` then names it, and inventory clears the recovery
+    /// actions. `duplicate_authenticated_replacements_fail_closed` already rules
+    /// this state a safety violation; this test proves the ruling survives
+    /// arrival through the production collector rather than only through a
+    /// literal slice.
+    ///
+    /// Injection: decide from the fast index alone. This then returns `Valid`.
+    // orgasmic:TASK-2QK4P.1
+    #[test]
+    fn a_hidden_duplicate_authenticated_replacement_fails_closed_through_the_collector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let seeded = seed_two_authenticated_replacements(&root, "run-hidden-origin");
+
+        // Both replacements are live and appending, so both records are gone.
+        seeded
+            .catalog
+            .invalidate_session(&seeded.committed.replacement_session_path);
+        seeded
+            .catalog
+            .invalidate_session(&seeded.second.replacement_session_path);
+        let blind = collector_links(&seeded.home, &seeded.board, &seeded.catalog);
+        assert!(
+            blind.is_empty(),
+            "two invalidated records must leave the production collector silent: {blind:?}"
+        );
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-hidden-origin",
+            &blind,
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+            "a second authenticated replacement hidden by an invalidated catalog record must \
+             still fail closed, got {resolved:?}"
+        );
+    }
+
+    /// TASK-2QK4P.1: the same hole one link WIDER, and the reason the resolver
+    /// does not consult `indexed_origins` on this branch at all.
+    ///
+    /// Only the SECOND replacement's record is invalidated here, so the
+    /// collector reports exactly one link and that link agrees with the loaded
+    /// claim — an index that reads as unanimous confirmation. It is not: it is
+    /// the same cache saying nothing about the file it was not holding. Closing
+    /// the hole only on a ZERO match would leave this arrangement — which needs
+    /// one live appender rather than two, and is therefore the likelier of the
+    /// pair — admitting a hidden authenticated duplicate.
+    ///
+    /// Injection: decide from the fast index alone. `matching.len() > 1` is
+    /// false and the one link equals the claim, so the injected predicate finds
+    /// nothing contradictory and returns `Valid`.
+    // orgasmic:TASK-2QK4P.1
+    #[test]
+    fn a_partially_loaded_index_does_not_confirm_uniqueness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let seeded = seed_two_authenticated_replacements(&root, "run-hidden-origin");
+
+        // Only the second replacement appends, so only its record is dropped.
+        seeded
+            .catalog
+            .invalidate_session(&seeded.second.replacement_session_path);
+        let partial = collector_links(&seeded.home, &seeded.board, &seeded.catalog);
+        assert_eq!(
+            partial.len(),
+            1,
+            "one invalidated record must leave the collector holding exactly the other: {partial:?}"
+        );
+        assert_eq!(
+            partial[0].claim, seeded.committed,
+            "and the link it still holds is the loaded claim's own — the index looks unanimous"
+        );
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-hidden-origin",
+            &partial,
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+            "an index holding one link and blind to a second authenticated replacement must not \
+             confirm uniqueness, got {resolved:?}"
+        );
     }
 
     #[test]

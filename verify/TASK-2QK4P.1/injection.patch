@@ -1,0 +1,39 @@
+diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
+index 4516fcb..041c409 100644
+--- a/crates/orgasmic-daemon/src/recovery_claim.rs
++++ b/crates/orgasmic-daemon/src/recovery_claim.rs
+@@ -1367,17 +1367,15 @@ pub fn resolve_authoritative_recovery_claim(
+                 // file at `SessionScanBudget::DEFAULT`, and the alternative is
+                 // deciding a lease-holder from a cache that cannot say what it
+                 // has not looked at.
+-                let Some(authoritative) =
+-                    enumerate_recovery_origin_links(home, project_root, project_id)
+-                else {
+-                    quarantine_invalid_claim(home, project_id, origin_run_id)?;
+-                    return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
+-                };
++                // INJECTION (orgasmic:TASK-2QK4P.1 F1): decide from the catalog-
++                // derived index alone and read its silence as non-contradiction.
++                // This is the 724973d predicate verbatim — no enumeration, no
++                // completeness question, `matching.len() > 1` retained.
+                 let matching =
+-                    matching_origin_links(&authoritative, project_root, project_id, origin_run_id);
+-                let uniquely_confirmed =
+-                    matches!(matching.as_slice(), [only] if only.claim == claim);
+-                if uniquely_confirmed
++                    matching_origin_links(indexed_origins, project_root, project_id, origin_run_id);
++                let contradicted =
++                    matching.len() > 1 || matching.iter().any(|link| link.claim != claim);
++                if !contradicted
+                     && verify_committed_claim_against_session(home, project_root, &claim)
+                 {
+                     return Ok(ResolvedRecoveryClaim::Valid(claim));
+@@ -1388,7 +1386,7 @@ pub fn resolve_authoritative_recovery_claim(
+                     project_root,
+                     project_id,
+                     origin_run_id,
+-                    &authoritative,
++                    indexed_origins,
+                 );
+             }
+             Ok(ResolvedRecoveryClaim::Valid(claim))

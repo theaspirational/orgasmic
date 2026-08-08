@@ -11820,7 +11820,7 @@ fn apply_recovery_claim_to_run(
 /// `catalog` is `None` only where no catalog is available; the fallback is the
 /// old whole-directory enumeration, so the answer can never be *smaller* than
 /// before for want of an index.
-fn collect_recovery_origin_index(
+pub(crate) fn collect_recovery_origin_index(
     home: &Home,
     board: &[BoardEntry],
     catalog: Option<&crate::run_catalog::RunCatalog>,

@@ -1,0 +1,50 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is surgical rather than a revert of the commit: it restores the
+# 724973d predicate verbatim over the catalog-derived index alone —
+# `matching.len() > 1 || any(link.claim != claim)`, with `matching.len() > 1`
+# retained — and deletes nothing else. `enumerate_recovery_origin_links` stays
+# in the file and goes dead, which is why the red run also carries a `dead_code`
+# warning; that warning is incidental and is not part of the signature.
+exit: 101
+
+# ===== THE RESOLVER PICKED AN AUTHORITY IT COULD NOT SEE ALL OF =============
+#
+# TWO failures, and they are the same defect at two widths.
+#
+# Width 1 — a SILENT index. Both replacements are live and appending, so both
+# catalog records are invalidated and the production collector reports nothing.
+# The injected predicate reads that emptiness as "nothing contradicts the claim
+# I loaded" and returns `Valid`.
+contains: a second authenticated replacement hidden by an invalidated catalog record must still fail closed, got Valid(
+
+# Width 2 — a PARTIALLY LOADED index, and the likelier arrangement of the two
+# because it needs one live appender rather than two. The collector holds
+# exactly one link, that link IS the loaded claim's, and the index therefore
+# reads as unanimous confirmation. It is not: the second authenticated
+# replacement's record is simply not loaded. `matching.len() > 1` is false, so
+# the injected predicate finds nothing contradictory and returns `Valid` here
+# too. This is the case a fix that enumerated only on a zero match would miss.
+contains: an index holding one link and blind to a second authenticated replacement must not confirm uniqueness, got Valid(
+
+# `Valid(` in both panics is the admission itself — `/api/runs/<id>/recover`
+# answers with exactly this claim and inventory then clears the run's recovery
+# actions. Both claims are for THIS origin, so this is authority selection and
+# not some unrelated claim leaking through. The replacement run ids are minted
+# with a timestamp and are deliberately not pinned.
+contains: origin_run_id: "run-hidden-origin"
+
+# ===== AND NOTHING ELSE MOVED ==============================================
+#
+# EXACTLY TWO failures out of twenty. The eighteen that stay green include both
+# tests that would otherwise make this look like a wholesale break rather than a
+# width dispute:
+#   - `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`
+#     (the 409 the injected predicate genuinely fixes — it must NOT go red), and
+#   - `duplicate_authenticated_replacements_fail_closed` (the uniqueness rule,
+#     which passes here only because its literal two-element slice never reaches
+#     the hidden state — which is exactly why it could not catch this).
+# A binary that collapses wholesale, a third failure, or a red in either of
+# those two, is a different failure and has not reproduced what this artifact
+# claims.
+contains: test result: FAILED. 18 passed; 2 failed
