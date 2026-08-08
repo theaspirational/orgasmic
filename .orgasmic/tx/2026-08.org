@@ -25369,3 +25369,102 @@
 :DISPATCH_TX:  tx-20260808-orgasmic-5517
 :MODEL_OVERRIDE: gpt-5.6-sol
 :END:
+
+* TX 2026-08-08 Sat 20:57:32 reviewer.finding TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5519
+:TIME:         [2026-08-08 Sat 20:57:32]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:REASON:       HIGH test/acceptance — crates/orgasmic-daemon/src/recovery_claim.rs:6649-6715 never invokes api::boot_reattach_ownership, reattach_live_runs_on_boot, or Supervisor::reattach. It calls pending_recovery_claim_owns_session directly, asserts the returned enum is not Invalid, and compares a session file that no exercised code can write. Changing api.rs:10768-10786 so boot reattaches on ClaimEvidence::Unobserved leaves this regression green, so acceptance 4's production boot route/no irreversible session write is unproved. Route the injected nth-entry readdir fault through the production boot decision (or an extracted decision that owns the reattach call), assert no reattach and byte-identical JSONL, then prove normal routing after repair.
+:END:
+
+* TX 2026-08-08 Sat 21:02:03 reviewer.finding TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5520
+:TIME:         [2026-08-08 Sat 21:02:03]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:REASON:       MEDIUM test — crates/orgasmic-daemon/src/recovery_claim.rs:6717-6790 passes on macOS after the invalid-byte fixture is rejected with EILSEQ, so it never exercises byte preservation. The remaining Vec<OsString> type assertion does not catch the old bug: names() could again call to_str(), silently drop Err names, and still return Vec<OsString>; this test would stay green on the only platform this project currently runs. Add a platform-independent raw-dirent seam that feeds an invalid byte name through the production collection/filter logic, or require a Linux gate that executes the byte assertions; prove the old drop/lossy-conversion implementation reds.
+:END:
+
+* TX 2026-08-08 Sat 21:03:26 reviewer.finding TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5521
+:TIME:         [2026-08-08 Sat 21:03:26]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:REASON:       MEDIUM test/tooling — scripts/derive-observation-surface.py:205-237,326-332 has no parser/coverage self-check, and the current tree proves the residual report is incomplete. The test-module regex misses api.rs's pub(crate) mod tests; body_of assigns semicolon-only declarations such as supervisor.rs:4834 WorkProbe::observe and stdio.rs:584 setsid the next unrelated brace body; and --report-dynamic scans body only, so it reports one row while omitting reachable Supervisor::acquire_impl's &dyn WorkerDriver signature/call at supervisor.rs:1743/1785. The 935/96 result is therefore an accidental test/macro-inflated superset, not a checked production call graph, and that overapproximation can mask underapproximation. Use a Rust parser/type-aware graph or add invariants for lexer EOF, declaration-vs-body ownership, cfg(test) exclusion including pub(crate), indexed-item coverage, and dynamic call sites from signatures; pin the authority roots and critical leaves.
+:END:
+
+* TX 2026-08-08 Sat 21:04:35 reviewer.finding TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5522
+:TIME:         [2026-08-08 Sat 21:04:35]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:REASON:       HIGH bug/operability — the F3 UI wiring is inert. api.rs:12101-12104 applies recovery_unobserved only when classification == failed_recoverable, and GET /runs serializes those records in the failed_recoverable bucket at api.rs:7562-7566. But ui/src/lib/types.ts:445-452 omits failed_recoverable from RecoveryInventoryResponse and ui/src/components/RunsView.tsx:54-62 never flattens that bucket. recoveryUnobservedNotice is therefore called only for interrupted/reattached/ambiguous/terminal_noop records that cannot carry the diagnostic, while the permanently refused recoveries are absent from the table. The operator still cannot see which file blocks recovery or the repair, violating acceptance 5/pre-authorized operability. Add failed_recoverable: RecoveredRun[] to the contract, render it in RunsView, and add a component test proving the subject plus remediation text is visible for a failed_recoverable response.
+:END:
+
+* TX 2026-08-08 Sat 21:10:47 reviewer.reported TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5523
+:TIME:         [2026-08-08 Sat 21:10:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:RUN_ID:       run-20260808T204913-8cc2a59e76fe43c19934db6289b6881a
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5517/last.txt
+:END:
+
+* TX 2026-08-08 Sat 21:11:40 reviewer.done TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5524
+:TIME:         [2026-08-08 Sat 21:11:40]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:REASON:       REJECT, but a materially different rejection from round four's. ZERO behaviour BLOCK SHIPs: the reviewer calls the Unix backend fixes for F1/F3/F4/F5 substantially correct with green focused regressions, and answered every design question in the round's favour — C3 the errno direction is sound (EISDIR/ENAMETOOLONG are observed path facts, default stays Unobserved), C4 an absent sessions directory as Complete([]) is safe because ENOENT proves no entries exist there while claims load independently, C5 the test-only readdir branch faithfully creates the errno-bearing NULL, C7 compile-time-only exhaustiveness is appropriate, C9 project-wide refusal SHOULD stay because isolating an unreadable member recreates the original uniqueness defect, C10 the write-side leftovers are legitimate follow-ups. Both blockers are about PROOF and PLUMBING, not behaviour. P1: F3's operator notice is wired to buckets that can never carry it — the daemon attaches recovery_unobserved only to failed_recoverable records and serializes them in their own bucket, but ui/src/lib/types.ts:445-452 omits that bucket from RecoveryInventoryResponse and RunsView.tsx:54-62 flattens only the other four, so permanently refused recoveries are absent from the table and the operator still cannot see the named file or the repair. MANAGER-CONFIRMED INDEPENDENTLY by reading both files. P1: F2's regression calls pending_recovery_claim_owns_session directly and never invokes boot_reattach_ownership, reattach_live_runs_on_boot or Supervisor::reattach — MANAGER-CONFIRMED: boot_reattach_ownership has exactly one caller in the tree, the production one at api.rs:10768, and the two mentions in recovery_claim.rs are both comments; the extraction was made so the test could exercise the real expression and then the test did not. P2: the non-UTF-8 regression has no teeth on macOS (EILSEQ) and its Vec<OsString> type pin cannot catch a reintroduced to_str() drop. P2: the derivation script has no coverage self-check and its residual report is incomplete (semicolon-only declarations acquire unrelated bodies, the test-module regex misses pub(crate) mod tests, --report-dynamic scans bodies only) so 935/96 is a test-inflated superset rather than a checked call graph — but the reviewer looked and did NOT find an authority-decision leaf missing from it, and explicitly declined to make this a second derivation block-ship. Reviewer answered the shipping question: it would NOT reinstall the operator runtime on this tree. It accepted the manager's calm-host GREEN as prior evidence and quoted it, obeyed the do-not-read-injection-patches rule, and disclosed that npm typecheck and vitest could not run in a read-only worktree.
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: dc1a4c2
+:WALL:         22m
+:REVIEWED_DIFF: main..task-2qk4p.1.1.1.1-impl
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5517
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5517/last.txt
+:END:
+
+* TX 2026-08-08 Sat 21:11:41 task.state_transitioned TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5525
+:TIME:         [2026-08-08 Sat 21:11:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
