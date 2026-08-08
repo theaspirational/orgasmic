@@ -57,6 +57,13 @@ function flattenRuns(data: RecoveryInventoryResponse | null): RunRow[] {
     ...liveRows(data.live),
     ...recoveredRows('interrupted', data.interrupted),
     ...recoveredRows('reattached', data.reattached),
+    // orgasmic:TASK-2QK4P.1.1.1.1.1 P1a — `failed_recoverable` is the bucket the
+    // daemon decorates with `recovery_unobserved*`, and it was missing here, so
+    // `recoveryUnobservedNotice` ran only on classifications that can never
+    // carry the diagnostic and every permanently refused recovery was absent
+    // from the table outright. `?? []` because a daemon older than this build
+    // sends no such key and an operator must still get the other buckets.
+    ...recoveredRows('failed_recoverable', data.failed_recoverable ?? []),
     ...recoveredRows('ambiguous', data.ambiguous),
     ...recoveredRows('terminal_noop', data.terminal_noop),
   ];

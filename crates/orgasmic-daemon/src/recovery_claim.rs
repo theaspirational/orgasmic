@@ -257,23 +257,52 @@ fn load_or_generate_reached_count(home: &Home) -> u32 {
 /// from a test, so the seam reproduces its exact observable shape: `readdir`
 /// returns NULL with a non-zero `errno`. That is precisely the shape the old
 /// loop could not tell from end-of-directory.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1.1 P1b — `pub(crate)` so the API-level boot test
+/// can arm the SAME seam and drive the fault through
+/// `reattach_live_runs_on_boot`. Round five's regression called the predicate
+/// directly and would have stayed green under a boot that reattached on
+/// `Unobserved`; that is the gap this visibility closes.
 #[cfg(test)]
-static READDIR_FAULTS: std::sync::Mutex<Option<BTreeMap<PathBuf, (u32, i32)>>> =
+static READDIR_FAULTS: std::sync::Mutex<Option<BTreeMap<PathBuf, ReaddirFault>>> =
     std::sync::Mutex::new(None);
 
+/// One armed `readdir` fault. `sticky` decides whether it survives firing: a
+/// single boot pass lists the claim store once per candidate, so a test with
+/// more than one candidate needs the fault to hold for the whole pass rather
+/// than disarm itself after the first listing.
 #[cfg(test)]
-fn arm_readdir_fault(home: &Home, nth: u32, code: i32) {
+#[derive(Clone, Copy)]
+struct ReaddirFault {
+    nth: u32,
+    code: i32,
+    sticky: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn arm_readdir_fault(home: &Home, nth: u32, code: i32) {
+    arm_readdir_fault_inner(home, nth, code, false);
+}
+
+/// Arm a fault that stays armed until [`disarm_readdir_fault`] clears it.
+#[cfg(test)]
+pub(crate) fn arm_readdir_fault_until_disarmed(home: &Home, nth: u32, code: i32) {
+    arm_readdir_fault_inner(home, nth, code, true);
+}
+
+#[cfg(test)]
+fn arm_readdir_fault_inner(home: &Home, nth: u32, code: i32, sticky: bool) {
     assert!(nth >= 1, "iterations are counted from one");
     let key = home.state().canonicalize().unwrap_or_else(|_| home.state());
     READDIR_FAULTS
         .lock()
         .expect("readdir fault lock")
         .get_or_insert_with(BTreeMap::new)
-        .insert(key, (nth, code));
+        .insert(key, ReaddirFault { nth, code, sticky });
 }
 
 #[cfg(test)]
-fn disarm_readdir_fault(home: &Home) {
+pub(crate) fn disarm_readdir_fault(home: &Home) {
     let key = home.state().canonicalize().unwrap_or_else(|_| home.state());
     if let Some(map) = READDIR_FAULTS.lock().expect("readdir fault lock").as_mut() {
         map.remove(&key);
@@ -284,12 +313,57 @@ fn disarm_readdir_fault(home: &Home) {
 fn readdir_fault(state_root: &Path, iteration: u32) -> Option<i32> {
     let mut slot = READDIR_FAULTS.lock().expect("readdir fault lock");
     let map = slot.as_mut()?;
-    let (nth, code) = *map.get(state_root)?;
-    if iteration != nth {
+    let fault = *map.get(state_root)?;
+    if iteration != fault.nth {
         return None;
     }
-    map.remove(state_root);
-    Some(code)
+    if !fault.sticky {
+        map.remove(state_root);
+    }
+    Some(fault.code)
+}
+
+/// A synthetic entry name delivered on the `nth` (1-based) iteration of
+/// [`ClaimDirectory::names`], as raw bytes.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1.1 P2a — APFS and HFS+ REJECT a non-UTF-8 file
+/// name with `EILSEQ`, so the byte-preservation half of the F2 non-UTF-8
+/// regression could not be built on the platform this project runs on, and what
+/// remained was a `Vec<OsString>` type assertion that a reintroduced
+/// `to_str()` drop would still satisfy. This seam removes the filesystem from
+/// the fixture and nothing else: the bytes are delivered through a real
+/// `dirent`'s `d_name`, read back with the same `CStr::from_ptr(..).to_bytes()`
+/// the syscall path uses, and handed to the SAME collect tail. Only the kernel
+/// is stubbed; every decision under test is production code, so the old
+/// drop/lossy implementation reds here on every platform.
+/// State root -> (iteration to fire on, the raw name bytes to deliver).
+#[cfg(test)]
+type ReaddirEntryNames = BTreeMap<PathBuf, (u32, Vec<u8>)>;
+
+#[cfg(test)]
+static READDIR_ENTRY_NAMES: std::sync::Mutex<Option<ReaddirEntryNames>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn arm_readdir_entry_name(home: &Home, nth: u32, bytes: &[u8]) {
+    assert!(nth >= 1, "iterations are counted from one");
+    let key = home.state().canonicalize().unwrap_or_else(|_| home.state());
+    READDIR_ENTRY_NAMES
+        .lock()
+        .expect("readdir entry name lock")
+        .get_or_insert_with(BTreeMap::new)
+        .insert(key, (nth, bytes.to_vec()));
+}
+
+#[cfg(test)]
+fn readdir_entry_name(state_root: &Path, iteration: u32) -> Option<Vec<u8>> {
+    let mut slot = READDIR_ENTRY_NAMES.lock().expect("readdir entry name lock");
+    let map = slot.as_mut()?;
+    let (nth, _) = map.get(state_root)?;
+    if iteration != *nth {
+        return None;
+    }
+    map.remove(state_root).map(|(_, bytes)| bytes)
 }
 
 #[cfg(test)]
@@ -959,7 +1033,20 @@ impl ClaimDirectory {
             }
             Ok(())
         };
-        let mut names = Vec::new();
+        let mut names: Vec<std::ffi::OsString> = Vec::new();
+        // orgasmic:TASK-2QK4P.1.1.1.1.1 P2a — THE PER-ENTRY DECISION, IN ONE
+        // PLACE. An entry name is BYTES: `.`/`..` are the only names this drops,
+        // and everything else is carried through unchanged for the caller's
+        // `.json` filter to decide about. It is a closure rather than two copies
+        // because the test seam below delivers its bytes HERE: a future edit
+        // that reintroduces the `to_str()` drop has exactly one place to put it,
+        // and the injected-name regression then reds on every platform.
+        let collect = |names: &mut Vec<std::ffi::OsString>, raw: &[u8]| {
+            if raw == b"." || raw == b".." {
+                return;
+            }
+            names.push(OsStr::from_bytes(raw).to_os_string());
+        };
         #[cfg(test)]
         let mut iteration = 0u32;
         loop {
@@ -968,6 +1055,25 @@ impl ClaimDirectory {
             #[cfg(test)]
             {
                 iteration += 1;
+                if let Some(bytes) = readdir_entry_name(&self.state_root, iteration) {
+                    // Deliver the fixture the way the kernel would: a real
+                    // `dirent` whose NUL-terminated `d_name` holds those bytes,
+                    // read back through the same `CStr::from_ptr(..).to_bytes()`
+                    // as the syscall path, into the same `collect`. The
+                    // directory stream is NOT advanced, so every real entry is
+                    // still listed after it.
+                    let mut entry: libc::dirent = unsafe { std::mem::zeroed() };
+                    assert!(
+                        bytes.len() < entry.d_name.len() && !bytes.contains(&0),
+                        "an injected entry name must fit `d_name` and carry no NUL"
+                    );
+                    for (slot, byte) in entry.d_name.iter_mut().zip(bytes.iter()) {
+                        *slot = *byte as libc::c_char;
+                    }
+                    let raw = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) }.to_bytes();
+                    collect(&mut names, raw);
+                    continue;
+                }
                 if let Some(code) = readdir_fault(&self.state_root, iteration) {
                     // Reproduce the real shape exactly: an errno-bearing NULL,
                     // which the pre-fix loop `break`s on and reports as a
@@ -999,10 +1105,7 @@ impl ClaimDirectory {
                 break;
             }
             let raw = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
-            if raw == b"." || raw == b".." {
-                continue;
-            }
-            names.push(OsStr::from_bytes(raw).to_os_string());
+            collect(&mut names, raw);
         }
         close(dir)?;
         Ok(names)
@@ -6625,8 +6728,16 @@ mod tests {
         );
     }
 
-    /// F2 — A FAILED `readdir` IS NOT A COMPLETE DIRECTORY, ON THE PRODUCTION
-    /// BOOT ROUTING PATH.
+    /// F2 — A FAILED `readdir` IS NOT A COMPLETE DIRECTORY.
+    ///
+    /// This is the PREDICATE-level regression and that is all it is. It asserts
+    /// what `pending_recovery_claim_owns_session` answers; it does not enter the
+    /// boot route, and it would stay green under a boot that reattached on
+    /// `ClaimEvidence::Unobserved`. The routing itself is pinned by
+    /// `api::tests::boot_reattach_refuses_a_candidate_whose_claim_store_could_not_be_listed`
+    /// (orgasmic:TASK-2QK4P.1.1.1.1.1 P1b), which arms this same seam and drives
+    /// `reattach_live_runs_on_boot`. Keep both: this one localizes the fault to
+    /// the predicate, that one proves what boot did with the answer.
     ///
     /// `names()` broke out of its loop on a NULL return and answered
     /// `Ok(names)`. `readdir` returns NULL at end-of-directory AND on error,
@@ -6787,6 +6898,112 @@ mod tests {
                 assert_eq!(names.len(), 1, "the entries that exist are all listed");
             }
         }
+    }
+
+    /// F2 — the non-UTF-8 entry name, WITH THE FILESYSTEM TAKEN OUT OF THE
+    /// FIXTURE, so the byte assertions execute on the platform this project
+    /// actually runs on.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1.1 P2a — the test above is honest and it has
+    /// no teeth here: APFS/HFS+ reject the fixture with `EILSEQ`, so on macOS
+    /// all that survived was `names(): Vec<OsString>`, which a reintroduced
+    /// `to_str()` drop satisfies just as well. This one delivers the bytes
+    /// through a real `dirent`'s `d_name` on the nth `readdir` iteration and
+    /// takes them back out with the same `CStr::from_ptr(..).to_bytes()` the
+    /// syscall path uses. Everything after that — the `.`/`..` filter, the
+    /// `OsStr::from_bytes` collect, and the caller's `.json` filter — is
+    /// production code.
+    ///
+    /// Injection to see it red: put `if let Ok(name) = raw.to_str()` back around
+    /// the push in `names()`'s `collect`, or make it lossy
+    /// (`String::from_utf8_lossy`). The first drops the entry and the count
+    /// assertion fails; the second re-encodes it to U+FFFD and the byte
+    /// assertion fails. Neither depends on the filesystem.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f2_an_injected_non_utf8_entry_name_survives_the_collect_on_every_platform() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        ClaimDirectory::open(&home, "orgasmic", true).unwrap();
+        let dir = recovery_claims_root(&home).join("orgasmic");
+        std::fs::write(dir.join("plain.json"), b"{}").unwrap();
+
+        // The first iteration yields the undecodable name; the real stream is
+        // not advanced, so `plain.json` is still listed after it.
+        arm_readdir_entry_name(&home, 1, b"not-\xffutf8.json");
+        let names: Vec<std::ffi::OsString> = ClaimDirectory::open(&home, "orgasmic", false)
+            .unwrap()
+            .unwrap()
+            .names()
+            .unwrap();
+
+        assert_eq!(
+            names.len(),
+            2,
+            "no entry may vanish from the set — this is the count a `to_str()` \
+             drop makes wrong: {names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name.as_encoded_bytes() == b"not-\xffutf8.json"),
+            "the undecodable entry must be carried through as its exact bytes: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name
+                .as_encoded_bytes()
+                .windows(3)
+                .any(|w| w == [0xEF, 0xBF, 0xBD])),
+            "and it must NOT be lossily re-encoded (U+FFFD) into a name that \
+             opens as NotFound: {names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|name| name.as_encoded_bytes() == b"plain.json"),
+            "the real entries after the injected one must still be listed: {names:?}"
+        );
+    }
+
+    /// F2 — and the entry that cannot be decoded does not FREEZE the decision
+    /// its caller makes.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1.1 P2a — the second half of "carried, not
+    /// dropped": `pending_recovery_claim_owns_session` applies the `.json`
+    /// filter to those bytes and then fails to open that name, and the DECIDED
+    /// answer for the rest of the directory must still come back. A refusal
+    /// here would be the F3 shape (project-wide freeze) triggered by an
+    /// unrelated file someone dropped in the claim store.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f2_an_undecodable_entry_does_not_freeze_the_ownership_answer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-p2a-origin",
+            "req-p2a",
+            "boot-p2a",
+            false,
+        );
+        write_origin_session(&spec, "rt-p2a-origin", "boot-dead");
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let owned_session = plan.claim.replacement_session_path.clone();
+        std::fs::write(&owned_session, b"").unwrap();
+
+        arm_readdir_entry_name(&home, 1, b"not-\xffutf8.json");
+        assert_eq!(
+            pending_recovery_claim_owns_session(&home, &project_root, "orgasmic", &owned_session),
+            ClaimEvidence::Valid,
+            "an entry whose name is not UTF-8 is a decided non-claim, not an \
+             observation failure"
+        );
     }
 
     /// F4 — read-side claim IO carries an observation reason.
