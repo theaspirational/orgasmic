@@ -23620,3 +23620,149 @@
 :SHA:          9087cef40bfdc5deb7c71d750f4c5529cdea9477
 :REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5414/last.txt
 :END:
+
+
+* TX 2026-08-08 Sat 15:19:40 task.created TASK-YBCYQ
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5418
+:TIME:         [2026-08-08 Sat 15:19:40]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YBCYQ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-2QK4P.1.1's implementer committed eight commits to main. Read out of the dispatch record: the compiled prompt's # Inputs block names project_root as 'the Project' and never names the worktree. Verified that linked worktrees share the main repo's hooks dir and that drivers already export a supervision marker, so the refusal can be structural.
+:END:
+
+* TX 2026-08-08 Sat 15:57:53 task.state_transitioned TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5419
+:TIME:         [2026-08-08 Sat 15:57:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 15:57:54 manager.dispatch_started TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5420
+:TIME:         [2026-08-08 Sat 15:57:54]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1-review
+:BRANCH:       task-2qk4p.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-review/task-2qk4p-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 15:57:54]
+:LIVENESS:     d77504a5578674667079bafde616dfe0fe488a72
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:REVIEWS_TX:   tx-20260808-orgasmic-5388
+:REASON_INITIAL: Cross-family review of the recovery-authority type change. Subject matter is session scanning, not the parser/deletion class that tripped the content filter three times (TASK-52NJS), and codex reviewed both prior rounds of this chain successfully. Acceptance 8 now closed by a manager calm-host GREEN.
+:END:
+
+* TX 2026-08-08 Sat 15:57:55 run.created TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5421
+:TIME:         [2026-08-08 Sat 15:57:55]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1-reviewer-20260808T155754.jsonl
+:REASON:       Cross-family review of the recovery-authority type change. Subject matter is session scanning, not the parser/deletion class that tripped the content filter three times (TASK-52NJS), and codex reviewed both prior rounds of this chain successfully. Acceptance 8 now closed by a manager calm-host GREEN.
+:RUN_ID:       run-20260808T155754-9663ad3bd00d4d2099e5fb625928551f
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-review/task-2qk4p-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1-1-review/task-2qk4p-1-1-review-261cc8e43d65404f88bb1fab72d105c5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1-1-review/task-2qk4p-1-1-review-261cc8e43d65404f88bb1fab72d105c5-stdout.log
+:DISPATCH_ATTEMPT: 261cc8e43d65404f88bb1fab72d105c5
+:DISPATCH_TX:  tx-20260808-orgasmic-5420
+:MODEL_OVERRIDE: gpt-5.6-sol
+:END:
+
+* TX 2026-08-08 Sat 15:58:01 task.state_transitioned TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5422
+:TIME:         [2026-08-08 Sat 15:58:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 15:58:02 manager.dispatch_started TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5423
+:TIME:         [2026-08-08 Sat 15:58:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1-review
+:BRANCH:       task-rma18.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-1-review/task-rma18-1-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 15:58:02]
+:LIVENESS:     d77504a5578674667079bafde616dfe0fe488a72
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5414
+:REASON_INITIAL: SAME-FAMILY, reason stated: this is the prune/index-parser subject matter that killed three consecutive cross-family dispatches on a provider content filter (TASK-52NJS). Round five closed all five findings; brief asks whether the verb is finally shippable to an operator binary.
+:END:
+
+* TX 2026-08-08 Sat 15:58:02 run.created TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5424
+:TIME:         [2026-08-08 Sat 15:58:02]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1.1-reviewer-20260808T155802.jsonl
+:REASON:       SAME-FAMILY, reason stated: this is the prune/index-parser subject matter that killed three consecutive cross-family dispatches on a provider content filter (TASK-52NJS). Round five closed all five findings; brief asks whether the verb is finally shippable to an operator binary.
+:RUN_ID:       run-20260808T155802-37f12af5a39a4bd2a6ae5f958b1c88bd
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-1-review/task-rma18-1-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1-1-review/task-rma18-1-1-1-review-a3ffbe72aa9e4b5c83e31c8db452450a-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1-1-review/task-rma18-1-1-1-review-a3ffbe72aa9e4b5c83e31c8db452450a-stdout.log
+:DISPATCH_ATTEMPT: a3ffbe72aa9e4b5c83e31c8db452450a
+:DISPATCH_TX:  tx-20260808-orgasmic-5423
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
