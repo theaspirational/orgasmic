@@ -27,5 +27,13 @@
 # `advice` string became `submodule_advice`), the three injected changes are
 # byte-identical in effect, and the pinned red was re-measured rather than
 # assumed.
+#
+# RE-AUTHORED AGAIN 2026-08-08 by TASK-RMA18.1.1.1.1, same discipline again:
+# giving the `.gitmodules` candidate loop a `NoRepository`-aware remedy (finding
+# 2) moved the context lines UNDER the second hunk. All four injected lines are
+# byte-identical, and the red below was re-measured against the re-authored
+# patch. Note that `if false && nonempty_dir_under(...)` still disables the whole
+# loop body, new branch included — the injection reproduces TASK-RMA18's
+# decision procedure exactly as before.
 # ---------------------------------------------------------------------------
 env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_worktree_containing_an_initialized_submodule

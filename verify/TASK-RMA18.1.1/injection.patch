@@ -1,13 +1,13 @@
 diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -4081,7 +4081,8 @@
- 
+@@ -4104,7 +4104,8 @@ fn worktree_submodule_refusal(
      let mut candidates = Vec::new();
+     let mut repo_gone = false;
      match worktree_index_gitlinks(worktree, path) {
 -        WorktreeIndexGitlinks::Recorded(paths) => candidates.extend(paths),
 +        // INJECTION: ask `.gitmodules` where git asks the index.
 +        WorktreeIndexGitlinks::Recorded(_) => {}
          WorktreeIndexGitlinks::NoRepository => {
+             repo_gone = true;
              if let Some(nested) = nested_git {
-                 return Some(format!(

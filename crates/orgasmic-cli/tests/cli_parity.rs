@@ -106,14 +106,33 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
 /// repo-gone branch must separately name the weaker check that branch really
 /// makes. A false sentence of the shipped shape fails both ways.
 ///
-/// WHAT THIS STILL CANNOT DO, stated rather than implied: `cli_parity` reads
-/// clap output, so it constrains the SHAPE of the claim and never its truth.
-/// The truth is pinned in `tests/dispatch.rs`, by three regressions that run
-/// the real verb over real fixtures git itself refuses —
+/// AND THE PIN THEN PASSED ON A FALSE HELP ANYWAY (TASK-RMA18.1.1.1.1 finding
+/// 5, which is the live proof that "the pin constrains shape, the regressions
+/// constrain truth" was not a sound division — the regressions constrain truth
+/// only for the shapes they instantiate). Two escapes were named. The first is
+/// closed below: a false sentence that names NO branch is never seen by the
+/// per-sentence repo-gone ban, so a universal quantifier over index-reading is
+/// banned globally instead.
+///
+/// WHAT THIS STILL CANNOT DO, stated rather than implied, so the next reader
+/// does not mistake this pin for total. It reads clap output, so it constrains
+/// the SHAPE of a claim and never its truth. The second escape is the standing
+/// example: an OVER-CLAIM inside the repo-gone sentence itself ("… of any type,
+/// at any depth and through unreadable directories") satisfies every clause
+/// here and is false, because the walk stops at `anchored_dir::MAX_DEPTH` and
+/// skips a child it cannot open. The literal `"at any depth"` is now refused
+/// above, and that closes THAT WORDING, not the class — any other phrasing of
+/// the same over-claim still passes. Only a fixture can decide it, and none
+/// exists for either fail-open yet.
+///
+/// The truth is pinned in `tests/dispatch.rs`, by four regressions that run the
+/// real verb over real fixtures git itself refuses —
 /// `worktree_prune_refuses_a_submodule_recorded_only_in_the_index`,
-/// `worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule`, and
-/// `worktree_prune_refuses_a_repo_gone_worktree_holding_a_nested_repository`.
-/// This test's job is to stop the help from drifting off what those three prove.
+/// `worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule`,
+/// `worktree_prune_refuses_a_repo_gone_worktree_holding_a_nested_repository`,
+/// and
+/// `worktree_prune_refuses_a_repo_gone_worktree_whose_gitmodules_names_a_populated_directory`.
+/// This test's job is to stop the help from drifting off what those four prove.
 #[test]
 fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
     let help = help_for(&["manager".to_string(), "worktree-prune".to_string()]);
@@ -129,6 +148,17 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
              the removal goes through this verb's own anchored handle:\n{help}"
         );
     }
+    // The walk that finds a nested `.git` stops at `anchored_dir::MAX_DEPTH` and
+    // skips a child it cannot open, so an unqualified "at any depth" is an
+    // OVER-claim — the dangerous direction, and the one the reviewer named as
+    // still reachable (TASK-RMA18.1.1.1.1 finding 5, shape 2). See the note at
+    // the top: banning this WORDING is not banning the claim.
+    assert!(
+        !lower.contains("at any depth"),
+        "worktree-prune help promises the nested-`.git` walk reaches ANY depth. It does not: \
+         it returns at `anchored_dir::MAX_DEPTH` and skips a directory it cannot open, so an \
+         operator reading this is told they have protection they do not have:\n{help}"
+    );
     for required in [
         "anchored",
         "submodule",
@@ -185,6 +215,29 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
              is gone — and a sentence that says otherwise is exactly the false claim \
              TASK-RMA18.1.1.1 finding B was filed on. Say the two branches separately:\n{help}"
         );
+    }
+    // THE COMPLEMENT, and the reason the sentence-level ban above is not enough
+    // on its own: a false claim can name no branch at all. "The submodule
+    // refusal reads the worktree's own INDEX for gitlinks on every branch."
+    // carries no repo-gone marker, so `about_repo_gone` never inspects it, the
+    // real repo-gone sentence still satisfies every clause below, and `"index"`
+    // is already a required global substring — so the pin would go green on a
+    // help that is dangerously false in the DELETE direction
+    // (TASK-RMA18.1.1.1.1 finding 5, shape 1). Index-reading is branch-scoped,
+    // so a universal quantifier over it is the shape to forbid.
+    for sentence in sentences
+        .iter()
+        .filter(|sentence| sentence.contains("index"))
+    {
+        for universal in ["every branch", "all branches"] {
+            assert!(
+                !sentence.contains(universal),
+                "worktree-prune help claims the index is read on {universal:?} ({sentence:?}). \
+                 It is not: the index lives in the admin directory, which is precisely what is \
+                 gone on the repo-gone branch. A sentence that names no branch escapes the \
+                 per-sentence ban above, which is why the quantifier is banned here:\n{help}"
+            );
+        }
     }
     assert!(
         about_repo_gone

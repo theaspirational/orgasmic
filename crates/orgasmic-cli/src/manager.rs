@@ -379,13 +379,16 @@ the repo-gone one included — but WHAT IT CAN CHECK DIFFERS BY BRANCH, so read
 both of the next two sentences. While the repository is still there it reads the
 worktree's own INDEX for gitlinks as git does, plus `.gitmodules`, and a
 submodule record it cannot read is itself a refusal. Once the repository is gone
-no such record survives to be read and git has no verdict left to reproduce, so
-that branch is checked a DIFFERENT and WEAKER way: the anchored walk of the
-tree's own contents refuses any NESTED `.git` entry, of any type, and nothing
-else there is checked. A worktree whose repository is gone cannot be salvaged,
-so unless something refuses it, it is removed with NO salvage, and the report
-says so. There is no `--force` on this verb, so a refusal names what to clear by
-hand instead of offering an override.")]
+that gitlink record is gone with it — the admin directory holding it is what
+vanished — and git has no verdict left to reproduce, so that branch is checked a
+DIFFERENT way, neither strictly stronger nor strictly weaker: `.gitmodules`
+lives in the tree rather than that directory, so it survives and is still read
+there, and ON TOP of it the anchored walk of the tree's own contents refuses any
+NESTED `.git` entry, of any type — which can KEEP a worktree over a vendored
+repository git itself would have let you delete. A worktree whose repository is
+gone cannot be salvaged, so unless something refuses it, it is removed with NO
+salvage, and the report says so. There is no `--force` on this verb, so a
+refusal names what to clear by hand instead of offering an override.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -4041,6 +4044,16 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
 /// is the whole job; a vendored `.git` on disk that the index does not record
 /// is git's business to permit, not this verb's to refuse.
 ///
+/// `.gitmodules` IS STILL READ ON `RepoGone`, which does not contradict the
+/// paragraph above: finding A's fixture had none, but the file itself lives in
+/// the WORKTREE rather than in the admin directory, so wherever a tree has one
+/// it survives the repository intact. So this predicate can refuse THREE ways on
+/// that branch, not one — the walk's nested `.git`, a `.gitmodules` that exists
+/// and does not read, and a `.gitmodules` naming a populated directory — and the
+/// last of those needs a remedy of its own, because the `--force` escape the
+/// ordinary branch offers cannot run once the repository is gone
+/// (TASK-RMA18.1.1.1.1 findings 1 and 2).
+///
 /// ORDERING, stated because it was raised as a consequence and turns out not to
 /// be one: the walk this consumes runs in [`scan_managed_worktrees`], which is
 /// the FIRST thing `worktree_prune` does — before the cleanup lock, before the
@@ -4061,6 +4074,15 @@ fn worktree_submodule_refusal(
     // correction). `--force` is offered conditionally in the first and not at
     // all in the third: this verb has no `--force` of its own, so every escape
     // here is something the operator does by hand.
+    //
+    // The `NoRepository` branch needs its own copy of the LAST refusal too, not
+    // only of the nested-`.git` one: `.gitmodules` lives in the WORKTREE rather
+    // than in the admin directory, so it survives a gone repository intact and
+    // can still refuse there — and `submodule_advice`'s conditional escape names
+    // a condition the operator cannot satisfy, because the repository being gone
+    // is what put them on this branch (TASK-RMA18.1.1.1.1 finding 2). That
+    // variant is written at its own call site below, where the module path it
+    // must name is in hand.
     let submodule_advice =
         "no salvage can capture what is inside a submodule, because the parent records it as a \
          gitlink. Rescue its contents, then either remove the submodule's checkout yourself and \
@@ -4080,9 +4102,11 @@ fn worktree_submodule_refusal(
     }
 
     let mut candidates = Vec::new();
+    let mut repo_gone = false;
     match worktree_index_gitlinks(worktree, path) {
         WorktreeIndexGitlinks::Recorded(paths) => candidates.extend(paths),
         WorktreeIndexGitlinks::NoRepository => {
+            repo_gone = true;
             if let Some(nested) = nested_git {
                 return Some(format!(
                     "{} has no repository behind it, so no index and no `modules` directory \
@@ -4122,6 +4146,26 @@ fn worktree_submodule_refusal(
 
     for module in candidates {
         if nonempty_dir_under(worktree, &module) {
+            // WHICH branch got here decides the remedy, because one of them
+            // cannot perform the escape the other offers. On `NoRepository` the
+            // only record that can have produced this candidate is the
+            // `.gitmodules` inside the tree, so the message names it — that is
+            // also what distinguishes this refusal from the nested-`.git` one
+            // above, which names the entry the walk found instead.
+            if repo_gone {
+                return Some(format!(
+                    "{} has no repository behind it, so no index and no `modules` directory \
+                     survive to say whether it contains a submodule — but its own `.gitmodules` \
+                     does survive inside the tree, and names an initialized submodule at \
+                     {module}. Its uncommitted work cannot be salvaged, because there is nothing \
+                     left to salvage into, and this branch removes with NO salvage at all — so \
+                     it is kept. `git worktree remove --force` CANNOT run here, since the \
+                     repository it would run against is the one that is gone, and this verb has \
+                     no `--force` of its own: rescue what you need, then remove {module} \
+                     yourself and re-run",
+                    path.display()
+                ));
+            }
             return Some(format!(
                 "{} contains an initialized submodule at {module}, and `git worktree remove` \
                  refuses such a worktree outright — {submodule_advice}",
