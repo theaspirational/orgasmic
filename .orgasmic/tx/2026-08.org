@@ -22755,3 +22755,113 @@
 :DISPATCH_TX:  tx-20260808-orgasmic-5367
 :MODEL_OVERRIDE: gpt-5.6-sol
 :END:
+
+* TX 2026-08-08 Sat 12:46:17 manager.dispatch_orphaned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5369
+:TIME:         [2026-08-08 Sat 12:46:17]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T123147.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260808T123147-fe5393f4e42e4b6f923a87fa5753fbfc
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:END:
+
+* TX 2026-08-08 Sat 12:49:26 task.created TASK-8VBXR
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5370
+:TIME:         [2026-08-08 Sat 12:49:26]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8VBXR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       The TASK-RMA18.1.1 reviewer died undiagnosably on 2026-08-08. supervisor.rs:4921 proves the daemon had the pane in hand at the kill decision and dropped it. Cheapest possible fix for the project's most opaque failure mode.
+:END:
+
+* TX 2026-08-08 Sat 12:49:32 manager.dispatch_aborted TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5371
+:TIME:         [2026-08-08 Sat 12:49:32]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       Killed by orgasmic's own stall detector after 600s idle at 0.0% CPU with no open-turn statusline. last.txt and stdout.log both 0 bytes, tmux session torn down: proximate cause unrecoverable. Filed TASK-8VBXR — the killer had the pane in hand and discarded it. Re-dispatching.
+:CLOSED_TX:    tx-20260808-orgasmic-5361
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5361/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:49:51 manager.dispatch_started TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5372
+:TIME:         [2026-08-08 Sat 12:49:51]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRANCH:       task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 12:49:51]
+:LIVENESS:     285a0c601a5e9df6d37a53a350ec74191cfb894a
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:REVIEWS_TX:   tx-20260808-orgasmic-5328
+:REASON_INITIAL: Re-dispatch after tx-20260808-orgasmic-5361 was stall-killed at 600s idle with zero recoverable evidence (TASK-8VBXR). Manager is snapshotting worker panes this time so a repeat is diagnosable.
+:END:
+
+* TX 2026-08-08 Sat 12:49:51 run.created TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5373
+:TIME:         [2026-08-08 Sat 12:49:51]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T124951.jsonl
+:REASON:       Re-dispatch after tx-20260808-orgasmic-5361 was stall-killed at 600s idle with zero recoverable evidence (TASK-8VBXR). Manager is snapshotting worker panes this time so a repeat is diagnosable.
+:RUN_ID:       run-20260808T124951-df85d294ef6d4fbfb6481447b754a5d0
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-d7f998d3996c402caa4682df8ec4c9de-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-d7f998d3996c402caa4682df8ec4c9de-stdout.log
+:DISPATCH_ATTEMPT: d7f998d3996c402caa4682df8ec4c9de
+:DISPATCH_TX:  tx-20260808-orgasmic-5372
+:MODEL_OVERRIDE: gpt-5.6-sol
+:END:
+
+* TX 2026-08-08 Sat 12:50:19 task.edited TASK-VD0VB
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5374
+:TIME:         [2026-08-08 Sat 12:50:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VD0VB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-VD0VB
+:NODE_ID:      TASK-VD0VB
+:END:

@@ -3746,6 +3746,32 @@ already capturing the pane.
 *Scoped to cursor-agent, not to tmux.* The two claude reviewer dispatches this
 session, on the same transport into the same worktree root, started clean with no
 prompt at all.
+** Generalisation
+GENERALISATION FOUND [2026-08-08], while investigating an unrelated worker death.
+=crates/orgasmic-drivers/src/modes/tmux.rs:1780-1798= builds the harness command:
+
+: "claude" => { ... args.push("--dangerously-skip-permissions"); ("claude", args) }
+: "codex"        => ("codex".to_string(), Vec::new()),
+: "cursor-agent" => ("cursor-agent".to_string(), Vec::new()),
+: "hermes"       => ("hermes".to_string(), vec!["chat", "--tui"]),
+
+*THE DRIVER IMPLEMENTS AN APPROVAL BYPASS FOR CLAUDE AND FOR NO OTHER HARNESS.*
+This task's =--trust=/=--yolo=/=-f= lead for cursor-agent is one instance of a
+three-harness asymmetry, and =codex 0.144.5= has the matching flags
+(=-a/--ask-for-approval never=, =--dangerously-bypass-approvals-and-sandbox=,
+=-s/--sandbox=), none of which are passed.
+
+*CAUTION — THIS IS NOT ESTABLISHED AS A CAUSE OF ANY DEATH, AND ONE MEASUREMENT
+POINTS AWAY FROM IT.* The manager raised it as the hypothesis for the
+=tx-20260808-orgasmic-5361= stall-kill, then captured a LIVE sibling codex
+reviewer mid-run: it was writing to =/tmp= and executing test binaries with no
+prompt at all. So codex's defaults on this host are permissive enough for
+ordinary review work, and the asymmetry is a latent risk rather than a
+demonstrated failure. Record it as such; do not repeat the hypothesis as fact.
+
+WORKAROUND AVAILABLE MEANWHILE: =harness_args= rides along for any real harness
+CLI, not only =custom= (=tmux.rs:969=), so
+=manager dispatch --harness-arg -a --harness-arg never= reaches codex today.
 
 * BACKLOG TASK-CGJM7 the log rotation rename-failure branch is still per-line: ~32 stderr writes per tracing line into the unrotated daemon.err.log    :daemon:ops:
 :PROPERTIES:
@@ -4764,3 +4790,97 @@ Start narrow and measured, not with a workspace-wide repeat policy:
   ownership of KNOWN flakes; this is DISCOVERY.
 - TASK-4BBA6 moves the syspolicyd watchdog inside =run-tests.sh=, which this
   task's repetition makes more urgent rather than less.
+
+* BACKLOG TASK-8VBXR the stall killer captures the pane to decide to kill, then discards it and tears down the session that held it    :daemon:diagnosability:
+:PROPERTIES:
+:ID: TASK-8VBXR
+:PRIORITY: P1
+:END:
+
+** Description
+*THE STALL KILLER READS THE PANE TO DECIDE TO KILL, THEN THROWS THE PANE AWAY
+AND KILLS THE SESSION THAT HELD IT.* The one artifact that could diagnose the
+death is in memory at the moment of the decision, and is discarded.
+
+=crates/orgasmic-daemon/src/supervisor.rs:4910-4934=:
+
+#+begin_src rust
+if let Some(mux) = PaneMux::for_transport(&target.transport) {
+    match pane_content(mux, &target.identity, socket) {
+        Some(pane) => match pane_open_turn_marker(&pane) {
+            Some(marker) => { /* Working */ }
+            None => {
+                return WorkEvidence::Idle {
+                    detail: format!("{cpu_detail}; no open-turn statusline in pane capture"),
+                };
+            }
+        },
+        None => { /* "pane capture unavailable" */ }
+    }
+}
+#+end_src
+
+=pane= is bound, inspected, and dropped. The reason string NAMES the capture and
+carries none of it. The run is then released and the tmux session torn down, so
+the only other copy dies with it.
+
+** How it was found, and what it cost
+[2026-08-08] The TASK-RMA18.1.1 reviewer (=tx-20260808-orgasmic-5361=, codex,
+round FOUR on a destructive path) died after ~14.5 minutes with:
+
+: stall_timeout_exceeded: no work evidence for 600s; 7 process(es) under pid 11873
+: at 0.0% cpu (work threshold 5.0%); no open-turn statusline in pane capture
+
+=last.txt= 0 bytes, =stdout.log= 0 bytes by design, tmux session gone. *The
+proximate cause is unrecoverable.* The manager could establish only what the
+lifecycle event already said.
+
+Note what the reason line proves: *the daemon had the pane.* It could not have
+concluded "no open-turn statusline in pane capture" without capturing and
+scanning one. Had those few kilobytes been written beside =last.txt=, the
+diagnosis would have been a =Read= away — the last frame carries the harness's
+own error text, an approval prompt if there was one, or an ordinary finished turn
+sitting at an idle input prompt.
+
+*A MANAGER-SIDE HYPOTHESIS WAS RAISED AND THEN DISPROVED BY MEASUREMENT, WHICH IS
+ITSELF THE ARGUMENT FOR THIS TASK.* The manager suspected a blocked approval
+prompt, having found that =tmux.rs:1789-1798= pushes
+=--dangerously-skip-permissions= for claude and passes NO approval flag for
+codex, cursor-agent or hermes. A LIVE sibling codex reviewer was then captured
+mid-run writing to =/tmp= and executing test binaries with no prompt at all —
+so the asymmetry is real (see [[TASK-VD0VB]]) but is *not* established as this
+death's cause. *Without a pane snapshot there is no way to close the question,
+and a plausible wrong answer was one step from being written down as fact.*
+
+** Recommended shape
+1. On the Idle path — both =no open-turn statusline= AND =pane capture
+   unavailable= — persist the capture (and the last N KiB of prior captures if
+   any are retained) next to the dispatch artifacts, e.g.
+   =.orgasmic/tmp/dispatch/<stem>/<run>-pane-at-release.txt=, BEFORE the release
+   that tears the session down.
+2. Persist it on ANY non-worker-finalized terminal release, not only the stall
+   path. =finalized_by_worker: false= is the general "died with nothing" signal.
+3. Name the file in the lifecycle =reason= so an operator reading the event knows
+   the evidence exists.
+4. Redact nothing by default but be aware the frame can contain repo content; it
+   already lives under =.orgasmic/tmp/=, which is the same trust boundary as the
+   brief and =last.txt=.
+
+** Acceptance
+1. A stall-killed tmux dispatch leaves a readable pane snapshot on disk.
+2. The lifecycle event names its path.
+3. A test proves it: drive a stub pane to the idle state, let the killer fire,
+   assert the file exists and contains the frame the killer scanned.
+4. The =pane capture unavailable= branch is covered too — it must not silently
+   produce no file with no explanation.
+
+** Why P1
+Every tmux dispatch is one silent death away from an undiagnosable outage, and
+tmux is the DEFAULT driver. Three worker deaths across 2026-08-07 and 08-08 were
+undiagnosable for exactly this reason. This is the cheapest possible fix — write
+a buffer that is already in hand — and it converts the project's single most
+opaque failure mode into an ordinary one.
+
+Related: [[TASK-VD0VB]] (a tmux dispatch leaves no evidence when it dies — this
+is the specific, cheapest instance), [[TASK-4CSMY]] (the pane-liveness channel
+whose capture this is).
