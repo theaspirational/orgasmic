@@ -22865,3 +22865,260 @@
 :REASON:       edited task node TASK-VD0VB
 :NODE_ID:      TASK-VD0VB
 :END:
+
+* TX 2026-08-08 Sat 12:51:07 reviewer.finding TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5375
+:TIME:         [2026-08-08 Sat 12:51:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       P1 crates/orgasmic-daemon/src/recovery_claim.rs:1094-1114,1282-1297: TASK-2QK4P.1 (authoritative recovery enumeration) reports Some(complete) after a JSONL open or lifecycle-scan failure because the inner scanner collapses the error to zero links; a second authenticated replacement in that file can be hidden while the loaded claim is accepted as unique. Propagate unresolved per-file scans and add unreadable/malformed hidden-duplicate regressions.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:VERDICT:      BLOCK_SHIP
+:SCOPE:        regression
+:END:
+
+* TX 2026-08-08 Sat 12:51:07 reviewer.finding TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5376
+:TIME:         [2026-08-08 Sat 12:51:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       P1 crates/orgasmic-core/src/session.rs:1162-1165 and crates/orgasmic-daemon/src/recovery_claim.rs:1094-1122,1370-1392: the authoritative path ignores scan.truncated even though the scanner contract says the skipped middle is unknown. RecoveryOrigin follows an uncapped PromptDraft and embeds the same claim draft; after enough later events a valid link can sit outside both windows, be treated as absent, and have its live claim quarantined. Use a full or streaming authoritative fallback and add a greater-than-192-KiB production-shaped regression.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:VERDICT:      BLOCK_SHIP
+:SCOPE:        regression
+:END:
+
+* TX 2026-08-08 Sat 12:51:07 reviewer.finding TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5377
+:TIME:         [2026-08-08 Sat 12:51:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       P1 crates/orgasmic-daemon/src/recovery_claim.rs:1396-1441 and crates/orgasmic-daemon/src/api.rs:9235-9335: Ok(None) and CorruptClaim reconstruction still trusts the catalog-derived slice; invalidating the live replacement record makes it return Missing and the recover handler can mint a fresh claim beside the authenticated replacement. This is the same hidden-authority defect in a pre-existing disclosed branch; route reconstruction through an authoritative candidate set and add production-collector invalidation cases.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:VERDICT:      FOLLOW_UP
+:SCOPE:        pre_existing_out_of_scope
+:END:
+
+* TX 2026-08-08 Sat 12:51:08 reviewer.finding TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5378
+:TIME:         [2026-08-08 Sat 12:51:08]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       P2 crates/orgasmic-daemon/src/api.rs:10045-10068 and crates/orgasmic-daemon/src/recovery_claim.rs:1362-1372: inventory builds the catalog origin index once to avoid O(failed_runs times session_bytes), but each committed claim now re-enumerates every JSONL in its project inside apply_recovery_claim_to_run. With no caller of remove_recovery_claim, claims accumulate and poll cost is O(committed failed runs times project sessions times 192 KiB). Build one authoritative per-project set per inventory or cache it with explicit completeness, then measure a multi-claim board.
+:SEVERITY:     MEDIUM
+:KIND:         performance
+:VERDICT:      FOLLOW_UP
+:SCOPE:        regression
+:END:
+
+* TX 2026-08-08 Sat 12:53:54 reviewer.reported TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5379
+:TIME:         [2026-08-08 Sat 12:53:54]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:RUN_ID:       run-20260808T123856-0dcad40b9c0940608f606e26795d118e
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5367/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:55:25 reviewer.done TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5380
+:TIME:         [2026-08-08 Sat 12:55:25]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       codex/gpt-5.6-sol: REJECT + BLOCK SHIP. The fix moved 'silence read as completeness' one layer down rather than closing it: index_recovery_origins_in_session collapses three error paths into IndexedRecoveryOrigins::default(), so enumerate_recovery_origin_links returns Some(links) on an incomplete set. Plus a bounded-scan miss that permanently quarantines a live rescue. Manager independently confirmed both, and that remove_recovery_claim has zero callers.
+:MODEL:        gpt-5.6-sol
+:REVIEWED_DIFF: a503213^..c4af3c6
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5367
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5367/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:55:25 task.state_transitioned TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5381
+:TIME:         [2026-08-08 Sat 12:55:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 12:55:29 implementer.done TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5382
+:TIME:         [2026-08-08 Sat 12:55:29]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:       Merged as c4af3c6. Review returned REJECT/BLOCK SHIP; fix round follows as TASK-2QK4P.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: a503213b093e8aedcb5e9c5602ec415e0a2ede40
+:MERGE_SHA:    c4af3c65988ac2299bc01ce3b40d73fd830a4def
+:BRANCH:       task-2qk4p.1-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5356
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5356/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:55:29 task.state_transitioned TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5383
+:TIME:         [2026-08-08 Sat 12:55:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 12:56:30 task.created TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5384
+:TIME:         [2026-08-08 Sat 12:56:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Third round on one defect. Rounds 1 and 2 each closed the instance and left the class one layer down; this round's acceptance leads with making the collapse unrepresentable rather than patching four sites.
+:END:
+
+* TX 2026-08-08 Sat 12:56:31 task.property_updated TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5385
+:TIME:         [2026-08-08 Sat 12:56:31]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-2QK4P.1
+:FIX_SUBTASK:  TASK-2QK4P.1.1
+:END:
+
+* TX 2026-08-08 Sat 12:56:31 task.property_updated TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5386
+:TIME:         [2026-08-08 Sat 12:56:31]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-2QK4P.1.1
+:IMPLEMENTS:   TASK-2QK4P.1
+:END:
+
+* TX 2026-08-08 Sat 12:57:25 task.state_transitioned TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5387
+:TIME:         [2026-08-08 Sat 12:57:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 12:57:26 manager.dispatch_started TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5388
+:TIME:         [2026-08-08 Sat 12:57:26]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1
+:BRANCH:       task-2qk4p.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1/task-2qk4p-1-1-brief.md
+:STARTED_AT:   [2026-08-08 Sat 12:57:26]
+:LIVENESS:     5c619c17358bb7f9ab41ffed54d0b82b9150032a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round three on one defect. Acceptance leads with making the unobserved/observed-nothing collapse unrepresentable at the type level, with a QGWK7-round-7-style structural pin, rather than patching the four sites.
+:END:
+
+* TX 2026-08-08 Sat 12:57:26 run.created TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5389
+:TIME:         [2026-08-08 Sat 12:57:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1-implementer-20260808T125726.jsonl
+:REASON:       Round three on one defect. Acceptance leads with making the unobserved/observed-nothing collapse unrepresentable at the type level, with a QGWK7-round-7-style structural pin, rather than patching the four sites.
+:RUN_ID:       run-20260808T125726-0e71e78d5ebd43509fcc89d9b4c45a8c
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1/task-2qk4p-1-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1-1/task-2qk4p-1-1-8ccf2ce6b36b47cabb4442aef4a3125c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1-1/task-2qk4p-1-1-8ccf2ce6b36b47cabb4442aef4a3125c-stdout.log
+:DISPATCH_ATTEMPT: 8ccf2ce6b36b47cabb4442aef4a3125c
+:DISPATCH_TX:  tx-20260808-orgasmic-5388
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:

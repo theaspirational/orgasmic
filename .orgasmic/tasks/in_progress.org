@@ -1,3 +1,192 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-2QK4P.1.1 make unobserved unrepresentable as observed-nothing: scan failures and truncated middles are still read as absence
+:PROPERTIES:
+:ID: TASK-2QK4P.1.1
+:PRIORITY: P0
+:IMPLEMENTS: TASK-2QK4P.1
+:END:
+
+** READ THIS FIRST — STATUS
+FIX ROUND for TASK-2QK4P.1, opened by a =REJECT= with =BLOCK SHIP=
+(=tx-20260808-orgasmic-5380=, codex/gpt-5.6-sol, cross-family).
+
+*THIS IS THE THIRD ROUND ON ONE DEFECT, AND EACH ROUND CLOSED THE INSTANCE IT WAS
+HANDED AND LEFT THE CLASS ALIVE ONE LAYER DOWN.* Read that sentence before you
+read the findings, because fixing the four findings below without closing the
+class buys round four.
+
+: round 1 (724973d)  an EMPTY catalog index was read as proof of non-contradiction
+: round 2 (a503213)  a ONE-ELEMENT catalog index was read as proof of uniqueness
+: round 3 (this)     a PER-FILE SCAN FAILURE is read as an empty-but-complete file
+:                    and a TRUNCATED scan's skipped middle is read as absence
+
+Same sentence every time: *an observation that failed is being reported as an
+observation that succeeded and found nothing.* The manager owns part of this —
+round 2's acceptance criterion said "on zero catalog matches", which would have
+left the one-element hole open; the implementer widened it and was right; and
+neither of us saw the layer below.
+
+*THE ROUND-3 FIX IS NOT A LIST OF FOUR PATCHES. IT IS MAKING THE COLLAPSE
+UNREPRESENTABLE.* See Acceptance 1.
+
+** Findings to close
+*** F1 (HIGH, BLOCK SHIP) — per-file scan failures are reported as a complete enumeration
+=crates/orgasmic-daemon/src/recovery_claim.rs:1094-1114,1282-1297=
+
+=enumerate_recovery_origin_links= returns =None= only when =read_dir= itself
+fails or a directory entry cannot be read. For each readable =*.jsonl= it calls
+=index_recovery_origins_in_session=, whose return type is
+=IndexedRecoveryOrigins= — *a type with no way to say "I failed"*. Manager-verified
+in source:
+
+#+begin_src rust
+let Ok(session_dir) = SessionDirectory::open(project_root) else {
+    return IndexedRecoveryOrigins::default();      // :1105
+};
+let Ok(scan) = session_dir.scan_path(session_path, budget) else {
+    return IndexedRecoveryOrigins::default();      // :1109
+};
+#[cfg(not(unix))]
+let Ok(scan) = orgasmic_core::scan_session_lifecycle(session_path, budget) else {
+    return IndexedRecoveryOrigins::default();      // :1113
+};
+#+end_src
+
+Three error paths, three empty-but-successful results. The outer function then
+returns =Some(links)= and the resolver treats the set as COMPLETE.
+
+*The rejected safety state is recreated through the filesystem slow path*: keep
+the loaded claim's session readable, put a second daemon-authenticated
+replacement in another JSONL, and make that second file fail its lifecycle scan
+— an unreadable file or one malformed lifecycle line is enough. The resolver
+sees exactly one link equal to the loaded claim and returns =Valid=, never
+discovering the second authority.
+
+*THIS ANSWERS THE BRIEF'S C4 IN THE DANGEROUS DIRECTION.* All three of round 2's
+new collector-shaped tests use small, readable, well-formed JSONLs, so they stay
+green if the production scanner is changed to return empty on every per-file
+error. None asserts that an unindexable directory member makes enumeration
+unresolved.
+
+*** F2 (HIGH, BLOCK SHIP) — the bounded scan treats its skipped middle as absence, and the miss is PERMANENT
+=crates/orgasmic-core/src/session.rs:1162-1165,1312-1366=;
+=recovery_claim.rs:1094-1122,1370-1392=; =supervisor.rs:1383-1395,2309-2341=;
+=api.rs:8716-8765,9222-9232=
+
+=SessionLifecycleScan= EXPLICITLY DOCUMENTS that a truncated scan's skipped
+middle must be treated as *unknown rather than absent*.
+=index_recovery_origins_in_session= ignores =scan.truncated= and returns only
+retained links. The new enumerator calls that bounded scanner for every file and
+labels the union authoritative.
+
+Round 2 disclosed this and argued "=RecoveryOrigin= is written near the head".
+*The condition is real and is not enforced.* The reviewer named the production
+mechanism that violates it: =PromptDraft= is written BEFORE =RecoveryOrigin=;
+the committed snapshot embedded in =RecoveryOrigin= REPEATS that draft; and the
+draft includes *uncapped output from =git diff --stat=*. A large enough diff stat
+pushes the envelope past the 128 KiB prefix, or makes the lifecycle line itself
+cross that boundary. Add more than 64 KiB of later driver output and it is
+outside the tail too. *No size invariant prevents this.*
+
+The consequence is worse than a miss. On that miss the loaded committed claim is
+QUARANTINED (=:1385-1392=), and the catalog uses THE SAME bounded scanner, so a
+later reconstruction cannot rediscover the link — *the refusal is PERSISTENT, not
+the "retry" the code comment claims.* The handler can then reach the no-plan
+branch and mint another replacement. So the safety fix produces the very
+duplicate authority it exists to prevent, by a second route.
+
+*** F3 (HIGH, pre-existing / out of scope for the regression question, in scope for this round)
+=recovery_claim.rs:1396-1441=; =api.rs:9235-9335=; test at =:3325-3454=
+
+The C5 hole is reachable and is the same defect wearing a different hat.
+=Ok(None)= and =CorruptClaim= still pass the catalog-derived =indexed_origins=
+into =reconstruct_or_quarantine=. If a real replacement's catalog record is
+invalidated during a lifecycle append, the slice is silent, reconstruction
+returns =Missing=, and =post_run_recover= sees no pending plan and creates a new
+claim/session beside the authenticated replacement already on disk.
+
+The existing corrupt-claim regression proves reconstruction only after
+constructing and passing a literal visible link — it does not drive
+=RunCatalog=, does not invalidate the replacement, and does not cover a second
+authenticated replacement. *Correctly classified by the reviewer as pre-existing
+rather than a regression in =a503213=.* It is in scope HERE because closing the
+class without closing this branch leaves the same hole with a different caller.
+
+*** F4 (MEDIUM) — per-claim enumeration reintroduces the complexity the caller deliberately removed
+=api.rs:10045-10068=; =recovery_claim.rs:1362-1372=
+
+The inventory builds =indexed_origins= ONCE on purpose, because rebuilding an
+origin set per failed tombstone made =GET /runs= =O(failed_runs × session_bytes)=.
+Round 2's resolver now performs a fresh bounded scan of every JSONL in the
+project *per committed claim*. The cost was stated as bounded per CLAIM; the
+inventory loop calls it per failed-recoverable record, so multiple committed
+claims in one project rescan the same files on every poll. On the cited 198-file
+board that is ~38 MiB per claim before origin-session follow-up scans.
+
+*Manager-verified: =rg "remove_recovery_claim\(" = returns ONLY the function
+definition at =:1458=. There is no in-tree caller, so committed claims are not
+bounded by any cleanup.*
+
+Avoiding a cache as the safety authority is right and is not the problem.
+Re-enumerating inside each resolver call is not required by that choice.
+
+** Acceptance
+1. *THE CLASS, FIRST AND STRUCTURALLY.* Make "I did not observe" unrepresentable
+   as "I observed nothing". =index_recovery_origins_in_session= must return a
+   type that carries completeness, and =IndexedRecoveryOrigins::default()= must
+   stop being reachable as an error path. Prefer a shape the COMPILER enforces —
+   if the unresolved variant cannot be silently discarded at a call site, round
+   four cannot happen the way rounds one through three did. *State how a future
+   call site is prevented from re-collapsing it*, and pin that with a test the
+   way TASK-QGWK7 round 7 pinned its marker table.
+2. F1 closed: per-file open/scan/malformed-lifecycle errors propagate through
+   =enumerate_recovery_origin_links=; they never become an empty successful set.
+3. F2 closed: =SessionScanBudget::DEFAULT= is never proof of global absence. On
+   =scan.truncated= where uniqueness is not provable, do a full streaming
+   lifecycle enumeration, or use a source with an explicit completeness
+   contract. *Unresolved observation must stay distinct from invalid data* —
+   see Open Question 1 below; a transient read failure must not durably destroy
+   a valid claim's idempotency.
+4. F3 closed: the missing/corrupt branch decides from the same authoritative set.
+   =Missing= is safe only after a complete candidate set proves there is no
+   authenticated replacement.
+5. F4 closed: build ONE complete per-project authoritative snapshot per
+   inventory/recover decision and share it across claims. Add a multi-claim test
+   pinning the file-scan COUNT, and measure the real board before landing.
+6. New production-shaped regressions, each of which must fail without the fix:
+   (a) a second authenticated replacement whose JSONL has a malformed lifecycle
+   line; (b) an authenticated =RecoveryOrigin= outside BOTH scan windows in a
+   >192 KiB replacement transcript; (c) missing/corrupt reconstruction with the
+   replacement's catalog record invalidated. Each must prove the visible claim is
+   never returned =Valid= — *and that a single valid live rescue is not
+   permanently destroyed.*
+7. =recovery_faults_kill_real_daemon_and_preserve_original_pane= still fixed,
+   shown by REPETITION with a stated pass count.
+8. =scripts/run-tests.sh -p orgasmic-daemon= GREEN, VERDICT block quoted.
+
+** The reviewer's open questions, carried verbatim as design input
+1. *Unknown completeness should not be represented as invalid evidence.* A
+   distinct =Unresolved= result should suppress recovery authority WITHOUT
+   renaming a valid committed claim; persistent unreadability can otherwise turn
+   a transient observation failure into durable loss of idempotency.
+2. The cleanest current-tree option appears to be a streaming full lifecycle scan
+   on bounded-scan uncertainty, with per-file errors propagated and one
+   per-project result shared across the inventory pass. An explicit catalog
+   generation can work too, *but only if its completeness contract includes
+   invalidation and scan failures rather than merely cache freshness.*
+3. The missing/corrupt branch needs its own round even after the committed branch
+   is repaired.
+
+** What the review did NOT check
+No cargo invocation was made — the reviewer deliberately reused already-built
+binaries per the brief. It independently re-ran =recovery_claim::= (20 passed)
+and =recovery_faults_kill_real_daemon_and_preserve_original_pane= (3/3), and
+=git diff --check a503213^ a503213= exit 0. The daemon-suite GREEN, clippy, fmt
+and =orgasmic verify TASK-2QK4P.1= remain PRIOR-RUN CLAIMS it did not reproduce.
+Not checked: workspace tests, fresh compilation, MSRV 1.87, non-Unix, real-board
+latency, and a RUNNING reproduction of either block-ship state — both are derived
+from exact source paths and the scanner's own documented unknown-on-truncation
+contract. *Build the running reproductions; that is what rounds one and two each
+learned the hard way.*

@@ -4884,3 +4884,4 @@ opaque failure mode into an ordinary one.
 Related: [[TASK-VD0VB]] (a tmux dispatch leaves no evidence when it dies — this
 is the specific, cheapest instance), [[TASK-4CSMY]] (the pane-liveness channel
 whose capture this is).
+

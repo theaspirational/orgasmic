@@ -597,6 +597,7 @@ relative to the index, not an anchored-walk escape.
 :ID: TASK-2QK4P.1
 :PRIORITY: P0
 :IMPLEMENTS: TASK-2QK4P
+:FIX_SUBTASK: TASK-2QK4P.1.1
 :END:
 
 ** READ THIS FIRST — STATUS
