@@ -1231,7 +1231,12 @@ nda_in_scope() {
     return 1
 }
 
-if [ -z "$CLASSIFY_LOG" ] && nda_in_scope; then
+# `ORGASMIC_HOST_STATE_SAMPLE` is this script's own self-test injector (see the
+# live-path branch above), and `run-tests-selftest.sh` drives those cases with a
+# two-line shell script standing in for `cargo`. Running a real compile against
+# that stub proves nothing and takes 15 self-test cases red, so the injector
+# means "this is the self-test" here exactly as it does there.
+if [ -z "$CLASSIFY_LOG" ] && [ -z "${ORGASMIC_HOST_STATE_SAMPLE-}" ] && nda_in_scope; then
     NDA_RAN=1
     printf 'run-tests: debug_assertions=off leg: cargo test -p orgasmic-cli --bin orgasmic %s\n' \
         "$NDA_TEST"
@@ -1291,7 +1296,7 @@ printf '  ignored  : %s test(s) carrying #[ignore]\n' "$IGNORED_COUNT"
 # the same reason `crashed :` is: a leg that silently did not execute is
 # indistinguishable from a leg that passed unless the block says so.
 if [ "$NDA_RAN" -eq 0 ]; then
-    printf '  cfg-off  : not run (orgasmic-cli not in scope, or --classify)\n'
+    printf '  cfg-off  : not run (orgasmic-cli not in scope, --classify, or the self-test injector)\n'
 elif [ "$NDA_STATUS" -eq 0 ]; then
     printf '  cfg-off  : passed — the pause rendezvous hooks are compiled out without debug_assertions\n'
 elif [ "$NDA_STATUS" -eq 97 ]; then
