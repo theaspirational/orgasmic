@@ -65,10 +65,10 @@ index 2c7dcd5..0aa13f8 100644
  }
  
 diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
-index 68d8422..2bd600a 100644
+index 9a22e70..4a79007 100644
 --- a/crates/orgasmic-daemon/src/api.rs
 +++ b/crates/orgasmic-daemon/src/api.rs
-@@ -9047,9 +9047,15 @@ async fn post_run_recover(
+@@ -9059,9 +9059,15 @@ async fn post_run_recover(
      // the claim branch further down needs the same enumeration; before this,
      // each built its own and the endpoint paid two full passes over the same
      // session files in one decision.
@@ -86,7 +86,7 @@ index 68d8422..2bd600a 100644
      let prior = recovery
          .interrupted_runs
          .iter()
-@@ -9067,6 +9073,35 @@ async fn post_run_recover(
+@@ -9079,6 +9085,35 @@ async fn post_run_recover(
  
      let failed_origin = prior.classification == "failed_recoverable";
  
@@ -106,7 +106,7 @@ index 68d8422..2bd600a 100644
 +            &origin_authority.project_root,
 +            &project_id,
 +        ) {
-+            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
++            AuthoritativeOriginLinks::Unobserved(reason) => Some(reason.clone()),
 +            AuthoritativeOriginLinks::Complete(_) => None,
 +        };
 +        if let Some(reason) = unobserved {
@@ -116,13 +116,13 @@ index 68d8422..2bd600a 100644
 +            // no longer the file you took it over" is actionable, while "the
 +            // enumeration did not complete" is not.
 +            origin_authority.envelopes()?;
-+            return Err(recovery_origins_unobserved(&id, reason));
++            return Err(recovery_origins_unobserved(&id, &reason));
 +        }
 +    }
      // orgasmic:TASK-2QK4P.1.1.1 F3 — AUTHORITY-INDEPENDENT REQUEST VALIDATION,
      // AHEAD OF THE REFUSAL. Whether the requested action exists for this record,
      // whether the caller had to name one, and whether a terminal Failed record
-@@ -9123,35 +9158,6 @@ async fn post_run_recover(
+@@ -9135,35 +9170,6 @@ async fn post_run_recover(
          }
      }
  
@@ -142,27 +142,27 @@ index 68d8422..2bd600a 100644
 -            &origin_authority.project_root,
 -            &project_id,
 -        ) {
--            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
+-            AuthoritativeOriginLinks::Unobserved(evidence) => Some(evidence.clone()),
 -            AuthoritativeOriginLinks::Complete(_) => None,
 -        };
--        if let Some(reason) = unobserved {
+-        if let Some(evidence) = unobserved {
 -            // A swapped or symlinked ORIGIN session is one of the ways the
 -            // enumeration cannot complete, and it has its own, more specific
 -            // refusal. Report that one: "the origin you took authority over is
 -            // no longer the file you took it over" is actionable, while "the
 -            // enumeration did not complete" is not.
 -            origin_authority.envelopes()?;
--            return Err(recovery_origins_unobserved(&id, reason));
+-            return Err(recovery_origins_unobserved(&id, &evidence));
 -        }
 -    }
      let request_id = req
          .request_id
          .clone()
 diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
-index d27f4d5..38016ec 100644
+index 531acd2..298793c 100644
 --- a/crates/orgasmic-daemon/src/recovery_claim.rs
 +++ b/crates/orgasmic-daemon/src/recovery_claim.rs
-@@ -505,9 +505,12 @@ fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> ClaimEvidenc
+@@ -609,20 +609,12 @@ fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> ClaimEvidenc
      let Some(actual) = claim.authority_tag.as_deref() else {
          return ClaimEvidence::Invalid;
      };
@@ -171,12 +171,23 @@ index d27f4d5..38016ec 100644
 +    // ABSENCE and drops the link from a set it still labels `Complete`.
      let key = match authority_key(home) {
          Ok(key) => key,
--        Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::AuthorityKeyUnreadable),
+-        // orgasmic:TASK-2QK4P.1.1.1.1 F3 — the evidence the leaf produced is
+-        // forwarded, subject and remediation intact, instead of being flattened
+-        // back to a bare tag one hop above the failure.
+-        Err(RecoveryClaimError::Unobserved(evidence)) => {
+-            return ClaimEvidence::Unobserved(evidence)
+-        }
+-        Err(_) => {
+-            return ClaimEvidence::Unobserved(UnobservedEvidence::about(
+-                UnobservedSession::AuthorityKeyUnreadable,
+-                "auth/token",
+-            ))
+-        }
 +        Err(_) => return ClaimEvidence::Invalid,
      };
      // A claim that cannot be canonicalized cannot be the value this daemon
      // minted, because minting serializes it — so this is a decided negative
-@@ -1159,10 +1162,11 @@ pub fn load_recovery_claim(
+@@ -1457,10 +1449,11 @@ pub fn load_recovery_claim(
      // QUARANTINES on, so an unreadable auth key must not spell itself that way:
      // it would rename a live rescue's claim on a transient failure and the
      // handler would then mint a competitor beside the running replacement.
@@ -190,7 +201,7 @@ index d27f4d5..38016ec 100644
      }
  }
  
-@@ -1469,6 +1473,13 @@ impl ClaimEvidence {
+@@ -2014,6 +2007,13 @@ impl ClaimEvidence {
  /// `CorruptClaim` from the path-membership check are statements about the
  /// PATH the claim carries, which is content the claim itself supplied.
  fn session_read_evidence(err: &RecoveryClaimError, reason: UnobservedSession) -> ClaimEvidence {

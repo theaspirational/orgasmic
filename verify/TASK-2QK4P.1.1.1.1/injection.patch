@@ -1,0 +1,58 @@
+diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
+index 531acd2..09b706b 100644
+--- a/crates/orgasmic-daemon/src/recovery_claim.rs
++++ b/crates/orgasmic-daemon/src/recovery_claim.rs
+@@ -506,7 +506,7 @@ fn authority_key(home: &Home) -> Result<Vec<u8>, RecoveryClaimError> {
+     // search permission from the token's parent directory, so `try_exists`
+     // returns `Err(EACCES)` while the token bytes survive untouched. Under
+     // `exists()` that same fixture answers `false` and MINTS.
+-    if !token_is_present(home)? {
++    if !home.auth_token().exists() {
+         #[cfg(test)]
+         record_load_or_generate_reached(home);
+         crate::auth::load_or_generate(home).map_err(|_| RecoveryClaimError::CorruptClaim)?;
+@@ -749,10 +749,7 @@ impl ClaimDirectory {
+                     // EACCES / EIO / EMFILE. NOTHING is known about any claim
+                     // under this directory, so nothing may be quarantined.
+                     ObservationClass::Unobserved => {
+-                        return Err(RecoveryClaimError::Unobserved(UnobservedEvidence::about(
+-                            UnobservedSession::ClaimStoreUnreadable,
+-                            component,
+-                        )))
++                        return Err(RecoveryClaimError::CorruptClaim)
+                     }
+                 }
+             }
+@@ -832,9 +829,12 @@ impl ClaimDirectory {
+         use std::io::Read;
+         let name = name.as_ref();
+         let subject = || Some(sanitized_subject(Path::new(""), Path::new(name)));
+-        let mut file = self.open_file(name, libc::O_RDONLY, 0).map_err(|err| {
+-            claim_io_error(err, UnobservedSession::ClaimFileUnreadable, subject())
+-        })?;
++        let mut file = self
++            .open_file(name, libc::O_RDONLY, 0)
++            .map_err(|err| match err.kind() {
++                std::io::ErrorKind::NotFound => RecoveryClaimError::Io(err),
++                _ => RecoveryClaimError::CorruptClaim,
++            })?;
+         if !file
+             .metadata()
+             .map_err(|err| claim_io_error(err, UnobservedSession::ClaimFileUnreadable, subject()))?
+@@ -986,16 +986,6 @@ impl ClaimDirectory {
+                 libc::readdir(dir)
+             };
+             if entry.is_null() {
+-                let code = errno::errno().0;
+-                if code != 0 {
+-                    let err = std::io::Error::from_raw_os_error(code);
+-                    let _ = close(dir);
+-                    return Err(claim_io_error(
+-                        err,
+-                        UnobservedSession::ClaimStoreUnreadable,
+-                        None,
+-                    ));
+-                }
+                 break;
+             }
+             let raw = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();

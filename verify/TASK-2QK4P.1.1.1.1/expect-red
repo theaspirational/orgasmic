@@ -1,0 +1,80 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is not a revert of the round. The round's centrepiece is that
+# the errno policy is written ONCE next to `RecoveryClaimError`, and deleting
+# the policy would only prove that deleted code is absent. It KEEPS the policy
+# and restores what each of the FOUR LEAVES OUTSIDE ROUND FOUR'S HAND-DRAWN
+# BOUNDARY did with a failure:
+#
+#   F1   `ClaimDirectory::read_regular` maps every non-NotFound open error to
+#        `CorruptClaim` — the bucket the resolver QUARANTINES on
+#   F1b  `ClaimDirectory::open` does the same for a component-open error, which
+#        is a statement about EVERY claim under the directory
+#   F2   `ClaimDirectory::names` breaks out of its `readdir` loop on NULL and
+#        returns `Ok(a complete directory)`
+#   F5   `authority_key` probes with `exists()` instead of `try_exists`, so an
+#        unstattable token answers "absent" and MINTS a replacement
+#
+# Three of the four fixtures are REAL: chmod 000 on the claim file, on the
+# per-project claim directory, and on the token's parent directory. Only F2 uses
+# a seam, and it reproduces the syscall's exact observable shape — an
+# errno-bearing NULL — never the decision that follows it.
+exit: 101
+
+# ===== A FAILED FILE OPEN, READ AS A CORRUPT FILE =========================
+#
+# F1, the block-ship state, RUNNING rather than derived — the review said
+# plainly it built no reproduction for this. A live PENDING claim, one `EACCES`
+# reading it. `Missing` is the whole finding in one word: the resolver
+# quarantined the claim, and for a pending claim there is no committed
+# `RecoveryOrigin` to reconstruct from, so the claim is simply GONE. The next
+# POST sees a complete origin enumeration plus no claim and reaches
+# `plan_pending_recovery_claim` — an observation failure destroyed authority and
+# issued permission to mint a competitor beside a running rescue.
+contains: an EACCES on the claim file must be unobserved, got Missing
+
+# F1b, the same collapse one level up and wider: `ClaimDirectory::open` speaks
+# for every claim under the directory, and one failed `openat` called them all
+# corrupt.
+contains: an EACCES opening the claim store must be unobserved: Err(CorruptClaim)
+
+# ===== A FAILED DIRECTORY READ, READ AS A COMPLETE DIRECTORY ==============
+#
+# F2, the block-ship state, RUNNING, on the PRODUCTION boot routing predicate.
+# `readdir` returns NULL at end-of-directory AND on error, and the loop cleared
+# no errno and read none. `Invalid` here means "no pending recovery owns this
+# session", which is the FAIL-OPEN direction: `reattach_live_runs_on_boot`
+# reattaches on exactly that answer and `Supervisor::reattach` appends
+# `Reattach` into the immutable prefix the pending recovery owns. That write is
+# not undoable; a skipped reattach is retried on the next boot.
+contains: a mid-listing EIO must not be reported as a complete directory, got Invalid
+
+# ===== AND THE TEST THAT COULD NOT FAIL ===================================
+#
+# F5. Every `authority_key` test injected through `authority_key_fault`, which
+# returns BEFORE control reaches the existence probe — including the five-case
+# behavioural pin — so the whole suite stayed green with `exists()` restored.
+# This fixture uses NO hook: it removes search permission from the token's
+# parent so the real `stat` fails while the token bytes survive. Under the
+# injection `exists()` answers `false`, `load_or_generate` is REACHED, and a
+# fresh token invalidates every `authority_tag` on the host.
+contains: an unstattable token must be unobserved, got Err(CorruptClaim)
+
+# FOUR failures out of thirty-nine. The thirty-five that stay green are the
+# point:
+#
+#   - `the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative`
+#     — THE STRUCTURAL PIN — stays GREEN, deliberately. This injection changes
+#     which VARIANT the code constructs, not the shape of any type. A red pin
+#     here would mean the pin has started measuring behaviour and stopped
+#     guarding structure, which is how round three's pin came to pass on the
+#     defect it existed to forbid.
+#   - every regression rounds one through four shipped stays GREEN, including
+#     `no_observation_failure_on_the_authority_path_confirms_or_destroys`, the
+#     round-four behavioural pin. It is blind to all four leaves above, which is
+#     why there was a round five.
+#
+# A binary that collapses wholesale, a fifth failure, or a red in the structural
+# pin or in any earlier round's regression, is a different failure and has not
+# reproduced what this artifact claims.
+contains: test result: FAILED. 35 passed; 4 failed
