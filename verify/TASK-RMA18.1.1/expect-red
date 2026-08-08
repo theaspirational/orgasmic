@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is one line, and it is exactly the finding: the candidate
+# submodule paths stop coming from the worktree's own INDEX. Everything else
+# TASK-RMA18.1 shipped stays live — the admin `modules/` branch, the
+# `.gitmodules` branch, `--ignore-submodules=none` on the clean check, the
+# categorical placement above every destructive branch. None of them can see a
+# gitlink that exists only in the index, which is the point.
+exit: 101
+
+# ===== THE SENTINEL IS GONE ================================================
+#
+# The failing assertion, and the only one that matters: an ignored file inside
+# the populated submodule checkout did not survive the prune. Everything below
+# is the mechanism that destroyed it.
+contains: the untracked file inside the submodule must SURVIVE the prune
+
+# The verb did not merely misreport — it DELETED, and it said so. `RECLAIMED`
+# is the removal line, and the summary confirms it counted one. Measured red on
+# 2026-08-08: `RECLAIMED PATH=<tmp>/home/worktrees/orgasmic/task-indexsub
+# BYTES=29485 SIZE=28.8KiB`, matching the reviewer's independent reproduction
+# of the same fixture shape on the production prune path.
+contains: RECLAIMED PATH=
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# NO SALVAGE COULD HAVE HELPED, which is what makes this data loss rather than
+# a parity wart: the parent records a submodule as a GITLINK, so `git add -A`
+# never reaches a file inside one. The fixture's premise assertions pin that the
+# parent reported the tree CLEAN, so no salvage ran either.
+#
+# Exactly one test, exactly one failure. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

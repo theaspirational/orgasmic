@@ -1,0 +1,27 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RMA18.1.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+#
+# ONE test, and it is the whole finding: `worktree_submodule_refusal` asked
+# `.gitmodules`, and GIT ASKS THE INDEX. A gitlink committed with
+# `git update-index --add --cacheinfo 160000,<sha>,vendor/sub` and populated by
+# an ordinary standalone `git clone` has NO `.gitmodules` entry — and, because
+# nothing ever ran `git submodule update --init`, no worktree admin `modules/`
+# directory either. Neither branch TASK-RMA18.1 implemented had anything to fire
+# on, so `worktree-prune` printed RECLAIMED and recursively deleted a tree git
+# itself exits 128 on.
+#
+# The fixture proves git's verdict FIRST, in the same checkout: `git status`
+# and `git status --ignore-submodules=none` both empty (so nothing else would
+# have refused), the index entry mode reported as 160000, and
+# `git worktree remove` failing with "working trees containing submodules
+# cannot be moved or removed". The sentinel SURVIVING is the assertion; against
+# the injected tree it is the first assertion to fire.
+#
+# The injection does not disable the refusal — it takes the INDEX back out of
+# it, leaving `.gitmodules` and the admin `modules/` branch exactly as
+# TASK-RMA18.1 shipped them. That is what makes this a completeness proof rather
+# than a "was the check wired up" proof: both shipped branches are live and
+# neither can see this submodule.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_submodule_recorded_only_in_the_index
