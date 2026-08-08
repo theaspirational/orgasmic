@@ -1,0 +1,25 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# Nothing about WHAT the refusal detects changes here. The call simply moves
+# back below the `RepoGone` early return, so the one branch that removes with NO
+# SALVAGE reaches `root.remove_child` without ever consulting it. That is
+# TASK-RMA18.1.1 finding 2, restored.
+exit: 101
+
+# ===== THE SENTINEL IS GONE ================================================
+#
+# An untracked file inside an ordinary initialized submodule — the shape
+# `git submodule add` + `git submodule update --init` produces — did not survive
+# the prune. No salvage could ever have captured it: the parent records a
+# submodule as a GITLINK, so `git add -A` never reaches inside one.
+contains: the untracked file inside the submodule must SURVIVE the prune
+
+# It DELETED, and said so. Measured red on 2026-08-08:
+# `RECLAIMED PATH=<tmp>/home/worktrees/orgasmic/task-gonesub BYTES=2243
+# SIZE=2.2KiB`.
+contains: RECLAIMED PATH=
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# Exactly one test, exactly one failure. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

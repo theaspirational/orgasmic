@@ -1,0 +1,31 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -4831,12 +4831,8 @@
+     // residual, and stated rather than papered over. It runs in the safe
+     // direction for the reverse case: one deleted after the scan only produces
+     // a refusal, and the operator re-runs.
+-    if let Some(reason) =
+-        worktree_submodule_refusal(&child.dir, &worktree.path, worktree.nested_git.as_deref())
+-    {
+-        return kept(format!("refusing to remove it: {reason}"));
+-    }
+-
++    // INJECTION: the categorical refusal moves back BELOW the `RepoGone` early
++    // return, so it guards only the `Unclaimed` path — TASK-RMA18.1.1 finding 2.
+     if let WorktreeDisposition::RepoGone { .. } = worktree.disposition {
+         // TASK-M47E5.2 finding 3: classification happened before the multi-GB
+         // size walk and before the reservation, and this is the ONE path that
+@@ -4862,6 +4858,12 @@
+         }
+         drop(child);
+         return removal_outcome(root.remove_child(&worktree.name, worktree.identity), None);
++    }
++
++    if let Some(reason) =
++        worktree_submodule_refusal(&child.dir, &worktree.path, worktree.nested_git.as_deref())
++    {
++        return kept(format!("refusing to remove it: {reason}"));
+     }
+ 
+     // Everything below hands `worktree.path` to a `git` subprocess, which cannot

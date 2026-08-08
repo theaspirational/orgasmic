@@ -1,0 +1,16 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -4831,9 +4831,9 @@
+     // residual, and stated rather than papered over. It runs in the safe
+     // direction for the reverse case: one deleted after the scan only produces
+     // a refusal, and the operator re-runs.
+-    if let Some(reason) =
+-        worktree_submodule_refusal(&child.dir, &worktree.path, worktree.nested_git.as_deref())
+-    {
++    // INJECTION: the RepoGone branch stops consuming the walk's nested-`.git`
++    // signal, exactly as TASK-RMA18.1.1 shipped it.
++    if let Some(reason) = worktree_submodule_refusal(&child.dir, &worktree.path, None) {
+         return kept(format!("refusing to remove it: {reason}"));
+     }
+ 

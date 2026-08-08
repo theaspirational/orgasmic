@@ -1,0 +1,34 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RMA18.1.1.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+#
+# ONE test, and it is the whole finding: on `RepoGone` all three of the shipped
+# refusal's sources go quiet AT ONCE. The admin directory is gone, so it holds
+# no `modules/`; the worktree's index lives inside that same gone directory, so
+# `worktree_index_gitlinks` answers `NoRepository` — deliberately not a refusal;
+# and a worker who cloned a dependency himself never wrote a `.gitmodules` for
+# the fallback to read. `worktree_submodule_refusal` therefore returned `None`
+# and the `RepoGone` arm ran `root.remove_child` on a tree holding a populated
+# independent repository with uncommitted work. That is the ONE branch that
+# removes with NO SALVAGE AT ALL.
+#
+# TASK-RMA18.1.1 shipped this as a disclosed carve-out and its help promised the
+# opposite, which is why the review would not ship the verb as documented.
+#
+# The fixture takes git's verdict FIRST, while the repository is still whole:
+# `git status` and `git status --ignore-submodules=none` both empty, the index
+# entry mode reported as 160000, and `git worktree remove` failing with
+# "working trees containing submodules cannot be moved or removed". Only then
+# does the admin directory go away, and `--dry-run` pins that the classification
+# really is `RepoGone` — so a green here cannot come from the `Unclaimed` path.
+# The sentinel SURVIVING is the assertion; against the injected tree it is the
+# first assertion to fire.
+#
+# The injection does not delete the refusal, or move it, or disable a branch of
+# it. It takes ONE argument back out: the `RepoGone` leg stops consuming the
+# nested-`.git` signal the size walk already collected, leaving the function
+# exactly as TASK-RMA18.1.1 shipped it. Every other refusal stays live —
+# admin `modules/`, the index, `.gitmodules`, the categorical placement above
+# every destructive branch — and none of them can see this repository.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_repo_gone_worktree_holding_a_nested_repository

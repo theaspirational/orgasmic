@@ -90,10 +90,38 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
 /// "removed with NO salvage", with no mention that the refusal precedes that
 /// branch too, and the refusal read `.gitmodules` where git reads the INDEX. So
 /// `categorical` and `index` are pinned as well.
+///
+/// AND THEN THE KEYWORD PIN ITSELF WAS THE DEFECT (TASK-RMA18.1.1.1 finding B).
+/// The version above asserted the help CONTAINS "categorical" and "index".
+/// Both substrings sat inside ONE sentence that was FALSE — "the submodule
+/// refusal … runs before EVERY removal this verb makes, the repo-gone one
+/// included; it reads the worktree's own INDEX" — because the repo-gone branch
+/// has no index to read and, at the time, no other check either. A keyword pin
+/// cannot tell a true sentence from a false one containing the same words.
+///
+/// SO THE PIN IS NOW STRUCTURAL: it constrains which claims may CO-OCCUR, at
+/// sentence granularity. No single sentence may attribute index-reading to the
+/// repo-gone branch — that is the exact false conjunction, and deleting either
+/// half of it no longer satisfies the test, because a sentence about the
+/// repo-gone branch must separately name the weaker check that branch really
+/// makes. A false sentence of the shipped shape fails both ways.
+///
+/// WHAT THIS STILL CANNOT DO, stated rather than implied: `cli_parity` reads
+/// clap output, so it constrains the SHAPE of the claim and never its truth.
+/// The truth is pinned in `tests/dispatch.rs`, by three regressions that run
+/// the real verb over real fixtures git itself refuses —
+/// `worktree_prune_refuses_a_submodule_recorded_only_in_the_index`,
+/// `worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule`, and
+/// `worktree_prune_refuses_a_repo_gone_worktree_holding_a_nested_repository`.
+/// This test's job is to stop the help from drifting off what those three prove.
 #[test]
 fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
     let help = help_for(&["manager".to_string(), "worktree-prune".to_string()]);
-    let lower = help.to_lowercase();
+    // Matched against the UNWRAPPED text throughout. clap prints this block
+    // with the literal newlines the source has, so a phrase that happens to
+    // straddle one is invisible to a line-oriented `contains` — which would
+    // make a pin fire (or, worse, pass) on where the author hit return.
+    let lower = help.to_lowercase().replace('\n', " ");
     for stale in ["git's clean check still gates", "removes without --force"] {
         assert!(
             !lower.contains(stale),
@@ -108,6 +136,10 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
         "dirty",
         "categorical",
         "index",
+        // There is no `--force` on this verb, so every escape a refusal can
+        // offer is something the operator does by hand. The help must say so
+        // rather than leave the operator hunting for a flag that is not there.
+        "no `--force` on this verb",
     ] {
         assert!(
             lower.contains(required),
@@ -115,6 +147,54 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
              verb reads this text, and each of these is a refusal it performs itself:\n{help}"
         );
     }
+
+    // Sentence granularity, because the defect was a conjunction inside one
+    // sentence. A `.` that is not followed by whitespace does not end a
+    // sentence, which is what keeps `.git` and `.gitmodules` whole.
+    let sentences: Vec<&str> = lower
+        .split(". ")
+        .map(str::trim)
+        .filter(|sentence| !sentence.is_empty())
+        .collect();
+    assert!(
+        sentences.len() > 3,
+        "the sentence split produced {} pieces, so this pin is not reading sentences at all \
+         and would pass on anything:\n{help}",
+        sentences.len()
+    );
+    let names_repo_gone = |sentence: &str| {
+        ["repo-gone", "repository is gone", "repo is gone"]
+            .iter()
+            .any(|marker| sentence.contains(marker))
+    };
+
+    let about_repo_gone: Vec<&&str> = sentences
+        .iter()
+        .filter(|sentence| names_repo_gone(sentence))
+        .collect();
+    assert!(
+        !about_repo_gone.is_empty(),
+        "worktree-prune help must say what happens on the repo-gone branch — it is the one \
+         branch that removes with NO salvage:\n{help}"
+    );
+    for sentence in &about_repo_gone {
+        assert!(
+            !sentence.contains("index"),
+            "worktree-prune help attributes the INDEX to the repo-gone branch in one sentence \
+             ({sentence:?}). There is no index there — the admin directory it lives in is what \
+             is gone — and a sentence that says otherwise is exactly the false claim \
+             TASK-RMA18.1.1.1 finding B was filed on. Say the two branches separately:\n{help}"
+        );
+    }
+    assert!(
+        about_repo_gone
+            .iter()
+            .any(|sentence| sentence.contains("nested `.git`") && sentence.contains("any type")),
+        "worktree-prune help names the repo-gone branch but not the check it actually makes \
+         there: the anchored walk refusing a NESTED `.git` entry of ANY TYPE (a `.git` written \
+         by `git submodule update --init` is a FILE, not a directory). Dropping the claim is \
+         not a fix — the operator needs to know which protection they have:\n{help}"
+    );
 }
 
 fn clap_leaf_paths() -> Vec<String> {

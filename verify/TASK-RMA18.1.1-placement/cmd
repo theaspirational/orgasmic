@@ -1,0 +1,29 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-RMA18.1.1-placement`.
+#
+# THE SECOND RUNG FOR TASK-RMA18.1.1. That task closed two BLOCK SHIPs and
+# shipped one injection proof, which covers finding 1 (the refusal asked
+# `.gitmodules` where git asks the INDEX). Finding 2 — the refusal sat BELOW the
+# `RepoGone` early return, so it guarded only the `Unclaimed` path — had no rung:
+# moving the call back down left `orgasmic verify TASK-RMA18.1.1` GREEN, and only
+# the integration test caught it. TASK-RMA18.1.1.1 finding E filed that gap and
+# this artifact is it.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+#
+# The fixture is the ORDINARY submodule shape — `git submodule add`, then
+# `git submodule update --init` inside the linked worktree — with git's own
+# refusal measured first, while the repository is still whole. No exotic index
+# is needed to reach this: the placement defect deletes a repo-gone worktree
+# holding a perfectly ordinary initialized submodule. Then the admin directory
+# goes away, `--dry-run` pins the `RepoGone` classification, and the sentinel
+# SURVIVING is the assertion.
+#
+# The injection changes no predicate at all. It relocates the call — the whole
+# `if let Some(reason) = worktree_submodule_refusal(...)` block moves from above
+# the `RepoGone` early return to below it — which is exactly the shape that
+# shipped before TASK-RMA18.1.1 and exactly what finding E asked to be pinned.
+# Everything the refusal knows how to detect stays live and correct; it simply
+# never runs on the one branch that deletes with no salvage.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule

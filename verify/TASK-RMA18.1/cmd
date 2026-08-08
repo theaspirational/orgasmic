@@ -21,4 +21,11 @@
 # submodule refusal fires first, exactly as it does in git. It is pinned by the
 # fixture's own premise assertions instead, which fail loudly if `git status`
 # ever stops reporting this tree clean.
+# ---------------------------------------------------------------------------
+# RE-AUTHORED 2026-08-08 by TASK-RMA18.1.1.1, for the same reason and with the
+# same discipline as TASK-RMA18.1.1's: only the CONTEXT moved (the shared
+# `advice` string became `submodule_advice`), the three injected changes are
+# byte-identical in effect, and the pinned red was re-measured rather than
+# assumed.
+# ---------------------------------------------------------------------------
 env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_worktree_containing_an_initialized_submodule
