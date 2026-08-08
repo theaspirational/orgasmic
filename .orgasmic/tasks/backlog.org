@@ -4884,4 +4884,55 @@ opaque failure mode into an ordinary one.
 Related: [[TASK-VD0VB]] (a tmux dispatch leaves no evidence when it dies — this
 is the specific, cheapest instance), [[TASK-4CSMY]] (the pane-liveness channel
 whose capture this is).
+** Proof
+*THE TASK WAS PROVEN THE SAME DAY IT WAS FILED, BY THE SAME WORKER DYING TWICE.*
+
+The TASK-RMA18.1.1 reviewer was stall-killed a SECOND time
+(=tx-20260808-orgasmic-5372=, after =tx-20260808-orgasmic-5361=), same
+=last.txt= 0 bytes, same undiagnosable lifecycle reason. The manager had
+meanwhile armed a crude external pane snapshotter — a 30s =tmux capture-pane=
+loop, which is exactly the buffer this task asks the daemon to persist. *That
+snapshot diagnosed in one read what the first death left permanently unknowable:*
+
+#+begin_example
+• Searching the web
+• Searched the web for site:github.com/git/git read-cache.c verify_hdr index checksum hashfile git index ...
+
+ⓘ This content can't be shown
+  We take extra caution with cybersecurity requests. If you're a security professional, you may be
+  able to apply for Trusted Access.
+
+› Implement {feature}
+#+end_example
+
+*A PROVIDER-SIDE SAFETY FILTER REFUSED A WEB SEARCH AND ENDED THE TURN.* The
+harness then sat at its IDLE INPUT PLACEHOLDER (=› Implement {feature}=) at 0.0%
+CPU. Ten minutes later the stall detector correctly killed an idle worker.
+
+Note what the review was doing: attacking a new git-index PARSER on a destructive
+path, which sent it to git's =read-cache.c= checksum semantics. The query
+(=verify_hdr=, =checksum=, =hashfile=) reads as a cybersecurity request. *This is
+deterministic, not flaky* — the same brief produced the same investigative path
+and the same refusal on both dispatches.
+
+=== What this proves, beyond the original argument
+1. *The stall detector is not wrong.* It killed a genuinely idle worker. The ONLY
+   defect is that it discarded the frame that explained why — and this frame was
+   sitting in =pane_content='s return value at =supervisor.rs:4911= at the moment
+   of the decision.
+2. *An external 30-second polling loop was sufficient.* The fix is not
+   architecturally hard; the daemon already has strictly better access than the
+   workaround that solved it.
+3. *ADD A TERMINAL CLASSIFICATION, not just the artifact.* The lifecycle reason
+   says "no work evidence for 600s", which describes the SYMPTOM and actively
+   misleads: this worker had not wedged, it had been REFUSED and had finished its
+   turn. A pane frame showing an idle input prompt with no open turn is a
+   different terminal state from a subtree spinning at 0% on a deadlock, and an
+   operator needs to be told which. At minimum, quote the last non-empty pane
+   line in the reason.
+
+=== Extra acceptance implied by this evidence
+5. A stall-kill whose pane shows the harness at an idle input prompt is reported
+   as a distinct terminal state (worker stopped) from an unresponsive subtree,
+   and the reason names which.
 

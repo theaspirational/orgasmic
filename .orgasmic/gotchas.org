@@ -546,6 +546,38 @@ punctuate long gates with output. Managers: a session that dies =[unreported]=
 with a complete-looking report.md died here; salvage = replay its artifact, run
 its missing gate yourself, merge, close with a tx noting the salvage.
 
+** A provider safety filter can END a worker's turn, and orgasmic reads that as a stall
+Measured TWICE on the same brief, 2026-08-08, costing two full review budgets. A
+codex reviewer attacking a git-index parser searched the web for
+=site:github.com/git/git read-cache.c verify_hdr index checksum hashfile=. The
+provider refused it as a cybersecurity request ("This content can't be shown …
+Trusted Access"); *the turn ENDED*; codex returned to its idle input placeholder
+(=› Implement {feature}=) at 0.0% CPU; and the stall detector killed the run at
+600s with =last.txt= 0 bytes. *DETERMINISTIC, NOT FLAKY* — the same brief drives
+the same investigative path to the same query, so re-dispatching unchanged burns
+another budget.
+
+Do not ask a worker to reason about security-sensitive UPSTREAM internals it will
+have to search for: parser, checksum and verification internals of git, openssl
+or kernels are exactly the query shape that trips it. *Give it an EXECUTABLE
+ORACLE instead*, which is stronger evidence anyway — the tool is installed
+locally, so have it generate and mutate real artifacts and observe what the real
+binary accepts (=git update-index=, =GIT_INDEX_FILE=, =git ls-files --stage=).
+Tell the worker an honest "I could not check this" beats a dead dispatch.
+
+DIAGNOSABLE ONLY FROM THE PANE. =last.txt= and =stdout.log= are both 0 bytes and
+the tmux session dies with the run, so the first occurrence was permanently
+unknowable; the second was diagnosed in one read from an external snapshotter.
+*TASK-8VBXR*: the daemon captures the pane to MAKE the kill decision
+(=supervisor.rs:4911=) and then discards it. Until that lands, snapshot beside
+any dispatch you care about:
+
+: while true; do tmux ls -F '#{session_name}' | while IFS= read -r s; do
+:   tmux capture-pane -p -t "$s" > "$SNAP/$s.txt"; done; sleep 30; done
+
+Note =for s in $(...)= does NOT word-split in zsh — use =while IFS= read -r=, or
+the loop silently captures nothing and then reports phantom deaths.
+
 ** NEVER set ORGASMIC_HOME inside a dispatch: any orgasmic verb then restarts the REAL daemon and kills every live run
 Measured three times on 2026-08-03, costing five workers across three
 dispatch-wide outages. Read out of the source afterwards, not inferred:

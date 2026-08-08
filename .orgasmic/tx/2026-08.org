@@ -23122,3 +23122,100 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-08 Sat 13:05:22 manager.dispatch_orphaned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5390
+:TIME:         [2026-08-08 Sat 13:05:22]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T124951.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260808T124951-df85d294ef6d4fbfb6481447b754a5d0
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:END:
+
+* TX 2026-08-08 Sat 13:06:46 manager.dispatch_aborted TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5391
+:TIME:         [2026-08-08 Sat 13:06:46]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       Stall-killed a SECOND time, same cause, now DIAGNOSED from an external pane snapshot: an OpenAI safety filter refused a web search for git read-cache.c checksum semantics as a cybersecurity request, ending the turn; codex sat at its idle input prompt at 0% CPU until the 600s stall timeout. Deterministic, driven by brief claim C2. Frame preserved at .orgasmic/tmp/dispatch/task-rma18-1-1-review/pane-at-stall-kill-run-20260808T124951.txt
+:CLOSED_TX:    tx-20260808-orgasmic-5372
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5372/last.txt
+:END:
+
+* TX 2026-08-08 Sat 13:06:52 task.edited TASK-8VBXR
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5392
+:TIME:         [2026-08-08 Sat 13:06:52]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8VBXR
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-8VBXR
+:NODE_ID:      TASK-8VBXR
+:END:
+
+* TX 2026-08-08 Sat 13:07:10 manager.dispatch_started TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5393
+:TIME:         [2026-08-08 Sat 13:07:10]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRANCH:       task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 13:07:10]
+:LIVENESS:     2c7f5ea8db828b716388ef269df3413e9d072165
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:REVIEWS_TX:   tx-20260808-orgasmic-5328
+:REASON_INITIAL: Third attempt. Two prior dispatches died identically: a provider safety filter refused a git read-cache.c web search, ending the turn and leaving codex idle until the stall killer fired. Brief now forbids the search and points C2 at the local git binary as an executable oracle instead.
+:END:
+
+* TX 2026-08-08 Sat 13:07:10 run.created TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5394
+:TIME:         [2026-08-08 Sat 13:07:10]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-reviewer-20260808T130710.jsonl
+:REASON:       Third attempt. Two prior dispatches died identically: a provider safety filter refused a git read-cache.c web search, ending the turn and leaving codex idle until the stall killer fired. Brief now forbids the search and points C2 at the local git binary as an executable oracle instead.
+:RUN_ID:       run-20260808T130710-c2061e0c43764ef7bba76d4e446423f7
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-51c866dfc4f1448f92781fef24ad0cff-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1-review/task-rma18-1-1-review-51c866dfc4f1448f92781fef24ad0cff-stdout.log
+:DISPATCH_ATTEMPT: 51c866dfc4f1448f92781fef24ad0cff
+:DISPATCH_TX:  tx-20260808-orgasmic-5393
+:MODEL_OVERRIDE: gpt-5.6-sol
+:END:
