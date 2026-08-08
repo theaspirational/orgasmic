@@ -4434,80 +4434,164 @@ self-describing host-state error the classifier could read directly.
   genuine assertion failure, or the decision not to distinguish them is recorded
   with its reason.
 
-* BACKLOG TASK-2QK4P worktree-prune redesign broke crash-recovery replay: recovery_faults_kill_real_daemon_and_preserve_original_pane 409s, bisected to TASK-RMA18    :daemon:recovery:
+* BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
 :PROPERTIES:
-:DEPENDS_ON: TASK-RMA18
-:ID: TASK-2QK4P
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/**
+:DEPENDS_ON: TASK-A55J7
+:ID: TASK-C7NVH
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**
 :END:
 
 ** READ THIS FIRST — STATUS
-*This is a REGRESSION on main, bisected, not a flake and not host load.* It was
-reported by the TASK-RMA18 implementer, MISCLASSIFIED as pre-existing, and missed
-by the TASK-RMA18 review (which ran no tests by brief). The manager found it while
-gating TASK-RMA18.1 and proved it with a control.
+Found [2026-08-08] by reading a LIVE PANE, which is exactly how the
+=manager-dispatch= convention says this class of defect gets discovered, and it
+is the second of the two failures that convention was written to prevent.
 
-** The measurement
-=recovery_faults_kill_real_daemon_and_preserve_original_pane=
-(=crates/orgasmic-daemon/tests/recovery_fault_restart.rs:576=) fails:
+A =tmux= dispatch with =--harness codex --model gpt-5.6-sol --effort high=
+recorded =:EFFORT: high= on its =manager.dispatch_started= tx
+(=tx-20260808-orgasmic-5309=) while the running TUI's statusline read
+=gpt-5.6-sol xhigh=. *The record is not merely incomplete — it is false.*
 
-: response: replay status 409 Conflict
+** Mechanism, read out of the source
+=crates/orgasmic-drivers/src/modes/tmux.rs=, harness argv composition:
 
-BISECTED, each run in an ISOLATED worktree with its own =CARGO_TARGET_DIR=, the
-single test by name, on a calm host (syspolicyd < 3%, load 4-7):
+- the =claude= branch (~:962-1002) pushes =--model= AND =--effort=;
+- the =codex | cursor-agent | hermes= branch (~:1004-1011) pushes *=--model= only*.
 
-| commit                                | result |
-|---------------------------------------|--------|
-| =3a36858= (before TASK-RMA18)         | *PASS*, 7.33s |
-| =ebc69c2= (TASK-RMA18 merged)         | *FAIL*, exit 101 |
-| =c090b51= (state commit after RMA18)  | *FAIL*, exit 101 |
-| =d10b0cf= (TASK-RMA18.1 merged)       | *FAIL*, exit 101 |
+So for three of the four TUI harnesses the effort value is accepted at the CLI,
+resolved, stored on the tx, and then DROPPED on the way to the process. The
+harness runs at whatever its own configuration defaults to.
 
-*So TASK-RMA18 introduced it and TASK-RMA18.1 is not at fault.* It fails ALONE,
-repeatably — this is not the concurrency-and-load shape of TASK-K9WWM.
+=--effort= is documented as "unvalidated passthrough" — passthrough is precisely
+what does not happen here.
 
-** Why it was missed three times, which is the more useful finding
-- The TASK-RMA18 implementer SAW this exact failure ("recovery_faults_kill_real_daemon_and_preserve_original_pane
-  (409 on replay)") and classified it *pre-existing / host-load*, supported by a
-  control that reverted =supervisor.rs= to main and ran the WHOLE SUITE, which
-  came back with three DIFFERENT failures. A whole-suite comparison under load
-  cannot answer a single-test question: it measured the host on both sides. The
-  correct control is the one above — one test, by name, isolated worktree.
-- The reviewer ran no tests, by explicit instruction in the manager's brief, and
-  said so plainly in its report. Its residual-risk statement named exactly this
-  gap. *That is the brief's fault, not the reviewer's.*
-- The manager reported the daemon suite "738 passed / 0 failed" — which was the
-  LIB binary only (=orgasmic_daemon-<hash>=). =recovery_fault_restart= is a
-  separate INTEGRATION binary and was never in that number. A per-binary green
-  was read as a per-crate green.
+** Why it matters, beyond the obvious
+The convention states the rule this breaks: "carry all four into every place you
+report that run ... the record says what ran without anything reading it back as
+a setting". A tx that says =high= when the process ran =xhigh= is worse than a tx
+with no effort field, because a later manager weighing a worker's claim will
+believe it. Every past codex/cursor-agent dispatch record on this board carries
+an effort value that may never have reached the process.
 
-** Where to look
-=/api/runs/<id>/recover= with =action: start_recovery_run= returns 409 from
-=recovery_claim_conflict= (=api.rs:11723=), which fires when a claim exists whose
-=request_id= differs, or when a Committed claim is not authoritative per
-=committed_claim_is_authoritative= — and that function consults =indexed_origins=,
-so an index that is not ready yet produces a conflict rather than a replay.
+The 2026-08-08 instance was BENIGN in direction — =xhigh= exceeds the requested
+=high=, so the review was more thorough and more expensive, not less. The reverse
+is the dangerous case: a manager choosing =low= for a cheap mechanical round
+silently gets the harness default, and the convention's own advice ("a fix pass
+may carry less effort than the pass that produced its findings") cannot be
+followed at all on these harnesses.
 
-TASK-RMA18's daemon surface is small and entirely in =supervisor.rs=:
-=AdmittedRun= replacing the lease's =String=, =worktree_identity= /
-=same_worktree=, =pending_admission_in_worktree=, and the =blocking_run_for_close=
-consultation.
+Related but distinct: *TASK-A55J7* is that nothing forces the manager to RESOLVE
+the four values. This is the next link — the value is resolved, recorded, and
+then discarded. Fixing A55J7 alone would still produce a false record.
 
-*RULED OUT ALREADY, do not repeat it:* the manager reverted =admit_live_run='s
-broadened conflict match (=same_worktree= back to =key.worktree_key ==
-worktree_key=) on the merged tree, rebuilt, and the test STILL FAILED. That was
-the obvious candidate — a broadened equality on a conflict check can only produce
-more conflicts — and it is not the cause.
+** Check before implementing
+Codex may not accept an =--effort= flag at all. =codex-cli 0.144.5= configures
+reasoning effort through a config override (=-c model_reasoning_effort=...=), and
+the app-server path in =adapters/codex.rs= already carries =reasoning_effort=
+through =cfg= (:78, :228, :442-443, :918-919) — so the stdio/ws lane may be
+correct while only the TUI lane is broken. Establish per harness what the real
+mechanism is; do not assume the claude flag shape generalises. Same question for
+=cursor-agent= and =hermes=.
+
+** Direction
+1. Determine, per TUI harness, how reasoning effort is actually set on a pane
+   launch. Measure it — launch one and read the statusline, as this was found.
+2. Plumb it. If a harness genuinely cannot accept an effort at launch, then
+   =--effort= must not be silently recorded as though it applied: either refuse
+   the flag for that pair, or record what actually took effect.
+3. A regression that pins argv/config composition per harness, so a harness
+   gaining or losing the capability fails a test rather than rotting.
 
 ** Acceptance
-- =recovery_faults_kill_real_daemon_and_preserve_original_pane= passes on main,
-  alone and in the full =-p orgasmic-daemon= suite on a calm host.
-- The root cause is stated as a measurement naming which part of TASK-RMA18's
-  daemon change broke the recovery replay, not as a plausible story.
-- If the test's premise (not the product code) turns out to be what RMA18
-  invalidated, say so explicitly and justify changing the test rather than the
-  code — the bar is high, because this test guards crash recovery.
-- A gate would have caught this: =scripts/run-tests.sh -p orgasmic-daemon= covers
-  it, so state why the round that introduced it went out green, and whether
-  anything should change so a per-binary result is never reported as per-crate.
+- A =tmux= dispatch on codex, cursor-agent and hermes either runs at the
+  requested effort, or is refused, or records what actually applied — never
+  records a value that did not reach the process.
+- A test pins the composition for every TUI harness, and fails if an effort value
+  is accepted but not delivered.
+- The same question is answered for =--model= on those harnesses (it IS pushed;
+  confirm it takes effect) and for the =rmux= mode, which composes argv
+  separately in =modes/rmux.rs= and was not examined.
+
+* BACKLOG TASK-D6N77 orgasmic has no wake channel: a finished worker cannot reach its manager, so autopilot depends on the manager hand-rolling a watcher every dispatch    :daemon:cli:manager:
+:PROPERTIES:
+:ID: TASK-D6N77
+:PRIORITY: P1
+:END:
+
+** Description
+*ORGASMIC HAS NO WAKE CHANNEL, SO AUTOPILOT IS A MANAGER HABIT RATHER THAN A
+PRODUCT PROPERTY.* Reported by the operator on 2026-08-08, from the symptom:
+a codex reviewer finished, the daemon recorded =[run-gone]= and
+=reviewer.reported=, and *the manager sat idle until the operator pinged it.*
+
+The daemon knows the instant a run reaches a terminal state. The manager is a
+harness session, and nothing the daemon does can inject a turn into it. Today
+the ONLY way a manager learns a worker finished is to POLL — by running
+=manager dispatch-status= itself, or by hand-rolling a background loop whose
+exit its harness reports back.
+
+That means the autopilot loop depends on the manager REMEMBERING to build a
+watcher, by hand, correctly, for every single dispatch. On 2026-08-08 the
+manager armed watchers for two dispatches and not for the third; the third is
+the one that stalled. There is no channel that reports the omission, because a
+watcher that was never armed is indistinguishable from a worker still working.
+
+*A protection that lives in a document is not a protection* — TASK-M47E5.3's
+own ruling, and the same argument that produced TASK-4BBA6. This is that
+argument applied to the goal itself.
+
+** Why this is worth more than one stalled session
+The project goal is that orgasmic lets a human autopilot development. Every
+other quality mechanism in this repo — the review gate, the verify artifacts,
+the flake classifier — assumes a manager that keeps moving. A manager that
+silently stops between rounds does not fail loudly; it looks exactly like a
+manager whose worker is still running. The operator is the only detector, which
+inverts the product.
+
+** Recommended shape
+*** 1. =orgasmic manager dispatch-wait= (the primitive, do this first)
+A blocking verb that exits when a dispatch GENERATION reaches a terminal state:
+
+: orgasmic manager dispatch-wait --started-tx <tx> [--timeout <dur>]
+
+- exits 0 and prints the terminal state when the generation reaches =reported=;
+- exits non-zero, distinguishably, when the run is gone WITHOUT a report (the
+  worker died) or the timeout elapses;
+- repeatable =--started-tx= so one wait covers a round;
+- *must not* key liveness on =[pid-gone]=, which tmux prints always because
+  =WORKER_PID=-= (a watcher keyed on it fires instantly and falsely — recorded
+  in gotchas.org).
+
+This turns the autopilot loop from "hand-roll a correct poll loop" into "run one
+command in the background", which every harness can already do.
+
+*** 2. Make the omission impossible rather than discouraged
+=manager dispatch= already prints a =watch:= line, and it currently names an
+INSPECT command (=orgasmic run show <run_id>=) — something you run when you have
+already decided to look. Print the BLOCKING wait command instead, so the obvious
+copy-paste is the one that keeps the loop alive. Consider a =--wait-command=
+that emits it in a form intended to be backgrounded.
+
+*** 3. Daemon-side terminal hook (the general version, later)
+A configured command invoked on run terminal transitions would also let the
+daemon push to a phone, a webhook, or a fifo without a manager session existing
+at all. Strictly more general than (1) and strictly more work; it does not
+replace (1), because the wake still has to land somewhere the manager can be
+resumed from.
+
+** Acceptance
+1. =dispatch-wait= exists, blocks, and distinguishes reported / died / timeout by
+   exit code, with each documented.
+2. It is proven against a real dispatch, not just a fixture: a test or a recorded
+   manual proof showing it returns promptly on report and does NOT return early
+   on =[pid-gone]=.
+3. =manager dispatch='s printed follow-up line names the blocking wait.
+4. The manager convention (=shipped/prompt-studio/conventions/manager-dispatch.org=)
+   is updated so arming the wait is part of the dispatch step, not an afterthought
+   — but the convention is the DOCUMENTATION of the mechanism, not the mechanism.
+
+** Open question for the implementer
+Is there a cheaper honest primitive than polling inside =dispatch-wait= — does
+the daemon expose, or could it cheaply expose, a long-poll or SSE endpoint on run
+state that the CLI could consume? Answer this before writing a poll loop; a
+30-second poll is acceptable but should be a decision, not a default.

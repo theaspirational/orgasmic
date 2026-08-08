@@ -21645,3 +21645,538 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       regression bisected by the manager: passes at 3a36858, fails at ebc69c2, fails alone on a calm host
 :END:
+
+* TX 2026-08-08 Sat 09:36:58 task.state_transitioned TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5305
+:TIME:         [2026-08-08 Sat 09:36:58]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 09:36:59 manager.dispatch_started TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5306
+:TIME:         [2026-08-08 Sat 09:36:59]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p
+:BRANCH:       task-2qk4p-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p/task-2qk4p-brief.md
+:STARTED_AT:   [2026-08-08 Sat 09:36:59]
+:LIVENESS:     4bcf6e405345694fb16dd45850ff4cbc2e3b45a9
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0 regression on main: crash-recovery replay 409s since ebc69c2, bisected by the manager, fails alone on a calm host
+:END:
+
+* TX 2026-08-08 Sat 09:36:59 run.created TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5307
+:TIME:         [2026-08-08 Sat 09:36:59]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P-implementer-20260808T093659.jsonl
+:REASON:       P0 regression on main: crash-recovery replay 409s since ebc69c2, bisected by the manager, fails alone on a calm host
+:RUN_ID:       run-20260808T093659-7f808deaa6ef4df8a5a40d6bb389ea27
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p/task-2qk4p-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p/task-2qk4p-857484361cc24551a329bf5c48a5526c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p/task-2qk4p-857484361cc24551a329bf5c48a5526c-stdout.log
+:DISPATCH_ATTEMPT: 857484361cc24551a329bf5c48a5526c
+:DISPATCH_TX:  tx-20260808-orgasmic-5306
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 09:42:19 task.state_transitioned TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5308
+:TIME:         [2026-08-08 Sat 09:42:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 09:42:19 manager.dispatch_started TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5309
+:TIME:         [2026-08-08 Sat 09:42:19]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1-review
+:BRANCH:       task-rma18.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-review/task-rma18-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 09:42:19]
+:LIVENESS:     4bcf6e405345694fb16dd45850ff4cbc2e3b45a9
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5301
+:REASON_INITIAL: cross-family review restored per operator direction: gpt-5.6-sol high, the same reviewer that produced both prior BLOCK SHIP rounds on this destructive path
+:END:
+
+* TX 2026-08-08 Sat 09:42:20 run.created TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5310
+:TIME:         [2026-08-08 Sat 09:42:20]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1-reviewer-20260808T094219.jsonl
+:REASON:       cross-family review restored per operator direction: gpt-5.6-sol high, the same reviewer that produced both prior BLOCK SHIP rounds on this destructive path
+:RUN_ID:       run-20260808T094219-6d82e1b895774dcda34634484789444a
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-review/task-rma18-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-review/task-rma18-1-review-4ad27ad235b942f6a2ec5577b93a5bab-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-review/task-rma18-1-review-4ad27ad235b942f6a2ec5577b93a5bab-stdout.log
+:DISPATCH_ATTEMPT: 4ad27ad235b942f6a2ec5577b93a5bab
+:DISPATCH_TX:  tx-20260808-orgasmic-5309
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 09:45:11 task.created TASK-C7NVH
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5311
+:TIME:         [2026-08-08 Sat 09:45:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C7NVH
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       observed live: tx recorded EFFORT high while the codex TUI statusline read xhigh; modes/tmux.rs pushes --effort only on the claude branch
+:END:
+
+* TX 2026-08-08 Sat 10:06:06 reviewer.finding TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5312
+:TIME:         [2026-08-08 Sat 10:06:06]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       HIGH correctness BLOCK SHIP: the submodule refusal reads .gitmodules instead of the index, so a populated index-only gitlink passes every local gate and is recursively deleted although git worktree remove refuses it
+:SEVERITY:     HIGH
+:KIND:         correctness
+:LINES:        3930-4049,4154-4163
+:EVIDENCE:     Production-path scratch variant printed RECLAIMED and deleted an ignored sentinel; the same clean fixture made git worktree remove exit 128
+:FIX_DIRECTION: Derive gitlink paths from the anchored worktree index and fail closed on unreadable or unsupported index state; add the index-only populated checkout regression
+:END:
+
+* TX 2026-08-08 Sat 10:06:06 reviewer.finding TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5313
+:TIME:         [2026-08-08 Sat 10:06:06]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       HIGH bug BLOCK SHIP: the RepoGone branch deletes through the anchored handle before the new categorical submodule refusal, so a populated submodule and its sentinel are removed unsalvaged
+:SEVERITY:     HIGH
+:KIND:         bug
+:LINES:        4254-4288
+:EVIDENCE:     Production-path scratch variant moved the worktree admin dir away after git proved its submodule refusal; prune printed RECLAIMED=1 and the sentinel assertion failed
+:FIX_DIRECTION: Run the handle-based submodule refusal before the RepoGone early return and add a repo-gone plus populated-submodule sentinel regression
+:END:
+
+* TX 2026-08-08 Sat 10:06:06 reviewer.finding TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5314
+:TIME:         [2026-08-08 Sat 10:06:06]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       MEDIUM correctness: the residual-risk comment says identity is rechecked immediately before every git subprocess, but status plus HEAD, every salvage subprocess, and worktree-list plus final status each share only one outer assert
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:LINES:        4196-4208,4291-4353
+:EVIDENCE:     The clean-decision window spans the entire git worktree list subprocess before git status resolves the pathname, not only assert-to-execve as documented
+:FIX_DIRECTION: Put an identity assertion immediately before each path-resolving subprocess or restate the larger group-level windows precisely; compute the clean decision from the handle where possible
+:END:
+
+* TX 2026-08-08 Sat 10:06:06 reviewer.finding TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5315
+:TIME:         [2026-08-08 Sat 10:06:06]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       LOW docs: the proving test tells maintainers to run scripts/run-tests.sh --release-gates, but that option does not exist; the cfg-off leg is automatic for workspace and orgasmic-cli scopes
+:SEVERITY:     LOW
+:KIND:         docs
+:LINES:        9245-9251
+:EVIDENCE:     run-tests argument parsing has no release-gates arm and forwards unknown arguments to cargo
+:FIX_DIRECTION: Name the real automatic gate invocation, such as scripts/run-tests.sh -p orgasmic-cli
+:END:
+
+* TX 2026-08-08 Sat 10:08:07 reviewer.reported TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5316
+:TIME:         [2026-08-08 Sat 10:08:07]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:RUN_ID:       run-20260808T094219-6d82e1b895774dcda34634484789444a
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5309/last.txt
+:END:
+
+* TX 2026-08-08 Sat 10:12:34 implementer.reported TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5317
+:TIME:         [2026-08-08 Sat 10:12:34]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:RUN_ID:       run-20260808T093659-7f808deaa6ef4df8a5a40d6bb389ea27
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p
+:SHA:          724973d946f64c58c4c808574cf87fbb7fa7c6d1
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5306/last.txt
+:END:
+
+* TX 2026-08-08 Sat 10:17:53 task.edited TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5318
+:TIME:         [2026-08-08 Sat 10:17:53]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2QK4P
+:NODE_ID:      TASK-2QK4P
+:END:
+
+* TX 2026-08-08 Sat 10:17:53 task.edited TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5319
+:TIME:         [2026-08-08 Sat 10:17:53]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2QK4P
+:NODE_ID:      TASK-2QK4P
+:END:
+
+* TX 2026-08-08 Sat 11:45:41 reviewer.done TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5320
+:TIME:         [2026-08-08 Sat 11:45:41]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:REASON:       codex/gpt-5.6-sol high: REJECT + BLOCK SHIP. Two HIGH data-loss paths reproduced on the production prune path (index-only gitlink; RepoGone bypasses the submodule refusal), one MEDIUM (F2 residual statement narrower than the code), one LOW (nonexistent --release-gates in a test comment).
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: c090b51..d10b0cf
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5309
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5309/last.txt
+:END:
+
+* TX 2026-08-08 Sat 11:45:41 task.state_transitioned TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5321
+:TIME:         [2026-08-08 Sat 11:45:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 11:45:54 implementer.done TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5322
+:TIME:         [2026-08-08 Sat 11:45:54]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:REASON:       Five commits merged as d10b0cf. Review returned REJECT/BLOCK SHIP; fix round follows as TASK-RMA18.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: f97bce9bf4b5e25edeca700eaf0b3e486e389da9
+:MERGE_SHA:    d10b0cfa4694248707252bb073a6a4befb98b435
+:BRANCH:       task-rma18.1-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5301
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5301/last.txt
+:END:
+
+* TX 2026-08-08 Sat 11:45:55 task.state_transitioned TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5323
+:TIME:         [2026-08-08 Sat 11:45:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 11:46:44 task.created TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5324
+:TIME:         [2026-08-08 Sat 11:46:44]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Fix round for the REJECT/BLOCK SHIP on TASK-RMA18.1 (tx-20260808-orgasmic-5320). Two HIGH findings reproduced on the production prune path: each deletes a sentinel out of a directory git refuses to remove.
+:END:
+
+* TX 2026-08-08 Sat 11:46:55 task.property_updated TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5325
+:TIME:         [2026-08-08 Sat 11:46:55]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-RMA18.1
+:FIX_SUBTASK:  TASK-RMA18.1.1
+:END:
+
+* TX 2026-08-08 Sat 11:46:56 task.property_updated TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5326
+:TIME:         [2026-08-08 Sat 11:46:56]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-RMA18.1.1
+:IMPLEMENTS:   TASK-RMA18.1
+:END:
+
+* TX 2026-08-08 Sat 11:48:35 task.state_transitioned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5327
+:TIME:         [2026-08-08 Sat 11:48:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 11:48:35 manager.dispatch_started TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5328
+:TIME:         [2026-08-08 Sat 11:48:35]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1
+:BRANCH:       task-rma18.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1/task-rma18-1-1-brief.md
+:STARTED_AT:   [2026-08-08 Sat 11:48:35]
+:LIVENESS:     1fcb0d614085318dad22f00e8b2c5ac2f28d5a4b
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round 4 fix for the REJECT/BLOCK SHIP on TASK-RMA18.1: submodule refusal is fail-open against git's index and skipped on the RepoGone branch. Cross-family review (codex/gpt-5.6-sol) will follow.
+:END:
+
+* TX 2026-08-08 Sat 11:48:36 run.created TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5329
+:TIME:         [2026-08-08 Sat 11:48:36]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1-implementer-20260808T114835.jsonl
+:REASON:       Round 4 fix for the REJECT/BLOCK SHIP on TASK-RMA18.1: submodule refusal is fail-open against git's index and skipped on the RepoGone branch. Cross-family review (codex/gpt-5.6-sol) will follow.
+:RUN_ID:       run-20260808T114835-d9c556182f29419f8401716593430f66
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1/task-rma18-1-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1/task-rma18-1-1-faeb66bcbe4a4c3aa36d03f896b59dc4-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1/task-rma18-1-1-faeb66bcbe4a4c3aa36d03f896b59dc4-stdout.log
+:DISPATCH_ATTEMPT: faeb66bcbe4a4c3aa36d03f896b59dc4
+:DISPATCH_TX:  tx-20260808-orgasmic-5328
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 11:48:40 task.state_transitioned TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5330
+:TIME:         [2026-08-08 Sat 11:48:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 11:48:41 manager.dispatch_started TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5331
+:TIME:         [2026-08-08 Sat 11:48:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p-review
+:BRANCH:       task-2qk4p-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-review/task-2qk4p-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 11:48:41]
+:LIVENESS:     1fcb0d614085318dad22f00e8b2c5ac2f28d5a4b
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5306
+:REASON_INITIAL: Cross-family review of the crash-recovery fix at 724973d. Brief carries the manager's correction: the bisect that named TASK-RMA18 was false and the implementer overturned it.
+:END:
+
+* TX 2026-08-08 Sat 11:48:41 run.created TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5332
+:TIME:         [2026-08-08 Sat 11:48:41]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P-reviewer-20260808T114841.jsonl
+:REASON:       Cross-family review of the crash-recovery fix at 724973d. Brief carries the manager's correction: the bisect that named TASK-RMA18 was false and the implementer overturned it.
+:RUN_ID:       run-20260808T114841-ab75e47aed6e4518a91fb7ff952ae6d8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-review/task-2qk4p-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-review/task-2qk4p-review-937adbbe8f654b85a183098926f6eb17-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-review/task-2qk4p-review-937adbbe8f654b85a183098926f6eb17-stdout.log
+:DISPATCH_ATTEMPT: 937adbbe8f654b85a183098926f6eb17
+:DISPATCH_TX:  tx-20260808-orgasmic-5331
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 11:49:54 task.created TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5333
+:TIME:         [2026-08-08 Sat 11:49:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Operator-reported 2026-08-08: a codex reviewer reported and the manager sat idle until pinged. Nothing in the product connects a terminal run to the manager session; the loop survives only on manager discipline, and it did not.
+:END:
