@@ -109,10 +109,19 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
 /// AND THE PIN THEN PASSED ON A FALSE HELP ANYWAY (TASK-RMA18.1.1.1.1 finding
 /// 5, which is the live proof that "the pin constrains shape, the regressions
 /// constrain truth" was not a sound division — the regressions constrain truth
-/// only for the shapes they instantiate). Two escapes were named. The first is
-/// closed below: a false sentence that names NO branch is never seen by the
-/// per-sentence repo-gone ban, so a universal quantifier over index-reading is
-/// banned globally instead.
+/// only for the shapes they instantiate). Two escapes were named, and BOTH of
+/// the clauses added for them ban a WORDING rather than a class — they are the
+/// same kind of pin, which an earlier version of this comment obscured by
+/// describing only the second that way. The first is addressed below: a false
+/// sentence that names NO branch is never seen by the per-sentence repo-gone
+/// ban, so the universal quantifiers over index-reading are refused globally
+/// instead. That closes THOSE WORDINGS. A quantifier the list does not carry
+/// still passes, and so does the escape NO per-sentence pin of this shape can
+/// ever see — the claim split ACROSS two sentences, neither of which contains
+/// both halves ("… reads the worktree's own INDEX for gitlinks. That is true of
+/// every branch this verb has."), because the second sentence carries the
+/// quantifier without the word `"index"` and the first carries `"index"`
+/// without a quantifier.
 ///
 /// WHAT THIS STILL CANNOT DO, stated rather than implied, so the next reader
 /// does not mistake this pin for total. It reads clap output, so it constrains
@@ -225,16 +234,29 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
     // help that is dangerously false in the DELETE direction
     // (TASK-RMA18.1.1.1.1 finding 5, shape 1). Index-reading is branch-scoped,
     // so a universal quantifier over it is the shape to forbid.
+    //
+    // FIVE LITERALS, not one, because `"both branches"` is not an exotic
+    // rewording — the help's own vocabulary is "read BOTH of the next two
+    // sentences", so it is the phrasing the next author is likeliest to reach
+    // for (TASK-RMA18.1.1.1.1.1 finding R2, measured: it passed the two-literal
+    // version). This is a WORDING ban like the `"at any depth"` one above, with
+    // the same limit: a sixth phrasing still passes.
     for sentence in sentences
         .iter()
         .filter(|sentence| sentence.contains("index"))
     {
-        for universal in ["every branch", "all branches"] {
+        for universal in [
+            "every branch",
+            "all branches",
+            "both branches",
+            "either branch",
+            "whatever the branch",
+        ] {
             assert!(
                 !sentence.contains(universal),
-                "worktree-prune help claims the index is read on {universal:?} ({sentence:?}). \
-                 It is not: the index lives in the admin directory, which is precisely what is \
-                 gone on the repo-gone branch. A sentence that names no branch escapes the \
+                "worktree-prune help quantifies index-reading over {universal:?} ({sentence:?}). \
+                 The index is not read there: it lives in the admin directory, which is precisely \
+                 what is gone on the repo-gone branch. A sentence that names no branch escapes the \
                  per-sentence ban above, which is why the quantifier is banned here:\n{help}"
             );
         }
