@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is one argument, and it is exactly the finding: the `RepoGone`
+# leg stops consuming the nested-`.git` signal. Everything else stays live — the
+# admin `modules/` branch, the index branch, `.gitmodules`, the categorical
+# placement above every destructive branch. None of them can see a repository
+# whose only record was in an index that no longer exists, which is the point.
+exit: 101
+
+# ===== THE SENTINEL IS GONE ================================================
+#
+# The failing assertion, and the only one that matters: an ignored file inside a
+# populated nested repository did not survive the prune. Everything below is the
+# mechanism that destroyed it.
+contains: the untracked file inside the nested repository must SURVIVE the prune
+
+# The verb did not merely misreport — it DELETED, and it said so. `RECLAIMED` is
+# the removal line, and the summary confirms it counted one. Measured red on
+# 2026-08-08: `RECLAIMED PATH=<tmp>/home/worktrees/orgasmic/task-goneindexsub
+# BYTES=29490 SIZE=28.8KiB`, byte-for-byte the same number the pre-fix tree
+# produced when this fixture first reproduced the finding on the production
+# prune path.
+contains: RECLAIMED PATH=
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# NO SALVAGE COULD HAVE HELPED, and on this branch none was even attempted:
+# `RepoGone` has nothing to salvage INTO. The fixture's premise assertions pin
+# that the parent reported the tree CLEAN in both `git status` modes, so nothing
+# upstream would have refused it either.
+#
+# Exactly one test, exactly one failure. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

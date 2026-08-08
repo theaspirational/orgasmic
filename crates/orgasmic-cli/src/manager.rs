@@ -375,10 +375,17 @@ than by handing a pathname to `git worktree remove`. It refuses what a
 non-forced `git worktree remove` refuses, checked here: a LOCKED worktree, one
 containing an INITIALIZED SUBMODULE, and one still dirty after salvage. The
 submodule refusal is CATEGORICAL and runs before EVERY removal this verb makes,
-the repo-gone one included; it reads the worktree's own INDEX for gitlinks as
-git does, plus `.gitmodules`, and a submodule record it cannot read is itself a
-refusal. A worktree whose repo is gone cannot be salvaged, so unless something
-refuses it, it is removed with NO salvage, and the report says so.")]
+the repo-gone one included — but WHAT IT CAN CHECK DIFFERS BY BRANCH, so read
+both of the next two sentences. While the repository is still there it reads the
+worktree's own INDEX for gitlinks as git does, plus `.gitmodules`, and a
+submodule record it cannot read is itself a refusal. Once the repository is gone
+no such record survives to be read and git has no verdict left to reproduce, so
+that branch is checked a DIFFERENT and WEAKER way: the anchored walk of the
+tree's own contents refuses any NESTED `.git` entry, of any type, and nothing
+else there is checked. A worktree whose repository is gone cannot be salvaged,
+so unless something refuses it, it is removed with NO salvage, and the report
+says so. There is no `--force` on this verb, so a refusal names what to clear by
+hand instead of offering an override.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -3092,6 +3099,15 @@ mod anchored_dir {
             unsafe { libc::close(fd) };
             return Err(err).context("fdopendir a directory handle");
         }
+        // `dup` shares the FILE DESCRIPTION, and therefore the directory read
+        // offset, with the caller's handle. Without this rewind a SECOND
+        // enumeration of the same handle resumes at EOF and returns an EMPTY
+        // list — which every caller here reads as "the directory is empty".
+        // That is a fail-open in a destructive verb: an empty enumeration means
+        // no nested repository to refuse over and nothing left to remove. Found
+        // by `a_repo_gone_worktree_is_refused_over_a_nested_git_of_any_type`,
+        // which walks one handle twice (TASK-RMA18.1.1.1).
+        unsafe { libc::rewinddir(stream) };
         let slot = errno_slot();
         let mut names = Vec::new();
         let mut failure: Option<std::io::Error> = None;
@@ -3429,6 +3445,13 @@ struct ManagedWorktree {
     /// worktree would put a multi-GB directory walk on the hot path of a status
     /// verb to inform no decision.
     bytes: Option<u64>,
+    /// The first NESTED `.git` the size walk saw, relative to the worktree root
+    /// — the `RepoGone` submodule signal, carried out of a walk that was
+    /// already being paid for rather than earned by a second traversal
+    /// (TASK-RMA18.1.1.1 finding A). `None` when the walk did not run or found
+    /// none. See [`worktree_submodule_refusal`] for what consumes it and why
+    /// only the `NoRepository` branch may.
+    nested_git: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -3565,13 +3588,17 @@ fn scan_managed_worktrees(
                 }
             }
         };
-        let bytes = disposition_is_reclaimable(&disposition).then(|| directory_bytes(&child.dir));
+        // ONE walk, TWO answers, and it stays where it already was — see
+        // [`walk_worktree`] and the ordering note in
+        // [`worktree_submodule_refusal`].
+        let walk = disposition_is_reclaimable(&disposition).then(|| walk_worktree(&child.dir));
         found.push(ManagedWorktree {
             path,
             name,
             identity: child.identity,
             disposition,
-            bytes,
+            bytes: walk.as_ref().map(|walk| walk.bytes),
+            nested_git: walk.and_then(|walk| walk.nested_git),
         });
     }
     Ok(found)
@@ -3750,18 +3777,56 @@ fn worktree_repo_state(worktree: &std::fs::File, path: &Path) -> WorktreeRepoSta
     }
 }
 
-/// Recursive apparent size in bytes, walked from the worktree's own HANDLE.
+/// What one anchored walk of a worktree learns.
+#[cfg(unix)]
+#[derive(Debug, Default)]
+struct WorktreeWalk {
+    /// Recursive apparent size in bytes.
+    bytes: u64,
+    /// The first NESTED entry named `.git`, relative to the worktree root, OF
+    /// ANY TYPE.
+    ///
+    /// TYPE-AGNOSTIC ON PURPOSE, and the type is the trap: `git submodule
+    /// update --init` inside a linked worktree writes the submodule's `.git` as
+    /// a FILE holding `gitdir: ../../.git/modules/<name>` (measured on git
+    /// 2.52.0), not as a directory. In the one state that consumes this — a
+    /// worktree whose repository is GONE — that admin directory is gone with
+    /// it, so the nested repository presents as a `.git` file pointing at
+    /// nothing. A "populated `.git` DIRECTORY" predicate returns false on the
+    /// single likeliest shape (TASK-RMA18.1.1.1, the reviewer's first
+    /// correction to the C1 ruling).
+    ///
+    /// NESTED, so the worktree's OWN `.git` — always present at depth 1, and on
+    /// the `RepoGone` path always the dangling link that put it there — is not
+    /// its own refusal.
+    nested_git: Option<String>,
+}
+
+/// Walk a worktree from its own HANDLE: recursive size, plus the nested-`.git`
+/// signal the `RepoGone` refusal needs.
+///
+/// ONE traversal for both. The size walk was already paid for before the
+/// reservation; the submodule signal rides along on it as a single `Option`
+/// rather than earning a second full descent of a possibly multi-GB tree
+/// (TASK-RMA18.1.1.1 finding A).
 ///
 /// Symlinks are counted at their own size and never followed, so a link out of
 /// the tree can neither inflate the number nor walk the machine — and because
 /// the walk descends by `openat` rather than by pathname, a directory swapped
-/// underneath it cannot redirect the walk out of the anchored tree either.
+/// underneath it cannot redirect the walk out of the anchored tree either. That
+/// is also what makes it a sound source for a REFUSAL and a `PathBuf`-based
+/// walk would not be: a `.git` reported here was reached through
+/// `O_NOFOLLOW|O_DIRECTORY` handles from the worktree root, so no symlink can
+/// have pointed the name at something outside the tree.
+///
 /// Unreadable entries are skipped rather than failing the whole report: an
-/// under-count is honest, a missing report is not.
-// orgasmic:TASK-RMA18
+/// under-count is honest, a missing report is not. That skip is a fail-open for
+/// the `.git` signal too, and it is the reason this signal is only ever ADDED
+/// to the other refusals rather than replacing one.
+// orgasmic:TASK-RMA18,TASK-RMA18.1.1.1
 #[cfg(unix)]
-fn directory_bytes(root: &std::fs::File) -> u64 {
-    fn walk(dir: &std::fs::File, depth: u32, total: &mut u64) {
+fn walk_worktree(root: &std::fs::File) -> WorktreeWalk {
+    fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) {
         if depth > anchored_dir::MAX_DEPTH {
             return;
         }
@@ -3769,20 +3834,28 @@ fn directory_bytes(root: &std::fs::File) -> u64 {
             return;
         };
         for name in names {
+            if depth > 1 && found.nested_git.is_none() && name == std::ffi::OsStr::new(".git") {
+                found.nested_git = Some(format!("{prefix}.git"));
+            }
             match anchored_dir::open_child_dir(dir, &name) {
-                Ok(anchored_dir::ChildOpen::Dir(child)) => walk(&child, depth + 1, total),
+                Ok(anchored_dir::ChildOpen::Dir(child)) => walk(
+                    &child,
+                    depth + 1,
+                    &format!("{prefix}{}/", name.to_string_lossy()),
+                    found,
+                ),
                 Ok(_) => {
                     if let Ok(kind) = anchored_dir::stat_at(dir, &name) {
-                        *total = total.saturating_add(kind.len());
+                        found.bytes = found.bytes.saturating_add(kind.len());
                     }
                 }
                 Err(_) => continue,
             }
         }
     }
-    let mut total = 0;
-    walk(root, 1, &mut total);
-    total
+    let mut found = WorktreeWalk::default();
+    walk(root, 1, "", &mut found);
+    found
 }
 
 /// Compact size for a `KEY=value` field, so it carries no space.
@@ -3943,25 +4016,65 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
 ///
 /// UNKNOWN MEANS KEEP. An index that should exist and does not open, does not
 /// parse, or defers to a shared split index is a REFUSAL, not an empty one. The
-/// one case that is not a refusal is a worktree with NO REPOSITORY BEHIND IT AT
+/// one case with no index at all is a worktree with NO REPOSITORY BEHIND IT AT
 /// ALL — a `RepoGone` orphan, where the admin directory the index lives in is
 /// provably absent rather than unreadable. That case has no index for anything
-/// to have been fail-open about, git has no verdict to reproduce (it cannot run
-/// `worktree remove` without the repository), and refusing it would make the
-/// `RepoGone` reclamation this verb exists for impossible. There, `.gitmodules`
-/// and the admin `modules/` check are the whole predicate; see
-/// [`worktree_index_gitlinks`].
-// orgasmic:TASK-RMA18.1,TASK-RMA18.1.1
+/// to have been fail-open about and no verdict of git's to reproduce: git
+/// cannot run `worktree remove` without the repository, so `RepoGone`
+/// reclamation is a thing orgasmic invented and not a parity question at all.
+///
+/// SO `RepoGone` GETS ITS OWN, WEAKER TEST, and this is the whole of
+/// TASK-RMA18.1.1.1 finding A. All three record-reading sources go quiet AT
+/// ONCE there — no admin directory means no `modules/`, no index, and a
+/// `.gitmodules` that a worker's standalone `git clone` never wrote — so the
+/// shipped predicate returned `None` and a populated independent repository
+/// holding uncommitted work was deleted on the ONE branch that removes with no
+/// salvage at all. What replaces the record is the disk: `nested_git`, the
+/// first nested entry named `.git` OF ANY TYPE that the size walk already saw
+/// ([`WorktreeWalk`]). It is a heuristic and it is scoped to a state that only
+/// arises once the repository has already disappeared; the cost asymmetry is
+/// the one this project has already ruled on — a kept orphan is an operator
+/// re-running a verb, a deleted one is a worker's unrecoverable output.
+///
+/// SCOPED TO `NoRepository` ONLY. Not `Unreadable`, not the ordinary path.
+/// Wherever the index answers, git's own oracle is available and reproducing it
+/// is the whole job; a vendored `.git` on disk that the index does not record
+/// is git's business to permit, not this verb's to refuse.
+///
+/// ORDERING, stated because it was raised as a consequence and turns out not to
+/// be one: the walk this consumes runs in [`scan_managed_worktrees`], which is
+/// the FIRST thing `worktree_prune` does — before the cleanup lock, before the
+/// reservation, and long before this refusal, which runs inside
+/// [`reclaim_managed_worktree`] under the guard. Nothing was reordered, and
+/// nothing needed to be. What that DOES cost is stated at the call site: the
+/// boolean is a classification-time observation consumed under the guard.
+// orgasmic:TASK-RMA18.1,TASK-RMA18.1.1,TASK-RMA18.1.1.1
 #[cfg(unix)]
-fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<String> {
-    let advice = "no salvage can capture what is inside a submodule, because the parent records \
-                  it as a gitlink. Remove the submodule's checkout yourself, or remove the \
-                  worktree with `git worktree remove --force` once you have rescued its contents";
+fn worktree_submodule_refusal(
+    worktree: &std::fs::File,
+    path: &Path,
+    nested_git: Option<&str>,
+) -> Option<String> {
+    // THREE remedies, because one string was being appended to refusals that
+    // are not about a submodule and to a branch where the escape it named
+    // cannot run (TASK-RMA18.1.1.1 finding D, and the reviewer's second
+    // correction). `--force` is offered conditionally in the first and not at
+    // all in the third: this verb has no `--force` of its own, so every escape
+    // here is something the operator does by hand.
+    let submodule_advice =
+        "no salvage can capture what is inside a submodule, because the parent records it as a \
+         gitlink. Rescue its contents, then either remove the submodule's checkout yourself and \
+         re-run, or — while the repository is still there — remove the worktree with \
+         `git worktree remove --force`";
+    let record_advice =
+        "nothing here says there IS a submodule; only that the record which would say so could \
+         not be read, and an unreadable record is not a licence to delete. Repair or remove what \
+         did not read and re-run — this verb has no `--force` of its own";
     if worktree_admin_dir_holds_modules(worktree, path) {
         return Some(format!(
             "{} contains an initialized submodule (its worktree admin directory holds a \
              `modules` directory), and `git worktree remove` refuses such a worktree outright \
-             — {advice}",
+             — {submodule_advice}",
             path.display()
         ));
     }
@@ -3969,12 +4082,27 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
     let mut candidates = Vec::new();
     match worktree_index_gitlinks(worktree, path) {
         WorktreeIndexGitlinks::Recorded(paths) => candidates.extend(paths),
-        WorktreeIndexGitlinks::NoRepository => {}
+        WorktreeIndexGitlinks::NoRepository => {
+            if let Some(nested) = nested_git {
+                return Some(format!(
+                    "{} has no repository behind it, so no index and no `modules` directory \
+                     survive to say whether it contains a submodule — and the walk of its own \
+                     contents found a nested repository (a submodule checkout, or a standalone \
+                     clone a worker made itself) at {nested}. Its uncommitted work cannot be \
+                     salvaged, because there is nothing left to salvage into, and this branch \
+                     removes with NO salvage at all — so it is kept. `git worktree remove \
+                     --force` CANNOT run here, since the repository it would run against is the \
+                     one that is gone, and this verb has no `--force` of its own: rescue what \
+                     you need, then delete {nested} yourself and re-run",
+                    path.display()
+                ));
+            }
+        }
         WorktreeIndexGitlinks::Unreadable(detail) => {
             return Some(format!(
                 "the index that records whether {} contains a submodule could not be read \
                  ({detail}), and this verb does not delete a tree whose submodule record it \
-                 cannot check — {advice}",
+                 cannot check — {record_advice}",
                 path.display()
             ))
         }
@@ -3984,7 +4112,7 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
         Err(detail) => {
             return Some(format!(
                 "{} has a `.gitmodules` that could not be read ({detail}), and this verb does \
-                 not delete a tree whose submodule record it cannot check — {advice}",
+                 not delete a tree whose submodule record it cannot check — {record_advice}",
                 path.display()
             ))
         }
@@ -3996,7 +4124,7 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
         if nonempty_dir_under(worktree, &module) {
             return Some(format!(
                 "{} contains an initialized submodule at {module}, and `git worktree remove` \
-                 refuses such a worktree outright — {advice}",
+                 refuses such a worktree outright — {submodule_advice}",
                 path.display()
             ));
         }
@@ -4555,7 +4683,12 @@ fn git_would_remove_worktree(
     }
     // BEFORE cleanliness, as git does — and categorical, so no amount of clean
     // makes it removable (TASK-RMA18.1 finding 1).
-    if let Some(reason) = worktree_submodule_refusal(handle, worktree) {
+    //
+    // No nested-`.git` signal, and none is wanted: everything above this line
+    // already read the repository (`git worktree list` named this worktree), so
+    // the index answers and git's own oracle is what gets reproduced. The
+    // disk fallback exists only where that oracle is gone.
+    if let Some(reason) = worktree_submodule_refusal(handle, worktree, None) {
         bail!("{reason}");
     }
     // `--ignore-submodules=none` is what git's own `remove_cmd` passes. Without
@@ -4687,7 +4820,20 @@ fn reclaim_managed_worktree(
     // to be kept anyway — staging its index and detaching its HEAD — for no gain.
     // Computed from the HANDLE, so this one decision needs no pathname and no
     // subprocess.
-    if let Some(reason) = worktree_submodule_refusal(&child.dir, &worktree.path) {
+    //
+    // `nested_git` is the ONE input here that was measured EARLIER, in the
+    // classification walk, rather than now under the guard — that is what buys
+    // the `RepoGone` fallback for a single boolean instead of a second full
+    // descent (TASK-RMA18.1.1.1 finding A). It describes the same IDENTITY the
+    // handle above was just re-proven to be, so it cannot have drifted onto
+    // some other directory; what it can be is STALE about that directory's
+    // contents. A nested repository created after the scan is not seen —
+    // residual, and stated rather than papered over. It runs in the safe
+    // direction for the reverse case: one deleted after the scan only produces
+    // a refusal, and the operator re-runs.
+    if let Some(reason) =
+        worktree_submodule_refusal(&child.dir, &worktree.path, worktree.nested_git.as_deref())
+    {
         return kept(format!("refusing to remove it: {reason}"));
     }
 
@@ -4721,9 +4867,8 @@ fn reclaim_managed_worktree(
     // Everything below hands `worktree.path` to a `git` subprocess, which cannot
     // take a handle. This is the fence for all of it: the path resolves to the
     // classified and reserved identity right now, so git is looking at the same
-    // tree the removal below will delete through the anchor. It is re-taken
-    // before EACH subprocess; see the window this narrows but cannot close in
-    // the doc comment above.
+    // tree the removal below will delete through the anchor. The doc comment
+    // above enumerates the windows it leaves open (TASK-RMA18.1.1.1 finding C).
     if let Err(err) = root.assert_path_names(&worktree.path, worktree.identity) {
         return kept(err.to_string());
     }
@@ -12385,13 +12530,13 @@ mod tests {
         // submodule, and git removes such a worktree without --force.
         assert!(worktree.join("vendor/sub").is_dir());
         assert_eq!(
-            worktree_submodule_refusal(&handle, &worktree),
+            worktree_submodule_refusal(&handle, &worktree, None),
             None,
             "an uninitialized submodule placeholder must stay removable"
         );
 
         std::fs::write(worktree.join("vendor/sub/lib.txt"), "checked out").unwrap();
-        let reason = worktree_submodule_refusal(&handle, &worktree)
+        let reason = worktree_submodule_refusal(&handle, &worktree, None)
             .expect("a populated gitlink checkout must be refused");
         assert!(
             reason.contains("vendor/sub"),
@@ -12417,6 +12562,117 @@ mod tests {
         assert!(
             bytes.windows(4).any(|window| window == b"link"),
             "fixture premise: git must actually have written a split index here"
+        );
+    }
+
+    /// TASK-RMA18.1.1.1 finding A, at the predicate: with NO REPOSITORY behind
+    /// the worktree the disk is the only witness, and the witness is a nested
+    /// `.git` OF ANY TYPE.
+    ///
+    /// THE TYPE IS THE WHOLE POINT (the reviewer's first correction to the C1
+    /// ruling). This fixture uses the shape `git submodule update --init` writes
+    /// inside a linked worktree — `.git` as a FILE holding
+    /// `gitdir: ../../.git/modules/<name>` — pointed at an admin directory that
+    /// does not exist, which is exactly what a repo-gone submodule looks like.
+    /// A "populated `.git` DIRECTORY" predicate returns false on it.
+    ///
+    /// Three other things are pinned here because each one would ship a
+    /// different defect: the refusal NAMES the offending path so the operator
+    /// can act on it; it does NOT offer `git worktree remove --force`, which
+    /// cannot run once the repository is gone and which this verb does not have;
+    /// and an ordinary directory — including an EMPTY submodule placeholder — is
+    /// not a signal, so `worktree_prune_removes_a_worktree_whose_repo_is_gone`
+    /// keeps its meaning.
+    // orgasmic:TASK-RMA18.1.1.1
+    #[cfg(unix)]
+    #[test]
+    fn a_repo_gone_worktree_is_refused_over_a_nested_git_of_any_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        // An empty placeholder and an ordinary populated directory. Neither is a
+        // repository, and neither may refuse.
+        std::fs::create_dir_all(worktree.join("vendor/placeholder")).unwrap();
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::write(worktree.join("src/main.rs"), "fn main() {}").unwrap();
+        let handle = std::fs::File::open(&worktree).unwrap();
+
+        let walk = walk_worktree(&handle);
+        assert_eq!(
+            walk.nested_git, None,
+            "an empty placeholder and an ordinary tree hold no repository"
+        );
+        assert_eq!(
+            worktree_submodule_refusal(&handle, &worktree, walk.nested_git.as_deref()),
+            None,
+            "a repo-gone worktree with nothing nested inside it must stay removable"
+        );
+
+        // Now the shape `git submodule update --init` leaves behind, with the
+        // admin directory it names already gone: a `.git` FILE.
+        std::fs::create_dir_all(worktree.join("vendor/sub")).unwrap();
+        std::fs::write(
+            worktree.join("vendor/sub/.git"),
+            "gitdir: ../../.git/modules/sub\n",
+        )
+        .unwrap();
+        std::fs::write(worktree.join("vendor/sub/lib.txt"), "worker output").unwrap();
+        assert!(
+            worktree.join("vendor/sub/.git").is_file()
+                && !worktree.join("vendor/sub/.git").is_dir(),
+            "fixture premise: the nested `.git` must be a FILE, not a directory"
+        );
+
+        let walk = walk_worktree(&handle);
+        assert_eq!(
+            walk.nested_git.as_deref(),
+            Some("vendor/sub/.git"),
+            "the walk must report the nested `.git` by its path inside the worktree"
+        );
+        let reason = worktree_submodule_refusal(&handle, &worktree, walk.nested_git.as_deref())
+            .expect("a repo-gone worktree holding a nested repository must be refused");
+        assert!(
+            reason.contains("vendor/sub/.git"),
+            "the refusal must NAME what to clear by hand, got: {reason}"
+        );
+        assert!(
+            !reason.contains("or remove the worktree with `git worktree remove --force`"),
+            "the repository is gone, so `git worktree remove --force` cannot run and the \
+             remedy must not offer it, got: {reason}"
+        );
+        assert!(
+            reason.contains("CANNOT run") && reason.contains("delete vendor/sub/.git yourself"),
+            "the refusal must say the --force escape is unavailable and name what to clear by \
+             hand, got: {reason}"
+        );
+    }
+
+    /// The worktree's OWN `.git` is not its own refusal — and on the `RepoGone`
+    /// path it is always there and always dangling, since a dangling `.git` is
+    /// precisely what classified the worktree `RepoGone`. A depth-blind
+    /// "any entry named `.git`" predicate would refuse EVERY repo-gone worktree
+    /// and delete the verb's reason to exist.
+    // orgasmic:TASK-RMA18.1.1.1
+    #[cfg(unix)]
+    #[test]
+    fn the_worktrees_own_dangling_git_link_is_not_a_nested_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            "gitdir: /nowhere/.git/worktrees/task-gone\n",
+        )
+        .unwrap();
+        std::fs::write(worktree.join("a.txt"), "ordinary file").unwrap();
+        let handle = std::fs::File::open(&worktree).unwrap();
+
+        let walk = walk_worktree(&handle);
+        assert_eq!(walk.nested_git, None, "depth 1 is the worktree's own link");
+        assert!(walk.bytes > 0, "the size walk must still have counted");
+        assert_eq!(
+            worktree_submodule_refusal(&handle, &worktree, walk.nested_git.as_deref()),
+            None,
+            "a repo-gone worktree must stay reclaimable on the strength of its own `.git`"
         );
     }
 }
