@@ -69,14 +69,14 @@ use crate::governance::SandboxPermissionsPatch;
 use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
-    commit_recovery_claim, load_committed_recovery_claim, load_recovery_claim,
-    mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
+    classify_observation, commit_recovery_claim, load_committed_recovery_claim,
+    load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
     resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, PendingRecoveryClaimSpec,
-    PendingRecoveryPlan, ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError,
-    RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim,
-    SessionDirectory, SessionFile, UnobservedSession,
+    AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, ObservationClass,
+    PendingRecoveryClaimSpec, PendingRecoveryPlan, ProjectOriginAuthority, RecoveryClaim,
+    RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions,
+    ResolvedRecoveryClaim, SessionDirectory, SessionFile, UnobservedEvidence, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -7462,6 +7462,18 @@ pub struct RecoveredRun {
     /// `suppressed_recovery_actions` and validated against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_unobserved: Option<String>,
+    /// WHICH FILE the observation failed on — sanitized and project-relative.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1 F3 — `recovery_unobserved` carried a reason
+    /// and nothing else, and the refusal it describes is project-wide and does
+    /// not self-repair. An operator was told every recovery in the project is
+    /// unavailable and given no way to find the one file responsible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_unobserved_subject: Option<String>,
+    /// What would clear it — a stable [`orgasmic_daemon::recovery_claim::Remediation`]
+    /// class, paired with `recovery_unobserved_subject`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_unobserved_remediation: Option<String>,
     /// The actions this record would offer had the enumeration completed. Empty
     /// unless `recovery_unobserved` is set.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -9139,17 +9151,17 @@ async fn post_run_recover(
             &origin_authority.project_root,
             &project_id,
         ) {
-            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
+            AuthoritativeOriginLinks::Unobserved(evidence) => Some(evidence.clone()),
             AuthoritativeOriginLinks::Complete(_) => None,
         };
-        if let Some(reason) = unobserved {
+        if let Some(evidence) = unobserved {
             // A swapped or symlinked ORIGIN session is one of the ways the
             // enumeration cannot complete, and it has its own, more specific
             // refusal. Report that one: "the origin you took authority over is
             // no longer the file you took it over" is actionable, while "the
             // enumeration did not complete" is not.
             origin_authority.envelopes()?;
-            return Err(recovery_origins_unobserved(&id, reason));
+            return Err(recovery_origins_unobserved(&id, &evidence));
         }
     }
     let request_id = req
@@ -9173,8 +9185,8 @@ async fn post_run_recover(
                         &mut origin_links,
                         &claim,
                     ) {
-                        CommittedClaimAuthority::Unobserved(reason) => {
-                            return Err(recovery_origins_unobserved(&id, reason))
+                        CommittedClaimAuthority::Unobserved(evidence) => {
+                            return Err(recovery_origins_unobserved(&id, &evidence))
                         }
                         CommittedClaimAuthority::NotAuthoritative => {}
                         CommittedClaimAuthority::Authoritative => {
@@ -9217,8 +9229,8 @@ async fn post_run_recover(
                                 &mut origin_links,
                                 &plan.claim,
                             ) {
-                                CommittedClaimAuthority::Unobserved(reason) => {
-                                    return Err(recovery_origins_unobserved(&id, reason))
+                                CommittedClaimAuthority::Unobserved(evidence) => {
+                                    return Err(recovery_origins_unobserved(&id, &evidence))
                                 }
                                 CommittedClaimAuthority::Authoritative => {
                                     // Same as above, reached one crash earlier:
@@ -9268,8 +9280,8 @@ async fn post_run_recover(
                             &mut origin_links,
                             &claim,
                         ) {
-                            CommittedClaimAuthority::Unobserved(reason) => {
-                                return Err(recovery_origins_unobserved(&id, reason))
+                            CommittedClaimAuthority::Unobserved(evidence) => {
+                                return Err(recovery_origins_unobserved(&id, &evidence))
                             }
                             CommittedClaimAuthority::Authoritative => {
                                 if claim.request_id == request_id {
@@ -10685,6 +10697,31 @@ async fn persist_catalog_snapshots(
     }
 }
 
+/// The boot pass's reattach-ownership decision for ONE candidate.
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F2 — extracted from the loop below so the
+/// regression exercises the PRODUCTION routing predicate rather than a
+/// restatement of it. The loop reattaches only on
+/// [`ClaimEvidence::Invalid`]; `Valid` and `Unobserved` both mean "leave the
+/// prefix alone", because `Supervisor::reattach` appends `Reattach` into an
+/// immutable prefix a pending recovery owns and that write cannot be undone,
+/// while a skipped reattach is simply retried on the next boot.
+fn boot_reattach_ownership(home: &Home, candidate: &BootReattachCandidate) -> ClaimEvidence {
+    candidate
+        .project_id
+        .as_deref()
+        .zip(candidate.worktree.as_deref())
+        .map(|(project_id, project_root)| {
+            pending_recovery_claim_owns_session(
+                home,
+                project_root,
+                project_id,
+                &candidate.session_path,
+            )
+        })
+        .unwrap_or(ClaimEvidence::Invalid)
+}
+
 pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
     let home = &state.home;
     let supervisor = &state.supervisor;
@@ -10728,19 +10765,25 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
         // `Reattach` into a prefix a pending claim owns and that write cannot be
         // undone. `Unobserved` is therefore treated exactly like ownership, and
         // a skipped reattach is retried on the next boot.
-        let ownership = c
-            .project_id
-            .as_deref()
-            .zip(c.worktree.as_deref())
-            .map(|(project_id, project_root)| {
-                pending_recovery_claim_owns_session(home, project_root, project_id, &c.session_path)
-            })
-            .unwrap_or(ClaimEvidence::Invalid);
+        let ownership = boot_reattach_ownership(home, &c);
         if !matches!(ownership, ClaimEvidence::Invalid) {
+            // orgasmic:TASK-2QK4P.1.1.1.1 F3 — an `Unobserved` skip here is the
+            // one an operator has to be able to act on: the run stays unattached
+            // for as long as the fault lasts, so the log names the file and the
+            // repair instead of only the `Debug` of a bare tag.
+            let (subject, remediation) = match &ownership {
+                ClaimEvidence::Unobserved(evidence) => (
+                    evidence.subject.clone(),
+                    Some(evidence.remediation.class().to_string()),
+                ),
+                ClaimEvidence::Valid | ClaimEvidence::Invalid => (None, None),
+            };
             tracing::info!(
                 run_id = %c.run_id,
                 session_path = %c.session_path.display(),
                 ownership = ?ownership,
+                subject = subject.as_deref().unwrap_or("-"),
+                remediation = remediation.as_deref().unwrap_or("-"),
                 "boot reattach: pending recovery prefix reserved for locked reconciliation"
             );
             continue;
@@ -11209,6 +11252,8 @@ async fn classify_catalog_entries(
                 classification: "ambiguous".to_string(),
                 reason: "session JSONL could not be parsed".to_string(),
                 recovery_unobserved: None,
+                recovery_unobserved_subject: None,
+                recovery_unobserved_remediation: None,
                 suppressed_recovery_actions: Vec::new(),
                 recovery_actions: Vec::new(),
                 recovery_replacement_run_id: None,
@@ -11340,6 +11385,8 @@ async fn classify_catalog_entries(
             reason,
             recovery_actions,
             recovery_unobserved: None,
+            recovery_unobserved_subject: None,
+            recovery_unobserved_remediation: None,
             suppressed_recovery_actions: Vec::new(),
             recovery_replacement_run_id: None,
             recovery_replacement_session_path: None,
@@ -11876,9 +11923,27 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
 /// caller can act on: retry once the daemon can read its own auth material.
 fn recovery_claim_load_error(origin_run_id: &str, err: RecoveryClaimError) -> ApiError {
     match err {
-        RecoveryClaimError::Unobserved(reason) => {
-            recovery_origins_unobserved(origin_run_id, reason)
+        RecoveryClaimError::Unobserved(evidence) => {
+            recovery_origins_unobserved(origin_run_id, &evidence)
         }
+        // orgasmic:TASK-2QK4P.1.1.1.1 F4 — raw `Io` used to land here and become
+        // a 500. A 500 tells the caller "the daemon is broken"; the truth is
+        // "the daemon could not read one file and will decide once it can",
+        // which is a 503 with a remediation. The errno policy makes the split:
+        // an `Absent`/`Decided` io error is a fact about the claim and keeps
+        // failing closed, everything else is the observer.
+        RecoveryClaimError::Io(err) => match classify_observation(&err) {
+            ObservationClass::Unobserved => recovery_origins_unobserved(
+                origin_run_id,
+                &UnobservedEvidence::about(
+                    UnobservedSession::ClaimFileUnreadable,
+                    format!("recovery-claims/{origin_run_id}.json"),
+                ),
+            ),
+            ObservationClass::Absent | ObservationClass::Decided => {
+                ApiError::internal(format!("recovery claim load failed: {err:?}"))
+            }
+        },
         other => ApiError::internal(format!("recovery claim load failed: {other:?}")),
     }
 }
@@ -11888,11 +11953,19 @@ fn recovery_claim_load_error(origin_run_id: &str, err: RecoveryClaimError) -> Ap
 /// orgasmic:TASK-2QK4P.1.1 — 503 and not 409: nothing is known to conflict, the
 /// daemon simply could not look. The claim on disk is untouched, so a retry once
 /// the file is readable resolves normally and the rescue keeps its idempotency.
-fn recovery_origins_unobserved(origin_run_id: &str, reason: UnobservedSession) -> ApiError {
+///
+/// orgasmic:TASK-2QK4P.1.1.1.1 F3 — the body now says WHICH FILE and WHAT TO DO.
+/// `reason` alone told the operator a category and nothing else, and the refusal
+/// is project-wide and permanent for a malformed session file, so "which file"
+/// is the difference between a clearable fault and an outage with no exit.
+fn recovery_origins_unobserved(origin_run_id: &str, evidence: &UnobservedEvidence) -> ApiError {
     ApiError::service_unavailable(json!({
         "error": "recovery origin enumeration did not complete; refusing to decide authority",
         "origin_run_id": origin_run_id,
-        "reason": format!("{reason:?}"),
+        "reason": evidence.reason.tag(),
+        "subject": evidence.subject,
+        "remediation": evidence.remediation.class(),
+        "remediation_hint": evidence.remediation.hint(),
     }))
 }
 
@@ -11921,19 +11994,58 @@ fn committed_claim_is_authoritative(
         // the no-plan branch, where it mints a SECOND replacement beside the one
         // the unread file may already hold. Unknown gets its own answer and the
         // caller refuses.
-        Ok(ResolvedRecoveryClaim::Unobserved(reason)) => {
-            CommittedClaimAuthority::Unobserved(reason)
+        Ok(ResolvedRecoveryClaim::Unobserved(evidence)) => {
+            CommittedClaimAuthority::Unobserved(evidence)
         }
-        _ => CommittedClaimAuthority::NotAuthoritative,
+        // orgasmic:TASK-2QK4P.1.1.1.1 F4 — THE WILDCARD IS GONE, and that is the
+        // fix. `_ => NotAuthoritative` swept EVERY resolver `Err` — raw `Io`
+        // included — into a decided negative, which is literally the rejected
+        // shape: "I could not decide" spelled as "I decided no". A decided no
+        // sends the handler to the no-plan branch, where it can mint a second
+        // replacement. Every arm below is now written out, so adding a variant
+        // to either enum is a compile error rather than a silent negative.
+        Ok(ResolvedRecoveryClaim::Valid(_) | ResolvedRecoveryClaim::Reconstructed(_)) => {
+            // Resolved, but not to THIS claim in Committed state: a decided
+            // negative about the claim the caller passed in.
+            CommittedClaimAuthority::NotAuthoritative
+        }
+        Ok(ResolvedRecoveryClaim::InvalidQuarantined) | Ok(ResolvedRecoveryClaim::Missing) => {
+            CommittedClaimAuthority::NotAuthoritative
+        }
+        Err(RecoveryClaimError::Unobserved(evidence)) => {
+            CommittedClaimAuthority::Unobserved(evidence)
+        }
+        Err(RecoveryClaimError::Io(err)) => match classify_observation(&err) {
+            ObservationClass::Unobserved => {
+                CommittedClaimAuthority::Unobserved(UnobservedEvidence::about(
+                    UnobservedSession::ClaimFileUnreadable,
+                    format!("recovery-claims/{origin_run_id}.json"),
+                ))
+            }
+            // Absent or a decided path fact: the claim is not authoritative and
+            // the daemon knows it.
+            ObservationClass::Absent | ObservationClass::Decided => {
+                CommittedClaimAuthority::NotAuthoritative
+            }
+        },
+        // Every remaining variant is a DECIDED statement about the claim or its
+        // identifiers, listed rather than swept.
+        Err(RecoveryClaimError::InvalidIdentifier)
+        | Err(RecoveryClaimError::UnresolvableProjectRoot)
+        | Err(RecoveryClaimError::AlreadyClaimed(_))
+        | Err(RecoveryClaimError::CorruptClaim)
+        | Err(RecoveryClaimError::MissingClaim)
+        | Err(RecoveryClaimError::DeadPlannedHandle)
+        | Err(RecoveryClaimError::ForeignSessionPath) => CommittedClaimAuthority::NotAuthoritative,
     }
 }
 
 /// Three answers, because two were never enough.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum CommittedClaimAuthority {
     Authoritative,
     NotAuthoritative,
-    Unobserved(UnobservedSession),
+    Unobserved(UnobservedEvidence),
 }
 
 /// Suppress this record's recovery actions because the daemon could not look,
@@ -11943,12 +12055,29 @@ enum CommittedClaimAuthority {
 /// orgasmic:TASK-2QK4P.1.1.1 — the claim on disk is deliberately left alone
 /// (ruling 1: unobserved never quarantines), so the next pass — which may read
 /// the file fine — still finds it and the rescue keeps its idempotency.
-fn suppress_unobserved_recovery(run: &mut RecoveredRun, reason: &str) {
+fn suppress_unobserved_recovery(run: &mut RecoveredRun, evidence: &UnobservedEvidence) {
     run.suppressed_recovery_actions = std::mem::take(&mut run.recovery_actions);
-    run.recovery_unobserved = Some(reason.to_string());
+    run.recovery_unobserved = Some(evidence.reason.tag().to_string());
+    run.recovery_unobserved_subject = evidence.subject.clone();
+    run.recovery_unobserved_remediation = Some(evidence.remediation.class().to_string());
+    let subject = evidence.subject.as_deref().unwrap_or("unnamed");
+    // orgasmic:TASK-2QK4P.1.1.1.1 F3 — the log line names the file too. An
+    // operator reading daemon logs is the other half of the surface; a reason
+    // tag on its own sent them looking through every session file in the
+    // project.
+    tracing::warn!(
+        run_id = %run.run_id,
+        reason = evidence.reason.tag(),
+        subject = %subject,
+        remediation = evidence.remediation.class(),
+        hint = evidence.remediation.hint(),
+        "recovery authority unresolved; refusing to decide and offering a repair"
+    );
     run.reason = format!(
-        "{}; recovery origin enumeration unresolved ({reason})",
-        run.reason
+        "{}; recovery origin enumeration unresolved ({} at {subject}; {})",
+        run.reason,
+        evidence.reason.tag(),
+        evidence.remediation.class()
     );
 }
 
@@ -11978,8 +12107,33 @@ fn apply_recovery_claim_to_run(
         // orgasmic:TASK-2QK4P.1.1.1 — an error here is an observation failure
         // too, so it suppresses through the same field rather than by silently
         // emptying the action list.
-        Err(err) => {
-            suppress_unobserved_recovery(run, &format!("{err:?}"));
+        // orgasmic:TASK-2QK4P.1.1.1.1 F4 — matched explicitly so an `Io` failure
+        // suppresses with a real observation reason instead of a `Debug` string.
+        Err(RecoveryClaimError::Unobserved(evidence)) => {
+            suppress_unobserved_recovery(run, &evidence);
+            return;
+        }
+        Err(RecoveryClaimError::Io(err)) => {
+            match classify_observation(&err) {
+                ObservationClass::Unobserved => suppress_unobserved_recovery(
+                    run,
+                    &UnobservedEvidence::about(
+                        UnobservedSession::ClaimFileUnreadable,
+                        format!("recovery-claims/{}.json", run.run_id),
+                    ),
+                ),
+                // Absent or a decided path fact about the claim file. The record
+                // simply offers no recovery, which is a statement the daemon is
+                // entitled to make.
+                ObservationClass::Absent | ObservationClass::Decided => {
+                    run.recovery_actions.clear()
+                }
+            }
+            return;
+        }
+        // Decided statements about the claim or its identifiers.
+        Err(_) => {
+            run.recovery_actions.clear();
             return;
         }
     };
@@ -11996,8 +12150,8 @@ fn apply_recovery_claim_to_run(
         // authority this whole path exists to prevent. The claim on disk is left
         // alone, so the next pass — which may read the file fine — still finds
         // it and the rescue stays idempotent.
-        ResolvedRecoveryClaim::Unobserved(reason) => {
-            suppress_unobserved_recovery(run, &format!("{reason:?}"));
+        ResolvedRecoveryClaim::Unobserved(evidence) => {
+            suppress_unobserved_recovery(run, &evidence);
             return;
         }
         ResolvedRecoveryClaim::Missing => return,
@@ -12013,8 +12167,8 @@ fn apply_recovery_claim_to_run(
     match verify_committed_claim_against_session(home, project_root, &claim) {
         ClaimEvidence::Valid => {}
         ClaimEvidence::Invalid => return,
-        ClaimEvidence::Unobserved(reason) => {
-            suppress_unobserved_recovery(run, &format!("{reason:?}"));
+        ClaimEvidence::Unobserved(evidence) => {
+            suppress_unobserved_recovery(run, &evidence);
             return;
         }
     }
@@ -31269,8 +31423,205 @@ pub(crate) mod tests {
             "and it must say WHY the actions are gone, so the caller can retry: {failed}"
         );
 
+        // orgasmic:TASK-2QK4P.1.1.1.1 F3 — THE DIAGNOSTIC AND THE REPAIR.
+        //
+        // The refusal above is project-wide and permanent: one malformed line
+        // in ONE session file makes every recovery in the project answer 503
+        // for as long as the file sits there, because the file cannot repair
+        // itself. Before this round the operator was told only
+        // `SessionUnreadable` — no file, no action — which is an outage with no
+        // exit. The design ruling (see `UnobservedEvidence`) is that the
+        // project-wide refusal is CORRECT and stays: excluding the unreadable
+        // file from the set and calling the remainder complete is exactly the
+        // defect rounds one through three closed. What ships instead is
+        // identity plus a documented single-file repair.
+        let expected_subject = format!(
+            "{}/recover-unreadable.jsonl",
+            project_sessions_dir(&project_root)
+                .strip_prefix(&project_root)
+                .unwrap()
+                .display()
+        );
+        assert_eq!(
+            failed["recovery_unobserved_subject"].as_str(),
+            Some(expected_subject.as_str()),
+            "the refusal must name WHICH FILE, project-relative and sanitized: {failed}"
+        );
+        assert_eq!(
+            failed["recovery_unobserved_remediation"].as_str(),
+            Some("repair_session_file"),
+            "and WHAT WOULD CLEAR IT: {failed}"
+        );
+
+        // THE DOCUMENTED REPAIR (Remediation::RepairSessionFile): move that one
+        // named file out of the project's sessions directory. Nothing else is
+        // touched, and recovery resumes on the very next request.
+        let named = project_sessions_dir(&project_root).join("recover-unreadable.jsonl");
+        std::fs::rename(
+            &named,
+            project_root.join("recover-unreadable.jsonl.quarantined"),
+        )
+        .unwrap();
+
+        let recovery: serde_json::Value = reqwest::Client::new()
+            .get(format!("http://{}/api/recovery/status", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let failed = recovery["failed_recoverable_runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == "run-forged-claim")
+            .expect("the origin is still a failed-recoverable record");
+        assert!(
+            failed["recovery_unobserved"].is_null(),
+            "the documented repair must clear the refusal for the WHOLE project: {failed}"
+        );
+        assert!(
+            failed["recovery_unobserved_subject"].is_null()
+                && failed["recovery_unobserved_remediation"].is_null(),
+            "and the diagnostic goes with it: {failed}"
+        );
+
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    /// F4 — THE DIRECT LOAD BOUNDARY: a claim IO failure is a 503, not a 500.
+    ///
+    /// `recovery_claim_load_error` mapped only the explicit `Unobserved`
+    /// variant to a retryable 503 and sent raw `Io` to 500. A 500 tells the
+    /// caller the daemon is broken and there is nothing to do; the truth is
+    /// that one file could not be read and the answer will be decided once it
+    /// can — which is a 503 with a named remediation.
+    ///
+    /// Injection to see it red: restore
+    /// `other => ApiError::internal(...)` over the `Io` arm.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f4_a_claim_io_failure_is_retryable_not_an_internal_error() {
+        let unobserved = recovery_claim_load_error(
+            "run-f4-direct",
+            RecoveryClaimError::Io(std::io::Error::from_raw_os_error(libc::EACCES)),
+        );
+        assert_eq!(
+            unobserved.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "EACCES on a claim file is the observer failing: {}",
+            unobserved.message
+        );
+        let body = unobserved.body.expect("a 503 must carry a diagnostic body");
+        assert_eq!(body["reason"], "claim_file_unreadable");
+        assert_eq!(body["remediation"], "repair_claim_store");
+        assert!(
+            body["subject"]
+                .as_str()
+                .is_some_and(|s| s.contains("run-f4-direct")),
+            "and it must name the file: {body}"
+        );
+        assert!(
+            body["remediation_hint"]
+                .as_str()
+                .is_some_and(|s| s.len() > 20),
+            "with the documented repair in it: {body}"
+        );
+
+        // The evidence-carrying variant keeps the subject the LEAF established,
+        // rather than the generic one this boundary would invent.
+        let named = recovery_claim_load_error(
+            "run-f4-direct",
+            RecoveryClaimError::Unobserved(UnobservedEvidence::about(
+                UnobservedSession::SessionUnreadable,
+                ".orgasmic/sessions/run-x.jsonl",
+            )),
+        );
+        assert_eq!(named.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = named.body.unwrap();
+        assert_eq!(body["subject"], ".orgasmic/sessions/run-x.jsonl");
+        assert_eq!(body["remediation"], "repair_session_file");
+
+        // A DECIDED failure is still an internal error here, so the 503 is not
+        // a blanket downgrade: the split is the errno policy's, not this site's.
+        let decided = recovery_claim_load_error("run-f4-direct", RecoveryClaimError::CorruptClaim);
+        assert_eq!(decided.status, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// F4 — THE HELPER BOUNDARY: `committed_claim_is_authoritative` had
+    /// `_ => CommittedClaimAuthority::NotAuthoritative`, which routed EVERY
+    /// resolver `Err` — raw `Io` included — through a DECIDED negative. That is
+    /// literally the rejected shape, "could not decide" spelled as "decided
+    /// no", and a decided no sends `post_run_recover` to the no-plan branch
+    /// where it can mint a second replacement.
+    ///
+    /// The fixture makes the claim store unreadable for real, so the resolver
+    /// genuinely cannot decide.
+    ///
+    /// Injection to see it red: restore the `_ =>` arm.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[test]
+    fn f4_the_helper_never_spells_could_not_decide_as_decided_no() {
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: permission fixtures are meaningless as root");
+            return;
+        }
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = root.join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+
+        // The claim's contents are irrelevant here — the resolver fails before
+        // it can be compared to anything, which is the point.
+        let claim: RecoveryClaim = serde_json::from_value(json!({
+            "plan_version": 1,
+            "project_id": "orgasmic",
+            "origin_run_id": "run-f4-helper",
+            "request_id": "req-f4-helper",
+            "status": "committed",
+            "replacement_run_id": "run-f4-replacement",
+            "replacement_session_path": project_sessions_dir(&project_root)
+                .join("run-f4-replacement.jsonl"),
+            "replacement_runtime_id": "rt-f4",
+        }))
+        .unwrap();
+
+        // Deny the whole state root: canonicalize/open of the daemon's own
+        // store fails, so the resolver cannot look at anything.
+        let previous = std::fs::metadata(home.state())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777;
+        std::fs::set_permissions(home.state(), std::fs::Permissions::from_mode(0o000)).unwrap();
+        let verdict = committed_claim_is_authoritative(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-f4-helper",
+            &mut ProjectOriginAuthority::default(),
+            &claim,
+        );
+        std::fs::set_permissions(home.state(), std::fs::Permissions::from_mode(previous)).unwrap();
+
+        match verdict {
+            CommittedClaimAuthority::Unobserved(evidence) => {
+                assert_eq!(evidence.remediation.class(), "repair_claim_store");
+            }
+            CommittedClaimAuthority::NotAuthoritative => panic!(
+                "an unreadable claim store must not be reported as a DECIDED negative — \
+                 that answer lets the handler mint a competitor"
+            ),
+            CommittedClaimAuthority::Authoritative => {
+                panic!("nothing was observed, so nothing can be authoritative")
+            }
+        }
     }
 
     #[tokio::test]

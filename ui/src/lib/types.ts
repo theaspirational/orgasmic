@@ -288,6 +288,15 @@ export type RecoveryAction = {
   target: 'manager' | 'worker' | string;
 };
 
+/** What would clear a `recovery_unobserved` refusal. Mirrors the daemon's
+ *  `orgasmic_daemon::recovery_claim::Remediation::class()`. */
+export type RecoveryRemediation =
+  | 'repair_session_file'
+  | 'repair_session_store'
+  | 'repair_auth_key'
+  | 'repair_claim_store'
+  | string;
+
 export type RecoveredRun = {
   run_id: string;
   runtime_id: string;
@@ -296,7 +305,43 @@ export type RecoveredRun = {
   classification: string;
   reason: string;
   recovery_actions?: RecoveryAction[];
+  /** Set when the daemon REFUSED to decide recovery authority rather than
+   *  finding nothing: the origin enumeration did not complete.
+   *  orgasmic:TASK-2QK4P.1.1.1.1 F3 — the refusal is project-wide and does not
+   *  self-repair, so the operator surface has to name the file and the fix. */
+  recovery_unobserved?: string | null;
+  /** Sanitized, project-relative identity of the file the observation failed
+   *  on. Never an absolute host path. */
+  recovery_unobserved_subject?: string | null;
+  recovery_unobserved_remediation?: RecoveryRemediation | null;
+  /** The actions this record would have offered had the enumeration completed.
+   *  Present only alongside `recovery_unobserved`; NOT actionable. */
+  suppressed_recovery_actions?: RecoveryAction[];
 };
+
+/** The operator-facing repair for each remediation class, kept beside the type
+ *  so the UI never has to invent one. The daemon ships the same sentence in the
+ *  503 body's `remediation_hint`; this is the fallback for the inventory list,
+ *  where only the class travels. */
+export const RECOVERY_REMEDIATION_HINTS: Record<string, string> = {
+  repair_session_file:
+    'The named session file could not be read as a complete event log. Restore read access to it, or move that one file out of the project\'s .orgasmic/sessions/ directory to quarantine it; recovery resumes on the next request.',
+  repair_session_store:
+    'The project\'s .orgasmic/sessions/ directory could not be opened. Restore read and execute access to it and retry.',
+  repair_auth_key:
+    'The daemon could not read its host auth material at <home>/auth/token. Restore read access to that file — do not delete or regenerate it, which would invalidate every live recovery claim.',
+  repair_claim_store:
+    'The daemon-owned claim store under <home>/state/recovery-claims/ could not be opened, listed or read. Restore read and execute access to it and retry.',
+};
+
+/** One line an operator can act on: what failed, on which file, and the fix. */
+export function recoveryUnobservedNotice(run: RecoveredRun): string | null {
+  if (!run.recovery_unobserved) return null;
+  const subject = run.recovery_unobserved_subject ?? 'an unnamed file';
+  const remediation = run.recovery_unobserved_remediation ?? '';
+  const hint = RECOVERY_REMEDIATION_HINTS[remediation] ?? 'Retry once the file is readable.';
+  return `Recovery authority unresolved (${run.recovery_unobserved}) at ${subject}. ${hint}`;
+}
 
 /// What one run-inventory pass touched. Counts and byte totals only — never
 /// session contents. Present so the run list can show that enumeration cost

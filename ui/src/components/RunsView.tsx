@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { fetchRun, fetchRecoveryInventory, postRunRelease } from '../lib/api';
 import { useRunDock } from '../lib/runDock';
 import { isExternalManagerRun } from '../lib/runLabels';
+import { recoveryUnobservedNotice } from '../lib/types';
 import type { RecoveredRun, RecoveryInventoryResponse, RunSummary } from '../lib/types';
 import { useResource } from '../lib/useResource';
 import { Badge, DataTable, ErrorPanel, JsonPanel, Loading } from './Primitives';
@@ -41,7 +42,12 @@ function recoveredRows(classification: string, runs: RecoveredRun[]): RunRow[] {
     kind: '',
     runtime_id: run.runtime_id,
     boot_id: run.boot_id,
-    reason: run.reason,
+    // orgasmic:TASK-2QK4P.1.1.1.1 F3 — when the daemon refused to decide
+    // recovery authority, the row says WHICH FILE and WHAT TO DO. Without it
+    // the operator sees a run whose recovery actions are simply missing and
+    // has no way to tell "nothing to offer" from "every recovery in this
+    // project is refused until one file is repaired".
+    reason: recoveryUnobservedNotice(run) ?? run.reason,
   }));
 }
 
