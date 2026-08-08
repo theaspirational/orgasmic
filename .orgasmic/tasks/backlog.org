@@ -5019,3 +5019,4 @@ Preserved pane frames:
 - =.orgasmic/tmp/dispatch/task-rma18-1-1-review/pane-at-stall-kill-run-20260808T130710.txt=
   (death 3, refusal with NO web search — the decisive one)
 Aborted dispatches: =tx-20260808-orgasmic-5361=, =-5372=, =-5393=.
+

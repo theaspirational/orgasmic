@@ -23317,3 +23317,276 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Three identical dispatch deaths on 2026-08-08. The third proves the trigger is subject matter plus adversarial framing, not a web search, so the cross-family review policy silently does not hold for safety-critical code.
 :END:
+
+* TX 2026-08-08 Sat 13:46:04 reviewer.finding TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5400
+:TIME:         [2026-08-08 Sat 13:46:04]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       HIGH F-A manager.rs:3972 — RepoGone + index-only gitlink is still deleted: NoRepository yields no candidates, admin modules/ is unreachable, .gitmodules absent, so a populated nested repo is removed with no salvage; the manager's C1 ruling (refuse on a nested .git in NoRepository) is not implemented
+:severity:     HIGH
+:kind:         bug
+:file:         crates/orgasmic-cli/src/manager.rs
+:line:         3972
+:END:
+
+* TX 2026-08-08 Sat 13:46:04 reviewer.finding TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5401
+:TIME:         [2026-08-08 Sat 13:46:04]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       HIGH F-B manager.rs:373-381 — operator help is false in the case it names: it says the refusal runs before the repo-gone removal, reads the INDEX as git does, and that an unreadable submodule record is itself a refusal; in RepoGone no index is read and NoRepository is explicitly not a refusal. Acceptance item 6 met only in appearance; cli_parity pins keywords, not truth
+:severity:     HIGH
+:kind:         docs
+:file:         crates/orgasmic-cli/src/manager.rs
+:line:         373
+:END:
+
+* TX 2026-08-08 Sat 13:46:05 reviewer.finding TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5402
+:TIME:         [2026-08-08 Sat 13:46:05]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       MEDIUM F-C manager.rs:4721-4726 — the inline fence comment still says assert_path_names is 're-taken before EACH subprocess', the exact overstatement round-3 F3 filed, now directly contradicting the rewritten doc comment at :4598. F3 is closed in one place and re-asserted 100 lines lower
+:severity:     MEDIUM
+:kind:         docs
+:file:         crates/orgasmic-cli/src/manager.rs
+:line:         4721
+:END:
+
+* TX 2026-08-08 Sat 13:46:05 reviewer.finding TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5403
+:TIME:         [2026-08-08 Sat 13:46:05]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       LOW F-D manager.rs:3957-3959,3974 — the Unreadable/split-index refusal reuses submodule-specific advice ('remove the submodule's checkout yourself') for trees that may hold no submodule, and offers 'git worktree remove --force' as the escape on the RepoGone branch where there is no repository to run it from
+:severity:     LOW
+:kind:         design
+:file:         crates/orgasmic-cli/src/manager.rs
+:line:         3957
+:END:
+
+* TX 2026-08-08 Sat 13:46:05 reviewer.finding TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5404
+:TIME:         [2026-08-08 Sat 13:46:05]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       LOW F-E verify/TASK-RMA18.1.1/injection.patch — the injection only disables the index branch, so reverting F2's move of the refusal above the RepoGone early return leaves 'orgasmic verify TASK-RMA18.1.1' green; only the dispatch regression catches that half
+:severity:     LOW
+:kind:         test
+:file:         verify/TASK-RMA18.1.1/injection.patch
+:END:
+
+* TX 2026-08-08 Sat 13:48:48 reviewer.reported TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5405
+:TIME:         [2026-08-08 Sat 13:48:48]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:RUN_ID:       run-20260808T132421-a2f64221023d4c56b10b639ce0f2af07
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5397/last.txt
+:END:
+
+* TX 2026-08-08 Sat 13:49:41 reviewer.done TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5406
+:TIME:         [2026-08-08 Sat 13:49:41]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       claude/opus-5 same-family (reason recorded): REJECT, narrow and actionable. F1/F2/F4 genuinely closed and the index parser survived a 16-shape sweep against local git. Rejected on F-A (the manager's C1 ruling is not implemented: RepoGone + index-only gitlink still deleted), F-B (operator help is false in exactly the case it names, and cli_parity pins keywords not truth, so acceptance 6 is met only in appearance), F-C (F3's overstatement relocated to an inline fence comment). Corrected the manager's ruling twice: nested .git must mean ANY type since a modern submodule's is a FILE, and there is no --force on this verb so the refusal needs its own advice.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: d10b0cf..1cdf25b
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5397
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5397/last.txt
+:END:
+
+* TX 2026-08-08 Sat 13:49:42 task.state_transitioned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5407
+:TIME:         [2026-08-08 Sat 13:49:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 13:49:48 implementer.done TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5408
+:TIME:         [2026-08-08 Sat 13:49:48]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:REASON:       Four commits merged as 1cdf25b. Review returned REJECT; fix round follows as TASK-RMA18.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: e8b1dcf056317f43034a2def6c98f994e2f75c0c
+:MERGE_SHA:    1cdf25b265dd5fb1ea3b15046759671fa35eeab5
+:BRANCH:       task-rma18.1.1-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5328
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5328/last.txt
+:END:
+
+* TX 2026-08-08 Sat 13:49:49 task.state_transitioned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5409
+:TIME:         [2026-08-08 Sat 13:49:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 13:51:04 task.created TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5410
+:TIME:         [2026-08-08 Sat 13:51:04]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round five. REJECT on the manager's own C1 ruling being unimplemented (F-A), operator help false in exactly the case it names with a keyword-not-truth pin (F-B), and F3's overstatement relocated (F-C). The reviewer upheld the ruling and corrected it twice: .git of ANY type, and no --force means the refusal needs its own remedy.
+:END:
+
+* TX 2026-08-08 Sat 13:51:11 task.property_updated TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5411
+:TIME:         [2026-08-08 Sat 13:51:11]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-RMA18.1.1
+:FIX_SUBTASK:  TASK-RMA18.1.1.1
+:END:
+
+* TX 2026-08-08 Sat 13:51:18 task.property_updated TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5412
+:TIME:         [2026-08-08 Sat 13:51:18]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-RMA18.1.1.1
+:IMPLEMENTS:   TASK-RMA18.1.1
+:END:
+
+* TX 2026-08-08 Sat 13:52:27 task.state_transitioned TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5413
+:TIME:         [2026-08-08 Sat 13:52:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 13:52:28 manager.dispatch_started TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5414
+:TIME:         [2026-08-08 Sat 13:52:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1
+:BRANCH:       task-rma18.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-1/task-rma18-1-1-1-brief.md
+:STARTED_AT:   [2026-08-08 Sat 13:52:28]
+:LIVENESS:     dc6a863b9fe61228ea656309ff79da70ed395664
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round five, small: close the disclosed NoRepository carve-out with the reviewer's two corrections to the manager's ruling (.git of ANY type; own advice string since there is no --force), and make the operator help true with a pin that is not substring-based.
+:END:
+
+* TX 2026-08-08 Sat 13:52:28 run.created TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5415
+:TIME:         [2026-08-08 Sat 13:52:28]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1.1-implementer-20260808T135228.jsonl
+:REASON:       Round five, small: close the disclosed NoRepository carve-out with the reviewer's two corrections to the manager's ruling (.git of ANY type; own advice string since there is no --force), and make the operator help true with a pin that is not substring-based.
+:RUN_ID:       run-20260808T135228-7aa23aceba6f4e709ce5341f92a9d133
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1-1-1/task-rma18-1-1-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1-1-1/task-rma18-1-1-1-1bc5d8eb27414521bf29309a1902b055-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1-1-1/task-rma18-1-1-1-1bc5d8eb27414521bf29309a1902b055-stdout.log
+:DISPATCH_ATTEMPT: 1bc5d8eb27414521bf29309a1902b055
+:DISPATCH_TX:  tx-20260808-orgasmic-5414
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
