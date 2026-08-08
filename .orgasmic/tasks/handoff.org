@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         19074b4
+:LIVENESS:         ed0ebbc
 :LIVENESS_AT:      [2026-08-08 Sat]
 :UPDATED_AT:       [2026-08-08 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -435,55 +435,66 @@ PRACTICES THAT PAID OFF, with this session as the evidence:
   manager.
 
 ** In flight
-ONE DISPATCH LIVE, and a REINSTALL is queued behind it on operator instruction.
+NO DISPATCH IS LIVE. One report is waiting for a review round, and *the runtime
+has been reinstalled.*
 
-- TASK-2QK4P.1.1.1 implementer =tx-20260808-orgasmic-5454=, claude, worktree
-  =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1=. Round FOUR on the recovery
-  path: the enumeration of every predicate that answers =false= when it could
-  not look. Started 16:24 org time (19:24 system — *org timestamps run 3h behind
-  the system clock on this machine*, which matters when you judge whether a
-  worker is overdue). Budget ~2.5h. Watcher armed on the started_tx.
+=== THE RUNTIME IS NOW ed0ebbc — worktree-prune is on the operator binary
+Reinstalled 2026-08-08 on operator instruction, in a genuine zero-worker window.
+Binary inode =533819939= → =544827231=, and the RUNNING daemon's =lsof= txt inode
+matches the new one. Rollback dir
+=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260808= holds =572c30a=.
+Recipe and SEVEN traps in the session memory =orgasmic-runtime-reinstall=; three
+of them were learned on this run and are new to that file.
 
-=== The prune chain is DONE and MERGED — round seven landed
-TASK-RMA18.1.1.1.1.1 merged as =19074b4=. Two commits, =2b9bdb9= + =26e2370=.
-R1 deleted the last unbounded universal from the =worktree-prune= help (a
-DELETION by manager ruling, so it cannot introduce a fourth false statement);
-R2 grew the =cli_parity= quantifier ban to five literals and made the doc comment
-admit both clauses ban a WORDING, not a class; R3 authored
-=verify/TASK-RMA18.1.1.1.1/=, the rung the chain lacked; R4 hedged BOTH submodule
-refusals to what =nonempty_dir_under= actually observes — it returns =true= for
-"could not list" as well as "non-empty", so neither arm may claim it saw an
-initialized submodule. *No behaviour changed in round seven.*
+*This is the first install carrying the =manager worktree-prune= chain, and it is
+a DESTRUCTIVE verb.* Verified end-to-end on the installed binary, not on a debug
+build: the help says "refuses a NESTED =.git= entry, of any type", the old
+over-claim "refuses any" is gone, and ="at any depth"= is absent. TCC survived
+the swap — =tasks list --ids= over the Documents-hosted project returns 647
+lines, =parse_errors 0=, 6 projects, zero permission errors in =daemon.err.log=.
 
-Manager-verified independently, not taken from the report: the merge left
-=.orgasmic/tx/2026-08.org= byte-identical (blob =439c542f=), so it did not repeat
-round three's revert; and all SIX verify injections =git apply --check= clean on
-the merged tree, which is what proves R4's rewrite moved no patch context.
+*THE RESIDUAL RISK IS OPEN AND WAS ACCEPTED KNOWINGLY.* Neither =walk_worktree=
+fail-open — =:3833= =MAX_DEPTH=, =:3836=/=:3855= an unreadable directory — has any
+fixture. The =remove_contents= symmetry that makes them safe has now been derived
+from source THREE times (round five's reviewer, round six's reviewer, and the
+manager on 2026-08-08, who checked the likeliest crack: the depth bases DO match,
+because the =child= passed to =remove_contents(&child, 1, ..)= at =:3243= is the
+worktree root itself, so both enter it at depth 1) and *executed ZERO times*. The
+cheap fixture is =chmod 000=, not the 65-deep tree. It is the next thing to do to
+this verb, and it should land before any further destructive change to it.
 
-=== The reinstall, and what it deliberately does NOT carry
-The operator authorised "wait for round seven then reinstall". A reinstall
-REQUIRES A ZERO-WORKER WINDOW — booting out the LaunchAgent cycles the mux and
-kills every live dispatch — so it waits for TASK-2QK4P.1.1.1 above.
+Second, unchanged by the reinstall and NOT data loss: =RemovalFailure= carries
+=touched= and =remove_contents= is readdir-ordered, so a fail-open shape yields a
+*reported partial removal*, not an untouched worktree. The help does not say so.
 
-*It packages main at =19074b4=, and deliberately does NOT wait to fold in
-TASK-2QK4P.1.1.1.* The prune chain carries two independent reviewer approvals;
-2QK4P.1.1.1 will have none until its review round runs. Shipping unreviewed
-daemon behaviour into the operator binary because it happened to finish first is
-the wrong trade. Its branch stays unmerged until reviewed.
+=== TASK-2QK4P.1.1.1 reported and is NOT merged — it needs its review round
+=tx-20260808-orgasmic-5454=, worktree =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1=,
+dispatch still open =[reported]=. *It was deliberately left out of the reinstall.*
+The prune chain carried two independent reviewer approvals; this one has none,
+and shipping unreviewed daemon behaviour into the operator binary because it
+finished first is the wrong trade. Its branch stays unmerged until reviewed.
 
-Recipe, traps, and the pre-tested probe live in the session memory
-=orgasmic-runtime-reinstall=. The probe was re-validated against the round-seven
-tree BEFORE the swap: ="neither strictly stronger nor strictly weaker"=,
-="nested repository"=, ="while the repository is still there"= are each *0 in the
-installed binary* (inode =533819939=, built 2026-08-07) and present in the new
-source, with ="worktree-prune"= as the control proving the grep works.
+It delivers what acceptance 1 asked for: the enumeration of every predicate on
+the recovery-authority path that returns =bool=/=Option=, split into group A
+(pure over already-observed bytes — unchanged) and group B (fallible and
+conflated — *13 sites*, now typed through =ClaimEvidence::{Valid, Invalid,
+Unobserved}= plus =RecoveryClaimError::{Unobserved, ForeignSessionPath}=). Notable
+finds beyond the two the review named: =authority_key='s =Path::exists()= swallowed
+a stat error and could drive =auth::load_or_generate= to MINT a new token,
+invalidating every =authority_tag= on the host; and an identity comparison
+=.ok() != .ok()= that failed open and closed at once — one side erroring dropped
+the link, both erroring compared =None == None= and ADMITTED it.
 
-*Round seven closes with BOTH waiver flags, and that is the designed path, not a
-hack*: =--no-review-required= waives the default-branch MERGE gate, and
-=--fix-round-final= waives the fix round's OWN review round. They are two
-different gates and deliberately not one flag (TASK-4WKNX). Both demand a
-=--reason= and both record on the close tx, so the waiver is auditable rather
-than silent.
+*The review round is the next dispatch.* It now runs against the reinstalled
+binary, which is a bonus: the new runtime gets exercised by real work before
+anything else depends on it.
+
+=== Round seven closed with a RECORDED waiver, not silently
+=tx-20260808-orgasmic-5480=, =--no-review-required= with a =--reason= naming every
+gate the manager re-measured on main. *=--fix-round-final= was REFUSED by the
+daemon and it was right*: =:FIX_SUBTASK:= is carried by the PARENT
+(TASK-RMA18.1.1.1.1), not by the fix round itself, and the child's close already
+lands in =in_review=. Do not reach for that flag on a child node.
 
 *ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE YOU DO ANYTHING ELSE.*
 Nothing in orgasmic wakes a manager (TASK-D6N77). The daemon knows the run
