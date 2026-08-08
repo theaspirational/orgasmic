@@ -4145,9 +4145,15 @@ fn worktree_index_gitlinks(worktree: &std::fs::File, path: &Path) -> WorktreeInd
 /// chain and trailing hash wins. Nothing is guessed: if neither length parses
 /// cleanly this returns an error, and the caller refuses.
 ///
-/// A `link` extension means a SPLIT INDEX: the entries here are a delta against
-/// a shared index that is not this file, so the gitlinks visible here are not
-/// the whole set. That is an error rather than a partial answer.
+/// A SPLIT INDEX is refused rather than answered partially: its entries are a
+/// delta against a shared index that is not this file, so the gitlinks visible
+/// here are not the whole set. Measured on git 2.52.0, it is caught by BOTH of
+/// the checks that can see it — a `link` extension in the extension chain, and
+/// the empty-pathname entries git writes for the positions the shared index
+/// still owns.
+///
+/// The FIRST attempt's error is the one reported: SHA-1 is git's default, so
+/// when both lengths fail its diagnosis is the one that describes the file.
 // orgasmic:TASK-RMA18.1.1
 #[cfg(unix)]
 fn index_gitlink_paths(bytes: &[u8]) -> std::result::Result<Vec<String>, String> {
@@ -4160,14 +4166,18 @@ fn index_gitlink_paths(bytes: &[u8]) -> std::result::Result<Vec<String>, String>
     }
     let count = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
 
-    let mut last: Option<String> = None;
+    let mut first: Option<String> = None;
     for hash_len in [20usize, 32usize] {
         match index_entries(bytes, version, count, hash_len) {
             Ok(paths) => return Ok(paths),
-            Err(detail) => last = Some(detail),
+            Err(detail) => {
+                if first.is_none() {
+                    first = Some(detail);
+                }
+            }
         }
     }
-    Err(last.unwrap_or_else(|| "index did not parse".to_string()))
+    Err(first.unwrap_or_else(|| "index did not parse".to_string()))
 }
 
 /// One parse attempt at a fixed object-hash length. Errors on ANY inconsistency,
@@ -4257,7 +4267,14 @@ fn index_entries(
             name
         };
         if name.is_empty() {
-            return Err(malformed("empty path"));
+            // Measured on git 2.52.0: this is how a SPLIT INDEX marks the
+            // positions its shared index still owns. Either way the file does
+            // not describe the whole tree.
+            return Err(
+                "this index has an entry with no path, which is how a SPLIT INDEX defers to a \
+                 shared index this cannot see"
+                    .to_string(),
+            );
         }
         if mode & 0o170000 == GITLINK_MODE {
             let name = String::from_utf8(name.clone())
@@ -12204,5 +12221,126 @@ mod tests {
             "unfinished work\n"
         );
         assert!(worktree_has_uncommitted_changes(&fixture.worktree).unwrap());
+    }
+
+    /// A repository with one ordinary file and one GITLINK, written by git
+    /// itself. `extra` goes to `git init`, `index_args` to `update-index`, so
+    /// the object format and index version are git's to choose rather than this
+    /// test's to encode. Returns the index bytes.
+    #[cfg(unix)]
+    fn git_written_index(extra: &[&str], index_args: &[&str]) -> Vec<u8> {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        let mut init = vec!["init", "-q", "-b", "main"];
+        init.extend_from_slice(extra);
+        git(&init);
+        git(&["config", "user.email", "tester@example.com"]);
+        git(&["config", "user.name", "Test User"]);
+        std::fs::write(root.join("a.txt"), "ordinary file").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-m", "init"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let mut update = vec!["update-index"];
+        update.extend_from_slice(index_args);
+        let cacheinfo = format!("160000,{head},vendor/sub");
+        update.extend_from_slice(&["--add", "--cacheinfo", &cacheinfo]);
+        git(&update);
+        std::fs::read(root.join(".git/index")).unwrap()
+    }
+
+    /// TASK-RMA18.1.1 finding 1: the delete-path predicate now reads the INDEX,
+    /// so its parser is checked against indexes GIT WROTE rather than against
+    /// bytes this test encoded — including the two layouts that change the
+    /// entry stride, a SHA-256 object format (32-byte object ids in the same
+    /// layout, with nothing in the header to announce it) and index version 4
+    /// (prefix-compressed, unpadded paths).
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_reads_the_gitlinks_git_wrote() {
+        for (label, init, index_args) in [
+            ("default", [].as_slice(), [].as_slice()),
+            (
+                "sha256",
+                ["--object-format=sha256"].as_slice(),
+                [].as_slice(),
+            ),
+            ("v4", [].as_slice(), ["--index-version", "4"].as_slice()),
+        ] {
+            let bytes = git_written_index(init, index_args);
+            assert_eq!(
+                index_gitlink_paths(&bytes).unwrap_or_else(|err| panic!("{label}: {err}")),
+                vec!["vendor/sub".to_string()],
+                "{label}: the mode-160000 entry is the only gitlink, and `a.txt` is not one"
+            );
+        }
+    }
+
+    /// UNKNOWN MEANS KEEP. Every one of these is an index this cannot trust, and
+    /// each must be an ERROR rather than "no submodules" — the caller turns the
+    /// error into a refusal, and turning it into an empty answer is exactly the
+    /// fail-open this task exists to close.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_fails_closed_on_anything_it_cannot_trust() {
+        let good = git_written_index(&[], &[]);
+        assert!(index_gitlink_paths(&good).is_ok(), "control must parse");
+
+        for (label, bytes) in [
+            ("empty", Vec::new()),
+            ("not an index", b"NOTDIRC and then some".to_vec()),
+            ("truncated mid-entry", good[..good.len() / 2].to_vec()),
+            ("trailing hash chopped", good[..good.len() - 4].to_vec()),
+            ("entry count overstated", {
+                let mut bytes = good.clone();
+                bytes[8..12].copy_from_slice(&99u32.to_be_bytes());
+                bytes
+            }),
+            ("unsupported version", {
+                let mut bytes = good.clone();
+                bytes[4..8].copy_from_slice(&9u32.to_be_bytes());
+                bytes
+            }),
+        ] {
+            assert!(
+                index_gitlink_paths(&bytes).is_err(),
+                "{label}: an index that cannot be trusted must be an error, not an empty answer"
+            );
+        }
+    }
+
+    /// A SPLIT INDEX holds a delta against a shared index this never opens, so
+    /// the gitlinks visible in it are not the whole set. git writes one on
+    /// demand, so the fixture is git's own, and the answer must be a refusal
+    /// rather than the partial list.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_refuses_a_split_index() {
+        let bytes = git_written_index(&[], &["--split-index"]);
+        let err = index_gitlink_paths(&bytes)
+            .expect_err("a split index must not answer for the shared index it defers to");
+        assert!(
+            err.contains("SPLIT INDEX"),
+            "the refusal must name why it refused, got: {err}"
+        );
+        assert!(
+            bytes.windows(4).any(|window| window == b"link"),
+            "fixture premise: git must actually have written a split index here"
+        );
     }
 }
