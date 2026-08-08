@@ -25005,3 +25005,114 @@
 :DISPATCH_TX:  tx-20260808-orgasmic-5495
 :MODEL_OVERRIDE: gpt-5.6-sol
 :END:
+
+* TX 2026-08-08 Sat 19:30:26 reviewer.finding TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5497
+:TIME:         [2026-08-08 Sat 19:30:26]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       HIGH correctness, BLOCK SHIP — crates/orgasmic-core/src/session.rs:1264-1268,1478-1526 plus crates/orgasmic-daemon/src/recovery_claim.rs:1882-1939 and api.rs:11891-11896: acceptance 6 turns any newline-terminated malformed lifecycle-relevant line in any project session into a permanent project-wide Unobserved refusal, but the enumerator discards the offending path and the inventory/POST surfaces expose only SessionUnreadable. The file cannot self-repair, every failed-origin recovery in the project returns/suppresses indefinitely, and the operator is not told which file to inspect or repair. This meets the brief's pre-authorised BLOCK SHIP condition: a permanent refusal the operator cannot diagnose or clear. Fix direction: carry a sanitized project-relative session identifier (and durable diagnostic/remediation guidance) through UnobservedSession/AuthoritativeOriginLinks/RecoveredRun/503, or narrow the blast radius with an authority-safe per-file quarantine design; add an endpoint regression asserting the offending file is named and recovery succeeds after the documented repair.
+:END:
+
+* TX 2026-08-08 Sat 19:31:19 reviewer.finding TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5498
+:TIME:         [2026-08-08 Sat 19:31:19]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       HIGH correctness, BLOCK SHIP — crates/orgasmic-daemon/src/recovery_claim.rs:684-710,1217-1260 and api.rs:10725-10747: the completeness report says ClaimDirectory::names errors propagate through pending_recovery_claim_owns_session, but names() never distinguishes readdir end-of-directory from readdir failure. A mid-enumeration EIO/other error returns a partial Ok(names); if the pending claim is in the unseen suffix, ownership returns ClaimEvidence::Invalid, and boot proceeds to generic Supervisor::reattach, the exact irreversible prefix write this round says Unobserved must prevent. This is another failed observation reported as complete absence, so acceptance 1/2 are not complete. Fix direction: set/clear and inspect errno around readdir (and propagate closedir/entry decoding failures as appropriate), map a failed enumeration to Unobserved, and add a fault-injected boot-path regression proving no generic reattach/write occurs and normal reattach routing resumes after repair.
+:END:
+
+* TX 2026-08-08 Sat 19:32:02 reviewer.finding TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5499
+:TIME:         [2026-08-08 Sat 19:32:02]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       HIGH correctness, BLOCK SHIP — crates/orgasmic-daemon/src/recovery_claim.rs:547-606,633-647,1110-1167,1960-2070: the completeness enumeration omitted ClaimDirectory::open (Result<Option<_>>) and claim-file open/read classification. openat failures other than NotFound, including transient EACCES/EIO, are converted to CorruptClaim at :595/:599; read_regular likewise converts every non-NotFound open error to CorruptClaim at :637-640. load_recovery_claim propagates that, and resolve_authoritative_recovery_claim quarantines on CorruptClaim at :2067-2069. For a Pending claim, the authoritative session set has no committed link to reconstruct, so a one-shot access failure can rename the live pending claim, resolve Missing, and let POST plan a competing replacement. This is the exact unobserved→invalid→quarantine/mint chain acceptance 1/2 forbids. Fix direction: preserve I/O errors as Unobserved through load/reconcile/resolver, reserve CorruptClaim for bytes/path facts actually observed, and add a fault-injected pending-claim open failure regression proving no quarantine/no new replacement and normal reconciliation after repair.
+:END:
+
+* TX 2026-08-08 Sat 19:33:26 reviewer.finding TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5500
+:TIME:         [2026-08-08 Sat 19:33:26]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       MEDIUM test — crates/orgasmic-daemon/src/recovery_claim.rs:419-428,224-243,5117-5255,5381-5395: the Path::exists()→try_exists() fix has no regression with teeth. Every authority-key test uses arm_authority_key_fault, whose hook returns from authority_key at :421 before execution reaches try_exists at :422-425. The structural pin checks return types, not this branch. Replacing try_exists handling with exists()+token generation can therefore restore the host-token remint defect while all named tests remain green. Fix direction: make the stat/existence observer injectable separately from key reads (or use a real faulting parent/path fixture) and assert no load_or_generate/write, token bytes unchanged, Unobserved/503, then normal resolution after repair.
+:END:
+
+* TX 2026-08-08 Sat 19:35:32 reviewer.finding TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5501
+:TIME:         [2026-08-08 Sat 19:35:32]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       MEDIUM correctness — raw claim-directory/claim-file observation failures are not carried as Unobserved to the retryable API contract, and one helper still collapses resolver errors into a decided negative. ClaimDirectory::open maps state canonicalize/open/metadata failures to RecoveryClaimError::Io at crates/orgasmic-daemon/src/recovery_claim.rs:558-568,602, while read_regular maps metadata/read failures to Io at :641-647; load_recovery_claim propagates them at :1110-1140. POST maps only RecoveryClaimError::Unobserved to retryable 503 and maps every raw Io to 500 at crates/orgasmic-daemon/src/api.rs:11877-11888. Worse, committed_claim_is_authoritative maps every resolver Err, including Io, through its wildcard to CommittedClaimAuthority::NotAuthoritative at :11907-11929, recreating the exact unobserved-to-false class even though current surrounding branches usually fail closed. Acceptance 1's claimed enumeration omitted these result-bearing observation sites, and acceptance 2's typed propagation is incomplete. Fix direction: classify all read-side claim IO as an explicit Unobserved reason, propagate it through resolver/helper/POST as 503, reserve CorruptClaim/NotAuthoritative for observed evidence, and regress both a raw read error and the helper boundary.
+:END:
+
+* TX 2026-08-08 Sat 19:44:43 reviewer.reported TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5502
+:TIME:         [2026-08-08 Sat 19:44:43]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:RUN_ID:       run-20260808T192449-c0f270e4e75544648f50d980e8ae4e66
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review2
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5495/last.txt
+:END:
+
+* TX 2026-08-08 Sat 19:45:56 reviewer.done TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5503
+:TIME:         [2026-08-08 Sat 19:45:56]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       REJECT — BLOCK SHIP, cross-family (codex/gpt-5.6-sol, ran at xhigh; see TASK-TH906). Five findings, all ledgered incrementally as reviewer.finding tx-…-5497 through -5501 while the run was live, which is what let attempt two survive where attempt one lost 27 minutes to the content filter. THE NAMED ROUND-FOUR DEFECTS ARE FIXED AND THEIR REGRESSIONS ARE GREEN; what fails is acceptance 1 itself — the completeness argument is false. Three authority-path observation boundaries were omitted from the 16-row enumeration because the report's PATH DEFINITION excluded them: ClaimDirectory::open and read_regular map every non-NotFound open error to CorruptClaim, which the resolver quarantines and which for a pending claim reaches plan_pending_recovery_claim (F1); ClaimDirectory::names never clears or checks errno around libc::readdir, so a mid-enumeration failure returns a partial Ok(names) as complete and boot proceeds to the irreversible generic reattach write (F2); and committed_claim_is_authoritative collapses every resolver Err through a wildcard into a decided NotAuthoritative (F4). F3 is the brief's own pre-authorised blocker realised: the F4 tear boundary is correct, but one complete-but-malformed line in ANY project session file wedges the whole project's recovery into a permanent 503 while UnobservedSession discards the offending path, so the operator is never told which file to repair. F5: the try_exists fix — the round's most destructive single find, a stat failure minting a new host token — has no regression with teeth, because every authority-key test hits the fault hook at :419-421 before try_exists at :422-425. Reviewer answered the shipping question explicitly: it would NOT reinstall the operator runtime on this tree. Independent gates it did run: recovery_claim:: 31 passed, and four named api/session tests 1 passed each, all watchdogged, peak 43.7%. It accepted the manager's calm-host GREEN and the six verify artifacts as prior evidence and said so, and it obeyed the do-not-read-injection-patches rule and disclosed that too.
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: d7f26bd1d4fb93003b2f38f396767cf0111f47de
+:WALL:         20m
+:REVIEWED_DIFF: main..task-2qk4p.1.1.1-impl
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5495
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5495/last.txt
+:END:
+
+* TX 2026-08-08 Sat 19:45:57 task.state_transitioned TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5504
+:TIME:         [2026-08-08 Sat 19:45:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
