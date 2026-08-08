@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         ed0ebbc
+:LIVENESS:         98f1780
 :LIVENESS_AT:      [2026-08-08 Sat]
 :UPDATED_AT:       [2026-08-08 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -435,89 +435,100 @@ PRACTICES THAT PAID OFF, with this session as the evidence:
   manager.
 
 ** In flight
-ONE DISPATCH LIVE: the TASK-2QK4P.1.1.1 review round, cross-family.
+ONE DISPATCH LIVE: TASK-2QK4P.1.1.1.1, round FIVE of the recovery-authority chain.
 
-- TASK-2QK4P.1.1.1 reviewer =tx-20260808-orgasmic-5485=, *codex / gpt-5.6-sol /
-  effort high*, tmux, worktree
-  =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review=, branched from
-  =d7f26bd= (=task-2qk4p.1.1.1-impl=). Started 18:53 org time (21:53 system —
-  *org timestamps run 3h behind the system clock here*). Budget ~75 min.
-  Watcher armed on the started_tx. Cross-family on purpose: the implementer was
-  claude/opus-5, and gpt-5.6-sol wrote the rejections that OPENED rounds three
-  and four, so it judges whether its own completeness ruling is satisfied.
+- =tx-20260808-orgasmic-5510=, claude / claude-opus-5 / effort high, tmux,
+  worktree =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1=, from main at the
+  round-four merge =9a6a68b=. Started 19:49 org time (22:49 system — *org
+  timestamps run 3h behind the system clock here*). Budget ~2.5h. Watcher armed.
+  Cross-family from the codex reviewer that has now rejected three rounds.
 
-*The implementer dispatch =tx-20260808-orgasmic-5454= is STILL OPEN, and that is
-forced, not an oversight* — see the friction note at the bottom.
+=== Round four: REJECT — BLOCK SHIP, and the reason matters more than the findings
+=tx-20260808-orgasmic-5503=, codex/gpt-5.6-sol. Five findings, ledgered
+incrementally as =tx-…-5497= through =-5501= WHILE THE RUN WAS LIVE. *That rule
+is why attempt two survived and attempt one lost 27 minutes and filed nothing.*
 
-=== What round four delivered, and what the manager checked before dispatching
-Round four's deliverable was a COMPLETENESS ARGUMENT, not a patch: enumerate
-every predicate on the recovery-authority path returning =bool=/=Option= and say
-what each does when it *cannot observe*. Group A = 10 pure-over-observed-bytes
-(unchanged); group B = 13 sites in =recovery_claim.rs= + 3 elsewhere, now typed
-through =ClaimEvidence::{Valid,Invalid,Unobserved}=; group C = 3 deliberately
-unfixed with reasons. Two finds beyond what the review named: =authority_key='s
-=Path::exists()= swallowed a stat error and could drive =auth::load_or_generate=
-to MINT a new token, invalidating every =authority_tag= on the host; and an
-identity comparison =.ok() != .ok()= that failed open and closed at once.
+*The named round-four defects ARE fixed and their regressions green.* What failed
+is acceptance 1 itself: the completeness argument is false. Three authority-path
+observation boundaries were never in the 16-row table because the report's *PATH
+DEFINITION* excluded them — =ClaimDirectory::open=, =::read_regular= and
+=::names=. Every predicate inside the hand-drawn boundary got classified; all
+three of these sit just outside it and carry the defect.
 
-*Manager-verified on =d7f26bd=, recorded as =tx-20260808-orgasmic-5488=, not
-carried from the report*: all SIX verify injections =git apply --check= clean;
-every remaining =Path::exists()= in =recovery_claim.rs= production code
-(=:1145 :1327 :1331 :2168=) is inside a =cfg(not(unix))= block, so section C's
-carve-out is honest; =line_is_lifecycle_relevant= (=session.rs:1264-1268=) does
-return =true= for any line whose header is not =kind:driver_event=, so residual
-risk 1's blast radius is as wide as claimed.
+: F1 BLOCK SHIP  non-NotFound open errors → CorruptClaim → quarantine → for a
+:                PENDING claim, plan_pending_recovery_claim mints a competitor
+: F2 BLOCK SHIP  libc::readdir NULL is EOF *and* error; errno never cleared or
+:                read, closedir discarded → partial Ok(names) read as complete →
+:                boot's generic reattach writes irreversibly into a prefix a
+:                pending recovery owns
+: F3 BLOCK SHIP  one complete-but-malformed line in ANY project session file
+:                wedges that project's recovery into a PERMANENT 503, and
+:                UnobservedSession is a FIELDLESS enum so nothing says which file
+: F4 MEDIUM      committed_claim_is_authoritative wildcards every resolver Err
+:                into a decided NotAuthoritative; raw claim IO answers 500
+: F5 MEDIUM      try_exists has no regression with teeth — every authority-key
+:                test hits the fault hook at :419-421 BEFORE :422-425
 
-*THE ONE UNMET ACCEPTANCE IS NOW MET* (=tx-20260808-orgasmic-5487=). The worker
-got =INCONCLUSIVE= x3 on a degraded host (rate 1.91 vs threshold 1.50) with ZERO
-REAL failures in both post-fix runs, and recorded acceptance 8 unmet rather than
-fudging it. The manager re-ran =scripts/run-tests.sh -p orgasmic-daemon= *in the
-branch's own worktree* on a calm host: *GREEN, failures 0, cargo exited 0, host
-calm at rate 0.1554, wall 121s*, watchdog peak 53.0%. Every load-sensitive
-failure and the TASK-X0PV1 registered flake are absent when the host is calm.
-*The report's "Unmet Criteria" section is now stale.*
+Reviewer answered the shipping question outright: *it would NOT reinstall the
+operator runtime on this tree.*
 
-=== The question the review actually has to answer
-Rounds 1-4 are ONE shape: a =bool= that means "I verified and it is false" and
-also means "I could not check". Round three fixed it in the two types the
-findings named. *So the review is not "are these 13 sites right" — it is "is the
-ENUMERATION complete, and is the PATH DEFINITION it rests on complete".* A
-missing row is exactly how rounds 1→4 happened. The brief asks ten numbered
-questions; the two the manager would attack first are C4 (F4 makes ONE
-complete-but-malformed final line in ANY project .jsonl wedge that whole
-project's recovery into a permanent, human-repair-only 503) and C8 (the
-=try_exists= fix, the most destructive single find of the round, may have no
-regression that fails if it reverts).
+*MANAGER ADDITION to F2, found while checking it:* the same loop also does
+=if let Ok(name) = name.to_str()=, silently dropping a non-UTF-8 entry name. A
+THIRD collapse in one function, making the set smaller — the unsafe direction,
+for the same reason it was in round three.
 
-=== FRICTION FOUND, and it is operator-facing text that cannot be obeyed
-=dispatch-status= prints, for the reported-but-unmerged implementer dispatch:
-"close it first (=orgasmic manager dispatch-close --task ... --started-tx ...=)".
-*That command cannot be run as printed* — =--status= is required — and the
-truthful variant =--status done= is REFUSED with "--merge-sha is required when
-closing an implementer dispatch as implementer.done". The merge cannot happen
-yet, because the default-branch gate correctly wants a reviewer verdict first.
-So during every review round the implementer dispatch is structurally stuck open,
-its worktree is reported HELD, and the only runnable close is =--status aborted=,
-which records a falsehood about a round that succeeded. Filed as *TASK-SJA9W*.
-Same family as the =worktree-prune= chain: operator text that is not true.
+=== MAIN NOW KNOWINGLY CARRIES F3 — DO NOT PACKAGE A RUNTIME FROM IT
+Round four merged as =9a6a68b= after its review (any verdict clears the merge
+gate; the verdict steers the next stage, not the merge), closed =tx-…-5505= with
+the merge sha. =.orgasmic= is byte-identical across the merge — checked, because
+round three reverted live daemon writes exactly here. *The installed runtime is
+=ed0ebbc=, which predates round four and is unaffected.* Round five closes F3.
+
+=== What round five is actually for
+*Rounds three and four failed the same way, and not in their fixes.* Round three
+fixed the two types its findings named. Round four was told to answer that with a
+completeness argument and produced a table that is internally correct and
+externally incomplete. *A hand-drawn boundary is exactly as trustworthy as the
+=bool= this chain has spent five rounds distrusting: it answers "nothing else is
+on the path" when it means "I did not look further."* So acceptance 1 is DERIVE
+the boundary mechanically and SHOW the derivation — with an explicit escape
+hatch to report an honest residual rather than assert a fifth confident boundary.
+
+=== Two defects filed out of the dispatch machinery itself
+- *TASK-TH906 (P1)* =manager dispatch --effort= is silently dropped for every
+  non-claude harness and the ledger records it as fact anyway. =tmux.rs:989-994=
+  and =rmux.rs:1817-1828= push =--effort= only inside the =is_claude= branch;
+  codex-cli 0.144.5 has no =--effort= at all (it is =-c model_reasoning_effort=)
+  and =--harness-arg= is refused for non-custom harnesses. Attempt one recorded
+  =EFFORT: high= and its pane read =gpt-5.6-sol xhigh=. *Both codex reviews this
+  session actually ran at xhigh.*
+- *TASK-SJA9W (P2)* while an implementer dispatch is reported-but-unmerged — the
+  whole duration of every review round — =dispatch-status= prints a close command
+  missing a required flag, =--status done= is refused for want of a merge sha
+  that must not exist yet, and only =--status aborted= runs, recording a
+  falsehood.
+
+=== TASK-52NJS trip FOUR, and the mitigation that worked
+Review attempt one (=tx-…-5485=) was killed by the OpenAI content filter after
+~27 min, immediately after three =git diff= over =verify/*/injection.patch=.
+Codex reviewed rounds two and three of this same chain fine, so the subject is
+not blocked — the *re-authored defect-injection patches* are. Two mitigations,
+both effective: the manager audited those artifacts himself (all apply clean,
+same target files, no =new file mode= so no =git add= to drop, =cmd= unchanged,
+12/12 non-count =contains:= signatures byte-identical, only two count lines
+moved and both upward) and the brief FORBADE opening them; and it required
+filing each finding to the ledger the moment it existed. *Reuse both.*
 
 *ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE YOU DO ANYTHING ELSE.*
-Nothing in orgasmic wakes a manager (TASK-D6N77). The daemon knows the run
-ended; it cannot tell you. A dispatch without a watcher stalls the whole board
-silently and looks exactly like a worker still working — the operator is the
-only detector, which is the product inverted. Poll =manager dispatch-status=
+Nothing in orgasmic wakes a manager (TASK-D6N77). Poll =manager dispatch-status=
 every 30s for the started_tx and emit on =[reported]= OR =[run-gone]=-without-
 report. *NEVER key on =[pid-gone]=*: tmux prints it always because =WORKER_PID=-=.
 
-=== The runtime is ed0ebbc; the residual risk on worktree-prune is still open
-Reinstalled 2026-08-08. Binary inode =533819939= → =544827231=; rollback dir
-=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260808= holds =572c30a=.
-Recipe and SEVEN traps in session memory =orgasmic-runtime-reinstall=.
-*Neither =walk_worktree= fail-open (=:3833= MAX_DEPTH, =:3836=/=:3855= an
-unreadable directory) has any fixture*; the =remove_contents= symmetry that makes
-them safe has been derived from source THREE times and executed ZERO times. The
-cheap fixture is =chmod 000=. It should land before any further destructive
-change to that verb. *This branch will go into the NEXT reinstall, not this one.*
+=== Still open on the other chain
+=worktree-prune= is on the operator binary and neither =walk_worktree= fail-open
+(=:3833= MAX_DEPTH, =:3836=/=:3855= unreadable directory) has any fixture; the
+=remove_contents= symmetry has been derived from source three times and executed
+zero times. Cheap fixture is =chmod 000=. Before any further destructive change.
 
 ** Divergence / Risks
 THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
