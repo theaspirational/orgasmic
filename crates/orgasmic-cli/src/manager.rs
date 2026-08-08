@@ -370,8 +370,12 @@ pub struct DispatchStatusArgs {
 Refuses any worktree an OPEN dispatch names, whatever its run health: ending a
 dispatch is `dispatch-close`'s job, and an abandoned one is reported with the
 verb that releases it. Salvages a dirty tree to refs/orgasmic/salvage/<sha>
-first and then removes WITHOUT --force, so git's clean check still gates the
-removal. A worktree whose repo is gone cannot be salvaged and says so.")]
+first, then removes it through this verb's OWN anchored directory handle rather
+than by handing a pathname to `git worktree remove`. It refuses what a
+non-forced `git worktree remove` refuses, checked here: a LOCKED worktree, one
+containing an INITIALIZED SUBMODULE, and one still dirty after salvage. A
+worktree whose repo is gone cannot be salvaged, so it is removed with NO
+salvage, and the report says so.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -3897,7 +3901,188 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
     (!oid.is_empty()).then_some(oid)
 }
 
-/// Does `git` consider this worktree clean enough to remove without `--force`?
+/// The submodule refusal `git worktree remove` makes, reproduced from the
+/// ANCHORED HANDLE on the worktree rather than from another subprocess.
+///
+/// `Some(reason)` means refuse. git's own test is `validate_no_submodules`
+/// (`builtin/worktree.c`) and it is CATEGORICAL and CHECKED BEFORE CLEANLINESS:
+/// a worktree containing an initialized submodule cannot be removed without
+/// `--force`, however clean the parent reports it to be. TASK-RMA18 reproduced
+/// only git's locked and unclean refusals, so this verb recursively deleted
+/// trees git itself declines to touch.
+///
+/// Salvage cannot stand in for the refusal, which is why it is a refusal rather
+/// than an extra salvage step: the parent's `git add -A` records a submodule as
+/// a GITLINK, so files inside one are never captured by any salvage commit. And
+/// a committed `submodule.<name>.ignore = all` — inherited by every clone —
+/// makes a submodule holding uncommitted work report CLEAN to the parent, so
+/// without this check the deletion happened with no salvage at all.
+///
+/// Both of git's branches are reproduced, in git's order:
+///   1. the worktree's own admin directory holds a `modules/` directory — which
+///      is what a `git submodule update --init` inside a LINKED worktree creates
+///      (measured: `.git/worktrees/<id>/modules/<path>`), and which survives a
+///      later `deinit` or an edit to `.gitmodules`;
+///   2. a submodule working path is a NON-EMPTY directory (git: `!is_empty_dir`,
+///      which is why an UNINITIALIZED submodule — an empty placeholder — is not
+///      a refusal, matching git).
+///
+/// Branch 2 reads `.gitmodules`, where git reads the worktree's index. The index
+/// is a binary format this cannot parse through a handle, and the reachable case
+/// the finding names — a worker running `git submodule update --init` in order
+/// to build — requires a `.gitmodules` entry. Branch 1 covers the gitlink whose
+/// `.gitmodules` entry was edited away.
+// orgasmic:TASK-RMA18.1
+#[cfg(unix)]
+fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<String> {
+    if worktree_admin_dir_holds_modules(worktree, path) {
+        return Some(format!(
+            "{} contains an initialized submodule (its worktree admin directory holds a \
+             `modules` directory), and `git worktree remove` refuses such a worktree outright \
+             — no salvage can capture what is inside a submodule, because the parent records it \
+             as a gitlink. Remove the submodule's checkout yourself, or remove the worktree with \
+             `git worktree remove --force` once you have rescued its contents",
+            path.display()
+        ));
+    }
+    for module in gitmodules_paths(worktree) {
+        if nonempty_dir_under(worktree, &module) {
+            return Some(format!(
+                "{} contains an initialized submodule at {module}, and `git worktree remove` \
+                 refuses such a worktree outright — no salvage can capture what is inside a \
+                 submodule, because the parent records it as a gitlink. Remove the submodule's \
+                 checkout yourself, or remove the worktree with `git worktree remove --force` \
+                 once you have rescued its contents",
+                path.display()
+            ));
+        }
+    }
+    None
+}
+
+/// git's branch 1: `is_directory(worktree_git_path(wt, "modules"))`.
+///
+/// `.git` is read through the worktree's own handle. When it is a real directory
+/// the `modules` lookup is fd-relative too; when it is a linked worktree's
+/// `gitdir:` FILE the target is resolved by pathname, because it points into the
+/// project repository — outside anything this verb anchors and never what it
+/// deletes. That is the same boundary [`worktree_repo_state`] already takes.
+#[cfg(unix)]
+fn worktree_admin_dir_holds_modules(worktree: &std::fs::File, path: &Path) -> bool {
+    use std::io::Read;
+
+    let dot_git = std::ffi::OsStr::new(".git");
+    let modules = std::ffi::OsStr::new("modules");
+    let Ok(kind) = anchored_dir::stat_at(worktree, dot_git) else {
+        return false;
+    };
+    if kind.is_dir() {
+        return match anchored_dir::open_child_dir(worktree, dot_git) {
+            Ok(anchored_dir::ChildOpen::Dir(admin)) => anchored_dir::stat_at(&admin, modules)
+                .map(|kind| kind.is_dir())
+                .unwrap_or(false),
+            _ => false,
+        };
+    }
+    if kind.is_symlink() {
+        return false;
+    }
+    let mut contents = String::new();
+    if anchored_dir::open_child_file(worktree, dot_git)
+        .and_then(|mut file| file.read_to_string(&mut contents))
+        .is_err()
+    {
+        return false;
+    }
+    let Some(gitdir) = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))
+        .map(str::trim)
+    else {
+        return false;
+    };
+    let resolved = if Path::new(gitdir).is_absolute() {
+        PathBuf::from(gitdir)
+    } else {
+        path.join(gitdir)
+    };
+    resolved.join("modules").is_dir()
+}
+
+/// `submodule.<name>.path` values from the worktree's `.gitmodules`, read
+/// through the anchored handle. An absent or unreadable file yields none.
+#[cfg(unix)]
+fn gitmodules_paths(worktree: &std::fs::File) -> Vec<String> {
+    use std::io::Read;
+
+    let mut contents = String::new();
+    if anchored_dir::open_child_file(worktree, std::ffi::OsStr::new(".gitmodules"))
+        .and_then(|mut file| file.read_to_string(&mut contents))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    let mut in_submodule = false;
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(header) = line.strip_prefix('[') {
+            in_submodule = header
+                .split(|c: char| c.is_whitespace() || c == ']')
+                .next()
+                .is_some_and(|section| section.eq_ignore_ascii_case("submodule"));
+            continue;
+        }
+        if !in_submodule {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("path") {
+            let value = value.trim().trim_matches('"');
+            if !value.is_empty() {
+                paths.push(value.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// git's branch 2: is `rel` a NON-EMPTY directory inside this worktree?
+///
+/// Walked component by component with `openat(O_NOFOLLOW)` from the worktree's
+/// handle, so a `.gitmodules` that names `../..` or routes through a symlink
+/// cannot make this look outside the tree. Anything that does not resolve to a
+/// plain directory is not a submodule checkout and is not a refusal; anything
+/// that resolves but cannot be listed IS a refusal, because "it might be empty"
+/// is not a licence to delete it.
+#[cfg(unix)]
+fn nonempty_dir_under(worktree: &std::fs::File, rel: &str) -> bool {
+    let mut dir = match worktree.try_clone() {
+        Ok(dir) => dir,
+        Err(_) => return false,
+    };
+    for component in rel.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            return false;
+        }
+        dir = match anchored_dir::open_child_dir(&dir, std::ffi::OsStr::new(component)) {
+            Ok(anchored_dir::ChildOpen::Dir(child)) => child,
+            _ => return false,
+        };
+    }
+    match anchored_dir::entry_names(&dir) {
+        Ok(names) => !names.is_empty(),
+        // Listed nothing because the listing FAILED. Refuse.
+        Err(_) => true,
+    }
+}
+
+/// Does `git` consider this worktree removable without `--force`?
 ///
 /// This is the check `git worktree remove` performs for itself, performed here
 /// instead, because TASK-RMA18 finding 5 took the RECURSIVE DELETION away from
@@ -3909,10 +4094,20 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
 /// and clearing the admin entry afterwards via `git worktree prune` — and the
 /// removal itself happens through the anchored handle.
 ///
-/// Both refusals git makes are reproduced. A LOCKED worktree is refused (git's
-/// `--force`-only case), and an unclean one is refused, `--porcelain` counting
-/// untracked files exactly as git's own check does.
-fn git_would_remove_worktree(project_root: &Path, worktree: &Path) -> Result<()> {
+/// All three refusals git makes without `--force` are reproduced, in git's own
+/// order: a LOCKED worktree, a worktree containing an INITIALIZED SUBMODULE (see
+/// [`worktree_submodule_refusal`] — TASK-RMA18 omitted this one, which is what
+/// TASK-RMA18.1 exists for), and an UNCLEAN one. The clean check passes
+/// `--ignore-submodules=none` exactly as git's own `remove_cmd` does, so a
+/// committed `submodule.<name>.ignore = all` cannot make a dirty tree read
+/// clean here.
+// orgasmic:TASK-RMA18,TASK-RMA18.1
+#[cfg(unix)]
+fn git_would_remove_worktree(
+    project_root: &Path,
+    worktree: &Path,
+    handle: &std::fs::File,
+) -> Result<()> {
     let listed = Command::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(project_root)
@@ -3956,11 +4151,19 @@ fn git_would_remove_worktree(project_root: &Path, worktree: &Path) -> Result<()>
             worktree.display()
         );
     }
+    // BEFORE cleanliness, as git does — and categorical, so no amount of clean
+    // makes it removable (TASK-RMA18.1 finding 1).
+    if let Some(reason) = worktree_submodule_refusal(handle, worktree) {
+        bail!("{reason}");
+    }
+    // `--ignore-submodules=none` is what git's own `remove_cmd` passes. Without
+    // it a committed `submodule.<name>.ignore = all` hides a dirty submodule and
+    // this reads CLEAN (measured on git 2.52.0).
     let status = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain", "--ignore-submodules=none"])
         .current_dir(worktree)
         .output()
-        .context("git status --porcelain")?;
+        .context("git status --porcelain --ignore-submodules=none")?;
     if !status.status.success() {
         bail!(
             "git status failed: {}",
@@ -3980,15 +4183,34 @@ fn git_would_remove_worktree(project_root: &Path, worktree: &Path) -> Result<()>
 
 /// Reclaim one worktree: salvage first, then a removal that refuses everything
 /// a non-forced `git worktree remove` refuses — so a tree git still considers
-/// dirty survives and is reported instead of destroyed.
+/// dirty, locked, or submodule-bearing survives and is reported instead of
+/// destroyed.
 ///
 /// Called only while this process holds the daemon's cleanup reservation for
 /// this worktree, and that reservation was taken against `worktree.identity`.
-/// Every step below re-proves the same identity before it acts, so THE IDENTITY
-/// CLASSIFIED, THE IDENTITY RESERVED AND THE IDENTITY DELETED ARE THE SAME ONE
-/// (TASK-RMA18, finding 5) — and where a pathname must be handed to `git`, it is
-/// fenced by proving that path resolves to that identity right now.
-// orgasmic:TASK-M47E5,TASK-M47E5.2,TASK-RMA18
+/// THE IDENTITY CLASSIFIED, THE IDENTITY RESERVED AND THE IDENTITY DELETED ARE
+/// THE SAME ONE (TASK-RMA18, finding 5): the removal goes through the anchored
+/// handle and re-proves that identity at the `unlinkat`, so no rename or relink
+/// can redirect what is destroyed.
+///
+/// THE WINDOW THAT REMAINS, stated rather than papered over (TASK-RMA18.1
+/// finding 2). Every `git` step below is a SUBPROCESS and a subprocess can only
+/// be given a PATHNAME, which it resolves itself, inside itself, after this
+/// process has stopped looking. `assert_path_names` immediately before each one
+/// narrows that window to the subprocess's own resolution but cannot close it:
+/// an actor able to rebind `<root>/<name>` to a clean decoy and back, between
+/// an assert and the `execve` that follows it, gets git to answer about the
+/// decoy. What that buys the actor is bounded and worth naming precisely:
+///   - it CANNOT redirect the deletion, which never resolves a pathname;
+///   - it CAN make the CLEAN CHECK — described below as the last gate between
+///     this verb and a worker's unrecoverable output — answer about a tree
+///     other than the one deleted, so a dirty, unsalvaged worktree is removed;
+///   - it CAN make the salvage commit the decoy's contents instead.
+///
+/// Closing it needs git to accept a directory handle, which `git worktree` does
+/// not offer (TASK-RMA18 ruled on that), or the clean decision to be computed
+/// here from the handle the way the submodule refusal now is.
+// orgasmic:TASK-M47E5,TASK-M47E5.2,TASK-RMA18,TASK-RMA18.1
 #[cfg(unix)]
 fn reclaim_managed_worktree(
     project_root: &Path,
@@ -4056,10 +4278,22 @@ fn reclaim_managed_worktree(
         return removal_outcome(root.remove_child(&worktree.name, worktree.identity), None);
     }
 
+    // The submodule refusal is CATEGORICAL and it runs BEFORE the salvage, not
+    // only inside `git_would_remove_worktree` after it. Salvage cannot capture
+    // anything inside a submodule (the parent records a gitlink), so running it
+    // first would mutate a tree that is going to be kept anyway — staging its
+    // index and detaching its HEAD — for no gain. Computed from the HANDLE, so
+    // this one decision needs no pathname and no subprocess (TASK-RMA18.1).
+    if let Some(reason) = worktree_submodule_refusal(&child.dir, &worktree.path) {
+        return kept(format!("refusing to remove it: {reason}"));
+    }
+
     // Everything below hands `worktree.path` to a `git` subprocess, which cannot
     // take a handle. This is the fence for all of it: the path resolves to the
     // classified and reserved identity right now, so git is looking at the same
-    // tree the removal below will delete through the anchor.
+    // tree the removal below will delete through the anchor. It is re-taken
+    // before EACH subprocess; see the window this narrows but cannot close in
+    // the doc comment above.
     if let Err(err) = root.assert_path_names(&worktree.path, worktree.identity) {
         return kept(err.to_string());
     }
@@ -4068,10 +4302,27 @@ fn reclaim_managed_worktree(
         Ok(false) => None,
         Ok(true) => match worktree_head_oid(&worktree.path) {
             Some(parent) => {
+                if let Err(err) = root.assert_path_names(&worktree.path, worktree.identity) {
+                    return kept(err.to_string());
+                }
                 match salvage_worktree_onto(project_root, &worktree.path, &worktree.name(), &parent)
                 {
                     Ok(salvage) => salvage,
-                    Err(err) => return kept(format!("salvage failed, worktree kept: {err}")),
+                    // NOT "untouched". `salvage_worktree_onto` mutates in four
+                    // steps — `git add -A`, `write-tree`, `commit-tree`,
+                    // `checkout --detach`, `anchor_salvage_ref` — and a failure
+                    // at any of them after the first leaves the tree staged and
+                    // possibly detached at a salvage commit. Nothing is
+                    // DESTROYED, which is why `touched` stays false, but the
+                    // operator must not read KEPT as "exactly as the worker left
+                    // it" (TASK-RMA18.1 finding 7).
+                    Err(err) => {
+                        return kept(format!(
+                            "salvage failed, worktree kept and NOTHING DELETED — but the salvage \
+                             had already started, so its index is staged and its HEAD may be \
+                             detached at a salvage commit; inspect it before re-running: {err}"
+                        ))
+                    }
                 }
             }
             None => {
@@ -4089,7 +4340,17 @@ fn reclaim_managed_worktree(
     // the same one `dispatch-close` relies on: git's own clean check. Salvage
     // leaves the tree detached at the salvage commit and therefore CLEAN, so a
     // tree that is still dirty here is one salvage could not capture.
-    if let Err(err) = git_would_remove_worktree(project_root, &worktree.path) {
+    if let Err(err) = root.assert_path_names(&worktree.path, worktree.identity) {
+        return WorktreeRemovalOutcome {
+            removed: false,
+            touched: false,
+            salvage,
+            error: Some(err.to_string()),
+            report_error: None,
+            report_path: None,
+        };
+    }
+    if let Err(err) = git_would_remove_worktree(project_root, &worktree.path, &child.dir) {
         return WorktreeRemovalOutcome {
             removed: false,
             touched: false,

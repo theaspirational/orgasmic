@@ -937,10 +937,12 @@ enum ManagerCmd {
     /// List open dispatches and run health, ending with the managed-worktree
     /// report: what `worktree-prune` could reclaim, and what it will not touch.
     DispatchStatus(DispatchStatusArgs),
-    // orgasmic:TASK-RMA18
+    // orgasmic:TASK-RMA18,TASK-RMA18.1
     /// Reclaim managed worktrees under `~/.orgasmic/worktrees/<project>/`.
-    /// Salvages a dirty tree first and never touches one an open dispatch or a
-    /// live run occupies. `--dry-run` reports without changing anything.
+    /// Salvages a dirty tree first UNLESS its repo is gone, in which case there
+    /// is nothing to salvage into and it is removed unsalvaged. Never touches
+    /// one an open dispatch or a live run occupies. `--dry-run` reports without
+    /// changing anything.
     WorktreePrune(manager::WorktreePruneArgs),
     /// Clear an orphaned dispatch lease (no live run). Never needs a daemon
     /// restart; refuses when a live run still holds the lease.

@@ -8638,6 +8638,151 @@ async fn worktree_prune_reclaims_an_unclaimed_worktree_after_salvaging_it() {
     let _ = running.join.await;
 }
 
+/// TASK-RMA18.1 finding 1: `git worktree remove` refuses a worktree containing
+/// an INITIALIZED SUBMODULE outright, before it considers cleanliness, and
+/// TASK-RMA18 reproduced only its locked and unclean refusals — so this verb
+/// recursively deleted a tree git declines to touch without `--force`.
+///
+/// This is the DATA-LOSS variant, and every part of it is committed fixture
+/// state rather than a contrivance: `submodule.<name>.ignore = all` lives in
+/// `.gitmodules`, so every clone inherits it and the parent reports the tree
+/// CLEAN while the submodule holds untracked work. No salvage runs, and salvage
+/// could not have captured it anyway — the parent records a submodule as a
+/// gitlink, so `git add -A` never sees files inside one.
+///
+/// The sentinel SURVIVING is the assertion. Against the pre-fix code this test
+/// fails on exactly that line.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_a_worktree_containing_an_initialized_submodule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+
+    // A real second repository to be the submodule.
+    let sub_origin = tmp.path().join("subrepo");
+    std::fs::create_dir_all(&sub_origin).unwrap();
+    write(&sub_origin.join("lib.txt"), "library source");
+    run_git(&sub_origin, &["init", "-b", "main"]);
+    run_git(&sub_origin, &["config", "user.email", "tester@example.com"]);
+    run_git(&sub_origin, &["config", "user.name", "Test User"]);
+    run_git(&sub_origin, &["add", "."]);
+    run_git(&sub_origin, &["commit", "-m", "sub init"]);
+
+    run_git(
+        &project_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_origin.to_str().unwrap(),
+            "vendor/sub",
+        ],
+    );
+    // COMMITTED into `.gitmodules`: this is the one config line that turns a
+    // submodule holding uncommitted work into a tree the parent calls clean.
+    run_git(
+        &project_root,
+        &[
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.vendor/sub.ignore",
+            "all",
+        ],
+    );
+    run_git(&project_root, &["add", "-A"]);
+    run_git(&project_root, &["commit", "-m", "add submodule"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-submodule",
+        "task-submodule-impl",
+        &head,
+    );
+    // `git worktree add` does NOT init submodules; a worker that must BUILD
+    // does exactly this, which is what makes the finding reachable.
+    run_git(
+        &worktree,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ],
+    );
+    let sentinel = worktree.join("vendor/sub/SENTINEL.txt");
+    write(&sentinel, "uncommitted worker output no salvage can reach");
+
+    // The premise, measured in the fixture rather than asserted in prose: the
+    // parent reports CLEAN, and git still refuses to remove the worktree.
+    let porcelain = run_git(&worktree, &["status", "--porcelain"]);
+    assert!(
+        porcelain.trim().is_empty(),
+        "fixture premise: with ignore=all the parent must report the tree clean, got:\n{porcelain}"
+    );
+    let refusal = Command::new("git")
+        .args(["worktree", "remove", worktree.to_str().unwrap()])
+        .current_dir(&project_root)
+        .output()
+        .expect("git worktree remove");
+    assert!(
+        !refusal.status.success()
+            && String::from_utf8_lossy(&refusal.stderr).contains("submodules"),
+        "fixture premise: git itself must refuse this removal, got status={} stderr={}",
+        refusal.status,
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+
+    let running = boot(home.clone()).await;
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+
+    assert!(
+        sentinel.is_file(),
+        "the untracked file inside the submodule must SURVIVE the prune, got:\n{stdout}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "the worktree itself must survive, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "the worktree must not be reclaimed, got:\n{stdout}"
+    );
+    let kept = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("KEPT PATH={}", worktree.display())))
+        .unwrap_or_else(|| panic!("a KEPT line naming the worktree, got:\n{stdout}"));
+    assert!(
+        kept.contains("submodule"),
+        "the report must say WHY it was kept, got:\n{kept}"
+    );
+    assert!(
+        !stdout.contains(&format!("SALVAGED PATH={}", worktree.display())),
+        "nothing was salvageable, so nothing must claim to have been salvaged, got:\n{stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-M47E5: a worktree an OPEN dispatch names is never reclaimed, whatever
 /// its run health, and the refusal says why. Ending a dispatch is
 /// `dispatch-close`'s authority, not this verb's.

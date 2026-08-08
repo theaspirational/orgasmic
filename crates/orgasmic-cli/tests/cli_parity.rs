@@ -74,6 +74,36 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
     );
 }
 
+/// TASK-RMA18.1 finding 4: `worktree-prune`'s `after_help` is what an operator
+/// reads at the moment of running a DESTRUCTIVE verb, and for a whole release it
+/// promised a mechanism the code no longer used — "removes WITHOUT --force, so
+/// git's clean check still gates the removal" — after TASK-RMA18 moved the
+/// removal off `git worktree remove` entirely. Nothing pinned it, which is
+/// exactly why it rotted.
+///
+/// This pins the two claims that were false, in both directions: the help must
+/// NOT claim git gates the removal, and it MUST name the refusals this verb
+/// performs for itself — including the submodule one TASK-RMA18 omitted.
+#[test]
+fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
+    let help = help_for(&["manager".to_string(), "worktree-prune".to_string()]);
+    let lower = help.to_lowercase();
+    for stale in ["git's clean check still gates", "removes without --force"] {
+        assert!(
+            !lower.contains(stale),
+            "worktree-prune help still claims the removed mechanism ({stale:?}); \
+             the removal goes through this verb's own anchored handle:\n{help}"
+        );
+    }
+    for required in ["anchored", "submodule", "locked", "dirty"] {
+        assert!(
+            lower.contains(required),
+            "worktree-prune help must name {required:?} — an operator running a destructive \
+             verb reads this text, and each of these is a refusal it performs itself:\n{help}"
+        );
+    }
+}
+
 fn clap_leaf_paths() -> Vec<String> {
     let mut pending = vec![Vec::<String>::new()];
     let mut leaves = Vec::new();
