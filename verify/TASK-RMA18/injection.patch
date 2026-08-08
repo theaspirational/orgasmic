@@ -1,0 +1,166 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 30247b2..9063412 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -3203,30 +3203,12 @@ mod anchored_dir {
+             }
+             Err(err) => return Err(untouched(err)),
+         };
+-        match identity_of(&child) {
+-            Ok(found) if found == expected => {}
+-            Ok(found) => {
+-                return Err(untouched(anyhow::anyhow!(
+-                    "refusing to remove {name:?}: it now names a different directory \
+-                     ({found}) than the one this prune classified and reserved ({expected})"
+-                )))
+-            }
+-            Err(err) => return Err(untouched(err)),
+-        }
++        let _ = expected;
+         let mut touched = false;
+         if let Err(error) = remove_contents(&child, 1, &mut touched) {
+             return Err(RemovalFailure { touched, error });
+         }
+         drop(child);
+-        if identity_at(dir, name) != Some(expected) {
+-            return Err(RemovalFailure {
+-                touched,
+-                error: anyhow::anyhow!(
+-                    "refusing to unlink {name:?}: it stopped naming the directory this prune \
+-                     classified and reserved ({expected}) before the entry could be removed"
+-                ),
+-            });
+-        }
+         match unlink_at(dir, name, libc::AT_REMOVEDIR) {
+             Ok(_) => Ok(()),
+             Err(error) => Err(RemovalFailure {
+@@ -3267,54 +3249,31 @@ impl AnchoredManagedRoot {
+     /// symlink is a refusal rather than a redirection (TASK-RMA18, finding 4).
+     #[cfg(unix)]
+     fn open(home: &Home, project_id: &str) -> Result<Option<Self>> {
+-        // Validates the id as a single safe component, and produces the display
+-        // path. The walk below is what the removals actually resolve against.
++        use std::os::unix::fs::OpenOptionsExt;
+         let path = managed_worktree_root(home, project_id)?;
+-        let trust_root = match anchored_dir::open_trust_root(&home.root) {
++        let dir = match std::fs::OpenOptions::new()
++            .read(true)
++            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
++            .open(&path)
++        {
+             Ok(dir) => dir,
+             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+-            Err(err) => bail!(
+-                "refusing to scan or prune the managed worktree root {}: its home directory {} \
+-                 could not be opened as a real directory: {err}",
+-                path.display(),
+-                home.root.display()
+-            ),
++            Err(err) => {
++                let shape = match std::fs::symlink_metadata(&path) {
++                    Ok(meta) if meta.file_type().is_symlink() => {
++                        "it is a symlink, and a prune that followed it would remove directories \
++                         outside the root"
++                            .to_string()
++                    }
++                    Ok(meta) if !meta.is_dir() => "it is not a directory".to_string(),
++                    _ => format!("it could not be opened as a real directory: {err}"),
++                };
++                bail!(
++                    "refusing to scan or prune the managed worktree root {}: {shape}",
++                    path.display()
++                )
++            }
+         };
+-        let mut dir = trust_root;
+-        for component in ["worktrees", project_id] {
+-            let name = std::ffi::OsStr::new(component);
+-            dir = match anchored_dir::open_child_dir(&dir, name)? {
+-                anchored_dir::ChildOpen::Dir(child) => child,
+-                anchored_dir::ChildOpen::Absent => return Ok(None),
+-                anchored_dir::ChildOpen::NotADirectory => {
+-                    // Name the shape rather than the errno: an operator whose
+-                    // `worktrees` directory is a symlink needs to hear exactly
+-                    // that, and it is the finding-4 case when `component` is an
+-                    // ancestor of the root rather than the root itself.
+-                    let component_path = if component == project_id {
+-                        path.clone()
+-                    } else {
+-                        home.root.join(component)
+-                    };
+-                    let shape = match std::fs::symlink_metadata(&component_path) {
+-                        Ok(meta) if meta.file_type().is_symlink() => format!(
+-                            "{} is a symlink, and a prune that followed it would scan and remove \
+-                             directories outside the root",
+-                            component_path.display()
+-                        ),
+-                        Ok(_) => format!("{} is not a directory", component_path.display()),
+-                        Err(err) => format!(
+-                            "{} could not be opened as a real directory: {err}",
+-                            component_path.display()
+-                        ),
+-                    };
+-                    bail!(
+-                        "refusing to scan or prune the managed worktree root {}: {shape}",
+-                        path.display()
+-                    )
+-                }
+-            };
+-        }
+         Ok(Some(Self { path, dir }))
+     }
+ 
+@@ -3368,19 +3327,16 @@ impl AnchoredManagedRoot {
+     /// `<root>/<name>`, and it does not re-stat the root. A string comparison
+     /// says nothing about which inode the string reaches, which is finding 5.
+     #[cfg(unix)]
+-    fn assert_path_names(&self, path: &Path, identity: anchored_dir::DirIdentity) -> Result<()> {
+-        match anchored_dir::identity_of_path(path) {
+-            Some(found) if found == identity => Ok(()),
+-            Some(found) => bail!(
+-                "refusing to touch {}: it now resolves to a different directory ({found}) than \
+-                 the one this prune classified and reserved ({identity})",
+-                path.display()
+-            ),
+-            None => bail!(
+-                "refusing to touch {}: it no longer resolves to a real directory",
++    fn assert_path_names(&self, path: &Path, _identity: anchored_dir::DirIdentity) -> Result<()> {
++        let meta =
++            std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
++        if !meta.is_dir() || meta.file_type().is_symlink() {
++            bail!(
++                "refusing to touch {}: it is not a real directory",
+                 path.display()
+-            ),
++            );
+         }
++        Ok(())
+     }
+ 
+     #[cfg(not(unix))]
+@@ -4008,14 +3964,7 @@ fn reclaim_managed_worktree(
+     // anything else. Between classification and here the reservation round-trip
+     // and a size walk have happened; this is where a substituted child stops.
+     let child = match root.open_child(&worktree.name) {
+-        Ok(Some(child)) if child.identity == worktree.identity => child,
+-        Ok(Some(other)) => {
+-            return kept(format!(
+-                "{:?} now names a different directory ({}) than the one classified and reserved \
+-                 ({}); kept",
+-                worktree.name, other.identity, worktree.identity
+-            ))
+-        }
++        Ok(Some(child)) => child,
+         Ok(None) => {
+             return kept(format!(
+                 "{:?} is no longer a real directory under the anchored root; kept",
+@@ -4429,8 +4378,7 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
+             // had already deleted something is a PARTIAL, and saying KEPT there
+             // tells an operator the tree is intact when it is a ruin.
+             println!(
+-                "{} PATH={} WHY={}",
+-                if outcome.touched { "PARTIAL" } else { "KEPT" },
++                "KEPT PATH={} WHY={}",
+                 worktree.path.display(),
+                 outcome.error.as_deref().unwrap_or("removal did not run")
+             );

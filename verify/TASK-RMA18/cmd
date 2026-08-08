@@ -1,0 +1,26 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RMA18`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests boot their own daemons against temp homes that must see
+# neither. No `ORGASMIC_ALLOW_MISSING_TOOLS` is needed: none of these three
+# wants a multiplexer, and the orgasmic-cli suite waives no tooling on this
+# host.
+#
+# THREE tests, and they are the three that DESTROY DATA rather than the ones
+# that merely misreport. Each has a victim that can be laid down before the verb
+# runs and looked for afterwards: sentinel files behind a symlinked ANCESTOR of
+# the managed root, a directory SUBSTITUTED at the reserved name while the prune
+# is parked, and a worktree whose removal stops half-way with files already
+# gone.
+#
+# Finding 6 (a run admitted but not yet recorded) is deliberately NOT in this
+# replay. Its window is between `admit_live_run` installing a lease and the
+# caller inserting the `RunRecord`, which cannot be held open from outside the
+# daemon; the regression that drives it is a supervisor unit test
+# (`a_run_admitted_but_not_yet_recorded_blocks_a_close_that_cannot_name_its_task`)
+# and it belongs in the suite rather than pinned here as if it were a message.
+#
+# All three filters go after `--`: `cargo test` takes exactly ONE positional
+# TESTNAME, so a second one is rejected as an unexpected argument. libtest
+# itself ORs any number of them.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch -- worktree_prune_refuses_an_ancestor_symlink_and_every_sentinel_survives a_worktree_substituted_in_the_prune_gap_is_refused_and_the_impostor_survives a_removal_that_stops_part_way_reports_partial_and_never_kept

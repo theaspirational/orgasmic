@@ -1,0 +1,51 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is surgical rather than a wholesale revert, because the three
+# defects it reintroduces are three INDEPENDENT properties of the same file and
+# a wholesale revert would not tell them apart:
+#
+#   1. `AnchoredManagedRoot::open` goes back to ONE `open(O_NOFOLLOW)` of the
+#      whole path, so `<home>/worktrees` is resolved by pathname and followed.
+#   2. The identity comparisons come out of `remove_dir_all_at`,
+#      `reclaim_managed_worktree` and `assert_path_names`, so the entry NAME is
+#      the reference point again and a substituted directory is deleted.
+#   3. The reclaim loop prints `KEPT` unconditionally, so a removal that already
+#      destroyed files reports the tree as intact.
+#
+# Nothing in the daemon is touched. Finding 6's fix lives there and is covered
+# by the supervisor's own tests; see `cmd` for why it is not replayed here.
+exit: 101
+
+# ===== FINDING 4: an ANCESTOR symlink is followed ==========================
+#
+# The first failing assertion of its test: a sentinel laid down OUTSIDE the
+# managed root, behind the symlinked `<home>/worktrees`, is gone. The mechanism
+# is in the same panic — two `RECLAIMED` lines print paths under
+# `<home>/worktrees/orgasmic/` while the directories those paths resolved to
+# belonged to the victim. `<home>/worktrees/orgasmic` is NOT itself a symlink in
+# this fixture, which is what the round-1 regression could not catch.
+contains: an ancestor symlink must never redirect the scan or the removal outside the root
+contains: victim/orgasmic/task-precious/keep-me.txt is gone
+contains: PRUNE_SUMMARY RECLAIMED=2
+
+# ===== FINDING 5: the identity classified is not the identity deleted ======
+#
+# The prune parks at its post-reservation rendezvous; the classified worktree is
+# moved aside and a different directory takes its name. Without the identity
+# carried from enumeration to removal, the resumed prune deletes whatever now
+# answers to that name and reports it RECLAIMED.
+contains: the substituted directory must survive
+contains: RECLAIMED PATH=
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# ===== "KEPT" DID NOT MEAN UNTOUCHED =======================================
+#
+# The removal unlinks the entries sorted before an unwritable subdirectory,
+# fails on that subdirectory's contents, and reports the worktree KEPT — while
+# the files it already deleted are gone.
+contains: a removal that destroyed something must be reported as PARTIAL
+contains: KEPT PATH=
+
+# All three, and only these three. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 3 failed
