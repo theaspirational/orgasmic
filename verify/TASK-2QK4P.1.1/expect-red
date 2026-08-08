@@ -13,6 +13,11 @@
 #   F3  the missing/corrupt branch reconstructs from a silent catalog-derived
 #       slice instead of the authoritative set
 #   F4  the per-project authority never memoizes, so every claim re-enumerates
+#
+# It also removes `post_run_recover`'s up-front refusal, which is what
+# `verify/TASK-2QK4P.1.1-recover` pins on the production path. That artifact
+# shares this injection and is split out only because the test filter wide
+# enough to catch both also catches a registered flake.
 exit: 101
 
 # ===== AN OBSERVATION THAT FAILED, REPORTED AS ONE THAT FOUND NOTHING ======
