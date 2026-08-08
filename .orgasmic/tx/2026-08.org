@@ -24892,3 +24892,116 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-08 Sat 19:20:24 manager.dispatch_orphaned TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5491
+:TIME:         [2026-08-08 Sat 19:20:24]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1.1-reviewer-20260808T185323.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260808T185323-b139351c8ef34e1f982677822160a98d
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review
+:END:
+
+* TX 2026-08-08 Sat 19:22:20 manager.dispatch_aborted TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5492
+:TIME:         [2026-08-08 Sat 19:22:20]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       Reviewer killed by the OpenAI content filter after ~27 minutes of substantive work, not by a crash: the captured pane ends with 'This content can't be shown / We take extra caution with cybersecurity requests' immediately after three consecutive 'git diff main...HEAD -- verify/TASK-2QK4P.1*/injection.patch' commands. The classifier read the deliberately-defect-injecting verify patches over an authority/HMAC recovery path as an exploit-development request. TASK-52NJS, fourth trip, and the FIRST on this subject — codex reviewed rounds two and three of this same chain successfully, so what is new this round is C6: the three re-authored injection patches. Partial work is lost: no reviewer.finding tx was filed, the worktree is unmodified at d7f26bd, and last.txt/stdout.log are both 0 bytes. The only surviving evidence is the pane snapshot, which shows it had already formed at least one finding ('...complete evidence and still returns Valid') before it died.
+:CLOSED_TX:    tx-20260808-orgasmic-5485
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5485/last.txt
+:END:
+
+* TX 2026-08-08 Sat 19:22:54 task.created TASK-TH906
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5493
+:TIME:         [2026-08-08 Sat 19:22:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TH906
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Measured on the TASK-2QK4P.1.1.1 review dispatch: --effort high was recorded on two tx entries and never reached codex, which ran at its own config default xhigh. The ledger states a runtime fact that is false.
+:END:
+
+* TX 2026-08-08 Sat 19:23:08 manager.evidence TASK-52NJS
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5494
+:TIME:         [2026-08-08 Sat 19:23:08]
+:TYPE:         manager.evidence
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-52NJS
+:REASON:       FOURTH trip, and the first on the recovery-authority subject: the TASK-2QK4P.1.1.1 reviewer (codex/gpt-5.6-sol, tx-20260808-orgasmic-5485) was killed by the OpenAI content filter after ~27 minutes of substantive work. Captured pane ends with 'This content can't be shown / We take extra caution with cybersecurity requests' plus the Trusted Access link, immediately after three consecutive 'git diff main...HEAD -- verify/TASK-2QK4P.1*/injection.patch' commands. Codex reviewed rounds two and three of this same chain successfully, so the subject is NOT inherently blocked — what is new this round is the three RE-AUTHORED injection patches, i.e. deliberately-defect-injecting diffs over an authority/HMAC path, which read as exploit development to the classifier. Mitigation being tried: the manager pre-verifies the re-authored artifacts and the brief forbids diffing injection patch bodies.
+:HARNESS:      codex
+:MODEL:        gpt-5.6-sol
+:TRIP:         4
+:TRIGGER:      git diff over verify/*/injection.patch
+:WORK_LOST:    ~27min, no reviewer.finding filed, last.txt and stdout.log both 0 bytes
+:END:
+
+* TX 2026-08-08 Sat 19:24:49 manager.dispatch_started TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5495
+:TIME:         [2026-08-08 Sat 19:24:49]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review2
+:BRANCH:       task-2qk4p.1.1.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 19:24:49]
+:LIVENESS:     d7f26bd1d4fb93003b2f38f396767cf0111f47de
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:REVIEWS_TX:   tx-20260808-orgasmic-5454
+:REASON_INITIAL: ATTEMPT TWO. Attempt one (tx-20260808-orgasmic-5485) was killed by the OpenAI content filter after ~27 minutes, immediately after three consecutive git diffs over verify/*/injection.patch; nothing was filed and the work was lost (TASK-52NJS, fourth trip, first on this subject). Two mitigations: the brief now FORBIDS reading injection-patch bodies and hands over the manager's own complete audit of the three re-authored artifacts (12 of 12 non-count contains: signatures byte-identical, same target files, no new-file mode so no git add to drop, cmd files unchanged, all apply clean, only two count lines moved and both upward), and it instructs the reviewer to file each finding as a reviewer.finding tx the moment it has it rather than batching to the end. NO --effort IS PASSED, DELIBERATELY: orgasmic cannot deliver an effort to codex today (TASK-TH906, P1, filed this round — --effort is pushed only inside the is_claude branch of tmux.rs/rmux.rs, codex has no --effort flag at all, and --harness-arg is refused for non-custom harnesses), so recording EFFORT=high would put a false fact on the ledger, which is the defect itself. This run uses the machine's ~/.codex/config.toml model_reasoning_effort = xhigh, which is what attempt one actually ran at while its tx claimed high.
+:END:
+
+* TX 2026-08-08 Sat 19:24:49 run.created TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5496
+:TIME:         [2026-08-08 Sat 19:24:49]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1.1-reviewer-20260808T192449.jsonl
+:REASON:       ATTEMPT TWO. Attempt one (tx-20260808-orgasmic-5485) was killed by the OpenAI content filter after ~27 minutes, immediately after three consecutive git diffs over verify/*/injection.patch; nothing was filed and the work was lost (TASK-52NJS, fourth trip, first on this subject). Two mitigations: the brief now FORBIDS reading injection-patch bodies and hands over the manager's own complete audit of the three re-authored artifacts (12 of 12 non-count contains: signatures byte-identical, same target files, no new-file mode so no git add to drop, cmd files unchanged, all apply clean, only two count lines moved and both upward), and it instructs the reviewer to file each finding as a reviewer.finding tx the moment it has it rather than batching to the end. NO --effort IS PASSED, DELIBERATELY: orgasmic cannot deliver an effort to codex today (TASK-TH906, P1, filed this round — --effort is pushed only inside the is_claude branch of tmux.rs/rmux.rs, codex has no --effort flag at all, and --harness-arg is refused for non-custom harnesses), so recording EFFORT=high would put a false fact on the ledger, which is the defect itself. This run uses the machine's ~/.codex/config.toml model_reasoning_effort = xhigh, which is what attempt one actually ran at while its tx claimed high.
+:RUN_ID:       run-20260808T192449-c0f270e4e75544648f50d980e8ae4e66
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-144c030dc6bc42f4870ccf86f6d8a88c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-144c030dc6bc42f4870ccf86f6d8a88c-stdout.log
+:DISPATCH_ATTEMPT: 144c030dc6bc42f4870ccf86f6d8a88c
+:DISPATCH_TX:  tx-20260808-orgasmic-5495
+:MODEL_OVERRIDE: gpt-5.6-sol
+:END:
