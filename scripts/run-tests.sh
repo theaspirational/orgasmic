@@ -1180,6 +1180,76 @@ IGNORED_COUNT=$(awk '
 ' "$SUITE_LOG")
 
 # ---------------------------------------------------------------------------
+# the leg where debug_assertions is OFF
+# ---------------------------------------------------------------------------
+
+# orgasmic:TASK-RMA18.1
+#
+# Two test-only rendezvous hooks — `worktree_prune_pause_after_guard` and
+# `dispatch_close_pause_after_guard` — park the process INDEFINITELY on an
+# environment variable while their caller holds the global dispatch cleanup lock
+# AND the daemon's worktree reservation. Both are `#[cfg(debug_assertions)]`,
+# and the test that proves they are gone without it is the only thing standing
+# between a shipped binary and a stray inherited env var wedging reclamation.
+#
+# That test could never fire from this wrapper: every leg here is a debug build,
+# so the half of the assertion that matters — "the hook is COMPILED OUT" — was
+# never executed by any gate (TASK-RMA18.1 finding 3, item 3).
+#
+# `--release` cannot be that leg. A release build of `orgasmic-daemon` embeds
+# the UI, so its build script shells out to `npm --prefix ui run build`; that
+# turns a source-level assertion into one that depends on node_modules and a
+# TypeScript version. Measured in this worktree on 2026-08-08: the npm build
+# fails on a `tsconfig.json` deprecation before a single Rust test compiles.
+#
+# So the leg keys on the thing the `#[cfg]` ACTUALLY reads instead of on the
+# profile name: `-C debug-assertions=off`, in its OWN target directory so it
+# does not invalidate the main cache on every alternation. It is a cheap
+# unoptimized compile, and it runs the assertion in the configuration a shipped
+# binary is in.
+NDA_RAN=0
+NDA_STATUS=0
+NDA_TEST=the_pause_rendezvous_hooks_park_only_in_debug_builds
+NDA_LOG="$WORK/no-debug-assertions.log"
+
+nda_in_scope() {
+    # Whole-workspace runs and any run that names orgasmic-cli.
+    local arg
+    local want_package=0
+    for arg in ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"}; do
+        if [ "$want_package" -eq 1 ]; then
+            [ "$arg" = "orgasmic-cli" ] && return 0
+            want_package=0
+            continue
+        fi
+        case "$arg" in
+            --workspace | --all) return 0 ;;
+            -p | --package) want_package=1 ;;
+            -p=orgasmic-cli | --package=orgasmic-cli) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+if [ -z "$CLASSIFY_LOG" ] && nda_in_scope; then
+    NDA_RAN=1
+    printf 'run-tests: debug_assertions=off leg: cargo test -p orgasmic-cli --bin orgasmic %s\n' \
+        "$NDA_TEST"
+    printf 'run-tests: log %s\n' "$NDA_LOG"
+    CARGO_TARGET_DIR="$REPO/target/no-debug-assertions" \
+        RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C debug-assertions=off" \
+        "${SCRUB[@]}" cargo test -p orgasmic-cli --bin orgasmic "$NDA_TEST" \
+        > "$NDA_LOG" 2>&1
+    NDA_STATUS=$?
+    # A leg that compiled and matched NOTHING is the failure this whole section
+    # exists against: it reads as coverage and is none. Require the named test
+    # to have actually run and passed.
+    if [ "$NDA_STATUS" -eq 0 ] && ! grep -qF "$NDA_TEST ... ok" "$NDA_LOG"; then
+        NDA_STATUS=97
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # verdict
 # ---------------------------------------------------------------------------
 
@@ -1217,6 +1287,19 @@ else
     printf '  cargo    : exited %s (0 all green, 101 libtest reported failures)\n' "$SUITE_EXIT"
 fi
 printf '  ignored  : %s test(s) carrying #[ignore]\n' "$IGNORED_COUNT"
+# orgasmic:TASK-RMA18.1 — always printed, including when it did not run, for
+# the same reason `crashed :` is: a leg that silently did not execute is
+# indistinguishable from a leg that passed unless the block says so.
+if [ "$NDA_RAN" -eq 0 ]; then
+    printf '  cfg-off  : not run (orgasmic-cli not in scope, or --classify)\n'
+elif [ "$NDA_STATUS" -eq 0 ]; then
+    printf '  cfg-off  : passed — the pause rendezvous hooks are compiled out without debug_assertions\n'
+elif [ "$NDA_STATUS" -eq 97 ]; then
+    printf '  cfg-off  : BROKEN — the leg compiled but %s never ran (log %s)\n' \
+        "$NDA_TEST" "$NDA_LOG"
+else
+    printf '  cfg-off  : FAILED (exit %s) — read %s\n' "$NDA_STATUS" "$NDA_LOG"
+fi
 if [ -z "$SKIPPED_TOOLS" ]; then
     printf '  environ  : complete — no tool requirement was waived\n'
 else
@@ -1315,6 +1398,16 @@ if [ "$BILLED_RAN" -eq 1 ]; then
     STATUS=$EXIT_REAL
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
+    STATUS=$EXIT_REAL
+elif [ "$NDA_RAN" -eq 1 ] && [ "$NDA_STATUS" -ne 0 ]; then
+    # orgasmic:TASK-RMA18.1 — a code fact, not a host artefact: this leg runs
+    # one hermetic test with no daemon, no PTY and no timing budget, so a
+    # degraded host cannot excuse it. It sits above HOST_DEGRADED for that
+    # reason, and it is never registrable as a flake.
+    printf '\nverdict: RED — the debug_assertions=off leg failed (exit %s).\n' "$NDA_STATUS"
+    printf '         A test-only pause rendezvous that survives into a shipped binary wedges\n'
+    printf '         dispatch-close or worktree-prune on a stray environment variable, holding\n'
+    printf '         the global cleanup lock and the daemon reservation. Read %s.\n' "$NDA_LOG"
     STATUS=$EXIT_REAL
 elif [ "$CRASH_COUNT" -gt 0 ]; then
     # orgasmic:TASK-STWVB.1.1.1.1

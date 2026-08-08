@@ -4455,9 +4455,14 @@ fn reclaim_managed_worktree(
 /// stray environment variable, inherited by any child of a shell that once ran
 /// the test suite, wedges reclamation and blocks every acquire into that
 /// worktree until the process is killed. A test-only rendezvous belongs in test
-/// builds; [`worktree_prune_pause_hook_is_compiled`] is what makes that
-/// checkable rather than asserted.
-// orgasmic:TASK-M47E5.2,TASK-RMA18
+/// builds.
+///
+/// What proves that is `the_pause_rendezvous_hooks_park_only_in_debug_builds`,
+/// which CALLS this hook and watches whether it parks. TASK-RMA18 proved it
+/// instead with a `const fn` whose body was `cfg!(debug_assertions)` compared
+/// against `cfg!(debug_assertions)` — a tautology that stayed green with the
+/// `#[cfg]` deleted, and which is gone (TASK-RMA18.1 finding 3).
+// orgasmic:TASK-M47E5.2,TASK-RMA18,TASK-RMA18.1
 #[cfg(debug_assertions)]
 fn worktree_prune_pause_after_guard() {
     pause_until_file_is_removed("ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE");
@@ -4465,18 +4470,6 @@ fn worktree_prune_pause_after_guard() {
 
 #[cfg(not(debug_assertions))]
 fn worktree_prune_pause_after_guard() {}
-
-/// Whether the pause rendezvous above exists in THIS build.
-///
-/// Exposed so the gating is proved by a test that reads the same `cfg` the hook
-/// is compiled under, run in both profiles, rather than by trusting the
-/// attribute. `cargo test -p orgasmic-cli --lib worktree_prune_pause` passes in
-/// debug and `cargo test --release ...` passes in release only if the two
-/// disagree exactly where they must.
-#[cfg_attr(not(test), allow(dead_code))]
-const fn worktree_prune_pause_hook_is_compiled() -> bool {
-    cfg!(debug_assertions)
-}
 
 /// Explicit, operator-run reclamation of managed worktrees. See the design note
 /// at the top of this section for why removal never happens automatically.
@@ -5355,9 +5348,23 @@ fn finish_close_guard(
 /// construction the holder is another process, and the window is exactly the
 /// one where it is not talking to the daemon at all. No-op unless the env var
 /// names a file.
+///
+/// COMPILE-GATED OUT OF RELEASE BUILDS for the same reason its `worktree-prune`
+/// twin is (TASK-RMA18.1 finding 3): this hook parks the process indefinitely
+/// while `dispatch-close` holds BOTH the global dispatch cleanup lock and the
+/// daemon reservation, so in a shipped binary a stray environment variable —
+/// inherited by any child of a shell that once ran the suite — wedges the close
+/// and blocks every acquire into that worktree until the process is killed.
+/// TASK-RMA18 gated the prune hook and left this one, 400 lines away in the same
+/// file, holding the same two locks.
+// orgasmic:TASK-RMA18.1
+#[cfg(debug_assertions)]
 fn dispatch_close_pause_after_guard() {
     pause_until_file_is_removed("ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE");
 }
+
+#[cfg(not(debug_assertions))]
+fn dispatch_close_pause_after_guard() {}
 
 fn pause_until_file_is_removed(env_var: &str) {
     let Ok(raw) = std::env::var(env_var) else {
@@ -9189,30 +9196,81 @@ mod tests {
             .is_none());
     }
 
-    /// TASK-RMA18: the test-only pause rendezvous must not exist in a release
-    /// build, where a stray environment variable would park the process forever
-    /// holding the global cleanup lock and the daemon's worktree reservation.
+    /// Does `hook` actually PARK when its env var names a file that exists?
     ///
-    /// Executable in BOTH profiles, and it is the disagreement that is the
-    /// proof: `cargo test -p orgasmic-cli` compiles this with `debug_assertions`
-    /// and asserts the hook is present, `cargo test --release -p orgasmic-cli`
-    /// compiles it without and asserts it is gone. A single-profile assertion
-    /// could not tell the two apart.
-    // orgasmic:TASK-RMA18
+    /// Answered by running it, never by reading a `cfg`. `pause_until_file_is_removed`
+    /// writes a `<pause>.reached` sidecar immediately before it starts sleeping,
+    /// so that file appearing is proof the body ran and parked; a compiled-out
+    /// hook returns at once and writes nothing. Bounded either way: the pause
+    /// file is removed once the sidecar shows up, which is what lets the parked
+    /// thread finish and be joined.
+    // orgasmic:TASK-RMA18.1
+    fn pause_hook_parks(hook: fn(), env_var: &str, dir: &Path) -> bool {
+        let pause = dir.join(format!("{env_var}.pause"));
+        let reached = pause.with_extension("reached");
+        let _ = std::fs::remove_file(&reached);
+        std::fs::write(&pause, "1").unwrap();
+        std::env::set_var(env_var, &pause);
+
+        let worker = std::thread::spawn(hook);
+        // Generous: this only has to outlast thread start-up, and the loop it
+        // is racing sleeps forever, so a slow machine cannot make this flake
+        // in the "it parked" direction.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut parked = false;
+        while std::time::Instant::now() < deadline {
+            if reached.exists() {
+                parked = true;
+                break;
+            }
+            if worker.is_finished() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Release a parked thread; a no-op hook has already returned.
+        let _ = std::fs::remove_file(&pause);
+        worker.join().expect("pause hook thread");
+        std::env::remove_var(env_var);
+        parked
+    }
+
+    /// TASK-RMA18 / TASK-RMA18.1 finding 3: NEITHER test-only pause rendezvous
+    /// may exist in a release build. Each parks the process indefinitely while
+    /// its caller holds the global dispatch cleanup lock AND the daemon's
+    /// worktree reservation, so in a shipped binary a stray environment variable
+    /// — inherited by any child of a shell that once ran the suite — wedges the
+    /// verb and blocks every acquire into that worktree until it is killed.
+    ///
+    /// THIS TEST MEASURES, IT DOES NOT RESTATE. TASK-RMA18 asserted
+    /// `hook_is_compiled() == cfg!(debug_assertions)` where the function's body
+    /// WAS `cfg!(debug_assertions)`; deleting the `#[cfg]` from the hook left it
+    /// green. Here the left-hand side comes from calling the hook and watching
+    /// for its `.reached` sidecar, so deleting the `#[cfg]` makes the release
+    /// leg go red — that is what `scripts/run-tests.sh --release-gates` runs it
+    /// for, and it is the only leg where the claim is live.
+    // orgasmic:TASK-RMA18,TASK-RMA18.1
     #[test]
-    fn the_worktree_prune_pause_hook_is_compiled_out_of_release_builds() {
-        assert_eq!(
-            worktree_prune_pause_hook_is_compiled(),
-            cfg!(debug_assertions),
-            "the pause rendezvous must exist in debug builds and NOT in release builds"
-        );
-        // And the no-op body is what a release build gets: calling it with the
-        // env var set must return rather than park. Only meaningful in release,
-        // where it is the whole claim.
-        if !cfg!(debug_assertions) {
-            std::env::set_var("ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE", "/nonexistent/pause");
-            worktree_prune_pause_after_guard();
-            std::env::remove_var("ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE");
+    fn the_pause_rendezvous_hooks_park_only_in_debug_builds() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (verb, hook, env_var) in [
+            (
+                "worktree-prune",
+                worktree_prune_pause_after_guard as fn(),
+                "ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE",
+            ),
+            (
+                "dispatch-close",
+                dispatch_close_pause_after_guard as fn(),
+                "ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE",
+            ),
+        ] {
+            assert_eq!(
+                pause_hook_parks(hook, env_var, tmp.path()),
+                cfg!(debug_assertions),
+                "{verb}'s pause rendezvous must park in a debug build and be COMPILED OUT of a \
+                 release one; measured by running it with {env_var} set to an existing file"
+            );
         }
     }
 
