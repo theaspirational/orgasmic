@@ -573,13 +573,14 @@ async fn replay_live_original_pane(point: &str, runtime_launched: bool) {
         .send()
         .await
         .unwrap_or_else(|err| panic!("{point}: replay request failed: {err}"));
+    let status = response.status();
+    let raw_body = response.text().await.unwrap_or_default();
     assert!(
-        response.status().is_success(),
-        "{point}: replay status {}: {}",
-        response.status(),
+        status.is_success(),
+        "{point}: replay status {status}: {raw_body} :: {}",
         restarted.diagnostics()
     );
-    let response: Value = response.json().await.unwrap();
+    let response: Value = serde_json::from_str(&raw_body).unwrap();
     let committed = load_recovery_claim(&home, PROJECT_ID, ORIGIN_RUN_ID)
         .unwrap()
         .unwrap();
