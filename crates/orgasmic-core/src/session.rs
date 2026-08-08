@@ -1202,13 +1202,34 @@ const ENVELOPE_HEADER_PROBE_BYTES: usize = 1024;
 /// therefore stays visible as recoverable, never silently dropped.
 const LIFECYCLE_DRIVER_EVENT_MAX_LINE_BYTES: usize = 64 * 1024;
 
+/// Substring search, first-byte-skip rather than a compare per offset.
+///
+/// orgasmic:TASK-2QK4P.1.1 — every needle here starts with `"`, and a
+/// transcript line is mostly not quote characters, so scanning for the first
+/// byte and confirming only on a hit skips almost the whole line. The naive
+/// `windows(m).position(..)` did a slice comparison at EVERY offset, which was
+/// affordable while this only ran over two 128 KiB windows and stopped being so
+/// once a truncated file is escalated to a complete scan: on the 420-file
+/// board that turned a 34 MiB read into a 1.15 GiB one, and this filter is what
+/// that read spends its time in.
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    let first = needle[0];
+    let last_start = haystack.len() - needle.len();
+    let mut cursor = 0;
+    while cursor <= last_start {
+        let offset = haystack[cursor..=last_start]
+            .iter()
+            .position(|byte| *byte == first)?;
+        let start = cursor + offset;
+        if &haystack[start..start + needle.len()] == needle {
+            return Some(start);
+        }
+        cursor = start + 1;
+    }
+    None
 }
 
 /// `run_id` of the last non-blank line in `window`.
