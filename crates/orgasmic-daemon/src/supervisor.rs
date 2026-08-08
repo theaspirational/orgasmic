@@ -447,13 +447,13 @@ mod admission {
 
     pub(super) struct Inner {
         pub(super) acquisition_paused: bool,
-        /// `(project_id, task_id, RunKind)` → run_id. Single-entry guard for
-        /// AC #2.
+        /// `(project_id, task_id, RunKind)` → the admitted run. Single-entry
+        /// guard for AC #2.
         ///
         /// PRIVATE ON PURPOSE — see the module docs. Read it through
         /// [`Inner::lease`], drop it through [`Inner::remove_lease`], and take
         /// one only through [`Inner::admit_live_run`].
-        leases: HashMap<LeaseKey, String>,
+        leases: HashMap<LeaseKey, AdmittedRun>,
         /// run_id → live run record. Holds the driver control handle so the
         /// supervisor can call `release` later.
         pub(super) runs: HashMap<String, RunRecord>,
@@ -497,6 +497,35 @@ mod admission {
         pub(super) worktree: Option<&'a Path>,
     }
 
+    /// A lease that is held, and the worktree the admission that took it
+    /// declared.
+    ///
+    /// The worktree is what TASK-RMA18 finding 6 added, and it is the whole
+    /// point of this type existing at all. Between the instant `admit_live_run`
+    /// installs a lease and the instant the caller inserts its `RunRecord`, the
+    /// run is LIVE and INVISIBLE: it occupies a worktree and nothing in
+    /// `runs` names it. `blocking_run_for_close` used to detect that window
+    /// only by looking up the lease for `params.task_id` — which works for a
+    /// `dispatch-close`, whose task id comes from its own dispatch record, and
+    /// does not work for `worktree-prune`, whose task id is GUESSED from a
+    /// directory name and whose `--worktree` may name any directory at all.
+    /// Recording the worktree here makes the pending admission addressable by
+    /// the thing both callers actually know.
+    #[derive(Debug, Clone)]
+    pub(super) struct AdmittedRun {
+        pub(super) run_id: String,
+        /// Normalized with `normalize_cleanup_worktree`, so it compares equal to
+        /// the key `reserve_dispatch_close` builds from its request.
+        pub(super) worktree_key: Option<PathBuf>,
+        /// The `(device, inode)` that worktree WAS at admission.
+        ///
+        /// A canonical pathname stops describing a directory the moment it is
+        /// renamed, and the pending window is precisely where nothing else in
+        /// daemon state names this run — so the fence for it is keyed on the one
+        /// property a rename does not change.
+        pub(super) worktree_identity: Option<super::WorktreeIdentity>,
+    }
+
     /// Proof that a lease was taken through [`Inner::admit_live_run`]. The only
     /// way to build a [`LeaseReservation`], so an admission path that skipped
     /// the check has nothing to hand it.
@@ -526,17 +555,47 @@ mod admission {
         }
 
         pub(super) fn lease(&self, key: &LeaseKey) -> Option<&String> {
-            self.leases.get(key)
+            self.leases.get(key).map(|held| &held.run_id)
         }
 
         pub(super) fn remove_lease(&mut self, key: &LeaseKey) -> Option<String> {
-            self.leases.remove(key)
+            self.leases.remove(key).map(|held| held.run_id)
+        }
+
+        /// A run that has been ADMITTED into `worktree_key` but whose
+        /// `RunRecord` is not in `runs` yet (TASK-RMA18 finding 6).
+        ///
+        /// This is the invisible-liveness window, and it is addressed by
+        /// WORKTREE rather than by task id, because the caller that most needs
+        /// it — `worktree-prune` — has a directory and only a guess at a task.
+        /// Liveness cannot be proven absent here, so naming the run is enough:
+        /// every caller refuses on it.
+        pub(super) fn pending_admission_in_worktree(
+            &self,
+            worktree_key: &Path,
+        ) -> Option<(String, Option<PathBuf>)> {
+            self.leases.values().find_map(|held| {
+                if self.runs.contains_key(&held.run_id) {
+                    return None;
+                }
+                let matches = match (
+                    held.worktree_identity,
+                    super::worktree_identity(worktree_key),
+                ) {
+                    (Some(admitted), Some(wanted)) => admitted == wanted,
+                    _ => held
+                        .worktree_key
+                        .as_deref()
+                        .is_some_and(|recorded| super::same_worktree(recorded, worktree_key)),
+                };
+                matches.then(|| (held.run_id.clone(), held.worktree_key.clone()))
+            })
         }
 
         /// Whether any lease is held by `run_id`.
         #[cfg(test)]
         pub(super) fn holds_lease_for_run(&self, run_id: &str) -> bool {
-            self.leases.values().any(|held| held == run_id)
+            self.leases.values().any(|held| held.run_id == run_id)
         }
 
         /// The single live-run admission decision.
@@ -560,17 +619,17 @@ mod admission {
                         return Err(SupervisorError::LeaseHeld {
                             task_id: req.task_id.to_string(),
                             kind: req.kind,
-                            run_id: existing.clone(),
+                            run_id: existing.run_id.clone(),
                         });
                     }
                 }
                 AdmissionPath::Reattach => {
                     if let Some(active) = self.leases.get(req.lease_key) {
-                        if active != req.run_id {
+                        if active.run_id != req.run_id {
                             return Err(SupervisorError::ReattachLeaseConflict {
                                 task_id: req.task_id.to_string(),
                                 kind: req.kind,
-                                active_run_id: active.clone(),
+                                active_run_id: active.run_id.clone(),
                             });
                         }
                     }
@@ -582,7 +641,7 @@ mod admission {
                 if let Some(reservation) = self
                     .cleanup_reservations
                     .iter()
-                    .find(|(key, _)| key.worktree_key == worktree_key)
+                    .find(|(key, _)| super::same_worktree(&key.worktree_key, &worktree_key))
                     .map(|(_, reservation)| reservation)
                 {
                     return Err(SupervisorError::CleanupInProgress {
@@ -593,8 +652,17 @@ mod admission {
                     });
                 }
             }
-            self.leases
-                .insert(req.lease_key.clone(), req.run_id.to_string());
+            // Record the worktree WITH the lease, so the window between here
+            // and the caller's `RunRecord` insert is addressable by worktree
+            // rather than only by task id (TASK-RMA18 finding 6).
+            self.leases.insert(
+                req.lease_key.clone(),
+                AdmittedRun {
+                    run_id: req.run_id.to_string(),
+                    worktree_key: req.worktree.map(normalize_cleanup_worktree),
+                    worktree_identity: req.worktree.and_then(worktree_identity),
+                },
+            );
             Ok(AdmittedLease {
                 key: req.lease_key.clone(),
                 run_id: req.run_id.to_string(),
@@ -605,7 +673,35 @@ mod admission {
         /// so a production caller of it is obvious in review.
         #[cfg(test)]
         pub(super) fn insert_lease_for_test(&mut self, key: LeaseKey, run_id: String) {
-            self.leases.insert(key, run_id);
+            self.leases.insert(
+                key,
+                AdmittedRun {
+                    run_id,
+                    worktree_key: None,
+                    worktree_identity: None,
+                },
+            );
+        }
+
+        /// Install a lease that declares a worktree, without an admission
+        /// decision. Tests only: it stages the pending-admission window
+        /// (TASK-RMA18 finding 6) that is otherwise reachable only by racing a
+        /// real acquire.
+        #[cfg(test)]
+        pub(super) fn insert_lease_with_worktree_for_test(
+            &mut self,
+            key: LeaseKey,
+            run_id: String,
+            worktree: &Path,
+        ) {
+            self.leases.insert(
+                key,
+                AdmittedRun {
+                    run_id,
+                    worktree_key: Some(normalize_cleanup_worktree(worktree)),
+                    worktree_identity: worktree_identity(worktree),
+                },
+            );
         }
     }
 }
@@ -5931,6 +6027,58 @@ fn normalize_cleanup_worktree(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// A worktree's `(device, inode)` — the identity a rename does not change.
+///
+/// `None` when the path does not resolve to a directory right now, which is not
+/// a failure: it means identity cannot answer, and the caller falls back to
+/// comparing canonical pathnames.
+// orgasmic:TASK-RMA18
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WorktreeIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+fn worktree_identity(path: &Path) -> Option<WorktreeIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).ok()?;
+    meta.is_dir().then(|| WorktreeIdentity {
+        dev: meta.dev(),
+        ino: meta.ino(),
+    })
+}
+
+#[cfg(not(unix))]
+fn worktree_identity(_path: &Path) -> Option<WorktreeIdentity> {
+    None
+}
+
+/// Are these two recorded worktrees the SAME DIRECTORY?
+///
+/// A canonical pathname is the cheap answer and it is the one that persists, but
+/// it is not stable under a rename: move a live worker's worktree and the run
+/// record still names the old path, so a fence keyed on the new one would miss
+/// it and reclaim the directory out from under the worker. So identity —
+/// `(device, inode)` — is consulted whenever both paths still resolve, which is
+/// exactly the case in which the question can be answered at all. A path that no
+/// longer resolves cannot name a directory anything is about to be removed from,
+/// so falling back to string equality there can only add a refusal.
+// orgasmic:TASK-RMA18
+fn same_worktree(a: &Path, b: &Path) -> bool {
+    if normalize_cleanup_worktree(a) == normalize_cleanup_worktree(b) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+            return a.is_dir() && b.is_dir() && a.dev() == b.dev() && a.ino() == b.ino();
+        }
+    }
+    false
+}
+
 /// The live worker a destructive `dispatch-close` must not clean up beneath
 /// (TASK-1T3FZ), decided from supervisor state under the supervisor lock.
 ///
@@ -5960,6 +6108,17 @@ fn blocking_run_for_close(
             return Some((run_id.clone(), None));
         }
     }
+    // The same undetermined case, addressed by WORKTREE instead of by task id
+    // (TASK-RMA18 finding 6). The lookup above only fires when the caller
+    // guessed the right task; `worktree-prune` derives its task id from a
+    // directory name and `--worktree` may name any directory, so for the caller
+    // that most needs this fence the guess is exactly what cannot be relied on.
+    // The worktree is what both callers actually know.
+    if let Some(pending) = inner.pending_admission_in_worktree(worktree_key) {
+        if Some(pending.0.as_str()) != params.releasing_run_id.as_deref() {
+            return Some(pending);
+        }
+    }
     inner.runs.iter().find_map(|(run_id, rec)| {
         if rec.kind != RunKind::Worker {
             return None;
@@ -5970,9 +6129,7 @@ fn blocking_run_for_close(
         let occupies = rec
             .worktree
             .as_deref()
-            .map(normalize_cleanup_worktree)
-            .as_deref()
-            == Some(worktree_key);
+            .is_some_and(|recorded| same_worktree(recorded, worktree_key));
         let owned = params.owned_run_ids.iter().any(|owned| owned == run_id);
         (occupies || owned).then(|| (run_id.clone(), rec.worktree.clone()))
     })
@@ -8416,6 +8573,109 @@ mod tests {
         let mut req = impl_req(task_id, dir);
         req.worktree = Some(worktree.to_path_buf());
         req
+    }
+
+    /// TASK-RMA18 finding 6: a run ADMITTED but not yet RECORDED is never
+    /// reclaimed, even when the caller cannot name its task.
+    ///
+    /// `admit_live_run` installs the lease and the caller inserts the
+    /// `RunRecord` afterwards. In between, the run is live in its worktree and
+    /// invisible in `runs`. `blocking_run_for_close` detected that window only
+    /// by looking the lease up under `params.task_id` — fine for a
+    /// `dispatch-close`, which reads its task from its own dispatch record, and
+    /// useless for `worktree-prune`, which DERIVES a task id from a directory
+    /// name and whose `--worktree` may name any directory at all. So this asks
+    /// with a task id that matches nothing, exactly as a prune over a
+    /// nonconforming directory name does.
+    ///
+    /// Injection: delete the `pending_admission_in_worktree` block from
+    /// `blocking_run_for_close` and the reservation is granted over a live run.
+    // orgasmic:TASK-RMA18
+    #[tokio::test]
+    async fn a_run_admitted_but_not_yet_recorded_blocks_a_close_that_cannot_name_its_task() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/scratch-dir");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        // The window: a lease is held for TASK-ADMITTED, declaring this
+        // worktree, and no `RunRecord` exists yet.
+        {
+            let mut g = sup.inner.lock().await;
+            g.insert_lease_with_worktree_for_test(
+                lease_key(Some("orgasmic"), "TASK-ADMITTED", RunKind::Worker),
+                "run-admitted-not-recorded".to_string(),
+                &worktree,
+            );
+        }
+
+        // The caller cannot name the task: this is the directory name a prune
+        // would guess from, and it encodes no task at all.
+        let outcome = sup
+            .reserve_dispatch_close(&close_guard_params(
+                "scratch-dir",
+                &worktree,
+                Some(std::process::id()),
+            ))
+            .await;
+        match outcome {
+            DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, .. } => {
+                assert_eq!(run_id, "run-admitted-not-recorded");
+            }
+            other => panic!(
+                "a pending admission in this worktree must block the reservation, got {other:?}"
+            ),
+        }
+
+        // And a blocked verdict reserves nothing, so the worktree is still
+        // acquirable once the admission resolves.
+        let g = sup.inner.lock().await;
+        assert!(
+            g.cleanup_reservations.is_empty(),
+            "a blocked close must not leave a fence behind"
+        );
+    }
+
+    /// TASK-RMA18: the PENDING-ADMISSION fence survives a RENAME of the
+    /// worktree.
+    ///
+    /// A lease records the path its run was admitted with. Rename that directory
+    /// and a fence keyed on the canonical pathname stops matching, so a close or
+    /// a prune addressing the NEW path is told nothing is live in it — while the
+    /// worker is sitting in the same inode. Identity is what does not move, and
+    /// the pending window is where it matters most, because nothing else in
+    /// daemon state names the run at all.
+    // orgasmic:TASK-RMA18
+    #[tokio::test]
+    async fn a_renamed_worktree_still_blocks_the_close_of_the_run_admitted_into_it() {
+        let (sup, dir, _w) = make_supervisor();
+        let original = dir.path().join("worktrees/task-renamed");
+        std::fs::create_dir_all(&original).unwrap();
+        {
+            let mut g = sup.inner.lock().await;
+            g.insert_lease_with_worktree_for_test(
+                lease_key(Some("orgasmic"), "TASK-RENAMED", RunKind::Worker),
+                "run-in-renamed-worktree".to_string(),
+                &original,
+            );
+        }
+        let renamed = dir.path().join("worktrees/task-renamed-elsewhere");
+        std::fs::rename(&original, &renamed).unwrap();
+
+        let outcome = sup
+            .reserve_dispatch_close(&close_guard_params(
+                "TASK-SOMETHING-ELSE",
+                &renamed,
+                Some(std::process::id()),
+            ))
+            .await;
+        match outcome {
+            DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, .. } => {
+                assert_eq!(run_id, "run-in-renamed-worktree");
+            }
+            other => {
+                panic!("a rename must not hide a live run from the worktree fence, got {other:?}")
+            }
+        }
     }
 
     /// The P0 this task exists for: `reattach` is a live-run admission path and
