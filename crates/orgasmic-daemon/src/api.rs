@@ -9052,10 +9052,22 @@ async fn post_run_recover(
     // only a completed enumeration can make. An unresolved one must refuse, or
     // the new replacement lands beside whatever the unread file was holding.
     if failed_origin {
-        if let AuthoritativeOriginLinks::Unobserved(reason) =
-            origin_links.links_for(&state.home, &origin_authority.project_root, &project_id)
-        {
-            return Err(recovery_origins_unobserved(&id, *reason));
+        let unobserved = match origin_links.links_for(
+            &state.home,
+            &origin_authority.project_root,
+            &project_id,
+        ) {
+            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
+            AuthoritativeOriginLinks::Complete(_) => None,
+        };
+        if let Some(reason) = unobserved {
+            // A swapped or symlinked ORIGIN session is one of the ways the
+            // enumeration cannot complete, and it has its own, more specific
+            // refusal. Report that one: "the origin you took authority over is
+            // no longer the file you took it over" is actionable, while "the
+            // enumeration did not complete" is not.
+            origin_authority.envelopes()?;
+            return Err(recovery_origins_unobserved(&id, reason));
         }
     }
     let request_id = req
