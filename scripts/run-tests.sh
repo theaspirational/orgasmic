@@ -1404,16 +1404,6 @@ if [ "$BILLED_RAN" -eq 1 ]; then
 elif [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nverdict: RED — build failure.\n'
     STATUS=$EXIT_REAL
-elif [ "$NDA_RAN" -eq 1 ] && [ "$NDA_STATUS" -ne 0 ]; then
-    # orgasmic:TASK-RMA18.1 — a code fact, not a host artefact: this leg runs
-    # one hermetic test with no daemon, no PTY and no timing budget, so a
-    # degraded host cannot excuse it. It sits above HOST_DEGRADED for that
-    # reason, and it is never registrable as a flake.
-    printf '\nverdict: RED — the debug_assertions=off leg failed (exit %s).\n' "$NDA_STATUS"
-    printf '         A test-only pause rendezvous that survives into a shipped binary wedges\n'
-    printf '         dispatch-close or worktree-prune on a stray environment variable, holding\n'
-    printf '         the global cleanup lock and the daemon reservation. Read %s.\n' "$NDA_LOG"
-    STATUS=$EXIT_REAL
 elif [ "$CRASH_COUNT" -gt 0 ]; then
     # orgasmic:TASK-STWVB.1.1.1.1
     # R-1: a crashed target is a code fact whatever else the run found — the
@@ -1474,6 +1464,18 @@ elif [ "$FAIL_COUNT" -eq 0 ] && [ "$SUITE_EXIT" != "?" ] && [ "$SUITE_EXIT" != 0
     # the arm above is ever moved.
     printf '\nverdict: RED — cargo exited %s with no per-test failure list. Read %s.\n' \
         "$SUITE_EXIT" "$SUITE_LOG"
+    STATUS=$EXIT_REAL
+elif [ "$NDA_RAN" -eq 1 ] && [ "$NDA_STATUS" -ne 0 ]; then
+    # orgasmic:TASK-RMA18.1 — a code fact, not a host artefact: this leg runs
+    # ONE hermetic test with no daemon, no PTY and no timing budget, so a
+    # degraded host cannot excuse it and it is never registrable as a flake.
+    # That is why it sits ABOVE the HOST_DEGRADED arm. It sits BELOW the arms
+    # above only because each of those means the main suite itself did not
+    # produce a trusted answer, which is the larger fact to report first.
+    printf '\nverdict: RED — the debug_assertions=off leg failed (exit %s).\n' "$NDA_STATUS"
+    printf '         A test-only pause rendezvous that survives into a shipped binary wedges\n'
+    printf '         dispatch-close or worktree-prune on a stray environment variable, holding\n'
+    printf '         the global cleanup lock and the daemon reservation. Read %s.\n' "$NDA_LOG"
     STATUS=$EXIT_REAL
 elif [ "$HOST_DEGRADED" -eq 1 ]; then
     # Degraded host without an alone-red REAL: green / flake / load-sensitive
