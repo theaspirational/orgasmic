@@ -67,4 +67,10 @@ contains: origin_run_id: "run-hidden-origin"
 # A binary that collapses wholesale, a sixth failure, or a red in
 # `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`, is
 # a different failure and has not reproduced what this artifact claims.
-contains: test result: FAILED. 22 passed; 5 failed
+# RE-AUTHORED for TASK-2QK4P.1.1.1: the counts moved because that round added
+# four regressions to this same binary, and one of them —
+# `an_authority_key_read_failure_cannot_hide_a_second_authenticated_replacement`
+# — catches this injection too. That is the class widening, not the artifact
+# drifting: the six named failures still include every one this artifact was
+# authored for.
+contains: test result: FAILED. 25 passed; 6 failed

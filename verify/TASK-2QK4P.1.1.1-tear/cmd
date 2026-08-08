@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-2QK4P.1.1.1-tear`.
+#
+# F4 lives in orgasmic-core, which is a different cargo package from the other
+# two artifacts and therefore a different invocation. `--exact` because the
+# claim is about one scanner boundary and the panic text must be attributable
+# to it.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-core --lib -- --exact session::tests::a_torn_final_line_is_observed_and_a_torn_middle_line_is_not --test-threads=1

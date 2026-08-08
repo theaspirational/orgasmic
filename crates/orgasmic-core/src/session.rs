@@ -1447,16 +1447,34 @@ pub fn scan_session_lifecycle_complete(
 /// - A malformed line with BYTES AFTER IT aborts the read, so every line that
 ///   follows is unread. That is an incomplete observation and it is returned as
 ///   an error, because a `RecoveryOrigin` may sit behind it.
-/// - A malformed line that is the file's LAST hides nothing. It is what a crash
-///   mid-append leaves — the writer appends whole `sync_all`-ed lines, so the
-///   only partial one is the one being written when the process died — and an
-///   incomplete line cannot itself be a valid envelope. Every complete line in
-///   the file WAS observed, so this returns `Ok`.
+/// - A malformed line that is the file's LAST **and is not newline-terminated**
+///   hides nothing. It is what a crash mid-append leaves — the writer appends
+///   whole `sync_all`-ed lines, so the only partial one is the one being written
+///   when the process died — and an incomplete line cannot itself be a valid
+///   envelope. Every complete line in the file WAS observed, so this returns
+///   `Ok`.
 ///
 /// Both shapes are reachable: the daemon reopens a torn session and appends
 /// after it, which puts yesterday's torn line in the middle of today's file.
 /// orgasmic:TASK-2QK4P.1.1 — collapsing them would either freeze recovery on a
 /// single junk `.jsonl` or hide a second authority behind one bad line.
+///
+/// # The tear shape is CHECKED here, not inferred from the writer
+///
+/// orgasmic:TASK-2QK4P.1.1.1 F4 — the argument above rests on a property of
+/// today's writer: [`SessionWriter::append`] serializes one valid envelope,
+/// writes the line, writes `\n`, flushes and `sync_all`s, and every production
+/// append routes through it. That is true, and it was confirmed — but this
+/// scanner did not check the thing the argument rests on. It deferred ANY
+/// malformed final line, including a newline-TERMINATED one, which is a shape
+/// the current writer cannot produce as a torn append because the newline is
+/// written only after the serialized JSON write succeeds. So the tolerance was
+/// wider than the inference that justified it, and a future writer that
+/// persisted a complete malformed line would have been silently forgiven.
+///
+/// The check is one byte and it moves the invariant from the writer's behaviour
+/// to this boundary: a malformed line that ended with `\n` is complete persisted
+/// content and stays an error wherever it sits.
 pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     file: &mut R,
     file_bytes: u64,
@@ -1474,9 +1492,9 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     // can be probed without holding the line itself.
     let mut final_line_header = Vec::new();
     let mut final_line_retained = false;
-    // Held rather than returned: it becomes an error only if a later line
-    // proves it was not the tear at the end of the file.
-    let mut deferred: Option<SessionError> = None;
+    // Set only by an UNTERMINATED malformed final line — the production tear
+    // shape. A terminated one returns an error where it is found.
+    let mut torn_final_fragment = false;
     loop {
         line.clear();
         let read = reader.read_until(b'\n', &mut line)?;
@@ -1484,21 +1502,28 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
             break;
         }
         scan.bytes_inspected += read as u64;
+        let newline_terminated = line.ends_with(b"\n");
         let raw = line.strip_suffix(b"\n").unwrap_or(&line);
         if raw.iter().all(u8::is_ascii_whitespace) {
             continue;
-        }
-        if let Some(err) = deferred.take() {
-            return Err(err);
         }
         match retain_lifecycle_line(&mut scan, raw) {
             Ok(LineOutcome::Blank) => continue,
             Ok(LineOutcome::Dropped) => final_line_retained = false,
             Ok(LineOutcome::Retained) => final_line_retained = true,
-            Err(err) => {
-                deferred = Some(err);
-                continue;
+            // orgasmic:TASK-2QK4P.1.1.1 F4 — the liveness exception survives only
+            // for a NON-TERMINATED fragment. `read_until` returns without the
+            // delimiter exactly at end of file, so this line is the file's last
+            // and there is nothing behind it to be hidden.
+            Err(_) if !newline_terminated => {
+                torn_final_fragment = true;
+                break;
             }
+            // A malformed line that ended with `\n` is complete persisted
+            // content, not a tear, wherever in the file it sits. It stays
+            // unresolved: whatever a later `RecoveryOrigin` would have said is
+            // still unread as far as this scanner is concerned.
+            Err(err) => return Err(err),
         }
         final_line_header.clear();
         final_line_header.extend_from_slice(&raw[..raw.len().min(ENVELOPE_HEADER_PROBE_BYTES)]);
@@ -1506,7 +1531,7 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     scan.final_line_run_id = window_final_line_run_id(&final_line_header);
     // A torn final line means the last retained envelope is not the file's last
     // event, exactly as a truncated tail window does.
-    scan.final_envelope_retained = final_line_retained && deferred.is_none();
+    scan.final_envelope_retained = final_line_retained && !torn_final_fragment;
     Ok(scan)
 }
 
@@ -2419,8 +2444,15 @@ mod tests {
         };
         const TEAR: &str = "{\"seq\":9001,\"kind\":\"lifecycle\",\"event\":{\"phase\":";
 
+        // orgasmic:TASK-2QK4P.1.1.1 F4 — THE PRODUCTION TEAR SHAPE, and note the
+        // missing `\n`. `SessionWriter::append` writes the serialized envelope,
+        // THEN the newline, then flushes and `sync_all`s, so a process that dies
+        // mid-append leaves a fragment with no terminator. This regression used
+        // to supply `{TEAR}\n` — a newline-terminated malformed line, a shape
+        // the writer cannot produce as a tear — so it did not fail if a future
+        // writer started persisting complete malformed lines.
         let trailing = dir.path().join("trailing.jsonl");
-        std::fs::write(&trailing, format!("{}\n{TEAR}\n", identity(0, "lifecycle"))).unwrap();
+        std::fs::write(&trailing, format!("{}\n{TEAR}", identity(0, "lifecycle"))).unwrap();
         let scan = scan_session_lifecycle_complete(&trailing)
             .expect("a tear with nothing after it hides nothing");
         assert_eq!(scan.envelopes.len(), 1, "the complete line is still read");
@@ -2442,6 +2474,42 @@ mod tests {
         assert!(
             scan_session_lifecycle_complete(&middle).is_err(),
             "a tear with bytes behind it leaves those bytes unread, and unread is not absent"
+        );
+
+        // orgasmic:TASK-2QK4P.1.1.1 F4 — the case the old regression could not
+        // see: a malformed line that IS newline-terminated and IS the file's
+        // last. Nothing about it is a tear — the terminator proves the write
+        // that produced it completed — so it is complete persisted content the
+        // scanner could not read, and it stays unresolved. Tolerating it would
+        // be tolerating a shape only a DIFFERENT writer can produce, which is
+        // exactly the inference this boundary now refuses to make on the
+        // writer's behalf.
+        let terminated = dir.path().join("terminated.jsonl");
+        std::fs::write(
+            &terminated,
+            format!("{}\n{TEAR}\n", identity(0, "lifecycle")),
+        )
+        .unwrap();
+        assert!(
+            scan_session_lifecycle_complete(&terminated).is_err(),
+            "a newline-terminated malformed final line is complete content, not a torn append: \
+             the writer emits the terminator only after the envelope write succeeded"
+        );
+
+        // And the tolerance is for the TEAR, not for "the last line": a
+        // non-terminated fragment behind which nothing was written is still the
+        // only forgiven shape, so the two cases above cannot both be satisfied
+        // by a scanner that simply forgives everything at EOF.
+        let both = dir.path().join("both.jsonl");
+        std::fs::write(
+            &both,
+            format!("{}\n{TEAR}\n{TEAR}", identity(0, "lifecycle")),
+        )
+        .unwrap();
+        assert!(
+            scan_session_lifecycle_complete(&both).is_err(),
+            "a terminated malformed line stays an error even when an unterminated fragment \
+             follows it"
         );
     }
 }

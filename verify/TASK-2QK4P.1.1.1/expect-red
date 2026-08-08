@@ -1,0 +1,77 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is not a revert. The commit's centrepiece is that every fallible
+# predicate on the recovery-authority path answers `ClaimEvidence` instead of
+# `bool`, and reverting the type would only prove that deleted code is absent.
+# It KEEPS the type and restores what round three's `bool` DID with each
+# failure, at the sites the review named plus the ordering and sharing findings:
+#
+#   F1a  an unreadable authority key answers `Invalid` — "not authentic" — so
+#        the indexer drops the link and the set is still labelled `Complete`
+#   F1b  every session read failure answers `Invalid` — "invalid evidence" — so
+#        the resolver quarantines, reaches `Missing`, and the handler may mint;
+#        and an unobserved authority check spells itself `CorruptClaim`
+#   F2   the recover endpoint builds its own authority for the inventory pass
+#   F3   the completeness refusal runs ahead of authority-independent validation
+#   F4   any malformed final line is forgiven, terminated or not
+#
+# `verify/TASK-2QK4P.1.1.1-endpoint` and `verify/TASK-2QK4P.1.1.1-tear` share
+# this injection and pin the F2/F3 and F4 halves on their own binaries.
+exit: 101
+
+# ===== A FAILED AUTHORITY VERIFICATION, READ AS "NOT AUTHENTIC" ============
+#
+# F1(a), the block-ship state, RUNNING rather than derived — the review said
+# plainly it built no reproduction for this. Two daemon-HMAC-authenticated
+# replacements exist for one origin, both files readable, both scans fine, the
+# enumeration complete. One `authority_key` READ fails. Under the injection the
+# link it was checking is dropped from a set still labelled `Complete`, and the
+# resolver hands the lease to whichever replacement survived the drop — here by
+# quarantining the loaded claim and RECONSTRUCTING the other one, which is the
+# daemon silently changing which replacement holds the lease.
+contains: position 1 fired and must answer unobserved (or fail closed on the duplicate it did observe), got Reconstructed(
+
+# F1(a) against a HEALTHY claim, which is acceptance 7's nth-read sweep. Nothing
+# is wrong with this rescue at all; one key read fails, `load_recovery_claim`
+# spells that `CorruptClaim`, and the resolver QUARANTINES. `Missing` is the
+# answer `post_run_recover` reads as permission to mint a competitor beside the
+# live replacement.
+contains: a key read that failed at position 1 decided nothing, got Missing
+
+# ===== A FAILED SESSION READ, READ AS INVALID EVIDENCE =====================
+#
+# F1(b), and note what is NOT involved: the enumeration COMPLETED and is cached
+# before anything breaks, so none of round three's machinery is in play. The
+# replacement session then cannot be read, `verify_committed_claim_against_
+# session` answers `false`, and a claim this function had just matched against a
+# complete link set is destroyed.
+contains: an unreadable replacement session decides nothing about a claim whose candidate set was fully enumerated, got InvalidQuarantined
+
+# ===== AND THE CLASS, WHICH IS THE DELIVERABLE ============================
+#
+# The behavioural pin sweeps every observation failure the path can suffer —
+# unreadable auth key, unreadable replacement, unreadable origin, unreadable
+# sessions directory, torn sibling — against a fixture that resolves `Valid`
+# with nothing injected, and demands the same two answers of all of them: never
+# `Valid`, never destructive. This is the test the source-text pin cannot be.
+contains: [authority key unreadable] a predicate that could not look must answer unobserved, got Missing
+
+# FOUR failures out of thirty-one. The twenty-seven that stay green are the
+# point:
+#
+#   - `the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative`
+#     — THE STRUCTURAL PIN — stays GREEN, deliberately. The injection changes
+#     which VARIANT the code constructs, not the shape of any type. A red pin
+#     here would mean the pin has started measuring behaviour and stopped
+#     guarding structure, which is how round three's pin came to pass on the
+#     defect it existed to forbid.
+#   - every regression rounds one through three shipped stays GREEN, including
+#     `duplicate_authenticated_replacements_fail_closed`,
+#     `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`
+#     and `a_scan_failure_in_a_second_replacement_is_not_an_empty_file`. They
+#     are blind to F1 in both directions, which is why there was a round four.
+#
+# A binary that collapses wholesale, a fifth failure, or a red in the structural
+# pin or in any round-three regression, is a different failure and has not
+# reproduced what this artifact claims.
+contains: test result: FAILED. 27 passed; 4 failed

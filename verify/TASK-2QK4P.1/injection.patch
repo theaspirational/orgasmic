@@ -1,8 +1,8 @@
 diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
-index 300d0ed..1401d95 100644
+index d27f4d5..090286b 100644
 --- a/crates/orgasmic-daemon/src/recovery_claim.rs
 +++ b/crates/orgasmic-daemon/src/recovery_claim.rs
-@@ -1627,10 +1627,24 @@ pub fn resolve_authoritative_recovery_claim(
+@@ -2032,10 +2032,24 @@ pub fn resolve_authoritative_recovery_claim(
                  // windows skipped a middle. That is paid knowingly: the
                  // alternative is deciding a lease-holder from a cache that
                  // cannot say what it has not looked at.
@@ -27,6 +27,6 @@ index 300d0ed..1401d95 100644
                  let uniquely_confirmed =
 -                    matches!(matching.as_slice(), [only] if only.claim == claim);
 +                    !(matching.len() > 1 || matching.iter().any(|link| link.claim != claim));
-                 if uniquely_confirmed
-                     && verify_committed_claim_against_session(home, project_root, &claim)
-                 {
+                 if uniquely_confirmed {
+                     // orgasmic:TASK-2QK4P.1.1.1 F1(b) — the enumeration above
+                     // completed, and this read can still fail. `false` used to

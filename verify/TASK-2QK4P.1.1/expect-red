@@ -86,4 +86,12 @@ contains: the project's session files must be scanned ONCE for the whole decisio
 # A binary that collapses wholesale, a seventh failure, or a red in the pin or
 # in either round-two regression, is a different failure and has not reproduced
 # what this artifact claims.
-contains: test result: FAILED. 21 passed; 6 failed
+# RE-AUTHORED for TASK-2QK4P.1.1.1. Ten failures now, not six, and the extra
+# four are that round's regressions catching this same injection — an
+# observation failure reported as an empty success fails
+# `no_observation_failure_on_the_authority_path_confirms_or_destroys` for the
+# same reason it fails the six above. The pin
+# (`the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative`)
+# still stays GREEN, which is still the point: this injection changes which
+# variant the code CONSTRUCTS, not the shape of the types.
+contains: test result: FAILED. 21 passed; 10 failed
