@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied, measured
+# on this tree rather than transcribed.
+#
+# NOTHING IS DELETED THAT SHOULD NOT BE. This is the one rung on the chain whose
+# red is a REPORT defect rather than a lost sentinel: the tree is still refused,
+# the sentinel still survives, and the operator is still told to keep their hands
+# off. What breaks is the accuracy of the reason and the reachability of the
+# remedy — which is the whole subject of TASK-RMA18.1.1.1.1.
+exit: 101
+
+# ===== THE WRONG ARM ANSWERED ==============================================
+#
+# The failing assertion, and the one the finding is about: with the repo-gone
+# leg's message deleted, the refusal comes from the ordinary arm, which names
+# neither the record it actually read (`.gitmodules` — the only submodule record
+# that survives a gone repository, because it lives in the TREE and not in the
+# admin directory) nor the fact that no index and no `modules` directory were
+# available to consult. Measured red at `dispatch.rs:9477`.
+contains: the report must name the record it refused over (`.gitmodules`) and the submodule path
+
+# ===== AND IT OFFERS AN IMPOSSIBLE ESCAPE ==================================
+#
+# `submodule_advice`'s conditional — "or — while the repository is still there —
+# remove the worktree with `git worktree remove --force`" — is a remedy whose
+# condition is the exact thing that put this worktree on this branch. There is no
+# repository for `git worktree remove` to run against, and this verb has no
+# `--force` of its own. Naming the flag in order to say it is UNAVAILABLE is
+# right; offering it as the way out is TASK-RMA18.1.1.1.1 finding 2.
+contains: while the repository is still there
+
+# Exactly one test, exactly one failure. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed
