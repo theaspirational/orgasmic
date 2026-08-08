@@ -333,6 +333,7 @@ otherwise correct on every destroying path the reviewer traced.
 :ID: TASK-2QK4P
 :PRIORITY: P0
 :WRITE_SCOPE: crates/orgasmic-daemon/**
+:FIX_SUBTASK: TASK-2QK4P.1
 :END:
 
 ** READ THIS FIRST — STATUS

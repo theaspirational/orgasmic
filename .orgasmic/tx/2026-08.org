@@ -22298,3 +22298,258 @@
 :REASON:       edited task node TASK-C7NVH
 :NODE_ID:      TASK-C7NVH
 :END:
+
+* TX 2026-08-08 Sat 12:01:59 reviewer.finding TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5343
+:TIME:         [2026-08-08 Sat 12:01:59]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:       P1 HIGH recovery_claim.rs:1294-1299: zero catalog matches can hide multiple authenticated replacements, yet the resolver returns one Valid and violates the existing fail-closed uniqueness invariant.
+:SEVERITY:     HIGH
+:BLOCKS_SHIP:  true
+:KIND:         correctness
+:REVIEWED_DIFF: 1c0d2b0^..1c0d2b0
+:END:
+
+* TX 2026-08-08 Sat 12:02:00 reviewer.finding TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5344
+:TIME:         [2026-08-08 Sat 12:02:00]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:       P2 MEDIUM recovery_claim.rs:2634-2640: the new mechanism test injects a literal empty slice, bypassing RunCatalog invalidation, collection, and the hidden-contradiction case.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         test
+:REVIEWED_DIFF: 1c0d2b0^..1c0d2b0
+:END:
+
+* TX 2026-08-08 Sat 12:02:00 reviewer.finding TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5345
+:TIME:         [2026-08-08 Sat 12:02:00]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:       P2 MEDIUM ci.yml:194-207 and run-tests.sh:944-959: green crash-recovery executions are never repeated, so an intermittent P0 can still merge green without pass-rate scoring.
+:SEVERITY:     MEDIUM
+:BLOCKS_SHIP:  false
+:KIND:         test
+:REVIEWED_DIFF: 1c0d2b0^..1c0d2b0
+:END:
+
+* TX 2026-08-08 Sat 12:02:19 reviewer.reported TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5346
+:TIME:         [2026-08-08 Sat 12:02:19]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:RUN_ID:       run-20260808T114841-ab75e47aed6e4518a91fb7ff952ae6d8
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5331/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:03:27 reviewer.done TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5347
+:TIME:         [2026-08-08 Sat 12:03:27]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:       codex/gpt-5.6-sol: REJECT + BLOCK SHIP on P1. The zero-link branch is broader than the state it means to authorize: an empty 'matching' has no completeness provenance, so two hidden authenticated replacements can both be invalidated out of the catalog and the resolver returns Valid on a state duplicate_authenticated_replacements_fail_closed requires to fail closed. Also independently confirmed from source history that TASK-RMA18 did not cause this defect.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 1c0d2b0^..1c0d2b0
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5331
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5331/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:03:28 task.state_transitioned TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5348
+:TIME:         [2026-08-08 Sat 12:03:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 12:03:34 implementer.done TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5349
+:TIME:         [2026-08-08 Sat 12:03:34]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:REASON:       Fix merged as 1c0d2b0. Review returned REJECT/BLOCK SHIP; fix round follows as TASK-2QK4P.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 724973d946f64c58c4c808574cf87fbb7fa7c6d1
+:MERGE_SHA:    1c0d2b0f004b7bf402204474182a15ed93bae72a
+:BRANCH:       task-2qk4p-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5306
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5306/last.txt
+:END:
+
+* TX 2026-08-08 Sat 12:03:35 task.state_transitioned TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5350
+:TIME:         [2026-08-08 Sat 12:03:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 12:04:09 task.created TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5351
+:TIME:         [2026-08-08 Sat 12:04:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Fix round for the REJECT/BLOCK SHIP on TASK-2QK4P (tx-20260808-orgasmic-5347). The zero-link branch is broader than the state it means to authorize.
+:END:
+
+* TX 2026-08-08 Sat 12:04:09 task.property_updated TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5352
+:TIME:         [2026-08-08 Sat 12:04:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-2QK4P
+:FIX_SUBTASK:  TASK-2QK4P.1
+:END:
+
+* TX 2026-08-08 Sat 12:04:10 task.property_updated TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5353
+:TIME:         [2026-08-08 Sat 12:04:10]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-2QK4P.1
+:IMPLEMENTS:   TASK-2QK4P
+:END:
+
+* TX 2026-08-08 Sat 12:04:36 task.created TASK-P4XKT
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5354
+:TIME:         [2026-08-08 Sat 12:04:36]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-P4XKT
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Found by the TASK-2QK4P round and independently confirmed by its reviewer with file/line: CI runs the suite once and the wrapper only re-runs tests that already failed. Generating cause of both the shipped 40% defect and the manager's false bisect.
+:END:
+
+* TX 2026-08-08 Sat 12:05:24 task.state_transitioned TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5355
+:TIME:         [2026-08-08 Sat 12:05:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 12:05:25 manager.dispatch_started TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5356
+:TIME:         [2026-08-08 Sat 12:05:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1
+:BRANCH:       task-2qk4p.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1/task-2qk4p-1-brief.md
+:STARTED_AT:   [2026-08-08 Sat 12:05:25]
+:LIVENESS:     b86cd4608e444b685223d036c9554cbb673bd16b
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Fix round for the REJECT/BLOCK SHIP on TASK-2QK4P: the zero-link branch admits a hidden duplicate authenticated replacement. First job is the reproduction the read-only reviewer could not build.
+:END:
+
+* TX 2026-08-08 Sat 12:05:26 run.created TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5357
+:TIME:         [2026-08-08 Sat 12:05:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1-implementer-20260808T120525.jsonl
+:REASON:       Fix round for the REJECT/BLOCK SHIP on TASK-2QK4P: the zero-link branch admits a hidden duplicate authenticated replacement. First job is the reproduction the read-only reviewer could not build.
+:RUN_ID:       run-20260808T120525-c00445e7d4f54a7eb367251ffc1d508f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1/task-2qk4p-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1/task-2qk4p-1-549aac8d62fc475fbe0010a72276d278-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1/task-2qk4p-1-549aac8d62fc475fbe0010a72276d278-stdout.log
+:DISPATCH_ATTEMPT: 549aac8d62fc475fbe0010a72276d278
+:DISPATCH_TX:  tx-20260808-orgasmic-5356
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
