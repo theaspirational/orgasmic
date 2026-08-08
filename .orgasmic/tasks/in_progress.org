@@ -1,3 +1,166 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-RMA18.1 close the submodule refusal gap before worktree-prune reaches any runtime, plus six review findings :cli:daemon:
+:PROPERTIES:
+:ID: TASK-RMA18.1
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**,scripts/run-tests.sh,shipped/prompt-studio/conventions/manager-dispatch.org
+:FIX_SUBTASK: t
+:END:
+
+** READ THIS FIRST — STATUS
+TASK-RMA18 landed (=ebc69c2=) and was reviewed *REJECT, BLOCK SHIP on F1*. The
+six findings RMA18 was filed for are closed and closed well — the reviewer said
+so explicitly, and the manager agrees. This round exists for one new defect the
+redesign introduced plus six smaller findings.
+
+*THE VERB IS UN-GATED IN SOURCE AND MUST NOT REACH A RUNTIME UNTIL F1 LANDS.*
+The runtime has deliberately not been reinstalled. That is the only thing
+currently standing between an operator and F1, and a protection that lives in a
+sentence is not a protection (TASK-M47E5.3's own ruling), which is why this round
+is P0 rather than P1.
+
+** F1 — BLOCK SHIP. git refuses to remove a worktree containing a submodule; our reproduction does not
+=crates/orgasmic-cli/src/manager.rs:3915-3979=
+
+TASK-RMA18 stopped calling =git worktree remove= and now removes through the
+anchored handle, gating on =git_would_remove_worktree= — a reproduction of git's
+non-forced refusals. It reproduces TWO (locked, unclean) and omits a THIRD, which
+git checks BEFORE cleanliness and which is categorical: *any worktree containing
+an initialized submodule*.
+
+MEASURED BY THE REVIEWER, then REPRODUCED INDEPENDENTLY BY THE MANAGER on git
+2.52.0 — a clean worktree containing one initialized submodule:
+
+: git status --porcelain          -> []          (our check says "clean")
+: git worktree list --porcelain   -> no `locked` line
+: git worktree remove ../wt       -> fatal: working trees containing submodules
+:                                    cannot be moved or removed        EXIT=128
+: git worktree remove --force ../wt                                    EXIT=0
+
+So =git_would_remove_worktree= returns =Ok(())= and =remove_child= recursively
+deletes a tree git refuses to touch without =--force=.
+
+THE DATA-LOSS VARIANT IS ONE COMMITTED CONFIG LINE AWAY. With
+=submodule.<name>.ignore = all= in =.gitmodules= — committed, so every clone
+inherits it — a submodule holding uncommitted work reports CLEAN to the parent,
+so prune proceeds with no salvage. Salvage could not rescue it anyway: the
+parent's =git add -A= records a submodule as a gitlink, so files inside it are
+never captured. Git passes =--ignore-submodules=none= in its own check
+(=builtin/worktree.c= =remove_cmd=) and our =git status= call does not — a
+second, independent divergence in the same call.
+
+REACHABLE, not theoretical: =git worktree add= does not init submodules, but a
+worker that must BUILD runs =git submodule update --init=. And =dispatch-close=
+still shells out to =git worktree remove=, so in exactly those projects the close
+FAILS and worktrees accumulate — which is the state that makes an operator reach
+for =worktree-prune=. This change therefore makes prune strictly MORE destructive
+than the close whose semantics it claims to match. =grep -rn submodule crates/
+shipped/ .orgasmic/*.org= returns ZERO hits: before this change git enforced the
+boundary for free.
+
+The parity claim is stated in three places and is now false in all three:
+=manager.rs:3431=, =manager.rs:3912=, and the operator-facing =after_help= at
+=manager.rs:369-374=.
+
+*Fix:* after the registered/locked checks, refuse when the worktree contains an
+initialized submodule (git's own test is =validate_no_submodules=: a =.gitmodules=
+entry whose working path holds a =.git=), and pass =--ignore-submodules=none= to
+the =git status= call. Regression: a managed worktree with an initialized
+submodule holding an untracked sentinel; assert the sentinel SURVIVES and the
+report says why. Update =after_help= in the same change — it currently promises
+the property this fix restores. Prefer computing the refusal from the anchored
+handle rather than a subprocess, which also shrinks F2.
+
+** F4 — ships with F1. Operator-facing texts still describe the removed mechanism
+The manager's =db2edb6= fixed the subcommand summary but NOT the =after_help=,
+which is what =orgasmic manager worktree-prune --help= actually prints:
+
+: "Salvages a dirty tree ... and then removes WITHOUT --force, so git's clean
+:  check still gates the removal."
+
+git does not perform the removal any more, and per F1 git's clean check is not
+what gates it. This is the sentence an operator reads at the moment of running a
+destructive verb, and it is the sentence F1 disproves — so it ships with F1.
+
+Also: =shipped/prompt-studio/conventions/manager-dispatch.org:484-486= says the
+same and is doubly wrong (=dispatch-close= still uses git, so it refuses cases
+prune deletes). And =main.rs:941-943='s "Salvages a dirty tree first" is false for
+the =RepoGone= disposition — the one path that deletes with NO salvage.
+
+Consider one =cli_parity= assertion over the prune help text. Nothing pins it
+today, which is exactly why it rotted.
+
+** F3 — MEDIUM. The "no test-only hook in release" item is met for one hook, and its proof never runs
+=manager.rs:5097-5113=, =:8941-8956=, =scripts/run-tests.sh:680-703=
+
+1. =dispatch_close_pause_after_guard= is NOT gated. Same =pause_until_file_is_removed=,
+   parking while =dispatch-close= holds the global cleanup lock AND the daemon
+   reservation — the exact hazard, same file, 400 lines away. PRE-EXISTING.
+2. =assert_eq!(worktree_prune_pause_hook_is_compiled(), cfg!(debug_assertions))=
+   is a TAUTOLOGY: the const fn's body IS =cfg!(debug_assertions)=. Delete the
+   =#[cfg]= from the hook and it still passes.
+3. The behavioural half runs only under =--release=, and =run-tests.sh= has no
+   =--release= leg, so the executable half of the guarantee is never executed.
+
+** F2 — MEDIUM. The clean check is not identity-fenced
+=manager.rs:4063-4118=. Between the =path -> identity= assert at :4063 and the
+re-assert at :4104 there are FOUR subprocess pathname resolutions: dirtiness
+(:4067), head oid (:4069), salvage (:4071 — which writes another tree's content
+into the project repo and mutates its index/HEAD), and
+=git_would_remove_worktree= (:4092). Rebind the name to a clean decoy across that
+stretch and back, and every assert passes while the classified, dirty, unsalvaged
+inode is removed.
+
+Acceptance item 2 still HOLDS — classified, reserved and deleted are the same
+identity. The identity CHECKED FOR CLEANLINESS is not, and that check is
+described in the code as "the last gate between this verb and a worker's
+unrecoverable output". At minimum, correct the report's "only window" statement
+and state this one.
+
+** F7 — LOW. KEPT is printed over a tree salvage already mutated
+=manager.rs:4067-4086=, =:2465-2536=. =salvage_worktree_onto= does =git add -A= ->
+=commit-tree= -> =checkout --detach= -> =anchor_salvage_ref=. A failure at step 3
+or 4 prints =KEPT ... salvage failed, worktree kept= with no =SALVAGED= line,
+while the index is staged and HEAD may be detached at a salvage commit. No
+content is destroyed, so not data loss — but "KEPT means untouched" is literally
+false on that branch and the escape clause is not taken either. =touched= is
+otherwise correct on every destroying path the reviewer traced.
+
+** F6 — LOW. Two identity/path asymmetries that survived the sweep
+- =supervisor.rs:4134-4136=: the already-reserved check still uses string equality
+  while =admit_live_run= was upgraded to =same_worktree= (=:641-645=). Mitigated
+  by the shared cleanup lock; a consistency wart.
+- =pending_admission_in_worktree= cannot match a lease whose admission carried
+  =worktree: None=. No dispatch path produces that today.
+
+** Ruled on, do not re-litigate
+- *Acceptance item 1, read literally, is not met and that is ACCEPTED.* =<home>=
+  is an ancestor of the managed root and =open_trust_root= opens it with plain
+  =open(2)=. Symlinking =~/.orgasmic/worktrees= is refused; symlinking
+  =~/.orgasmic= itself is followed. Reasoned at =manager.rs:2816-2821= (macOS
+  =/var=, =/tmp=, temp-rooted fixtures). An actor who can replace the operator's
+  configured runtime home already controls the daemon socket and the binary path.
+  Recorded as RULED-ON rather than met.
+- *Deleting the two TASK-M47E5.3 gate tests was right.* They assert the gate
+  refuses, the gate is gone, and the nine behaviour tests they stood in for are
+  back. If F1 forces the gate back on, this becomes live again.
+- *Branch 2 of the reviewers' disjunction is not reachable.* =git worktree remove=
+  accepts only a pathname and offers no =AT_=-style handle option, so taking
+  branch 1 (removing through our own anchored handle) was correct and necessary.
+  The defect is not the substitution; it is reproducing PART of git's decision
+  procedure while claiming parity with the whole of it.
+
+** Acceptance
+- =git_would_remove_worktree= refuses an initialized submodule, and passes
+  =--ignore-submodules=none=; a regression proves an untracked sentinel inside a
+  submodule survives a prune attempt.
+- =after_help= no longer claims git's clean check gates the removal, and the
+  =main.rs= summary no longer claims salvage is unconditional.
+- F3's =dispatch_close_pause_after_guard= is gated, the tautological assertion is
+  replaced or dropped, and the behavioural half runs in a gate.
+- F2 and F7 are fixed or their residual risk is stated precisely in the task.
+- Gates green per the project's verification section, run under the syspolicyd
+  watchdog (TASK-4BBA6 — this machine rebooted once today from an unguarded run).
+- Only then may the runtime be reinstalled.

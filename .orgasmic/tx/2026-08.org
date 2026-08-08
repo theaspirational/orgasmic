@@ -21551,3 +21551,97 @@
 :REASON:       update properties on TASK-RMA18.1
 :FIX_SUBTASK:  t
 :END:
+
+* TX 2026-08-08 Sat 08:39:32 task.state_transitioned TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5300
+:TIME:         [2026-08-08 Sat 08:39:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 08:39:32 manager.dispatch_started TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5301
+:TIME:         [2026-08-08 Sat 08:39:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1
+:BRANCH:       task-rma18.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1/task-rma18-1-brief.md
+:STARTED_AT:   [2026-08-08 Sat 08:39:32]
+:LIVENESS:     c090b516f63e36ba5370213b1bda57e077a54b27
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0 fix round: close the submodule refusal gap that makes an un-gated worktree-prune delete trees git refuses; BLOCK SHIP from the RMA18 review, manager-reproduced on git 2.52.0
+:END:
+
+* TX 2026-08-08 Sat 08:39:33 run.created TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5302
+:TIME:         [2026-08-08 Sat 08:39:33]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1-implementer-20260808T083932.jsonl
+:REASON:       P0 fix round: close the submodule refusal gap that makes an un-gated worktree-prune delete trees git refuses; BLOCK SHIP from the RMA18 review, manager-reproduced on git 2.52.0
+:RUN_ID:       run-20260808T083932-c889b8f788de4e899403351f7db65952
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-1/task-rma18-1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-1/task-rma18-1-ad83c0b692694cf19c720ca56a074579-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-1/task-rma18-1-ad83c0b692694cf19c720ca56a074579-stdout.log
+:DISPATCH_ATTEMPT: ad83c0b692694cf19c720ca56a074579
+:DISPATCH_TX:  tx-20260808-orgasmic-5301
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 09:20:01 implementer.reported TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5303
+:TIME:         [2026-08-08 Sat 09:20:01]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:RUN_ID:       run-20260808T083932-c889b8f788de4e899403351f7db65952
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1
+:SHA:          f97bce9bf4b5e25edeca700eaf0b3e486e389da9
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5301/last.txt
+:END:
+
+* TX 2026-08-08 Sat 09:36:11 task.created TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5304
+:TIME:         [2026-08-08 Sat 09:36:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       regression bisected by the manager: passes at 3a36858, fails at ebc69c2, fails alone on a calm host
+:END:
