@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is surgical rather than a revert of the commit: it neutralises
+# BOTH branches of `worktree_submodule_refusal` and takes
+# `--ignore-submodules=none` back off the clean check, leaving every other part
+# of TASK-RMA18.1 in place. What remains is exactly the decision procedure
+# TASK-RMA18 shipped — git's locked and unclean refusals, and neither of the
+# two things git checks that it did not reproduce.
+exit: 101
+
+# ===== THE SENTINEL IS GONE ================================================
+#
+# The failing assertion, and the only one that matters: an untracked file
+# inside the initialized submodule did not survive the prune. Everything below
+# is the mechanism that destroyed it.
+contains: the untracked file inside the submodule must SURVIVE the prune
+
+# The verb did not merely misreport — it DELETED, and it said so. `RECLAIMED`
+# is the removal line, and the summary confirms it counted one.
+contains: RECLAIMED PATH=
+contains: PRUNE_SUMMARY RECLAIMED=1
+
+# NO SALVAGE RAN, which is what makes this the data-loss variant rather than
+# the merely-noisy one: `submodule.vendor/sub.ignore = all` is committed, the
+# parent reported the tree clean, and the salvage step was skipped entirely.
+# The signature language has no negative directive, so the absence of a
+# `SALVAGED` line is pinned by the test itself — it asserts that absence, and
+# the assertion above is the FIRST one to fire, which is only true when nothing
+# was salvaged first.
+#
+# Exactly one test, exactly one failure. A binary that collapses wholesale is a
+# different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

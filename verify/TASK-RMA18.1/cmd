@@ -1,0 +1,24 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RMA18.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+#
+# ONE test, and it is the whole finding: a managed worktree containing an
+# INITIALIZED SUBMODULE that holds an untracked sentinel. `git worktree remove`
+# refuses such a worktree outright, before it considers cleanliness, and
+# TASK-RMA18 reproduced only git's locked and unclean refusals — so
+# `worktree-prune` recursively deleted a tree git itself declines to touch
+# without `--force`.
+#
+# The fixture commits `submodule.vendor/sub.ignore = all` into `.gitmodules`,
+# which is what makes this DATA LOSS rather than a parity wart: the parent then
+# reports the tree CLEAN, so no salvage runs at all. Salvage could not have
+# helped anyway — `git add -A` records a submodule as a gitlink, so nothing
+# inside one ever reaches a salvage commit.
+#
+# The other half of the finding, `--ignore-submodules=none` on the clean check,
+# is reverted by the same injection and is not separately observable here: the
+# submodule refusal fires first, exactly as it does in git. It is pinned by the
+# fixture's own premise assertions instead, which fail loudly if `git status`
+# ever stops reporting this tree clean.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_worktree_containing_an_initialized_submodule
