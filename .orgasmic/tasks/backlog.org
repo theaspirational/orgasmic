@@ -4353,6 +4353,50 @@ nothing on the fast path.
   runs; =--classify= runs execute nothing and are trivially inert.
 - A selftest case covers the trip, in the same style as the existing ladder cases.
 - =.orgasmic/gotchas.org= no longer asks the reader to build the sampler.
+** Evidence
+MEASURED BY A WORKER'S OWN WATCHDOG [2026-08-08], TASK-2QK4P.1's daemon gate.
+This is the strongest argument yet for putting the guard inside =run-tests.sh=,
+and it is not the argument the task was filed on.
+
+The worker ran =scripts/run-tests.sh -p orgasmic-daemon= under the mandated
+10s-sampling watchdog. The gate's own VERDICT said:
+
+: host : calm (threshold syspolicyd_rate>=1.50; load=8.21 elevated (>=8.0), corroborating only)
+: delta load=8.21 syspolicyd_cpu=117.8 wall_s=168
+: rate  0.7012
+
+*While the watchdog simultaneously recorded a genuine ~20-second syspolicyd burst
+PEAKING AT 796.3%*, decaying to 167% and then to single digits. The hot streak
+reached 2 of the 6 consecutive samples required to kill. *Only its DURATION kept
+it under the guard — its amplitude was twice the 400% line.*
+
+*THE MECHANISM: =rate= IS TOTAL CPU OVER WALL TIME, SO IT CANNOT DISTINGUISH A
+SHORT VIOLENT SPIKE FROM A LONG GENTLE SIMMER — AND IT IS THE SPIKE THAT WEDGES
+tccd.* Nearly all of the run's syspolicyd CPU was concentrated in ~20 seconds,
+and dividing by a 168-second wall spread it into a number that reads calm. Two
+instruments looked at the same 20 seconds: the instantaneous sampler saw 796.3%,
+the averaged gate saw 0.7012 against a 1.50 threshold.
+
+This is NOT an argument that TASK-STWVB's rate design was wrong. The rate answers
+"was this host degraded across the run", and the round-6 review upheld the
+reasoning that a verdict must not be routed through a measurement of something
+else. *It is an argument that the rate cannot serve as the REBOOT guard*, because
+the reboot chain (syspolicyd -> tccd -> WindowServer) is driven by sustained
+INSTANTANEOUS contention, which is exactly what an average destroys.
+
+So the guard =run-tests.sh= needs is not a stricter threshold on the number it
+already computes. It is a *second, instantaneous sampler running for the duration
+of the suite* — the thing every worker is currently told to hand-roll in prose,
+which is what this task exists to fix. A worker hand-rolling it is why this
+measurement exists at all; a worker forgetting to is why the machine rebooted on
+2026-08-08.
+
+*ONE WORD, TWO BLIND SPOTS.* TASK-K9WWM records the same =host: calm= verdict
+printed while the 1m load average at the moment of failure was 13.64-15.03. The
+host word is derived from syspolicyd rate and is structurally blind BOTH to a 10s
+HTTP budget expiring under scheduler pressure AND to an instantaneous CPU spike.
+Whatever this task ships should say plainly what the word does and does not
+cover, because operators and workers alike read it as "was the host to blame".
 
 * BACKLOG TASK-K9WWM three dispatch-close tests time out on the 10s daemon budget under suite concurrency, and one now recurs on a calm host    :dispatch:testing:
 :PROPERTIES:

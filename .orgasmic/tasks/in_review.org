@@ -592,3 +592,110 @@ component with =openat(O_NOFOLLOW|O_DIRECTORY)=, and never follows a symlink.
 The reviewer's conclusion is that the block-ship issue is FAIL-OPEN COMPLETENESS
 relative to the index, not an anchored-walk escape.
 
+* IN_REVIEW TASK-2QK4P.1 recovery-claim resolution treats a silent catalog as proof of non-contradiction, admitting a hidden duplicate authenticated replacement
+:PROPERTIES:
+:ID: TASK-2QK4P.1
+:PRIORITY: P0
+:IMPLEMENTS: TASK-2QK4P
+:END:
+
+** READ THIS FIRST — STATUS
+FIX ROUND for TASK-2QK4P, opened by a =REJECT= with =BLOCK SHIP=
+(=tx-20260808-orgasmic-5347=, codex/gpt-5.6-sol, cross-family).
+
+*THE FIX AT =724973d= IS CORRECT ABOUT THE 409 IT WAS SENT TO FIX AND TOO
+PERMISSIVE ABOUT WHY.* It converted a safety check into a permissive one on the
+argument that a SILENT index is a BLIND index. The reviewer showed that silence
+has no completeness provenance: the same empty slice is produced by "one live
+entry was temporarily invalidated" and by "the candidate set is incomplete", and
+the second admits a state this codebase already models as a safety violation.
+
+Two things the review also settled, which are NOT open:
+- *TASK-RMA18 DID NOT CAUSE THIS.* Confirmed independently from source history:
+  strict claim corroboration (=b35ae5b=) and catalog-based candidate
+  filtering/removal-on-invalidation (=9bee827= and ancestors) are BOTH ancestors
+  of the TASK-RMA18 merge =ebc69c2=. The causal design combination predates it.
+  The manager's original bisect was false and is retracted.
+- The daemon crate is GREEN at =1c0d2b0= — reviewer-run
+  =scripts/run-tests.sh -p orgasmic-daemon=, exit 0, =verdict: GREEN — no
+  failures=, host calm rate 0.6802 — and the production recovery test passed
+  *6/6* under the reviewer's own probes.
+
+** Description
+*** F1 (HIGH, BLOCK SHIP) — a silent catalog can hide contradictory authenticated replacements, and the resolver now accepts one
+=crates/orgasmic-daemon/src/recovery_claim.rs:1294-1299=
+
+The new branch treats =matching.len() == 0= as non-contradictory and returns the
+loaded claim whenever its own transcript verifies. *An empty slice carries no
+statement about completeness.* =collect_recovery_origin_index= can return nothing
+because:
+- a board entry, path, identity or session directory is unavailable;
+- a catalog record is absent or lacks =replacement_run_id=;
+- a candidate scan rejects the file;
+- or — the load-bearing case — =RunCatalog::invalidate_session= removed every
+  relevant live entry (=crates/orgasmic-daemon/src/api.rs:11831-11873=,
+  =crates/orgasmic-daemon/src/run_catalog.rs:1124-1134=).
+
+*This codebase already rules that two daemon-HMAC-authenticated replacements for
+one origin is a safety violation.*
+=duplicate_authenticated_replacements_fail_closed= builds both valid transcripts
+and REQUIRES =InvalidQuarantined=
+(=crates/orgasmic-daemon/src/recovery_claim.rs:2455-2543=).
+
+If both replacement records have been invalidated by lifecycle appends, the
+collector supplies no links; the changed branch verifies only the LOADED claim's
+transcript, returns =Valid=, and *never discovers the other authenticated
+replacement*. =/api/runs/:id/recover= then hands back that one replacement
+(=api.rs:9075-9097=) and inventory clears recovery actions
+(=api.rs:11780-11801=) — silently choosing authority in exactly the state the
+existing regression requires to fail closed.
+
+*** F2 (MEDIUM) — the mechanism test bypasses the production component whose blindness IS the mechanism
+=crates/orgasmic-daemon/src/recovery_claim.rs:2634-2640=
+
+=committed_claim_survives_an_index_blind_to_its_replacement= passes a literal
+=&[]= straight to the resolver. It never instantiates =RunCatalog=, never
+invalidates a record, never calls =collect_recovery_origin_index=, and never
+retains a hidden contradictory replacement. So it *passes if the production
+collector is accidentally globally blind*, and it passes while the F1 duplicate
+state is hidden.
+
+It does pin something real — restoring the old =matching.len() == 1= predicate
+makes it fail by control flow — but that is the RESOLVER BRANCH, not the SAFETY
+OF THE SILENCE REACHING IT. *The manager described this test as pinning the
+mechanism; it does not, and that description is retracted.*
+
+** Acceptance
+1. F1 closed by making completeness EXPLICIT rather than assumed. Either:
+   (a) on zero catalog matches, run an authoritative slow-path enumeration of the
+       canonical project's session JSONL files; or
+   (b) make catalog completeness / dirty-generation observable, and
+       retry or fall back until the origin candidate set is authoritative.
+   Then accept ONLY exactly one verified link equal to the loaded claim.
+   *Fail closed on multiplicity and on unresolved completeness.*
+2. F2 closed by a production-shaped test that drives =RunCatalog= and
+   =collect_recovery_origin_index= and INVALIDATES the matching replacement
+   record — plus the paired case where a SECOND authenticated replacement is also
+   hidden, where the resolver must NOT return =Valid=.
+3. =duplicate_authenticated_replacements_fail_closed= still passes, and is now
+   reachable through the production collector rather than only through a literal
+   slice.
+4. =recovery_faults_kill_real_daemon_and_preserve_original_pane= — the defect
+   TASK-2QK4P was filed for — stays fixed, demonstrated by REPETITION with a
+   stated pass count, not one green run.
+5. =scripts/run-tests.sh -p orgasmic-daemon= GREEN, quoting the VERDICT block.
+
+** Not this task
+The reviewer is strictly read-only, so it did NOT mutate a scratch checkout to
+execute the old predicate or inject the hidden-duplicate state. F1 is derived
+from source and from the existing fail-closed regression, not from a running
+reproduction. *Build that reproduction first* — if F1 turns out to be
+unreachable in practice, that is a real answer, but it must be shown rather than
+argued, and the completeness ambiguity would still want closing.
+
+Also not checked by the review: workspace-wide tests, clippy, fmt, MSRV,
+non-Unix coverage, and the pre-fix base distribution (the brief told it not to
+re-derive that).
+
+The repeated-execution gap the review also found is TASK-P4XKT, not this task.
+
