@@ -1415,6 +1415,27 @@ pub fn scan_session_lifecycle_complete(
 
 /// [`scan_session_lifecycle_complete`] over an already-open handle, for callers
 /// holding a pinned, identity-validated descriptor.
+///
+/// # A torn LAST line is not the same fact as a torn middle one
+///
+/// [`scan_session_lifecycle`] rejects the whole file on the first malformed
+/// lifecycle-relevant line, which is right for it: it answers questions from
+/// two windows and cannot tell where the damage sits. A complete scan can, and
+/// the two shapes carry different information:
+///
+/// - A malformed line with BYTES AFTER IT aborts the read, so every line that
+///   follows is unread. That is an incomplete observation and it is returned as
+///   an error, because a `RecoveryOrigin` may sit behind it.
+/// - A malformed line that is the file's LAST hides nothing. It is what a crash
+///   mid-append leaves — the writer appends whole `sync_all`-ed lines, so the
+///   only partial one is the one being written when the process died — and an
+///   incomplete line cannot itself be a valid envelope. Every complete line in
+///   the file WAS observed, so this returns `Ok`.
+///
+/// Both shapes are reachable: the daemon reopens a torn session and appends
+/// after it, which puts yesterday's torn line in the middle of today's file.
+/// orgasmic:TASK-2QK4P.1.1 — collapsing them would either freeze recovery on a
+/// single junk `.jsonl` or hide a second authority behind one bad line.
 pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     file: &mut R,
     file_bytes: u64,
@@ -1432,6 +1453,9 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
     // can be probed without holding the line itself.
     let mut final_line_header = Vec::new();
     let mut final_line_retained = false;
+    // Held rather than returned: it becomes an error only if a later line
+    // proves it was not the tear at the end of the file.
+    let mut deferred: Option<SessionError> = None;
     loop {
         line.clear();
         let read = reader.read_until(b'\n', &mut line)?;
@@ -1440,16 +1464,28 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
         }
         scan.bytes_inspected += read as u64;
         let raw = line.strip_suffix(b"\n").unwrap_or(&line);
-        match retain_lifecycle_line(&mut scan, raw)? {
-            LineOutcome::Blank => continue,
-            LineOutcome::Dropped => final_line_retained = false,
-            LineOutcome::Retained => final_line_retained = true,
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if let Some(err) = deferred.take() {
+            return Err(err);
+        }
+        match retain_lifecycle_line(&mut scan, raw) {
+            Ok(LineOutcome::Blank) => continue,
+            Ok(LineOutcome::Dropped) => final_line_retained = false,
+            Ok(LineOutcome::Retained) => final_line_retained = true,
+            Err(err) => {
+                deferred = Some(err);
+                continue;
+            }
         }
         final_line_header.clear();
         final_line_header.extend_from_slice(&raw[..raw.len().min(ENVELOPE_HEADER_PROBE_BYTES)]);
     }
     scan.final_line_run_id = window_final_line_run_id(&final_line_header);
-    scan.final_envelope_retained = final_line_retained;
+    // A torn final line means the last retained envelope is not the file's last
+    // event, exactly as a truncated tail window does.
+    scan.final_envelope_retained = final_line_retained && deferred.is_none();
     Ok(scan)
 }
 
@@ -2339,5 +2375,52 @@ mod tests {
         assert_eq!(env.len(), 2);
         assert_eq!(env[0].event["msg"], "one");
         assert_eq!(env[1].event["msg"], "two");
+    }
+    /// orgasmic:TASK-2QK4P.1.1 — a torn LAST line and a torn MIDDLE line carry
+    /// different information, and collapsing them costs something either way.
+    ///
+    /// Read as equally fatal, one junk `.jsonl` in a sessions directory freezes
+    /// that project's recovery forever. Read as equally harmless, one bad line
+    /// early in a file hides every `RecoveryOrigin` behind it and lets a second
+    /// daemon-authenticated replacement go undiscovered. The distinction is
+    /// mechanical: bytes after the tear were never read; bytes after nothing
+    /// do not exist.
+    #[test]
+    fn a_torn_final_line_is_observed_and_a_torn_middle_line_is_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = |seq: u64, kind: &str| {
+            format!(
+                "{{\"seq\":{seq},\"time\":\"2026-08-08T00:00:00Z\",\"run_id\":\"run-tear\",\
+                 \"runtime_id\":\"rt-tear\",\"boot_id\":\"boot-tear\",\"kind\":\"{kind}\",\
+                 \"event\":{{\"phase\":\"acquire\",\"kind\":\"worker\",\
+                 \"task_id\":\"TASK-TEAR\",\"worker_id\":\"implementer-claude-rmux\"}}}}"
+            )
+        };
+        const TEAR: &str = "{\"seq\":9001,\"kind\":\"lifecycle\",\"event\":{\"phase\":";
+
+        let trailing = dir.path().join("trailing.jsonl");
+        std::fs::write(&trailing, format!("{}\n{TEAR}\n", identity(0, "lifecycle"))).unwrap();
+        let scan = scan_session_lifecycle_complete(&trailing)
+            .expect("a tear with nothing after it hides nothing");
+        assert_eq!(scan.envelopes.len(), 1, "the complete line is still read");
+        assert!(
+            !scan.final_envelope_retained,
+            "but the last retained envelope is not the file's last event"
+        );
+
+        let middle = dir.path().join("middle.jsonl");
+        std::fs::write(
+            &middle,
+            format!(
+                "{}\n{TEAR}\n{}\n",
+                identity(0, "lifecycle"),
+                identity(2, "lifecycle")
+            ),
+        )
+        .unwrap();
+        assert!(
+            scan_session_lifecycle_complete(&middle).is_err(),
+            "a tear with bytes behind it leaves those bytes unread, and unread is not absent"
+        );
     }
 }
