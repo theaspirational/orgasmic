@@ -4511,6 +4511,23 @@ mechanism is; do not assume the claude flag shape generalises. Same question for
 - The same question is answered for =--model= on those harnesses (it IS pushed;
   confirm it takes effect) and for the =rmux= mode, which composes argv
   separately in =modes/rmux.rs= and was not examined.
+** Evidence
+SECOND CONFIRMED INSTANCE [2026-08-08]. Dispatch =tx-20260808-orgasmic-5331=
+(TASK-2QK4P reviewer) was created with =--effort high=. The tx records
+=:EFFORT: high=. The live pane reports =gpt-5.6-sol xhigh= — the harness
+default, because the tmux driver's codex/cursor-agent/hermes branch pushes
+=--model= and never pushes an effort flag at all, while the claude branch pushes
+=--effort=.
+
+The SAME dispatch round sent a claude implementer with =--effort high=, and its
+pane shows =thinking with high effort= against the argv
+=claude --model claude-opus-5 ... --effort high=. *Same manager invocation, same
+flag, one harness honours it and one silently discards it.*
+
+The harm is not that =xhigh= is worse than =high= — it is higher. The harm is
+that *the dispatch record asserts a parameter that was never sent*, so any later
+comparison of review quality against effort reads a fabricated column. Fail
+loudly on an unsupported flag, or map it, but do not record it as sent.
 
 * BACKLOG TASK-D6N77 orgasmic has no wake channel: a finished worker cannot reach its manager, so autopilot depends on the manager hand-rolling a watcher every dispatch    :daemon:cli:manager:
 :PROPERTIES:
