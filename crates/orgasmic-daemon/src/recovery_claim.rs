@@ -1264,8 +1264,36 @@ pub fn resolve_authoritative_recovery_claim(
                             && link.project_root == project_root
                     })
                     .collect();
-                if matching.len() == 1
-                    && matching[0].claim == claim
+                // orgasmic:TASK-2QK4P — an index that CONTRADICTS the claim is
+                // evidence. An index that is SILENT about it is not.
+                //
+                // `indexed_origins` is derived from the run catalog, and the
+                // catalog is a cache with holes ON PURPOSE: the session writer
+                // calls [`crate::run_catalog::RunCatalog::invalidate_session`]
+                // on every lifecycle append, and that REMOVES the record so the
+                // next refresh rebuilds it from the newer bytes. A replacement
+                // run that is live — which is exactly the state a crash-recovery
+                // replay finds it in, because the replay's whole job is to hand
+                // back the replacement the dead daemon already spawned — is
+                // appending, so its record is missing for the window between the
+                // append and the next refresh, and
+                // `collect_recovery_origin_index` derives its candidate files
+                // from that cache. A replay landing in the window indexes no
+                // link at all.
+                //
+                // Reading that silence as disproof quarantined a committed claim
+                // that this function had just verified against its own
+                // replacement session, and the caller then went on to mint a
+                // SECOND replacement — the duplication the uniqueness check
+                // exists to prevent. The session-backed proof stands on its own:
+                // `verify_committed_claim_against_session` re-derives the claim
+                // from the replacement transcript, including the daemon-keyed
+                // authority tag and the `RecoveryOrigin` envelope naming this
+                // origin and request. Only a link that disagrees with the claim,
+                // or more than one link for the same origin, overrules it.
+                let contradicted =
+                    matching.len() > 1 || matching.iter().any(|link| link.claim != claim);
+                if !contradicted
                     && verify_committed_claim_against_session(home, project_root, &claim)
                 {
                     return Ok(ResolvedRecoveryClaim::Valid(claim));
@@ -2513,6 +2541,122 @@ mod tests {
             resolved,
             ResolvedRecoveryClaim::InvalidQuarantined
         ));
+    }
+
+    /// TASK-2QK4P: an index that has not SEEN the replacement is not an index
+    /// that DISPROVES it.
+    ///
+    /// `indexed_origins` is built from the run catalog, and the catalog drops a
+    /// record on purpose every time the session writer appends a lifecycle
+    /// envelope ([`crate::run_catalog::RunCatalog::invalidate_session`]). The
+    /// replacement a crash-recovery replay is asked about is LIVE — the dead
+    /// daemon spawned it before it died, and the next daemon reattaches it — so
+    /// it appends, and for the window until the next refresh the whole-board
+    /// index carries no link for it. That window is what a replay lands in.
+    ///
+    /// Before this fix the silence quarantined the committed claim, the handler
+    /// fell through to a fresh acquire, and `/api/runs/<id>/recover` answered
+    /// 409 `recovery blocked by an active lease` — held by the very replacement
+    /// the caller was asking for.
+    ///
+    /// Injection: restore `matching.len() == 1 && matching[0].claim == claim` as
+    /// the precondition in `resolve_authoritative_recovery_claim` and this
+    /// quarantines a claim its own replacement session verifies.
+    // orgasmic:TASK-2QK4P
+    #[test]
+    fn committed_claim_survives_an_index_blind_to_its_replacement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-blind-origin",
+            "req-blind",
+            "boot-blind",
+            false,
+        );
+        std::fs::remove_file(&spec.origin_session_path).unwrap();
+        let mut origin = orgasmic_core::SessionWriter::open(
+            &spec.origin_session_path,
+            RuntimeIdentity {
+                run_id: "run-blind-origin".into(),
+                runtime_id: "rt-blind-origin".into(),
+                boot_id: "boot-dead".into(),
+            },
+        )
+        .unwrap();
+        origin
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: "tmux".into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: spec.worktree.clone(),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    driver_config: serde_json::json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(origin);
+
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let committed = commit_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-blind-origin",
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-blind".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: Some("stable draft".into()),
+            },
+        )
+        .unwrap();
+        write_committed_replacement(&committed);
+
+        // The claim IS backed by its own replacement transcript, and the index
+        // is empty anyway — the state a live replacement produces.
+        assert!(verify_committed_claim_against_session(
+            &home,
+            &project_root,
+            &committed
+        ));
+        let resolved = resolve_authoritative_recovery_claim(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-blind-origin",
+            &[],
+        )
+        .unwrap();
+        match resolved {
+            ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+            other => panic!(
+                "a session-verified committed claim must survive a silent index, got {other:?}"
+            ),
+        }
+
+        // And nothing was quarantined, so the replay stays idempotent: the next
+        // caller reads the same committed claim rather than minting a second
+        // replacement beside the live one.
+        assert_eq!(
+            load_recovery_claim(&home, "orgasmic", "run-blind-origin").unwrap(),
+            Some(committed)
+        );
+        assert!(!claim_path(&home, "orgasmic", "run-blind-origin")
+            .unwrap()
+            .with_extension("json.quarantine")
+            .exists());
     }
 
     #[test]
