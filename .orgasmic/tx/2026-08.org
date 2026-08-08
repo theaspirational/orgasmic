@@ -21123,3 +21123,431 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-08 Sat 06:36:12 task.state_transitioned TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5276
+:TIME:         [2026-08-08 Sat 06:36:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 06:36:17 manager.dispatch_started TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5277
+:TIME:         [2026-08-08 Sat 06:36:17]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18
+:BRANCH:       task-rma18-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18/task-rma18-brief.md
+:STARTED_AT:   [2026-08-08 Sat 06:36:17]
+:LIVENESS:     3a368583a70975e5569d90c02d1d206441a29bea
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: worktree-reclamation redesign, 6 BLOCK SHIP from two prune reviews; tmux+claude opus-5 high per operator session answer; pane-liveness confirmed on the reinstalled runtime so no stall override
+:END:
+
+* TX 2026-08-08 Sat 06:36:17 run.created TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5278
+:TIME:         [2026-08-08 Sat 06:36:17]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18-implementer-20260808T063617.jsonl
+:REASON:       worktree-reclamation redesign, 6 BLOCK SHIP from two prune reviews; tmux+claude opus-5 high per operator session answer; pane-liveness confirmed on the reinstalled runtime so no stall override
+:RUN_ID:       run-20260808T063617-4e6fa77fe42c4cb9a905ff22e272d286
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18/task-rma18-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18/task-rma18-daae1d217b694f2c92826761b3086366-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18/task-rma18-daae1d217b694f2c92826761b3086366-stdout.log
+:DISPATCH_ATTEMPT: daae1d217b694f2c92826761b3086366
+:DISPATCH_TX:  tx-20260808-orgasmic-5277
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 07:24:54 implementer.reported TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5279
+:TIME:         [2026-08-08 Sat 07:24:54]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:RUN_ID:       run-20260808T063617-4e6fa77fe42c4cb9a905ff22e272d286
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18
+:SHA:          4d8253dcb66b90a0acbf2432677790f9e0c236c3
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5277/last.txt
+:END:
+
+
+* TX 2026-08-08 Sat 08:22:07 task.created TASK-4BBA6
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5280
+:TIME:         [2026-08-08 Sat 08:22:07]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4BBA6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       third WindowServer watchdog reboot 2026-08-08, caused by an unguarded run-tests.sh -p orgasmic-daemon run by a manager that had read the guard entry first
+:END:
+
+* TX 2026-08-08 Sat 08:22:37 task.created TASK-K9WWM
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5281
+:TIME:         [2026-08-08 Sat 08:22:37]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-K9WWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       recurrence on a calm host, which the 2026-08-07 handoff named as the condition that turns this from an environment excuse into a real finding
+:END:
+
+* TX 2026-08-08 Sat 08:23:54 task.edited TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5282
+:TIME:         [2026-08-08 Sat 08:23:54]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-RMA18
+:NODE_ID:      TASK-RMA18
+:END:
+
+* TX 2026-08-08 Sat 08:24:24 task.state_transitioned TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5283
+:TIME:         [2026-08-08 Sat 08:24:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 08:24:25 manager.dispatch_started TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5284
+:TIME:         [2026-08-08 Sat 08:24:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18-review
+:BRANCH:       task-rma18-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-review/task-rma18-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 08:24:25]
+:LIVENESS:     db2edb68c74548989bb00fbb8624011ac8c6d862
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5277
+:REASON_INITIAL: destructive-path review before the TASK-M47E5.3 gate removal reaches any runtime; same-family review stated because codex is out of credits and cursor-agent killed two workers on 2026-08-07
+:END:
+
+* TX 2026-08-08 Sat 08:24:25 run.created TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5285
+:TIME:         [2026-08-08 Sat 08:24:25]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18-reviewer-20260808T082425.jsonl
+:REASON:       destructive-path review before the TASK-M47E5.3 gate removal reaches any runtime; same-family review stated because codex is out of credits and cursor-agent killed two workers on 2026-08-07
+:RUN_ID:       run-20260808T082425-d53ee0b4d58542a2a698a5a919b901c5
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-review/task-rma18-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-review/task-rma18-review-5c6bcb1ebfb942e4a6ac44f57f97b436-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-review/task-rma18-review-5c6bcb1ebfb942e4a6ac44f57f97b436-stdout.log
+:DISPATCH_ATTEMPT: 5c6bcb1ebfb942e4a6ac44f57f97b436
+:DISPATCH_TX:  tx-20260808-orgasmic-5284
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 08:35:37 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5286
+:TIME:         [2026-08-08 Sat 08:35:37]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F1 BLOCK SHIP: git_would_remove_worktree omits git's categorical submodule refusal, so prune recursively deletes worktrees a non-forced git worktree remove refuses (measured, git 2.52.0)
+:SEVERITY:     HIGH
+:KIND:         correctness
+:VERDICT:      block-ship
+:FILE:         crates/orgasmic-cli/src/manager.rs:3915-3979
+:EVIDENCE:     probe: clean worktree with initialized submodule -> git status --porcelain empty, no locked marker, git worktree remove EXIT=128 'working trees containing submodules cannot be moved or removed', --force EXIT=0
+:IMPACT:       prune deletes what dispatch-close (manager.rs:5775, still shells git worktree remove) refuses; with submodule.<n>.ignore=all committed in .gitmodules, uncommitted submodule work is invisible to git status and unsalvageable by parent git add -A
+:FIX:          refuse initialized submodules (git validate_no_submodules equivalent) and pass --ignore-submodules=none to the status call; regression with a submodule sentinel
+:END:
+
+* TX 2026-08-08 Sat 08:35:50 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5287
+:TIME:         [2026-08-08 Sat 08:35:50]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F2: the conceded fstatat->unlinkat window is not the only one; the clean check and the salvage run through the pathname between the two identity asserts
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs:4063-4118
+:EVIDENCE:     four subprocess pathname resolutions between the assert at :4063 and the re-assert at :4104 (worktree_has_uncommitted_changes :4067, worktree_head_oid :4069, salvage_worktree_onto :4071, git_would_remove_worktree :4092)
+:IMPACT:       a name rebound across that stretch and back lets a clean decoy pass the last gate while the classified dirty inode is deleted, and lets another tree's content be committed into the project repo as refs/orgasmic/salvage/<sha>
+:FIX:          state the window in the report; compute the refusal from the anchored handle rather than a subprocess where possible
+:END:
+
+* TX 2026-08-08 Sat 08:35:50 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5288
+:TIME:         [2026-08-08 Sat 08:35:50]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F3: acceptance 'no test-only hook reachable in a release build' met for the prune hook only; the sibling dispatch-close hook is ungated and the proving assertion is a tautology whose executable half never runs
+:SEVERITY:     MEDIUM
+:KIND:         test
+:FILE:         crates/orgasmic-cli/src/manager.rs:5097-5113,8941-8956
+:EVIDENCE:     dispatch_close_pause_after_guard has no cfg gate and parks on ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE holding the cleanup lock and close-guard reservation; assert_eq!(worktree_prune_pause_hook_is_compiled(), cfg!(debug_assertions)) is self-comparing since the const fn body is cfg!(debug_assertions) at :4216-4218; scripts/run-tests.sh:680-703 has no --release leg
+:CLASSIFICATION: dispatch-close hook pre-existing, in scope under the acceptance item as written
+:FIX:          gate the sibling hook, couple or drop the reporter, add a --release leg
+:END:
+
+* TX 2026-08-08 Sat 08:36:01 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5289
+:TIME:         [2026-08-08 Sat 08:36:01]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F4: worktree-prune's after_help still tells the operator git's clean check gates the removal, and the manager-dispatch convention still claims parity with dispatch-close
+:SEVERITY:     MEDIUM
+:KIND:         docs
+:FILE:         crates/orgasmic-cli/src/manager.rs:369-374
+:ALSO:         shipped/prompt-studio/conventions/manager-dispatch.org:484-486; crates/orgasmic-cli/src/main.rs:941-943 says 'salvages a dirty tree first', false for the RepoGone disposition that deletes with no salvage
+:IMPACT:       the after_help is what an operator reads at the moment of running a destructive verb, and F1 disproves its central clause; nothing in cli_parity pins help prose, which is why it rotted
+:FIX:          fix after_help with F1; fix the .org and the summary line as follow-ups; consider one cli_parity assertion over prune help text
+:END:
+
+* TX 2026-08-08 Sat 08:36:01 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5290
+:TIME:         [2026-08-08 Sat 08:36:01]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F5: residual risk 2 confirmed reachable - RunRecord stores no worktree identity, so same_worktree re-derives it from a stale path and a renamed live worktree is reclaimed under its worker
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/supervisor.rs:6068-6080,6129-6132
+:ALSO:         crates/orgasmic-cli/src/manager.rs:3518-3526 claims closure has the same shape
+:EVIDENCE:     AdmittedRun stores worktree_identity at admission (supervisor.rs:515-527) and its rename test passes; RunRecord does not, so metadata() on the stale recorded path fails after a rename and same_worktree returns false
+:FIX:          store worktree_identity on RunRecord at insert and compare stored-vs-current; mirror in the CLI claims closure
+:DISPOSITION:  deserves its own task; not blocking
+:END:
+
+* TX 2026-08-08 Sat 08:36:11 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5291
+:TIME:         [2026-08-08 Sat 08:36:11]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F6: two identity-vs-path asymmetries survived the sweep - reserve_dispatch_close's held check is still string equality, and a lease admitted with worktree:None is invisible to the pending fence
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/supervisor.rs:4134-4136,573-597
+:IMPACT:       two cleanups can hold reservations on the same inode via different recorded paths after a rename; mitigated by the shared dispatch cleanup file lock
+:FIX:          use same_worktree in the held-reservation check for consistency with admit_live_run (:641-645)
+:END:
+
+* TX 2026-08-08 Sat 08:36:11 reviewer.finding TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5292
+:TIME:         [2026-08-08 Sat 08:36:11]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       F7: KEPT is printed over a tree salvage already mutated - a salvage that fails after git add -A or checkout --detach leaves index/HEAD moved and reports neither SALVAGED nor PARTIAL
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs:4067-4086
+:ALSO:         salvage_worktree_onto crates/orgasmic-cli/src/manager.rs:2465-2536
+:IMPACT:       no content destroyed, but 'KEPT means untouched' is literally false on that branch and the acceptance's escape clause is not taken either; a checkout-step failure leaves the salvage commit unreferenced
+:NOTE:         touched is otherwise correct on every destroying path traced: remove_contents :3162-3164, final AT_REMOVEDIR :3230-3236, preserved across the recursion's ?
+:END:
+
+* TX 2026-08-08 Sat 08:36:22 reviewer.reported TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5293
+:TIME:         [2026-08-08 Sat 08:36:22]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:RUN_ID:       run-20260808T082425-d53ee0b4d58542a2a698a5a919b901c5
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5284/last.txt
+:END:
+
+* TX 2026-08-08 Sat 08:37:19 reviewer.done TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5294
+:TIME:         [2026-08-08 Sat 08:37:19]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       REJECT, 7 findings, BLOCK SHIP on F1: git_would_remove_worktree omits git's categorical submodule refusal, so prune recursively deletes worktrees a non-forced git worktree remove refuses; manager reproduced the git probe independently (exit 128 clean, --force exit 0)
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5284
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5284/last.txt
+:END:
+
+* TX 2026-08-08 Sat 08:37:19 task.state_transitioned TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5295
+:TIME:         [2026-08-08 Sat 08:37:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 08:37:32 implementer.done TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5296
+:TIME:         [2026-08-08 Sat 08:37:32]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:REASON:       fd-anchored reclamation redesign merged; six original findings closed, reviewed REJECT with BLOCK SHIP on F1 (submodule refusal) carried to TASK-RMA18.1; runtime deliberately not reinstalled
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    ebc69c2c69a3c67df4948254d001cd297fc4bfc9
+:BRANCH:       task-rma18-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5277
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5277/last.txt
+:END:
+
+* TX 2026-08-08 Sat 08:37:32 task.state_transitioned TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5297
+:TIME:         [2026-08-08 Sat 08:37:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 08:38:38 task.created TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5298
+:TIME:         [2026-08-08 Sat 08:38:38]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewer REJECT on TASK-RMA18 with BLOCK SHIP on F1, manager-reproduced against real git 2.52.0
+:END:
+
+* TX 2026-08-08 Sat 08:38:38 task.property_updated TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5299
+:TIME:         [2026-08-08 Sat 08:38:38]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-RMA18.1
+:FIX_SUBTASK:  t
+:END:

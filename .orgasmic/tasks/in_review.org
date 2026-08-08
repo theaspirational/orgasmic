@@ -1,3 +1,165 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-RMA18 redesign worktree reclamation: fd-anchored end to end, with the daemon owning worktree identity :cli:daemon:
+:PROPERTIES:
+:DEPENDS_ON: TASK-M47E5.3
+:ID: TASK-RMA18
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**
+:END:
+
+** READ THIS FIRST — STATUS
+The prune implementation is ON MAIN but GATED OFF by TASK-M47E5.3. Start from that
+code and from the two review reports; do not start from scratch, and do not
+un-gate until this task acceptance is met.
+
+Two independent review rounds produced SIX BLOCK SHIP findings, every one on the
+destructive path. That is the signal this task exists for: reclamation was
+attempted as a CLI feature with safety bolted on, and it needs to be designed as a
+safety problem with a feature attached.
+
+** The six findings, which are the design input
+ROUND 1 (tx =tx-20260805-orgasmic-4474=):
+1. =read_dir= on the managed root followed a symlinked root; the direct-child
+   fence could not fail because =path.parent()= IS =managed_root= by construction.
+2. Ownership came from the tx ledger alone; =RunSummary= deserialized only
+   =run_id=, so the CLI could not match a live run to a worktree at all.
+3. =worktree_repo_gone= treated ANY =read_to_string= error as proof the repo was
+   gone — the one disposition that skips salvage and deletes.
+
+ROUND 2 (tx =tx-20260805-orgasmic-4495=), against the fixes for those:
+4. =O_NOFOLLOW= GUARDS ONLY THE FINAL COMPONENT. =open_dir_nofollow= opens
+   =<home>/worktrees/<project-id>= in one syscall, so replacing the ANCESTOR
+   =<home>/worktrees= with a symlink is followed and the fd anchors a victim
+   directory. The round-1 regression replaced only the final component, so it
+   could not catch it. Confirmed by the manager against POSIX semantics and the
+   code.
+5. THE HANDLE WAS NOT THE REFERENCE POINT FOR THE WHOLE DECISION. Enumeration used
+   the fd, but classification reconstructed =root.path().join(name)= and freshly
+   resolved metadata, canonicalization, repo state, sizing AND the daemon
+   reservation through that pathname. So the reservation can describe tree B while
+   =unlinkat= deletes anchored tree A. The salvageable branch has the same gap:
+   =git worktree remove= is itself the destructive remover and receives only a
+   re-resolved pathname, with no child inode ever captured or passed.
+6. The reservation task-id fallback to the directory name misses the window where
+   an acquire is admitted but its =RunRecord= is not yet inserted —
+   =blocking_run_for_close= detects that window ONLY by lease lookup on
+   =params.task_id=, and =--worktree= may name any directory.
+
+** Design directions from the reviewers, not yet ruled on
+- Walk from a trusted anchored home fd and open =worktrees= and =<project-id>=
+  with =openat(..., O_NOFOLLOW|O_DIRECTORY)= each, so no ancestor is ever resolved
+  by pathname.
+- Carry a child directory HANDLE plus a stable identity from enumeration through
+  classification to removal; use fd-relative metadata and repo inspection. Either
+  stop letting git own the recursive deletion through a rebindable pathname, or
+  prove the exact child inode at the destructive syscall.
+- Key the daemon fence on a stable worktree identity that survives rename, not a
+  canonical pathname.
+- Make pending admissions worktree-addressable in the supervisor: store the
+  canonical/stable worktree identity when =admit_live_run= installs the lease, and
+  have =reserve_dispatch_close= reject a matching pending admission regardless of
+  task-name guessing. THIS IS A DAEMON CHANGE, which is why it did not fit a CLI
+  fix round.
+- Retain the deterministic pause-file race test under a =debug_assertions= or
+  test-hooks compile gate; today =ORGASMIC_WORKTREE_PRUNE_PAUSE_FILE= is live in
+  the release binary and can hang forever holding the global cleanup lock and the
+  daemon reservation.
+
+** Two things measured along the way, worth keeping
+- FD accounting peaks near the anchored root plus 65 child fds against a macOS
+  soft =RLIMIT_NOFILE= of 256; depth 65 and =EMFILE= propagate an error, but
+  earlier siblings can already have been removed.
+- A mid-stream =readdir= error is treated as EOF, so recursive removal can delete
+  entries already returned, fail =rmdir= with =ENOTEMPTY=, and print KEPT. "Kept"
+  currently does not mean "untouched", and it should.
+
+** Acceptance
+- No pathname is resolved for any ancestor of the managed root, and an
+  ANCESTOR-symlink regression with surviving sentinels proves it.
+- The identity classified, the identity reserved, and the identity deleted are
+  provably the same, with a regression that substitutes a child and a root
+  mid-operation.
+- A live run is never reclaimed, including one admitted but not yet recorded, and
+  including a dispatch whose =--worktree= names a nonconforming directory.
+- "Kept" means untouched, or the report says precisely what it touched.
+- No test-only hook is reachable in a release build.
+- Only then is the TASK-M47E5.3 gate removed.
+** Inherited from the M47E5.3 gate review
+The gate review returned APPROVE with no findings. Three things it left for this task.
+
+1. UN-IGNORE ALL NINE retained behaviour tests as part of this redesign, and re-run
+   the destructive-path review BEFORE reconnecting either =*_ungated= function.
+   They are listed on TASK-M47E5.3.
+
+2. THE GATE OWN STRUCTURAL GUARANTEE WAS NEVER PINNED BY A FIXTURE. The gate tests
+   boot a daemon and seed a valid project, so "refuses before project-root
+   resolution and before daemon contact" is proved by the one-line body rather than
+   by a test that would fail if the gate slipped later in the function. An
+   empty-tempdir / no-daemon refusal case would make that executable evidence. Only
+   worth adding if a gated state persists for any length of time.
+
+3. A REVIEWER DESIGN OPINION WORTH WEIGHING, recorded because it is a real argument
+   and not a defect: it would have REVERTED the unsafe implementation from compiled
+   source rather than gating it, keeping the nine tests and pointing this task at
+   the prior commits and review reports — on the grounds that git is already a
+   durable archive, and dead code that once deleted the wrong things is a loaded gun
+   that =#[allow(dead_code)]= keeps quiet. The manager ruled to RETAIN it so this
+   task starts from working code. IF THIS REDESIGN STALLS OR IS DEFERRED, revisit
+   that ruling rather than leaving the implementation sitting there indefinitely.
+** Evidence
+Landed =ebc69c2= (merge of =4d8253d=) on main, base =3a36858=, plus manager-direct
+=db2edb6=. Implementer: =implementer-claude-tmux= (tmux / claude / claude-opus-5 /
+high), run =run-20260808T063617-4e6fa77fe42c4cb9a905ff22e272d286=, started_tx
+=tx-20260808-orgasmic-5277=. 48 minutes, one commit, clean worktree, finalized
+cleanly.
+
+*THE TASK-M47E5.3 GATE IS REMOVED IN SOURCE.* The runtime was NOT reinstalled, so
+no operator can reach the verb until a reinstall the manager will not perform
+before an independent review returns.
+
+GATES, RE-RUN BY THE MANAGER ON THE MERGED TREE rather than taken on report:
+=cargo fmt --all --check= exit 0; =cargo clippy --workspace --all-targets -D
+warnings= exit 0; =cli_parity= 6 passed; =orgasmic verify TASK-RMA18= PASS
+(injection applied, red matched the pinned signature, revert byte-identical,
+green); daemon lib suite *738 passed / 0 failed / 1 ignored in 49.37s*.
+
+*THE WORKER REPORTED THE DAEMON SUITE RED AND IT IS GREEN.* Its report classified
+three runs as "pre-existing / host-load" and supported that with a base-tree
+control showing main redder still. Directionally right, wrongly framed: on a calm
+host, re-executing the already-built binary, the suite is FULLY GREEN in 49s
+against the worker's 660s. Nothing was pre-existing; it was all load — the
+control was measuring the host on both sides.
+
+CLAIMS VERIFIED AGAINST THE DIFF, not taken on report:
+- all nine retained tests are un-ignored; the file now carries ZERO =#+begin_src
+  text
+  #[ignore
+  #+end_src= attributes;
+- exactly TWO tests were deleted, and they are the two TASK-M47E5.3 gate tests
+  the report named (=worktree_prune_is_gated_off_and_reclaims_nothing=,
+  =dispatch_status_no_longer_advertises_reclaimable_worktrees=);
+- four new integration tests added, matching the four the report claims.
+
+MANAGER-DIRECT =db2edb6=: the merged tree still told an operator running
+=worktree-prune --help= that the verb was "GATED OFF ... refuses and reclaims
+nothing, with or without --dry-run" — the opposite of what it now does — and
+=dispatch-status='s summary said its report was gated off with it. Nothing pins
+help prose (=cli_parity= resolves invocations and flags, not =after_help=), which
+is why it rotted silently. Named for attack in the review brief.
+
+CLI SUITE RED, twice, and NOT this change: three =reviewer_close_*= tests time
+out on the 10s daemon budget at =/api/runs/<id>/release=. Ruled out by mechanism
+— this change adds filesystem work only to =admit_live_run= (acquire) and
+=blocking_run_for_close= (close reservation), neither of which is on the release
+path — and two of the three were already recorded failing this way on 2026-08-07.
+One recurred on a host the suite called CALM, which is the condition the handoff
+set for filing: *TASK-K9WWM*.
+
+ALSO FILED: *TASK-4BBA6* (P1). Running =scripts/run-tests.sh -p orgasmic-daemon=
+unguarded rebooted this machine — =WindowServer-2026-08-08-105749.ips=, third
+occurrence of the syspolicyd chain. The manager had read the guard entry during
+bootstrap and skipped it because the sentence is conditioned on "WHILE
+UNATTENDED". The guard belongs inside =run-tests.sh=, not in prose.
+
