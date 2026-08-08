@@ -1,18 +1,17 @@
 diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
-index 23d41bc..8e76c3c 100644
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -3957,7 +3957,8 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
-     let advice = "no salvage can capture what is inside a submodule, because the parent records \
-                   it as a gitlink. Remove the submodule's checkout yourself, or remove the \
-                   worktree with `git worktree remove --force` once you have rescued its contents";
+@@ -4070,7 +4070,8 @@
+         "nothing here says there IS a submodule; only that the record which would say so could \
+          not be read, and an unreadable record is not a licence to delete. Repair or remove what \
+          did not read and re-run — this verb has no `--force` of its own";
 -    if worktree_admin_dir_holds_modules(worktree, path) {
 +    // INJECTION: reproduce only the two refusals TASK-RMA18 reproduced.
 +    if false && worktree_admin_dir_holds_modules(worktree, path) {
          return Some(format!(
              "{} contains an initialized submodule (its worktree admin directory holds a \
               `modules` directory), and `git worktree remove` refuses such a worktree outright \
-@@ -3993,7 +3994,7 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
+@@ -4121,7 +4122,7 @@
      candidates.dedup();
  
      for module in candidates {
@@ -20,8 +19,8 @@ index 23d41bc..8e76c3c 100644
 +        if false && nonempty_dir_under(worktree, &module) {
              return Some(format!(
                  "{} contains an initialized submodule at {module}, and `git worktree remove` \
-                  refuses such a worktree outright — {advice}",
-@@ -4545,10 +4546,10 @@ fn git_would_remove_worktree(
+                  refuses such a worktree outright — {submodule_advice}",
+@@ -4695,10 +4696,10 @@
      // it a committed `submodule.<name>.ignore = all` hides a dirty submodule and
      // this reads CLEAN (measured on git 2.52.0).
      let status = Command::new("git")

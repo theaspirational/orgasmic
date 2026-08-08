@@ -24,4 +24,12 @@
 # TASK-RMA18.1 shipped them. That is what makes this a completeness proof rather
 # than a "was the check wired up" proof: both shipped branches are live and
 # neither can see this submodule.
+# ---------------------------------------------------------------------------
+# RE-AUTHORED 2026-08-08 by TASK-RMA18.1.1.1. The patch was stale in the literal
+# sense only: TASK-RMA18.1.1.1 split the shared `advice` string in three and gave
+# the `NoRepository` arm a body, so the CONTEXT lines around this hunk moved and
+# `git apply` refused. THE INJECTION IS UNCHANGED — the same one line, taking the
+# INDEX back out of the candidate set — and the pinned red below was re-measured
+# against the re-authored patch, not carried over.
+# ---------------------------------------------------------------------------
 env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_submodule_recorded_only_in_the_index
