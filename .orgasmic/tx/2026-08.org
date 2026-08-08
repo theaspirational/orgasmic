@@ -23766,3 +23766,284 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-08 Sat 16:07:55 reviewer.finding TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5425
+:TIME:         [2026-08-08 Sat 16:07:55]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       F1 HIGH docs/acceptance: shipped worktree-prune --help is still FALSE about the repo-gone branch, now in the safe direction; measured, manager.rs:378-385
+:SEVERITY:     HIGH
+:KIND:         docs
+:FILE:         crates/orgasmic-cli/src/manager.rs:378-385
+:EVIDENCE:     probe: worktree_submodule_refusal on NoRepository with no nested .git still refuses via .gitmodules+nonempty_dir_under
+:CLAIM:        Once the repository is gone no such record survives to be read / nothing else there is checked
+:ACCEPTANCE:   5a unmet (help sentence TRUE of whatever ships)
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-08 Sat 16:07:56 reviewer.finding TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5426
+:TIME:         [2026-08-08 Sat 16:07:56]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       F2 MEDIUM: a NoRepository refusal reached via .gitmodules still carries submodule_advice, whose 'git worktree remove --force' escape cannot run there; acceptance 3 unmet on that arm
+:SEVERITY:     MEDIUM
+:KIND:         bug
+:FILE:         crates/orgasmic-cli/src/manager.rs:4064-4069,4122-4128
+:EVIDENCE:     probe A output ends '- while the repository is still there - remove the worktree with git worktree remove --force' on a repo-gone worktree
+:ACCEPTANCE:   3 unmet for the .gitmodules arm
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-08 Sat 16:08:06 reviewer.finding TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5427
+:TIME:         [2026-08-08 Sat 16:08:06]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       F3 MEDIUM test: C5 realized - RepoGone + .gitmodules now has ZERO coverage; the old regression passes through the new nested_git arm, which is how F2 survived the round
+:SEVERITY:     MEDIUM
+:KIND:         test
+:FILE:         crates/orgasmic-cli/tests/dispatch.rs:8960-9081
+:EVIDENCE:     measured on git 2.52.0: submodule update --init in a linked worktree writes vendor/sub/.git as a FILE, so the walk sees it and the new arm returns first
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-08 Sat 16:08:07 reviewer.finding TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5428
+:TIME:         [2026-08-08 Sat 16:08:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       F4 LOW docs: the repo-gone check is called WEAKER but it is DIFFERENT - broader (refuses a vendored .git git would allow, ruling 1) and narrower (blind past MAX_DEPTH 64 and under unreadable dirs); the over-refusal is undocumented for the operator
+:SEVERITY:     LOW
+:KIND:         docs
+:FILE:         crates/orgasmic-cli/src/manager.rs:381-383
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-08 Sat 16:08:07 reviewer.finding TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5429
+:TIME:         [2026-08-08 Sat 16:08:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       F5 LOW test: the strengthened cli_parity pin is still defeatable in the DANGEROUS direction - a false universal sentence naming no branch, or an over-claim inside the repo-gone sentence; its live proof is that it passes on the shipped false sentence (F1)
+:SEVERITY:     LOW
+:KIND:         test
+:FILE:         crates/orgasmic-cli/tests/cli_parity.rs:150-196
+:ACCEPTANCE:   5b met in shape, not in guarantee
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-08 Sat 16:10:01 reviewer.reported TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5430
+:TIME:         [2026-08-08 Sat 16:10:01]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:RUN_ID:       run-20260808T155802-37f12af5a39a4bd2a6ae5f958b1c88bd
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5423/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:11:06 reviewer.done TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5431
+:TIME:         [2026-08-08 Sat 16:11:06]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       claude/opus-5 same-family (reason recorded): APPROVE-WITH-FOLLOW-UPS, and explicitly YES to shipping the verb — the deletion half is fixed and reproduced on the production prune path. Five follow-ups, all keep-direction or text: help still false about the repo-gone branch but now UNDER-promising (F1, acceptance 5a unmet), the .gitmodules arm still offers the impossible --force remedy (F2, acceptance 3 unmet on that arm), RepoGone + .gitmodules now has ZERO coverage because the new arm fires first (F3 — the manager's C5 concern realized), 'WEAKER' mischaracterises (F4), and the strengthened cli_parity pin still passes on a false sentence two ways (F5, answering C2 in the negative).
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWED_DIFF: 1cdf25b..34c0943
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260808-orgasmic-5423
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5423/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:11:06 task.state_transitioned TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5432
+:TIME:         [2026-08-08 Sat 16:11:06]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 16:11:12 implementer.done TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5433
+:TIME:         [2026-08-08 Sat 16:11:12]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:REASON:       Two commits merged as 34c0943. Reviewed approve-with-follow-ups; five follow-ups carry to TASK-RMA18.1.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 9087cef40bfdc5deb7c71d750f4c5529cdea9477
+:MERGE_SHA:    34c094367ba82eec322f20bb235eb88acb311fc9
+:BRANCH:       task-rma18.1.1.1-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5414
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5414/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:11:12 task.state_transitioned TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5434
+:TIME:         [2026-08-08 Sat 16:11:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RMA18.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 16:12:29 task.created TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5435
+:TIME:         [2026-08-08 Sat 16:12:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Five follow-ups from the approve-with-follow-ups on TASK-RMA18.1.1.1. All keep-direction or text; the verb is ship-safe. Dispatched rather than fixed-forward because the operator contract has been written wrong twice and the fixture is what makes the third attempt safe.
+:END:
+
+* TX 2026-08-08 Sat 16:12:29 task.property_updated TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5436
+:TIME:         [2026-08-08 Sat 16:12:29]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-RMA18.1.1.1
+:FIX_SUBTASK:  TASK-RMA18.1.1.1.1
+:END:
+
+* TX 2026-08-08 Sat 16:12:30 task.property_updated TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5437
+:TIME:         [2026-08-08 Sat 16:12:30]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-RMA18.1.1.1.1
+:IMPLEMENTS:   TASK-RMA18.1.1.1
+:END:
+
+* TX 2026-08-08 Sat 16:13:24 task.state_transitioned TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5438
+:TIME:         [2026-08-08 Sat 16:13:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RMA18.1.1.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 16:13:25 manager.dispatch_started TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5439
+:TIME:         [2026-08-08 Sat 16:13:25]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1.1
+:BRANCH:       task-rma18.1.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-r6/task-rma18-r6-brief.md
+:STARTED_AT:   [2026-08-08 Sat 16:13:25]
+:LIVENESS:     3b59172cf942d6b1f6e57ee2e7dd0ef1e5f18c9e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round six, small: one sentence, one advice string, one fixture, one pin clause. Dispatched rather than fixed-forward because the operator contract has been written wrong twice by hand and the fixture is what makes the third attempt safe.
+:END:
+
+* TX 2026-08-08 Sat 16:13:26 run.created TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5440
+:TIME:         [2026-08-08 Sat 16:13:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RMA18.1.1.1.1-implementer-20260808T161325.jsonl
+:REASON:       Round six, small: one sentence, one advice string, one fixture, one pin clause. Dispatched rather than fixed-forward because the operator contract has been written wrong twice by hand and the fixture is what makes the third attempt safe.
+:RUN_ID:       run-20260808T161325-af24514ef9054335a5c61e0ce5e0b8e1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-rma18.1.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-rma18-r6/task-rma18-r6-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-rma18-r6/task-rma18-r6-d62db1e598124e38af10f41d46d1cd10-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-rma18-r6/task-rma18-r6-d62db1e598124e38af10f41d46d1cd10-stdout.log
+:DISPATCH_ATTEMPT: d62db1e598124e38af10f41d46d1cd10
+:DISPATCH_TX:  tx-20260808-orgasmic-5439
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
