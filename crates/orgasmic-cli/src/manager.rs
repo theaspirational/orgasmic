@@ -12323,6 +12323,82 @@ mod tests {
         }
     }
 
+    /// The predicate must fire on a POPULATED gitlink checkout and NOT on an
+    /// uninitialized placeholder — git's own rule is `!is_empty_dir`, and a
+    /// refusal that fired on empty placeholders would make the verb useless for
+    /// every worktree of a repository that has any submodule at all.
+    ///
+    /// Both halves are measured on ONE linked worktree, through the same
+    /// anchored handle the delete path uses, with the submodule recorded ONLY in
+    /// the index — no `.gitmodules`, no admin `modules/` directory — so it is
+    /// the index-derived branch that is under test in both directions.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn worktree_submodule_refusal_fires_on_a_populated_gitlink_and_not_a_placeholder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let git = |root: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        git(&project, &["init", "-q", "-b", "main"]);
+        git(&project, &["config", "user.email", "tester@example.com"]);
+        git(&project, &["config", "user.name", "Test User"]);
+        std::fs::write(project.join("a.txt"), "ordinary file").unwrap();
+        git(&project, &["add", "a.txt"]);
+        git(&project, &["commit", "-m", "init"]);
+        let head = git(&project, &["rev-parse", "HEAD"]);
+        git(
+            &project,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{head},vendor/sub"),
+            ],
+        );
+        git(&project, &["commit", "-m", "gitlink, no .gitmodules"]);
+
+        let worktree = tmp.path().join("wt");
+        git(
+            &project,
+            &["worktree", "add", "-q", worktree.to_str().unwrap(), "HEAD"],
+        );
+        assert!(
+            !worktree.join(".gitmodules").exists(),
+            "fixture premise: nothing but the index records this submodule"
+        );
+        let handle = std::fs::File::open(&worktree).unwrap();
+
+        // `git worktree add` leaves an EMPTY placeholder for an uninitialized
+        // submodule, and git removes such a worktree without --force.
+        assert!(worktree.join("vendor/sub").is_dir());
+        assert_eq!(
+            worktree_submodule_refusal(&handle, &worktree),
+            None,
+            "an uninitialized submodule placeholder must stay removable"
+        );
+
+        std::fs::write(worktree.join("vendor/sub/lib.txt"), "checked out").unwrap();
+        let reason = worktree_submodule_refusal(&handle, &worktree)
+            .expect("a populated gitlink checkout must be refused");
+        assert!(
+            reason.contains("vendor/sub"),
+            "the refusal must name the submodule it found, got: {reason}"
+        );
+    }
+
     /// A SPLIT INDEX holds a delta against a shared index this never opens, so
     /// the gitlinks visible in it are not the whole set. git writes one on
     /// demand, so the fixture is git's own, and the answer must be a refusal
