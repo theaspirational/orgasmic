@@ -1104,3 +1104,204 @@ from exact source paths and the scanner's own documented unknown-on-truncation
 contract. *Build the running reproductions; that is what rounds one and two each
 learned the hard way.*
 
+* IN_REVIEW TASK-RMA18.1.1.1.1 worktree-prune's repo-gone help under-promises, its .gitmodules arm offers an impossible remedy, and nothing covers that arm
+:PROPERTIES:
+:ID: TASK-RMA18.1.1.1.1
+:PRIORITY: P2
+:IMPLEMENTS: TASK-RMA18.1.1.1
+:END:
+
+** READ THIS FIRST — STATUS
+Follow-up round for TASK-RMA18.1.1.1, opened by an *APPROVE-WITH-FOLLOW-UPS*
+(=tx-20260808-orgasmic-5431=, claude/opus-5 same-family — cross-family is blocked
+for this subject matter, [[TASK-52NJS]]).
+
+*THE VERB IS SAFE TO SHIP. THE REVIEWER SAID SO EXPLICITLY AND MEASURED IT.*
+Round four's answer was "No — not as documented"; the deletion half is now fixed
+and *reproduced on the production prune path*, not argued from source. Every
+defect below runs in the KEEP direction or lives in operator-facing text. Nothing
+found deletes a directory git would refuse.
+
+*SO THIS ROUND IS NOT URGENT AND IS NOT A BLOCK.* It exists because the operator
+contract of a destructive verb has now been written wrong TWICE, and the right
+way to stop that is a test that pins the sentence — not a third hand-edit.
+
+*MANAGER RULING, DEPARTING FROM THE REVIEWER'S OWN RECOMMENDATION.* It advised
+folding items 1–3 into the reinstall commit as a fix-forward rather than a sixth
+dispatch. I am dispatching instead, for two reasons it could not weigh:
+1. This project's record is that *a round convened to remove a false claim has
+   twice introduced a new one*, which is why the seventh QGWK7 node was taken
+   manager-direct — that precedent covers PROSE. F3 is a new integration fixture
+   on a five-round destructive path, which is not prose.
+2. The reviewer's own fix direction 3 says the fixture "closes F2's coverage hole
+   and pins F1's corrected sentence at the same time". *The test is what makes
+   the text safe to write.* Writing the text by hand without it repeats the
+   pattern that produced F1.
+The cost is one short worker round against a sentence that has been wrong twice.
+Nothing ships before it because the runtime reinstall is gated on this chain.
+
+** Findings to close
+*** F1 (HIGH, docs — acceptance 5a of the last round is UNMET) — the shipped help is still false about the repo-gone branch
+=crates/orgasmic-cli/src/manager.rs:381-385=, rendered from the built binary.
+
+Two clauses in the sentence that exists to describe that branch, both false:
+
+#+begin_quote
+"Once the repository is gone *no such record survives to be read* and git has no
+verdict left to reproduce, so that branch is checked a DIFFERENT and WEAKER way:
+the anchored walk of the tree's own contents refuses any NESTED =.git= entry, of
+any type, *and nothing else there is checked*."
+#+end_quote
+
+=.gitmodules= lives in the *worktree*, not the admin directory, so it survives
+=RepoGone= intact — and =worktree_submodule_refusal= still reads it there. The
+=NoRepository= arm at =:4085-4100= returns early only when =nested_git= is
+=Some=; otherwise control FALLS THROUGH to =gitmodules_paths= (=:4110=) and
+=nonempty_dir_under= (=:4123=), either of which can refuse.
+
+MEASURED, not inferred (reviewer probe A, source copy under =/tmp=, shipped
+predicates called directly):
+
+: premise: worktree_index_gitlinks => NoRepository
+: premise: walk.nested_git         => None
+: worktree_submodule_refusal(...)  => Some("… contains an initialized submodule at vendor/sub …")
+
+Probe B: a symlinked =.gitmodules= on the same branch also refuses. *So on
+=RepoGone= at least THREE things are checked, not one.*
+
+*Direction: SAFE.* The operator is told they have LESS protection than they do,
+so acting on this text makes them over-cautious, never under-cautious. That is
+why it did not block the ship — and why it must not be read as pinned truth.
+
+*** F2 (MEDIUM, bug — acceptance 3 of the last round is UNMET on one arm) — a =NoRepository= refusal reached via =.gitmodules= still offers the impossible remedy
+=manager.rs:4064-4069= (=submodule_advice=), used at =:4123-4129=
+
+The refusal in probe A *is* a =NoRepository= refusal, and it carries
+=submodule_advice=, ending "… or — *while the repository is still there* —
+remove the worktree with =git worktree remove --force=". The repository is not
+still there; that is what put the worktree on this branch. The hedge keeps the
+sentence from being flatly untrue, but the operator gets a conditional escape
+whose condition they cannot satisfy, and *no statement that =--force= is
+unavailable* — unlike the arm three lines above, which says it "CANNOT run here".
+The last round's F-D was closed on the =nested_git= arm ONLY.
+
+*** F3 (MEDIUM, test) — =RepoGone= + =.gitmodules= now has ZERO coverage, and that is how F2 shipped
+=crates/orgasmic-cli/tests/dispatch.rs:8960-9081=
+
+The manager's C5 asked the reviewer to check that
+=worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule= still passes
+*for the same reason*. It does not, and the reviewer measured why:
+
+: $ git --version               → 2.52.0
+: $ git submodule update --init   (inside a LINKED worktree)
+: $ file vendor/sub/.git        → ASCII text
+:   gitdir: ../../../super/.git/worktrees/wt/modules/vendor/sub
+
+The fixture's submodule leaves a nested =.git= *FILE*, the walk finds it, and the
+new arm returns *before =gitmodules_paths= is ever called*. Both assertions
+(=contains("submodule")=, =contains("vendor/sub")=) match the new message
+verbatim, so the test stays green for a different reason — *exactly the shape
+that hides a regression.* Nothing in the suite now exercises the =.gitmodules=
+arm on =RepoGone=, which is how F2 shipped and why F1's "nothing else there is
+checked" went unchallenged.
+
+(The same measurement independently confirms the previous round's "correction 1":
+a =.git= DIRECTORY predicate would have missed the likeliest shape.)
+
+*** F4 (LOW, docs) — "WEAKER" mischaracterises, and the over-refusal is undocumented
+=manager.rs:382-385=. The repo-gone check is not weaker, it is DIFFERENT in both
+directions: broader than git (it refuses a vendored =.git= git would have let you
+delete — ruling 1's deliberate cost asymmetry) and narrower (blind past
+=MAX_DEPTH = 64= and under directories that fail to open). An operator told only
+"WEAKER" is never warned this branch can KEEP a worktree git itself would have
+removed, which is the one operator-visible consequence of that ruling.
+
+*** F5 (LOW, test) — the strengthened =cli_parity= pin still passes on a false help
+=crates/orgasmic-cli/tests/cli_parity.rs:154-196=. The reviewer answered the
+manager's C2 in the negative and gave two reachable shapes:
+
+1. *A false universal sentence that names no branch.* The pin only inspects
+   sentences containing =repo-gone= / =repository is gone= / =repo is gone=. Add
+   "The submodule refusal reads the worktree's own INDEX for gitlinks on every
+   branch." — no marker, so =about_repo_gone= never sees it; the existing
+   repo-gone sentence still satisfies its clauses; ="index"= is already a required
+   global substring. *Pin green, help dangerously false.*
+2. *An over-claim inside the repo-gone sentence itself*: "… of any type, at any
+   depth and through unreadable directories." Contains both required phrases,
+   contains no ="index"=, passes — and is false (=MAX_DEPTH= 64, =open_child_dir=
+   errors skipped).
+
+So the previous round's stated division — "the pin constrains shape, the
+regressions constrain truth" — *is not sound*: the regressions constrain truth
+only for the shapes they instantiate. *Its live proof is F1: the pin is currently
+passing on a false sentence.* Acceptance 5b was met in shape, not in guarantee.
+
+** Acceptance
+1. F1 + F4 in one sentence that is TRUE of the shipped behaviour and names the
+   over-refusal. The reviewer's proposed wording is a starting point, not a
+   mandate — it keeps every phrase the pin requires:
+   #+begin_quote
+   "Once the repository is gone there is no index and no =modules/= directory left
+   to read, and git has no verdict to reproduce. =.gitmodules= still survives
+   inside the tree and is still read there; on top of it, the anchored walk of the
+   tree's own contents refuses any NESTED =.git= entry, of any type — which can
+   refuse a vendored repository git itself would have let you delete."
+   #+end_quote
+2. F2: the =nonempty_dir_under= refusal gets a =NoRepository=-aware remedy.
+   Simplest is passing the branch down and selecting between =submodule_advice=
+   and a repo-gone variant, reusing the "=--force= CANNOT run here" wording that
+   already exists three lines above.
+3. F3: a regression for =RepoGone= + =.gitmodules= with *NO* nested =.git= —
+   delete the submodule's =.git= after =update --init=, or use a =.gitmodules=
+   naming an ordinary populated directory. *Assert the =KEPT= line does NOT offer
+   =git worktree remove --force=.* This one test closes F2's coverage hole and
+   pins F1's corrected sentence at the same time, which is the whole reason this
+   is a dispatched round rather than a hand edit.
+4. F5: add the complement the reviewer named — no sentence containing ="index"=
+   may claim universality (="every branch"= / ="all branches"=), and drop the
+   unqualified ="at any depth"= escape. *Shape (2) is not reachable by a
+   clap-text pin at all; leave it a DISCLOSED limitation and say so in the test's
+   doc comment rather than implying the pin is now total.*
+5. All existing =worktree_prune_*= regressions still green, and the five verify
+   artifacts still PASS.
+
+** Established by the review — do not redo
+- =manager::tests= 68 passed; =cli_parity= 7 passed; =worktree_prune_refuses…= 9
+  passed including the F-A production-path proof; =…removes_a_worktree_whose_repo_is_gone=
+  passed. Freshly compiled in the review worktree, watchdog peak 14.1%.
+- All five RMA18 injection patches =git apply --check= clean; the re-authored
+  =TASK-RMA18.1= and =.1.1= injected lines are *byte-identical* before and after,
+  =expect-red= untouched — re-authoring weakened nothing.
+- *The =rewinddir= change stays.* The reviewer enumerated every =entry_names=
+  caller and confirmed no shipped path double-enumerates a shared file
+  description; it also found the nearest real hazard the implementer had not
+  named (=nonempty_dir_under= starts from =worktree.try_clone()=, a =dup=, and for
+  a =.gitmodules= with =path = .= enumerates the worktree handle itself — but that
+  call refuses immediately on a non-empty listing, so the fail-open direction is
+  unreachable in one invocation). Its ruling: keep it here, because reverting
+  leaves a live landmine in a destructive verb's enumeration primitive.
+- *C4 got a stronger answer than the implementer's.* Both disclosed fail-opens are
+  covered by a SYMMETRIC limit in the removal path: =walk_worktree= returns at
+  =depth > MAX_DEPTH= (=:3829=) and =remove_contents= BAILS at the same constant
+  from the same start depth (=:3176-3178=); =walk_worktree= skips =open_child_dir=
+  =Err= (=:3843=) and =remove_contents= propagates the same =Err= with =?=
+  (=:3181=). So a =.git= too deep or too unreadable for the walk sits inside a
+  directory too deep or too unreadable for the REMOVAL — the outcome is a
+  =RemovalFailure=, never a silent deletion. Caveat: =remove_contents= is
+  readdir-ordered, so siblings may already be gone; the guarantee is about the
+  nested repository, and the report is a partial-removal failure, not a clean KEPT.
+
+** What the review did NOT check — it is same-family, and it said so
+- *=orgasmic verify= was not run for any of the five artifacts.* Patches apply and
+  injected lines are unweakened; *the RED side of every artifact remains a
+  manager/implementer claim.* Acceptance 9 of the last round is unverified.
+- =scripts/run-tests.sh=, the workspace suite, =orgasmic-daemon=, UI checks,
+  =clippy -D warnings=, =fmt --check= — all manager claims.
+- F-A was not reproduced on the PRE-fix tree; only the post-fix behaviour.
+- F2 was measured at the predicate, not on the production prune path — no
+  integration fixture exists for that state, which is F3.
+- =MAX_DEPTH= and unreadable-directory fail-opens were argued from source
+  symmetry, not exercised with a deep or =chmod 000= fixture.
+- Non-Unix untested; =anchored_dir='s =openat= primitives not re-audited beyond
+  =entry_names= and =remove_contents=.
+
