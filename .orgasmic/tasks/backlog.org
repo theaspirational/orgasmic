@@ -4433,6 +4433,49 @@ self-describing host-state error the classifier could read directly.
 - A =daemon request timed out= failure is no longer classified identically to a
   genuine assertion failure, or the decision not to distinguish them is recorded
   with its reason.
+** Occurrences
+THIRD OCCURRENCE, MEASURED [2026-08-08], on the merged tree at =1cdf25b= during
+the manager's TASK-RMA18.1.1 gate. =scripts/run-tests.sh -p orgasmic-cli=
+returned *RED — 2 real failure(s)*:
+=reviewer_close_non_clean_verdict_flags_stay_in_progress= and
+=reviewer_close_refuses_verdict_flag_alongside_property_verdict=, both at
+=crates/orgasmic-cli/tests/dispatch.rs:433=, both:
+
+: daemon request timed out after 10s (1m load average 13.64) ... url (http://127.0.0.1:51030/api/runs/<run>/release)
+: daemon request timed out after 10s (1m load average 15.03) ... url (http://127.0.0.1:51129/api/runs/<run>/release)
+
+=isolation: passed= — both green alone. The load was MANAGER-CAUSED: a
+=claude= implementer dispatch (TASK-2QK4P.1) was running cargo concurrently with
+the gate. That is normal operating load for this project, not an anomaly.
+
+*A SECOND FINDING, AND THE MORE INTERESTING ONE — THE HOST VERDICT IS BLIND TO
+THIS FAILURE MODE.* The same VERDICT block that reported these two failures also
+reported:
+
+: host : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
+: rate 0.1123
+
+*=run-tests.sh= called the host CALM while the load average at the moment of
+failure was 13.64 and 15.03.* That is not a bug in the wrapper — TASK-STWVB
+round 3 deliberately derived the host word from the syspolicyd RATE and demoted
+load to "corroborating only", and the round-6 review upheld that reasoning
+explicitly: =HOST_DEGRADED= is measured from syspolicyd CPU CONTENTION, which is
+not evidence of an unrelated failure mode.
+
+But it means *the one word an operator reads to decide whether a red is
+attributable is derived from a signal that cannot see a 10s HTTP budget
+expiring under scheduler pressure.* The 08-07 handoff said these tests
+recurring "on a calm host" would be a real finding rather than a registry
+excuse. They recurred, the host word said calm, and the word was measuring
+something else entirely. *Whatever fixes the 10s budget should also decide
+whether a load-sensitive timeout deserves its own attributability signal, rather
+than inheriting a syspolicyd-derived one.*
+
+NOT REGISTERED AS A FLAKE. The registry's own guard says a green-alone failure
+is REAL until OWNED, and this task owns it — but registering these two would
+make the gate report green-modulo on a real product weakness that is now
+three-times measured. The decision to register belongs with the fix, not ahead
+of it.
 
 * BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
 :PROPERTIES:
