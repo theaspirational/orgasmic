@@ -1,0 +1,101 @@
+# TASK-RMA18.1 review
+
+## Verdict
+
+**REJECT — BLOCK SHIP.** The round closes the original normal-submodule fixture and the cfg-off harness requirement, but the categorical submodule refusal is still incomplete on two independently reachable production paths. Each path makes `worktree-prune` print `RECLAIMED` and recursively delete a sentinel from a directory that the stated contract says must be kept.
+
+Workflow context: risky review (P0 priority, multi-crate breadth, and parent-task coupling).
+
+## Findings
+
+### HIGH correctness — index-only populated gitlinks bypass the refusal and are deleted
+
+`crates/orgasmic-cli/src/manager.rs:3930-4049,4154-4163`
+
+Git 2.52.0 `validate_no_submodules` reads the worktree index and checks every mode-160000 gitlink for a populated checkout. This implementation instead reads working-tree `.gitmodules` paths, after separately checking for an admin `modules/` directory. The disclosed gap is reachable: create and commit a gitlink with `git update-index --add --cacheinfo`, populate its working path with a standalone clone, and do not create `.gitmodules`. The checkout has neither local signal this predicate reads.
+
+I first reproduced the Git premise without changing orgasmic: `.gitmodules=absent`, worktree admin `modules=absent`, index entry mode `160000`, nested `.git=present`, and both ordinary status and `status --ignore-submodules=none` empty. `git worktree remove` exited 128 with `working trees containing submodules cannot be moved or removed`.
+
+I then changed only the existing regression fixture in a scratch checkout of `d10b0cf` to construct that state and put an ignored sentinel inside the standalone nested repository. The production prune path returned:
+
+```text
+RECLAIMED PATH=.../task-submodule BYTES=29486 SIZE=28.8KiB
+PRUNE_SUMMARY RECLAIMED=1 ...
+```
+
+The test failed at `the untracked file inside the submodule must SURVIVE the prune`. Its own pre-prune Git assertion had already proved that Git refused the same worktree. This is the pre-authorised block-ship condition.
+
+The current regression at `crates/orgasmic-cli/tests/dispatch.rs:8655-8784` only constructs a normal `.gitmodules`-registered submodule, for which the admin `modules/` branch also fires. The injection proof disables both implemented branches; it does not challenge their completeness against the index source of truth.
+
+### HIGH bug — RepoGone deletes before the categorical submodule check
+
+`crates/orgasmic-cli/src/manager.rs:4254-4288`; operator claim at `crates/orgasmic-cli/src/manager.rs:369-378`
+
+`reclaim_managed_worktree` handles `WorktreeDisposition::RepoGone` by rechecking that disposition and returning directly through `root.remove_child` at line 4278. The new categorical submodule refusal is below that return at line 4287. Therefore it is before salvage only on the `Unclaimed` branch; it is not before every destructive branch.
+
+This is reachable with the ordinary submodule shape. In a scratch production-path negative control, I took the passing accepted fixture, let its assertion prove Git refused the initialized submodule, then moved the linked worktree admin directory away. The populated submodule directory and sentinel remained. `worktree-prune` classified the worktree RepoGone, printed:
+
+```text
+RECLAIMED PATH=.../task-submodule BYTES=2261 SIZE=2.2KiB
+PRUNE_SUMMARY RECLAIMED=1 ...
+```
+
+and failed the sentinel-survival assertion. RepoGone may remain removable when it has no submodule; it must not bypass the handle-computable refusal whose purpose is to protect data that parent salvage cannot capture. The help currently says the verb refuses initialized submodules without naming a RepoGone exception.
+
+### MEDIUM correctness — F2 is documented as a narrow assert-to-exec race, but several subprocesses share one outer assert
+
+`crates/orgasmic-cli/src/manager.rs:4196-4208,4291-4353`; subprocess groups at `crates/orgasmic-cli/src/manager.rs:2469-2532,4111-4165`
+
+The new comment says `assert_path_names` is immediately before each Git subprocess and narrows the residual to the subprocess's own pathname resolution. The code does not do that:
+
+- one assert precedes `worktree_has_uncommitted_changes`, then `worktree_head_oid` runs with no new assert;
+- one assert precedes `salvage_worktree_onto`, which performs `add`, `write-tree`, `commit-tree`, `diff-tree`, `checkout`, another status, and salvage-ref commands without identity assertions between them;
+- one assert precedes `git_would_remove_worktree`, which first runs `git worktree list` and only afterwards resolves the worktree pathname for `git status`.
+
+For the deletion-critical clean decision, an actor need not fit only between an assertion and its immediately following `execve`; it can wait through the entire worktree-list subprocess, bind a clean decoy for status, and bind the original back before the final assertion. The deletion remains identity-anchored, but the dirty unsalvaged inode can still be the one removed. That consequence is acknowledged, but the claimed window and mitigation are materially narrower than the implementation.
+
+### LOW docs — the proving test names a nonexistent gate option
+
+`crates/orgasmic-cli/src/manager.rs:9245-9251`; argument parser at `scripts/run-tests.sh:158-198`
+
+The test comment says `scripts/run-tests.sh --release-gates` runs the cfg-off proof. There is no `--release-gates` option; unknown arguments are forwarded to Cargo. The real cfg-off leg runs automatically for workspace and `orgasmic-cli` scopes. Name a real invocation such as `scripts/run-tests.sh -p orgasmic-cli` so a maintainer following the proof does not get a Cargo argument error.
+
+## Open Questions
+
+No open question changes the verdict. If RepoGone is intentionally meant to override the initialized-submodule refusal, that exception would need an explicit product ruling and operator copy; it contradicts this task's categorical safety contract and leaves independently versioned nested content unprotected.
+
+The index-only state should not be ruled unreachable: Git accepts and commits it, a worker can populate the path with an ordinary clone, Git itself recognizes it as a populated submodule, and the production negative control deleted it.
+
+## Verification Notes
+
+Independent checks performed:
+
+- Read the authoritative TASK-RMA18.1 task record, `c090b51..d10b0cf`, the implementer commits, project constraints, and relevant current source.
+- Inspected Git 2.52.0 `builtin/worktree.c`: `validate_no_submodules` reads mode-160000 entries from the worktree index; an empty/uninitialized submodule path is skipped. A separate scratch probe confirmed an uninitialized empty placeholder is removable by Git (`git worktree remove` exit 0), matching the implementation.
+- `scripts/run-tests.sh -p orgasmic-cli --bin orgasmic the_pause_rendezvous_hooks_park_only_in_debug_builds`: GREEN; debug test passed and `cfg-off : passed`.
+- Behavioral cfg-off negative control in a scratch checkout: compiled `dispatch_close_pause_after_guard` in both configurations and removed its no-op twin. The debug suite stayed green, the cfg-off test failed with `left: true, right: false`, and the wrapper returned RED / exit 1. This proves the leg gates the behavior rather than a tautological cfg value.
+- `scripts/run-tests.sh -p orgasmic-cli --test dispatch worktree_prune_refuses_a_worktree_containing_an_initialized_submodule`: GREEN; accepted normal-submodule production path passed, and cfg-off passed.
+- `cargo test -p orgasmic-cli --test cli_parity`: 7 passed, including the prune help assertion.
+- `scripts/run-tests-selftest.sh`: 59 passed, 0 failed.
+- Scratch production negative controls: RepoGone-plus-populated-submodule returned cargo 101 after prune deleted the sentinel; index-only-populated-gitlink returned cargo 101 after prune deleted the sentinel. These failures are intentional review probes, not baseline regressions.
+- Every real Cargo invocation ran under the required 10-second syspolicyd watchdog. No run held at or above 400% for 60 seconds; one negative-control sample briefly read 513.1% and the next sample was not needed because the command had completed.
+- C2 source audit: the `.gitmodules` path walk rejects `..`, resolves every component with `openat(O_NOFOLLOW|O_DIRECTORY)`, and never follows a symlink. I found no escape outside the anchored worktree. The block-ship issue is fail-open completeness relative to the index, not an anchored-walk escape.
+- C3 on the ordinary `Unclaimed` path is correctly before salvage. The RepoGone bypass is the finding above.
+- The F6 `same_worktree` consistency change did not expose a new defect in source review.
+
+Not independently checked:
+
+- I did not rerun the full workspace/CLI/daemon suites, `fmt`, workspace `clippy`, or either shipped `orgasmic verify` proof. The manager's stated results remain implementer/manager claims, not this review's evidence. The targeted scope was sufficient to disprove the central acceptance criterion, and the daemon crate is separately red on TASK-2QK4P (crash-recovery regression), which I did not root-cause.
+- I did not test non-Unix behavior; the reviewed reclamation implementation is Unix-gated.
+- I did not add a runtime malicious-`.gitmodules` traversal test; C2 was inspected at source level.
+- I did not reinstall or touch the runtime, LaunchAgent, or `~/.orgasmic/bin`, and did not run or arm the billed provider test.
+
+Filed tx findings: `tx-20260808-orgasmic-5312` through `tx-20260808-orgasmic-5315`.
+
+## Fix Directions
+
+1. Move `worktree_submodule_refusal(&child.dir, ...)` above the RepoGone early return. Keep RepoGone direct removal only after that categorical refusal passes.
+2. Derive candidate submodule paths from the anchored worktree index, not `.gitmodules`. Fail closed when the index cannot be read or parsed. Then check each gitlink path handle-relatively for a populated checkout. The admin `modules/` check remains Git's conservative first branch.
+3. Add two sentinel regressions: (a) index-only gitlink plus standalone populated checkout and no admin `modules/`; (b) RepoGone plus an ordinary populated submodule. Each must prove Git's refusal before the state transition where applicable, prove the sentinel survives, and require a reasoned KEPT line.
+4. Either assert identity directly before every path-resolving Git subprocess or rewrite F2's residual statement to describe the real multi-subprocess windows. The deletion-critical status call should not sit after an unrelated worktree-list subprocess under the same assertion.
+5. Replace the nonexistent `--release-gates` command in the test comment with the real automatic gate invocation.
