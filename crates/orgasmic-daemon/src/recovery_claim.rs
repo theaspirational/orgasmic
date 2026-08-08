@@ -1193,27 +1193,32 @@ pub enum IndexedRecoveryOrigins {
 /// as an answer. Nothing bounds a `RecoveryOrigin` envelope to either window:
 /// the committed snapshot it embeds repeats the run's `PromptDraft`, and that
 /// draft carries uncapped `git diff --stat` output.
+///
+/// The bounded scan is also escalated past when it ERRORS, not only when it
+/// truncates. It rejects a whole file on any malformed lifecycle-relevant line,
+/// including a torn final one, and the complete scan can tell that shape apart
+/// from a torn middle — see
+/// [`orgasmic_core::scan_session_lifecycle_complete_reader`]. Deciding recovery
+/// from the stricter of the two would freeze a project's recovery on one junk
+/// `.jsonl`.
 #[cfg(unix)]
 fn complete_session_scan(
     session_dir: &SessionDirectory,
     session_path: &Path,
 ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
-    let scan = session_dir.scan_path(session_path, SessionScanBudget::DEFAULT)?;
-    if !scan.truncated {
-        return Ok(scan);
+    match session_dir.scan_path(session_path, SessionScanBudget::DEFAULT) {
+        Ok(scan) if !scan.truncated => Ok(scan),
+        _ => session_dir.scan_path_complete(session_path),
     }
-    session_dir.scan_path_complete(session_path)
 }
 
 #[cfg(not(unix))]
 fn complete_session_scan(session_path: &Path) -> Result<SessionLifecycleScan, RecoveryClaimError> {
-    let scan = orgasmic_core::scan_session_lifecycle(session_path, SessionScanBudget::DEFAULT)
-        .map_err(|_| RecoveryClaimError::CorruptClaim)?;
-    if !scan.truncated {
-        return Ok(scan);
+    match orgasmic_core::scan_session_lifecycle(session_path, SessionScanBudget::DEFAULT) {
+        Ok(scan) if !scan.truncated => Ok(scan),
+        _ => orgasmic_core::scan_session_lifecycle_complete(session_path)
+            .map_err(|_| RecoveryClaimError::CorruptClaim),
     }
-    orgasmic_core::scan_session_lifecycle_complete(session_path)
-        .map_err(|_| RecoveryClaimError::CorruptClaim)
 }
 
 pub fn index_recovery_origins_in_session(
@@ -4075,16 +4080,22 @@ mod tests {
         );
     }
 
-    /// Append a line the lifecycle scanner must reject the whole file for.
+    /// Tear a line in the MIDDLE of a session file.
     ///
     /// `"kind":"lifecycle"` in the envelope header makes the retention filter
-    /// keep the line, and the truncated body then fails to parse. That is the
-    /// production shape of a torn append: a real daemon crash mid-write leaves
-    /// exactly this.
-    fn append_malformed_lifecycle_line(session_path: &Path) {
+    /// keep the line, and the truncated body then fails to parse — the shape a
+    /// daemon crash mid-append leaves. The second line is what makes it a
+    /// MIDDLE tear rather than a trailing one, and that is the whole point: the
+    /// daemon reopens a torn session and appends after it, so yesterday's tear
+    /// sits inside today's file, and a reader that stops there has not seen the
+    /// lines behind it. A tear with nothing after it hides nothing and is
+    /// deliberately NOT this fixture.
+    fn tear_a_line_in_the_middle(session_path: &Path) {
         use std::io::Write as _;
         let mut file = OpenOptions::new().append(true).open(session_path).unwrap();
         file.write_all(b"{\"seq\":9001,\"kind\":\"lifecycle\",\"event\":{\"phase\":\n")
+            .unwrap();
+        file.write_all(b"{\"seq\":9002,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chunk\",\"text\":\"after the tear\"}}\n")
             .unwrap();
     }
 
@@ -4115,7 +4126,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         let seeded = seed_two_authenticated_replacements(&root, "run-hidden-origin");
-        append_malformed_lifecycle_line(&seeded.second.replacement_session_path);
+        tear_a_line_in_the_middle(&seeded.second.replacement_session_path);
 
         let resolved = resolve_authoritative_recovery_claim(
             &seeded.home,
@@ -4233,7 +4244,7 @@ mod tests {
 
         let sibling = project_sessions_dir(&project_root).join("run-unrelated-torn.jsonl");
         std::fs::write(&sibling, "").unwrap();
-        append_malformed_lifecycle_line(&sibling);
+        tear_a_line_in_the_middle(&sibling);
 
         let resolved = resolve_authoritative_recovery_claim(
             &home,

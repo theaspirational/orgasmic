@@ -73,9 +73,10 @@ use crate::recovery_claim::{
     mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
     resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    CommitRecoveryDetails, PendingRecoveryClaimSpec, PendingRecoveryPlan, ProjectOriginAuthority,
-    RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions,
-    ResolvedRecoveryClaim, SessionDirectory, SessionFile, UnobservedSession,
+    AuthoritativeOriginLinks, CommitRecoveryDetails, PendingRecoveryClaimSpec, PendingRecoveryPlan,
+    ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
+    RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim, SessionDirectory, SessionFile,
+    UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -9044,6 +9045,19 @@ async fn post_run_recover(
     let mut origin_links = ProjectOriginAuthority::default();
 
     let failed_origin = prior.classification == "failed_recoverable";
+    // orgasmic:TASK-2QK4P.1.1 F3 — refuse BEFORE the claim branch, not inside
+    // it. The dangerous path is the one with NO claim on disk: it walks straight
+    // to `plan_pending_recovery_claim` and mints a fresh replacement, and
+    // "there is no authenticated replacement for this origin" is a statement
+    // only a completed enumeration can make. An unresolved one must refuse, or
+    // the new replacement lands beside whatever the unread file was holding.
+    if failed_origin {
+        if let AuthoritativeOriginLinks::Unobserved(reason) =
+            origin_links.links_for(&state.home, &origin_authority.project_root, &project_id)
+        {
+            return Err(recovery_origins_unobserved(&id, *reason));
+        }
+    }
     let request_id = req
         .request_id
         .clone()
@@ -30639,6 +30653,104 @@ pub(crate) mod tests {
             let _ = running.shutdown.send(());
             let _ = running.join.await;
         }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F3 — the PRODUCTION path for "Missing is not
+    /// safe until a complete candidate set proves it".
+    ///
+    /// A failed-recoverable origin with NO claim on disk is the dangerous
+    /// shape: nothing stops the handler reaching `plan_pending_recovery_claim`
+    /// and minting a fresh replacement. Doing that is only sound if the daemon
+    /// can state that no authenticated replacement already exists for this
+    /// origin, and here it cannot — a session file in the project has a line
+    /// torn in its MIDDLE, so every line behind that tear is unread. The
+    /// handler must refuse rather than mint a second authority beside whatever
+    /// the unread bytes hold.
+    ///
+    /// 503 and not 409: nothing is known to conflict, the daemon could not
+    /// look. Nothing is quarantined, so the next call once the file is readable
+    /// resolves normally.
+    #[tokio::test]
+    async fn recover_refuses_to_mint_while_a_session_file_is_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        write_failed_recoverable_session(
+            &project_root,
+            "run-unreadable-board",
+            "protocol_end_without_finalize",
+            false,
+        );
+        // A torn line with bytes BEHIND it: the scan stops there, so anything
+        // after it — including a `RecoveryOrigin` — is unread.
+        let torn = project_sessions_dir(&project_root).join("run-torn.jsonl");
+        std::fs::create_dir_all(torn.parent().unwrap()).unwrap();
+        std::fs::write(
+            &torn,
+            "{\"seq\":1,\"kind\":\"lifecycle\",\"event\":{\"phase\":\n\
+             {\"seq\":2,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chunk\",\"text\":\"after\"}}\n",
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let resp = reqwest::Client::new()
+            .post(format!(
+                "http://{}/api/runs/run-unreadable-board/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "req-unreadable-board",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "an unresolved origin enumeration must refuse rather than mint a replacement"
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            body["error"],
+            "recovery origin enumeration did not complete; refusing to decide authority",
+            "the refusal must name what it could not do: {body}"
+        );
+
+        // Nothing was created and nothing was destroyed: with the file removed
+        // the very same request proceeds.
+        std::fs::remove_file(&torn).unwrap();
+        let resp = reqwest::Client::new()
+            .post(format!(
+                "http://{}/api/runs/run-unreadable-board/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "req-unreadable-board",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "the refusal must be transient, not a durable loss of recovery: {}",
+            resp.status()
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     #[tokio::test]
