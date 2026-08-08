@@ -24047,3 +24047,253 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-08-08 Sat 16:20:07 reviewer.finding TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5441
+:TIME:         [2026-08-08 Sat 16:20:07]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       P1 HIGH correctness BLOCK SHIP: authority-key and post-enumeration session read failures still collapse through bool to absent/invalid evidence, allowing Valid selection or claim quarantine before a new replacement is planned; recovery_claim.rs:304-371,1297-1301,1635-1651,2157-2274
+:SEVERITY:     HIGH
+:KIND:         correctness
+:VERDICT:      block_ship
+:END:
+
+* TX 2026-08-08 Sat 16:20:08 reviewer.finding TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5442
+:TIME:         [2026-08-08 Sat 16:20:08]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       P2 MEDIUM perf: POST /runs/:id/recover enumerates the project once in recovery_status_inner and again through a fresh ProjectOriginAuthority, violating one-snapshot-per-recover Acceptance 5; api.rs:9028,9045-9059,10087-10093
+:SEVERITY:     MEDIUM
+:KIND:         perf
+:END:
+
+* TX 2026-08-08 Sat 16:20:08 reviewer.finding TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5443
+:TIME:         [2026-08-08 Sat 16:20:08]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       P2 MEDIUM correctness: the up-front unresolved-enumeration 503 preempts invalid-action 400, multiple-action 409, and failed reattach_tmux 400 responses; api.rs:9054-9070,9163-9171,9209-9215,9233-9236
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:END:
+
+* TX 2026-08-08 Sat 16:20:08 reviewer.finding TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5444
+:TIME:         [2026-08-08 Sat 16:20:08]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       P2 MEDIUM test: torn-final tolerance is not pinned to the whole-line writer invariant; the scanner accepts newline-terminated malformed EOF while the production writer can only tear before newline; session.rs:257-270,1477-1510,2420-2425
+:SEVERITY:     MEDIUM
+:KIND:         test
+:END:
+
+* TX 2026-08-08 Sat 16:20:30 reviewer.reported TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5445
+:TIME:         [2026-08-08 Sat 16:20:30]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:RUN_ID:       run-20260808T155754-9663ad3bd00d4d2099e5fb625928551f
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5420/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:21:36 reviewer.done TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5446
+:TIME:         [2026-08-08 Sat 16:21:36]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       codex/gpt-5.6-sol cross-family: REJECT + BLOCK SHIP. The completeness types stop before AUTHORITY VERIFICATION: claim_has_valid_authority collapses every authority_tag error to false and the indexer then drops that link from a set labelled Complete; verify_committed_claim_against_session maps open/read/parse failures to false and the resolver reads that as INVALID, quarantines, reaches Missing, and POST /recover mints. Same defect class at a fourth width. The structural pin is blind because it inspects only the two new enum declarations, and it prefix-matches so adding a links field keeps it green. Plus: POST performs TWO complete enumerations (acceptance 5 unmet on the endpoint), the 503 preempts authority-independent request validation, and the torn-final regression uses a shape the writer cannot produce.
+:MODEL:        gpt-5.6-sol
+:REVIEWED_DIFF: 408b838^..0658e18
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260808-orgasmic-5420
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5420/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:21:36 task.state_transitioned TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5447
+:TIME:         [2026-08-08 Sat 16:21:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 16:22:01 implementer.done TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5448
+:TIME:         [2026-08-08 Sat 16:22:01]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:REASON:       Eight commits landed directly on main (408b838..0658e18) rather than through a merge — see TASK-YBCYQ. Recorded with a -s ours merge whose tree is byte-identical to main's, because an ordinary merge would revert live .orgasmic daemon writes the branch is behind on. Reviewed REJECT; fix round follows as TASK-2QK4P.1.1.1.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 0658e18f43fb8565768e4ded48ad009a90695571
+:MERGE_SHA:    dffd7d7619098a38e48d0cdc4d80e7f42444e27e
+:BRANCH:       task-2qk4p.1.1-impl
+:CLOSED_TX:    tx-20260808-orgasmic-5388
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5388/last.txt
+:END:
+
+* TX 2026-08-08 Sat 16:22:01 task.state_transitioned TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5449
+:TIME:         [2026-08-08 Sat 16:22:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 16:23:09 task.created TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5450
+:TIME:         [2026-08-08 Sat 16:23:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Round four. The round-3 type change made the collapse unrepresentable in the two types it changed, then handed them a bool computed by a predicate with the same defect. Acceptance leads with a completeness argument over the whole authority path rather than another point fix.
+:END:
+
+* TX 2026-08-08 Sat 16:23:10 task.property_updated TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5451
+:TIME:         [2026-08-08 Sat 16:23:10]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       update properties on TASK-2QK4P.1.1
+:FIX_SUBTASK:  TASK-2QK4P.1.1.1
+:END:
+
+* TX 2026-08-08 Sat 16:23:10 task.property_updated TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5452
+:TIME:         [2026-08-08 Sat 16:23:10]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       update properties on TASK-2QK4P.1.1.1
+:IMPLEMENTS:   TASK-2QK4P.1.1
+:END:
+
+* TX 2026-08-08 Sat 16:24:07 task.state_transitioned TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5453
+:TIME:         [2026-08-08 Sat 16:24:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-08 Sat 16:24:09 manager.dispatch_started TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5454
+:TIME:         [2026-08-08 Sat 16:24:09]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1
+:BRANCH:       task-2qk4p.1.1.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-r4/task-2qk4p-r4-brief.md
+:STARTED_AT:   [2026-08-08 Sat 16:24:09]
+:LIVENESS:     96a5359da11dba1875129f457accad1ba5daf9b4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Round four. Acceptance leads with a completeness argument over every bool/Option on the recovery-authority path, because round three's type change closed the two places the findings named and left the class. The pin the review defeated is also in scope.
+:END:
+
+* TX 2026-08-08 Sat 16:24:09 run.created TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5455
+:TIME:         [2026-08-08 Sat 16:24:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1.1-implementer-20260808T162409.jsonl
+:REASON:       Round four. Acceptance leads with a completeness argument over every bool/Option on the recovery-authority path, because round three's type change closed the two places the findings named and left the class. The pin the review defeated is also in scope.
+:RUN_ID:       run-20260808T162409-eff12b03b6bf40b8a9d7a5a8f4765e8a
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-r4/task-2qk4p-r4-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-r4/task-2qk4p-r4-0c2e4b7621124d5089ba6b2c78dcce9b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-r4/task-2qk4p-r4-0c2e4b7621124d5089ba6b2c78dcce9b-stdout.log
+:DISPATCH_ATTEMPT: 0c2e4b7621124d5089ba6b2c78dcce9b
+:DISPATCH_TX:  tx-20260808-orgasmic-5454
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
