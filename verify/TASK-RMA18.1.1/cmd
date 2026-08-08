@@ -31,5 +31,11 @@
 # `git apply` refused. THE INJECTION IS UNCHANGED — the same one line, taking the
 # INDEX back out of the candidate set — and the pinned red below was re-measured
 # against the re-authored patch, not carried over.
+#
+# RE-AUTHORED AGAIN 2026-08-08 by TASK-RMA18.1.1.1.1, for the third time and for
+# the same literal reason: finding 2's fix added a `repo_gone` flag beside this
+# match, so the context lines both above and below the hunk moved. THE INJECTION
+# IS STILL THE SAME ONE LINE, and the red below was re-measured against the
+# re-authored patch.
 # ---------------------------------------------------------------------------
 env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_submodule_recorded_only_in_the_index
