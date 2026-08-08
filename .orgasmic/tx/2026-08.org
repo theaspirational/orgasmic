@@ -24768,3 +24768,127 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-08 Sat 18:53:22 task.state_transitioned TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5484
+:TIME:         [2026-08-08 Sat 18:53:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-08 Sat 18:53:23 manager.dispatch_started TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5485
+:TIME:         [2026-08-08 Sat 18:53:23]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review
+:BRANCH:       task-2qk4p.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-brief.md
+:STARTED_AT:   [2026-08-08 Sat 18:53:23]
+:LIVENESS:     d7f26bd1d4fb93003b2f38f396767cf0111f47de
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260808-orgasmic-5454
+:REASON_INITIAL: Cross-family review of round four. The implementer is claude/opus-5; codex/gpt-5.6-sol wrote the rejections that opened rounds 3 and 4, so it judges whether its own completeness ruling is actually satisfied. Subject is session scanning, not the parser/deletion class that tripped the content filter (TASK-52NJS). Acceptance 8 closed by a manager calm-host GREEN before dispatch; all six verify injections apply clean on d7f26bd.
+:END:
+
+* TX 2026-08-08 Sat 18:53:23 run.created TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5486
+:TIME:         [2026-08-08 Sat 18:53:23]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1.1-reviewer-20260808T185323.jsonl
+:REASON:       Cross-family review of round four. The implementer is claude/opus-5; codex/gpt-5.6-sol wrote the rejections that opened rounds 3 and 4, so it judges whether its own completeness ruling is actually satisfied. Subject is session scanning, not the parser/deletion class that tripped the content filter (TASK-52NJS). Acceptance 8 closed by a manager calm-host GREEN before dispatch; all six verify injections apply clean on d7f26bd.
+:RUN_ID:       run-20260808T185323-b139351c8ef34e1f982677822160a98d
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-e0eb58c4b0d54072bd8ab990ecb769cc-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-review/task-2qk4p-1-1-1-review-e0eb58c4b0d54072bd8ab990ecb769cc-stdout.log
+:DISPATCH_ATTEMPT: e0eb58c4b0d54072bd8ab990ecb769cc
+:DISPATCH_TX:  tx-20260808-orgasmic-5485
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-08 Sat 18:54:09 manager.evidence TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5487
+:TIME:         [2026-08-08 Sat 18:54:09]
+:TYPE:         manager.evidence
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       Acceptance 8 CLOSED by the manager on a calm host: scripts/run-tests.sh -p orgasmic-daemon re-run in the branch worktree at d7f26bd is GREEN — failures 0, cargo exited 0, ignored 5, environ complete, host calm (rate 0.1554 vs threshold 1.50, load 5.38, syspolicyd_cpu 18.8, wall 121s), manager watchdog peak 53.0%. The implementer got INCONCLUSIVE x3 on a degraded host (rate 1.91) with zero REAL failures post-fix and recorded the criterion unmet rather than fudging it; the 5 load-sensitive failures and the TASK-X0PV1 registered flake are all absent on a calm host.
+:GATE:         scripts/run-tests.sh -p orgasmic-daemon
+:VERDICT_LINE: GREEN — no failures
+:TREE:         d7f26bd1d4fb93003b2f38f396767cf0111f47de
+:SYSPOLICYD_RATE: 0.1554
+:WATCHDOG_PEAK: 53.0%
+:END:
+
+* TX 2026-08-08 Sat 18:54:13 manager.evidence TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5488
+:TIME:         [2026-08-08 Sat 18:54:13]
+:TYPE:         manager.evidence
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:REASON:       Pre-dispatch manager verification of d7f26bd, not carried from the worker report: all SIX verify injection patches (TASK-2QK4P.1, .1.1, .1.1-recover, .1.1.1, .1.1.1-endpoint, .1.1.1-tear) git apply --check clean on the branch; every remaining Path::exists() in recovery_claim.rs production code (:1145 :1327 :1331 :2168) sits inside a cfg(not(unix)) block, so the report's section-C non-unix carve-out is honest; line_is_lifecycle_relevant (orgasmic-core/src/session.rs:1264-1268) does return true for any line whose header is not kind:driver_event, so residual risk 1's blast radius is as wide as the report claims.
+:INJECTIONS_APPLY: 6/6
+:TREE:         d7f26bd1d4fb93003b2f38f396767cf0111f47de
+:END:
+
+* TX 2026-08-08 Sat 18:55:22 task.created TASK-SJA9W
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5489
+:TIME:         [2026-08-08 Sat 18:55:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJA9W
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Found while dispatching the TASK-2QK4P.1.1.1 review round: the HELD_WORKTREE advice prints a command that is missing a required flag, and the truthful form of that command is refused by design for the whole duration of every review round.
+:END:
+
+* TX 2026-08-08 Sat 18:55:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5490
+:TIME:         [2026-08-08 Sat 18:55:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
