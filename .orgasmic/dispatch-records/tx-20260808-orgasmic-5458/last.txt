@@ -1,0 +1,240 @@
+# TASK-RMA18.1.1.1.1 — review (round six, verification round)
+
+Range reviewed: `34c0943..43ea0f3` on `main` (one substantive commit, `85c1c53`).
+Reviewer: reviewer-claude-tmux, **same-family** (claude/opus-5). Cross-family is
+blocked for this subject matter (TASK-52NJS), so a real check is missing and the
+"what I did not run" section below is the honest boundary of this review.
+
+## Verdict
+
+**approve-with-follow-ups.**
+
+All four findings this round set out to close are closed, and the one that
+mattered most — F3, the coverage hole — is closed with a fixture I independently
+proved goes RED when the fix is removed, on the production prune path, failing
+on the ARM assertion rather than on "something refused". Nothing found runs in
+the over-promising direction with a data-loss consequence, so the pre-authorised
+BLOCK SHIP is not triggered.
+
+**Would I reinstall the runtime on this tree? Yes.** See "The reinstall call".
+
+## Findings
+
+### R1 (MEDIUM, docs) — the help still makes ONE unbounded universal claim about the walk, and it is the same class the pin now bans a single wording of
+
+`crates/orgasmic-cli/src/manager.rs:386-388`:
+
+> "…the anchored walk of the tree's own contents refuses any NESTED `.git`
+> entry, of any type…"
+
+The walk is bounded twice (`manager.rs:3833` returns at `depth >
+anchored_dir::MAX_DEPTH` = 64, `:3836` returns on an `entry_names` error, `:3855`
+skips an `open_child_dir` `Err`). So "refuses any NESTED `.git` entry" is, read
+literally, an over-claim — the *dangerous* direction, and the one
+`cli_parity.rs:156-161` now bans in the wording `"at any depth"` while the
+shipped sentence makes the same universal claim more compactly and passes.
+
+**Why this is MEDIUM and not HIGH, measured rather than argued from the previous
+round's summary.** I re-derived round five's symmetry claim from source and it
+holds exactly:
+
+| fail-open in `walk_worktree` | matching limit in the removal |
+|---|---|
+| `:3833` `if depth > anchored_dir::MAX_DEPTH { return }`, entered as `walk(root, 1, …)` (`:3860`) | `:3180` `if depth > MAX_DEPTH { bail!(…) }`, entered as `remove_contents(&child, 1, …)` (`:3243`) — same constant, same start depth |
+| `:3836` `let Ok(names) = entry_names(dir) else { return }` | `:3183` `for name in entry_names(dir)?` — propagates |
+| `:3855` `Err(_) => continue` on `open_child_dir` | `:3184` `open_child_dir(dir, &name)?` — propagates |
+
+`open_child_dir` (`:2977-2984`) only maps `ENOTDIR`/`ELOOP`/`EMLINK`/`ENOENT` to
+a non-error; everything else (`EACCES` included) is `Err`. So a `.git` too deep
+or too unreadable for the walk sits inside a directory too deep or too unreadable
+for `remove_contents`, which turns into a `RemovalFailure`, never a silent clean
+deletion.
+
+**But the symmetry does not deliver what the help implies.** `RemovalFailure`
+carries `touched` (`:3174-3177`), and `remove_contents` is readdir-ordered, so
+siblings enumerated before the blocked directory are already gone. On the
+repo-gone branch there is no salvage. So the operator's inference from this
+sentence — "a nested `.git` anywhere means the worktree is KEPT untouched" — is
+wrong in the fail-open shapes: they get a *reported partial removal*. The nested
+repository itself survives (it is inside the thing that blocked the walk), which
+is why this is a docs finding and not a data-loss one.
+
+**Fix direction.** One clause, not a paragraph: bound the universal at the point
+it is made — e.g. "…refuses any NESTED `.git` entry, of any type, as deep and as
+far as it can read; a directory too deep or unreadable for that walk is also too
+deep or unreadable for the removal, which then fails part-way rather than
+completing." Cheaper alternative if the exact wording is not worth measuring
+again: drop the bare "any" ("refuses a NESTED `.git` entry, of any type"), which
+removes the over-claim without asserting anything new.
+
+**This answers the brief's Q1 directly:** the implementer's omission is safe to
+ship — no silent deletion is reachable through either fail-open — but it is not
+*complete*, because the sentence's universal quantifier is what makes the
+omission read as a promise. I would not hold the reinstall for it.
+
+### R2 (MEDIUM, test) — the F5 shape-1 clause is a WORDING ban too, and the doc comment says otherwise
+
+`crates/orgasmic-cli/tests/cli_parity.rs:112-115` says the first escape "is
+closed below", and `:119-126` correctly says the second closes "THAT WORDING, not
+the class". That asymmetry is not real: the new clause (`:228-241`) bans the
+literals `"every branch"` and `"all branches"` inside a sentence containing
+`"index"`, which is a wording ban of exactly the same kind.
+
+**Measured.** I re-implemented the pin's logic verbatim against the shipped
+`after_help` text (`manager.rs:370-391`) and ran candidate false helps through
+it. Shipped help: PASS (matching the real `cli_parity` run, which is also green —
+so the reimplementation is faithful). Then:
+
+| appended false sentence | pin |
+|---|---|
+| "…reads the worktree's own INDEX for gitlinks on **every branch**." | CAUGHT |
+| "…reads the worktree's own INDEX for gitlinks on **both branches**." | **PASSES** |
+| "…reads the worktree's own INDEX for gitlinks, **whatever the branch**." | **PASSES** |
+| "…reads the worktree's own INDEX for gitlinks. That is true of every branch this verb has." (split across two sentences — the `"index"` sentence has no quantifier, the quantifier sentence has no `"index"`) | **PASSES** |
+| repo-gone sentence + "…**at any depth** and through unreadable directories" | CAUGHT |
+| repo-gone sentence + "…**however deeply nested** and through every directory in the tree" | **PASSES** (matches the implementer's own table) |
+
+`"both branches"` is not an exotic rewording: the help's own vocabulary is
+"WHAT IT CAN CHECK DIFFERS BY BRANCH, so read both of the next two sentences"
+(`manager.rs:378-379`). It is the phrasing the next author is most likely to
+reach for.
+
+**This answers Q2.** I agree with the stopping point — a clap-text pin cannot
+decide truth, and chasing synonyms is a thesaurus, not a guarantee. But then the
+doc comment must describe *both* clauses the same way. Fix direction: (a) add
+`"both branches"`, `"either branch"`, `"whatever the branch"` to the ban list —
+cheap, and it closes the phrasing an author of this particular help would
+actually use; (b) change `:112-115` from "The first is closed below" to the same
+honest framing `:119-126` already uses, and name the split-across-two-sentences
+escape, which no per-sentence pin of this shape can see.
+
+### R3 (LOW, test/process) — the new regression has no `verify/` artifact, so its red is not replayable
+
+There is no `verify/TASK-RMA18.1.1.1.1/`. Every other node on this chain has one
+(`verify/TASK-RMA18/`, `.1/`, `.1.1/`, `.1.1-placement/`, `.1.1.1/` — all five
+`git apply --check` CLEAN on this tree; the other stale artifacts in `verify/`
+are pre-existing and unrelated to this range). `verify/README.md` is explicit
+that a re-authored-at-merge-time probe is where false green lives.
+
+The mitigation is that I reproduced the red myself (below), but a one-off manual
+injection in a scratch copy is not a pinned artifact and does not survive this
+dispatch. On a path where a regression already rotted into passing-for-the-wrong-
+reason once, the artifact is the thing that would catch it a second time. Fix
+direction: author `verify/TASK-RMA18.1.1.1.1/` from the injection that is already
+known to work — delete the `if repo_gone { … }` block at `manager.rs:4155-4168`;
+`expect-red` pins `contains: while the repository is still there`.
+
+### R4 (LOW, docs) — the new repo-gone refusal states as observed fact something it only inferred
+
+`manager.rs:4156-4167` says "…its own `.gitmodules` does survive inside the tree,
+and names an initialized submodule at {module}". The condition that got here is
+`nonempty_dir_under` (`:4635-4657`), which returns `true` both when the directory
+lists non-empty AND when the listing *failed* (`:4655`, `Err(_) => true`, fail-
+closed by design). In the second case the verb has not observed an initialized
+submodule; it has observed that it could not look. The remedy it then offers
+("remove {module} yourself") is still correct, and the direction is KEEP, so this
+is cosmetic — but it is the same "say what you actually checked" discipline this
+whole chain exists for, and the identical over-statement is pre-existing in the
+sibling arm at `:4169-4173`.
+
+## What was verified, and how
+
+Built independently in this review worktree (`CARGO_TARGET_DIR` in scratch, so
+nothing in the repo or in the other live dispatch's target was touched), under a
+syspolicyd watchdog sampling every 10s with a ≥400%-held-60s kill. **syspolicyd
+peaked at 0.2% across the whole session** — the host stayed calm.
+
+1. **`cli_parity` — 7 passed, 0 failed** (3.71s), including
+   `worktree_prune_help_describes_the_mechanism_it_actually_uses`. So the F5
+   clauses are live and the shipped help satisfies them.
+2. **`dispatch worktree_prune_` — 14 passed, 0 failed** (6.72s), including the
+   new `worktree_prune_refuses_a_repo_gone_worktree_whose_gitmodules_names_a_populated_directory`
+   and every pre-existing prune regression. No regression.
+3. **The new fixture is RED without the fix — reproduced by me, on the production
+   prune path.** I exported `HEAD` with `git archive` into a scratch tree (the
+   repo's source was never mutated), deleted the `if repo_gone { … }` block at
+   `manager.rs:4155-4168`, rebuilt, and re-ran the same 14:
+
+   ```
+   test result: FAILED. 13 passed; 1 failed
+   worktree_prune_refuses_a_repo_gone_worktree_whose_gitmodules_names_a_populated_directory ... FAILED
+   panicked at crates/orgasmic-cli/tests/dispatch.rs:9477:
+   the report must name the record it refused over (`.gitmodules`) and the submodule path, got:
+   KEPT PATH=…/task-gonemodules WHY=refusing to remove it: … contains an initialized submodule at
+   vendor/sub, and `git worktree remove` refuses such a worktree outright — … or — while the
+   repository is still there — remove the worktree with `git worktree remove --force`
+   ```
+
+   Two things this proves that the implementer's own report could only claim.
+   First, F2 was real on the *production path*, not merely at the predicate:
+   the impossible remedy reaches a real `KEPT` line. Second, **exactly one test
+   went red** — confirming F3's premise independently, that none of the other
+   three prune regressions covers the `.gitmodules`-on-`RepoGone` arm.
+4. **The arm assertion is load-bearing.** The failure above is on the
+   `contains("`.gitmodules`")` assertion (`dispatch.rs:9477`), not on a generic
+   "something refused" — this fixture cannot rot the way its predecessor did.
+5. **Q1's symmetry argument re-derived from source**, table in R1 above:
+   `manager.rs:3180/3183/3184` against `:3833/:3836/:3855`, plus
+   `remove_contents(&child, 1, …)` at `:3243` against `walk(root, 1, …)` at
+   `:3860` (same start depth — the claim depended on that and it is true), plus
+   `open_child_dir`'s errno mapping at `:2977-2984`.
+6. **F2's fix is correctly scoped.** On `NoRepository` the only source of a
+   candidate is `gitmodules_paths` (`:4134`), because the `Recorded` arm is the
+   other match arm and `nested_git` returns early (`:4110-4123`) — so the new
+   message's claim that `.gitmodules` is what produced this candidate is sound,
+   and `submodule_advice`'s conditional escape is now unreachable on that branch.
+7. **The five injection patches apply CLEAN** (`git apply --check`), and the
+   re-authoring of `verify/TASK-RMA18.1/` and `TASK-RMA18.1.1/` changes only
+   hunk headers and context; the injected `+`/`-` lines are byte-identical, and
+   `if false && nonempty_dir_under(…)` still disables the whole loop body
+   including the new branch.
+
+## What I did NOT run — the boundary of this review
+
+- **`orgasmic verify` was not replayed for any artifact.** A replay applies the
+  injection to the working tree, and the brief forbids mutating the repo's
+  source; I checked that all five patches still apply and re-derived one red by
+  hand in a scratch copy instead. **The RED side of the other four artifacts
+  remains a manager/implementer claim.**
+- `scripts/run-tests.sh`, the workspace suite, `orgasmic-daemon`, `manager::`
+  unit tests, UI checks, `clippy -D warnings`, `fmt --check` — all manager
+  claims, none re-run here.
+- **Neither fail-open was exercised.** No 65-deep fixture, no `chmod 000`
+  fixture. R1's safety rests on source symmetry, same as round five's — I
+  verified the symmetry is real, not that the runtime behaves as it implies.
+  The partial-removal consequence I describe in R1 is likewise derived from
+  `touched` semantics, not observed.
+- Non-Unix untested. `anchored_dir`'s `openat` primitives not re-audited.
+- I did not re-derive the deletion-safety argument; the brief scoped it out and
+  round five reproduced it.
+- **Same-family.** No independent-model check of any reasoning above.
+
+## The reinstall call
+
+**Yes — I would reinstall the runtime on this tree.**
+
+The reasons, in the order they matter:
+
+1. The destructive direction is covered by a fixture I ran, and by a red I
+   reproduced myself rather than accepted. That is a stronger position than the
+   verb has been in at any earlier round.
+2. Every finding above runs in the KEEP direction or is operator text. R1 is the
+   only over-promising clause left, and I traced its two failure shapes to a
+   `RemovalFailure`, not a silent deletion.
+3. The remaining risk is concentrated in things a reinstall does not change:
+   the two unexercised fail-opens, and the fact that no cross-family reader has
+   seen any of this.
+
+What I would want *before the next destructive change to this verb* — not before
+the reinstall: a fixture for at least one fail-open (the `chmod 000` one is far
+cheaper to build than the 65-deep one and is the more reachable shape), and the
+`verify/TASK-RMA18.1.1.1.1/` artifact from R3.
+
+## Open questions for the manager
+
+1. R1's fix is one clause in a sentence that has now been written three times.
+   Given the record, is a fourth hand-edit the right instrument, or should the
+   bare "any" simply be deleted — which removes the over-claim without asserting
+   anything new and therefore cannot introduce a fourth false statement?
+2. R2(a) is three string literals in an existing array. Fold into the same
+   commit as R1, or leave both to the next round that touches this file?
