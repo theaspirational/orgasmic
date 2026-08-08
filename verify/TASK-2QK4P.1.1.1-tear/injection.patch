@@ -1,0 +1,206 @@
+diff --git a/crates/orgasmic-core/src/session.rs b/crates/orgasmic-core/src/session.rs
+index 2c7dcd5..0aa13f8 100644
+--- a/crates/orgasmic-core/src/session.rs
++++ b/crates/orgasmic-core/src/session.rs
+@@ -1492,9 +1492,9 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
+     // can be probed without holding the line itself.
+     let mut final_line_header = Vec::new();
+     let mut final_line_retained = false;
+-    // Set only by an UNTERMINATED malformed final line — the production tear
+-    // shape. A terminated one returns an error where it is found.
+-    let mut torn_final_fragment = false;
++    // INJECTION (F4): round three's deferral, which never looked at whether the
++    // malformed line was newline-terminated.
++    let mut deferred: Option<SessionError> = None;
+     loop {
+         line.clear();
+         let read = reader.read_until(b'\n', &mut line)?;
+@@ -1502,28 +1502,26 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
+             break;
+         }
+         scan.bytes_inspected += read as u64;
+-        let newline_terminated = line.ends_with(b"\n");
+         let raw = line.strip_suffix(b"\n").unwrap_or(&line);
+         if raw.iter().all(u8::is_ascii_whitespace) {
+             continue;
+         }
++        // INJECTION (F4): a held error becomes one only if a later line proves
++        // it was not the tear at the end of the file.
++        if let Some(err) = deferred.take() {
++            return Err(err);
++        }
+         match retain_lifecycle_line(&mut scan, raw) {
+             Ok(LineOutcome::Blank) => continue,
+             Ok(LineOutcome::Dropped) => final_line_retained = false,
+             Ok(LineOutcome::Retained) => final_line_retained = true,
+-            // orgasmic:TASK-2QK4P.1.1.1 F4 — the liveness exception survives only
+-            // for a NON-TERMINATED fragment. `read_until` returns without the
+-            // delimiter exactly at end of file, so this line is the file's last
+-            // and there is nothing behind it to be hidden.
+-            Err(_) if !newline_terminated => {
+-                torn_final_fragment = true;
+-                break;
++            // INJECTION (F4): defer ANY malformed line, including a
++            // newline-terminated one the current writer cannot produce as a
++            // torn append.
++            Err(err) => {
++                deferred = Some(err);
++                continue;
+             }
+-            // A malformed line that ended with `\n` is complete persisted
+-            // content, not a tear, wherever in the file it sits. It stays
+-            // unresolved: whatever a later `RecoveryOrigin` would have said is
+-            // still unread as far as this scanner is concerned.
+-            Err(err) => return Err(err),
+         }
+         final_line_header.clear();
+         final_line_header.extend_from_slice(&raw[..raw.len().min(ENVELOPE_HEADER_PROBE_BYTES)]);
+@@ -1531,7 +1529,7 @@ pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
+     scan.final_line_run_id = window_final_line_run_id(&final_line_header);
+     // A torn final line means the last retained envelope is not the file's last
+     // event, exactly as a truncated tail window does.
+-    scan.final_envelope_retained = final_line_retained && !torn_final_fragment;
++    scan.final_envelope_retained = final_line_retained && deferred.is_none();
+     Ok(scan)
+ }
+ 
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 68d8422..2bd600a 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -9047,9 +9047,15 @@ async fn post_run_recover(
+     // the claim branch further down needs the same enumeration; before this,
+     // each built its own and the endpoint paid two full passes over the same
+     // session files in one decision.
++    // INJECTION (F2): the inventory classification gets its own authority, so
++    // one POST pays two full passes over the same session files.
+     let mut origin_links = ProjectOriginAuthority::default();
+-    let recovery =
+-        recovery_status_inner(&state, TerminalWindow::default(), &mut origin_links).await;
++    let recovery = recovery_status_inner(
++        &state,
++        TerminalWindow::default(),
++        &mut ProjectOriginAuthority::default(),
++    )
++    .await;
+     let prior = recovery
+         .interrupted_runs
+         .iter()
+@@ -9067,6 +9073,35 @@ async fn post_run_recover(
+ 
+     let failed_origin = prior.classification == "failed_recoverable";
+ 
++    // orgasmic:TASK-2QK4P.1.1 F3 — refuse BEFORE the claim branch, not inside
++    // it. The dangerous path is the one with NO claim on disk: it walks straight
++    // to `plan_pending_recovery_claim` and mints a fresh replacement, and
++    // "there is no authenticated replacement for this origin" is a statement
++    // only a completed enumeration can make. An unresolved one must refuse, or
++    // the new replacement lands beside whatever the unread file was holding.
++    //
++    // orgasmic:TASK-2QK4P.1.1.1 F3 — and it stays IMMEDIATELY before that
++    // branch. Everything moved above this point decides nothing about authority;
++    // everything below can mint it or accept it.
++    if failed_origin {
++        let unobserved = match origin_links.links_for(
++            &state.home,
++            &origin_authority.project_root,
++            &project_id,
++        ) {
++            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
++            AuthoritativeOriginLinks::Complete(_) => None,
++        };
++        if let Some(reason) = unobserved {
++            // A swapped or symlinked ORIGIN session is one of the ways the
++            // enumeration cannot complete, and it has its own, more specific
++            // refusal. Report that one: "the origin you took authority over is
++            // no longer the file you took it over" is actionable, while "the
++            // enumeration did not complete" is not.
++            origin_authority.envelopes()?;
++            return Err(recovery_origins_unobserved(&id, reason));
++        }
++    }
+     // orgasmic:TASK-2QK4P.1.1.1 F3 — AUTHORITY-INDEPENDENT REQUEST VALIDATION,
+     // AHEAD OF THE REFUSAL. Whether the requested action exists for this record,
+     // whether the caller had to name one, and whether a terminal Failed record
+@@ -9123,35 +9158,6 @@ async fn post_run_recover(
+         }
+     }
+ 
+-    // orgasmic:TASK-2QK4P.1.1 F3 — refuse BEFORE the claim branch, not inside
+-    // it. The dangerous path is the one with NO claim on disk: it walks straight
+-    // to `plan_pending_recovery_claim` and mints a fresh replacement, and
+-    // "there is no authenticated replacement for this origin" is a statement
+-    // only a completed enumeration can make. An unresolved one must refuse, or
+-    // the new replacement lands beside whatever the unread file was holding.
+-    //
+-    // orgasmic:TASK-2QK4P.1.1.1 F3 — and it stays IMMEDIATELY before that
+-    // branch. Everything moved above this point decides nothing about authority;
+-    // everything below can mint it or accept it.
+-    if failed_origin {
+-        let unobserved = match origin_links.links_for(
+-            &state.home,
+-            &origin_authority.project_root,
+-            &project_id,
+-        ) {
+-            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
+-            AuthoritativeOriginLinks::Complete(_) => None,
+-        };
+-        if let Some(reason) = unobserved {
+-            // A swapped or symlinked ORIGIN session is one of the ways the
+-            // enumeration cannot complete, and it has its own, more specific
+-            // refusal. Report that one: "the origin you took authority over is
+-            // no longer the file you took it over" is actionable, while "the
+-            // enumeration did not complete" is not.
+-            origin_authority.envelopes()?;
+-            return Err(recovery_origins_unobserved(&id, reason));
+-        }
+-    }
+     let request_id = req
+         .request_id
+         .clone()
+diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
+index d27f4d5..38016ec 100644
+--- a/crates/orgasmic-daemon/src/recovery_claim.rs
++++ b/crates/orgasmic-daemon/src/recovery_claim.rs
+@@ -505,9 +505,12 @@ fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> ClaimEvidenc
+     let Some(actual) = claim.authority_tag.as_deref() else {
+         return ClaimEvidence::Invalid;
+     };
++    // INJECTION (F1a): the round-four collapse. A key file that could not be
++    // read answers "this claim is not authentic", which the indexer reads as
++    // ABSENCE and drops the link from a set it still labels `Complete`.
+     let key = match authority_key(home) {
+         Ok(key) => key,
+-        Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::AuthorityKeyUnreadable),
++        Err(_) => return ClaimEvidence::Invalid,
+     };
+     // A claim that cannot be canonicalized cannot be the value this daemon
+     // minted, because minting serializes it — so this is a decided negative
+@@ -1159,10 +1162,11 @@ pub fn load_recovery_claim(
+     // QUARANTINES on, so an unreadable auth key must not spell itself that way:
+     // it would rename a live rescue's claim on a transient failure and the
+     // handler would then mint a competitor beside the running replacement.
++    // INJECTION (F1b): an unobserved authority check spells itself
++    // `CorruptClaim`, which is the error the resolver QUARANTINES on.
+     match claim_has_valid_authority(home, &claim) {
+         ClaimEvidence::Valid => Ok(Some(claim)),
+-        ClaimEvidence::Invalid => Err(RecoveryClaimError::CorruptClaim),
+-        ClaimEvidence::Unobserved(reason) => Err(RecoveryClaimError::Unobserved(reason)),
++        _ => Err(RecoveryClaimError::CorruptClaim),
+     }
+ }
+ 
+@@ -1469,6 +1473,13 @@ impl ClaimEvidence {
+ /// `CorruptClaim` from the path-membership check are statements about the
+ /// PATH the claim carries, which is content the claim itself supplied.
+ fn session_read_evidence(err: &RecoveryClaimError, reason: UnobservedSession) -> ClaimEvidence {
++    // INJECTION (F1b): every read failure is invalid evidence, exactly as the
++    // bare `bool` made it. The resolver quarantines a claim it just matched
++    // against a complete link set, reaches `Missing`, and the handler mints a
++    // competitor beside the live replacement.
++    #[allow(unreachable_code)]
++    return ClaimEvidence::Invalid;
++    #[allow(unreachable_code)]
+     match err {
+         RecoveryClaimError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+             ClaimEvidence::Invalid

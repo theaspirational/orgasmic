@@ -1,11 +1,11 @@
 diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
-index 5934487..d88a219 100644
+index 68d8422..15c7acc 100644
 --- a/crates/orgasmic-daemon/src/api.rs
 +++ b/crates/orgasmic-daemon/src/api.rs
-@@ -9051,25 +9051,7 @@ async fn post_run_recover(
-     // "there is no authenticated replacement for this origin" is a statement
-     // only a completed enumeration can make. An unresolved one must refuse, or
-     // the new replacement lands beside whatever the unread file was holding.
+@@ -9133,25 +9133,7 @@ async fn post_run_recover(
+     // orgasmic:TASK-2QK4P.1.1.1 F3 — and it stays IMMEDIATELY before that
+     // branch. Everything moved above this point decides nothing about authority;
+     // everything below can mint it or accept it.
 -    if failed_origin {
 -        let unobserved = match origin_links.links_for(
 -            &state.home,
@@ -30,10 +30,10 @@ index 5934487..d88a219 100644
          .request_id
          .clone()
 diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
-index 6e5cd03..487de96 100644
+index d27f4d5..83797e3 100644
 --- a/crates/orgasmic-daemon/src/recovery_claim.rs
 +++ b/crates/orgasmic-daemon/src/recovery_claim.rs
-@@ -1206,10 +1206,9 @@ fn complete_session_scan(
+@@ -1564,10 +1564,9 @@ fn complete_session_scan(
      session_dir: &SessionDirectory,
      session_path: &Path,
  ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
@@ -47,7 +47,7 @@ index 6e5cd03..487de96 100644
  }
  
  #[cfg(not(unix))]
-@@ -1231,8 +1230,10 @@ pub fn index_recovery_origins_in_session(
+@@ -1589,8 +1588,10 @@ pub fn index_recovery_origins_in_session(
      let session_dir = match SessionDirectory::open(project_root) {
          Ok(dir) => dir,
          Err(_) => {
@@ -60,7 +60,7 @@ index 6e5cd03..487de96 100644
                  bytes_inspected: 0,
              }
          }
-@@ -1244,8 +1245,10 @@ pub fn index_recovery_origins_in_session(
+@@ -1602,8 +1603,10 @@ pub fn index_recovery_origins_in_session(
      let scan = match scan {
          Ok(scan) => scan,
          Err(_) => {
@@ -73,7 +73,7 @@ index 6e5cd03..487de96 100644
                  bytes_inspected: 0,
              }
          }
-@@ -1352,12 +1355,8 @@ pub fn index_recovery_origins_in_session(
+@@ -1750,12 +1753,8 @@ pub fn index_recovery_origins_in_session(
              let origin_scan = complete_session_scan(&origin_session_path);
              let origin_scan = match origin_scan {
                  Ok(scan) => scan,
@@ -88,7 +88,7 @@ index 6e5cd03..487de96 100644
              };
              bytes_inspected += origin_scan.bytes_inspected;
              let origin_envelopes = origin_scan.envelopes;
-@@ -1471,7 +1470,8 @@ impl ProjectOriginAuthority {
+@@ -1869,7 +1868,8 @@ impl ProjectOriginAuthority {
          project_root: &Path,
          project_id: &str,
      ) -> &AuthoritativeOriginLinks {
@@ -98,7 +98,7 @@ index 6e5cd03..487de96 100644
              let (links, cost) = enumerate_recovery_origin_links(home, project_root, project_id);
              self.cost.files += cost.files;
              self.cost.bytes_inspected += cost.bytes_inspected;
-@@ -1530,12 +1530,11 @@ fn enumerate_recovery_origin_links(
+@@ -1930,12 +1930,11 @@ fn enumerate_recovery_origin_links(
                  cost.bytes_inspected += bytes_inspected;
                  links.extend(found);
              }
@@ -113,7 +113,7 @@ index 6e5cd03..487de96 100644
              }
          }
      }
-@@ -1652,9 +1651,9 @@ pub fn resolve_authoritative_recovery_claim(
+@@ -2061,9 +2060,9 @@ pub fn resolve_authoritative_recovery_claim(
              }
              Ok(ResolvedRecoveryClaim::Valid(claim))
          }

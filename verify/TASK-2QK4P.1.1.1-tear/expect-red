@@ -1,0 +1,25 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# Same injection as `verify/TASK-2QK4P.1.1.1`; this artifact pins its F4 hunk.
+exit: 101
+
+# ===== THE INFERENCE WAS TRUE AND THE BOUNDARY DID NOT CHECK IT ============
+#
+# The reviewer CONFIRMED the invariant: every production append routes through
+# `SessionWriter::append`, which serializes one valid envelope, writes the line,
+# writes `\n`, flushes and `sync_all`s. So the only partial line a crash can
+# leave is one with no terminator, and forgiving a torn FINAL line hides
+# nothing.
+#
+# But the scanner deferred ANY malformed final line, including a
+# newline-TERMINATED one — a shape the current writer cannot produce as a torn
+# append, because the terminator is written only after the envelope write
+# succeeded. The tolerance was therefore wider than the inference justifying it,
+# and a future writer that started persisting complete malformed lines would
+# have been silently forgiven. Under the injection that is exactly what happens.
+#
+# The regression also now supplies the PRODUCTION tear shape — `{TEAR}` with no
+# trailing newline — where round three supplied `{TEAR}\n`, which is why round
+# three's regression could not have failed on this.
+contains: a newline-terminated malformed final line is complete content, not a torn append: the writer emits the terminator only after the envelope write succeeded
+contains: test result: FAILED. 0 passed; 1 failed

@@ -1,0 +1,42 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# Same injection as `verify/TASK-2QK4P.1.1.1`; see that file for what it
+# restores. These two pin the halves that only exist on the endpoint.
+exit: 101
+
+# ===== F3: THE REFUSAL ANSWERED A QUESTION THAT NEEDED NO AUTHORITY ========
+#
+# A failed-recoverable origin, a valid request shape, and an action this record
+# never offers. Whether that action is valid is decidable from the record alone.
+# Under the injection the completeness refusal runs first, so an UNRELATED
+# session file with a line torn in its middle turns a malformed request into a
+# retryable 503 — and repairing that file silently turns the same request into
+# the actionable 400. A caller cannot tell a typo from a transient failure, and
+# retrying is exactly the wrong response to a typo.
+#
+# The fix is an ordering change and not a relaxation: the same unreadable file
+# still answers 503 to a WELL-FORMED request, because that request reaches the
+# branch that mints authority. `an_invalid_action_answers_400_even_while_the_
+# enumeration_is_unresolved` asserts both directions, so an injection that
+# merely deleted the refusal would fail it too.
+contains: an action this record never offers is decidable without any authority, so an unreadable sibling file must not turn it into a retryable 503
+contains: left: 503
+contains: right: 400
+
+# ===== F2: ONE POST, TWO FULL PASSES OVER THE SAME FILES ===================
+#
+# `post_run_recover` calls `recovery_status_inner` to classify the run it was
+# handed, and that function enumerated the project to do it. The handler then
+# discarded that authority and built another for the claim decision. Against the
+# round-three measurement of 1.15 GiB / 340 ms per pass, one POST paid roughly
+# two full passes before any action executed — and the second was invisible to
+# `ProjectOriginAuthority::cost()`, so it never appeared in the inventory
+# metrics at all.
+#
+# `one_authority_serves_every_claim_in_a_project` cannot see this: it hands both
+# callers the SAME authority object and counts through it. The count here lives
+# outside both objects, in `recovery_claim::origin_enumeration_passes`.
+contains: one recover decision must enumerate the project's session files ONCE
+contains: left: 2
+contains: right: 1
+contains: test result: FAILED. 0 passed; 2 failed

@@ -73,10 +73,10 @@ use crate::recovery_claim::{
     mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
     resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    AuthoritativeOriginLinks, CommitRecoveryDetails, PendingRecoveryClaimSpec, PendingRecoveryPlan,
-    ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
-    RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim, SessionDirectory, SessionFile,
-    UnobservedSession,
+    AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, PendingRecoveryClaimSpec,
+    PendingRecoveryPlan, ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError,
+    RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim,
+    SessionDirectory, SessionFile, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -7450,6 +7450,22 @@ pub struct RecoveredRun {
     /// executes through `POST /runs/:id/recover` with `action.kind`.
     #[serde(default)]
     pub recovery_actions: Vec<RecoveryAction>,
+    /// Why the recovery actions above were SUPPRESSED rather than being absent.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1 F3 — an empty `recovery_actions` had two
+    /// meanings, and the endpoint could not tell them apart: "this record offers
+    /// nothing" and "the origin enumeration did not complete, so we refuse to
+    /// say". `POST /runs/:id/recover` needs the difference to keep its
+    /// authority-INDEPENDENT request validation authority-independent — an
+    /// invalid action must answer 400 whether or not some unrelated session file
+    /// happens to be readable — so the actions it would have offered are kept in
+    /// `suppressed_recovery_actions` and validated against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_unobserved: Option<String>,
+    /// The actions this record would offer had the enumeration completed. Empty
+    /// unless `recovery_unobserved` is set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_recovery_actions: Vec<RecoveryAction>,
     /// When a Failed origin already has a committed recovery replacement, the
     /// link is exposed and actionable recovery is suppressed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -7527,7 +7543,7 @@ async fn get_recovery_inventory(
 ) -> Json<Value> {
     let recovery = {
         let _status_guard = state.recovery_status_lock.lock().await;
-        recovery_status_inner(&state, query.into()).await
+        recovery_status_inner(&state, query.into(), &mut ProjectOriginAuthority::default()).await
     };
     Json(json!({
         "live": recovery.live_runs,
@@ -9025,7 +9041,15 @@ async fn post_run_recover(
     let _claim_guard = claim_lock.lock().await;
     let status_guard = state.recovery_status_lock.lock().await;
 
-    let recovery = recovery_status_inner(&state, TerminalWindow::default()).await;
+    // orgasmic:TASK-2QK4P.1.1.1 F2 — ONE authority for the WHOLE POST, built
+    // here and handed to the inventory classification below rather than created
+    // inside it. The inventory pass enumerates this project to classify the run;
+    // the claim branch further down needs the same enumeration; before this,
+    // each built its own and the endpoint paid two full passes over the same
+    // session files in one decision.
+    let mut origin_links = ProjectOriginAuthority::default();
+    let recovery =
+        recovery_status_inner(&state, TerminalWindow::default(), &mut origin_links).await;
     let prior = recovery
         .interrupted_runs
         .iter()
@@ -9040,17 +9064,75 @@ async fn post_run_recover(
     if let Some(hook) = take_recovery_post_origin_authority_hook(&id) {
         hook();
     }
-    // One authoritative enumeration for this whole recover decision, shared by
-    // every claim branch below (orgasmic:TASK-2QK4P.1.1 F3/F4).
-    let mut origin_links = ProjectOriginAuthority::default();
 
     let failed_origin = prior.classification == "failed_recoverable";
+
+    // orgasmic:TASK-2QK4P.1.1.1 F3 — AUTHORITY-INDEPENDENT REQUEST VALIDATION,
+    // AHEAD OF THE REFUSAL. Whether the requested action exists for this record,
+    // whether the caller had to name one, and whether a terminal Failed record
+    // can be reattached are all decided from the record itself. Answering 503 to
+    // any of them made a malformed request look retryable and silently become an
+    // actionable 400/409 once some unrelated session file was repaired.
+    //
+    // `offered_actions` is the un-suppressed set: an enumeration that did not
+    // complete empties `recovery_actions`, and validating against that empty
+    // list would just move the same defect (an invalid action would answer "not
+    // valid for this run" only because we could not look).
+    //
+    // An EMPTY offered set is deliberately not validated here. It has a third
+    // meaning this check cannot serve: an authoritative committed claim
+    // suppresses the actions, and that origin's recover request is an
+    // IDEMPOTENT REPLAY which must answer with the existing replacement rather
+    // than "that action is not valid for this run". The claim branch below owns
+    // that case, and the empty-action arm of the resolver already consults it.
+    let offered_actions = if prior.recovery_actions.is_empty() {
+        prior.suppressed_recovery_actions.as_slice()
+    } else {
+        prior.recovery_actions.as_slice()
+    };
+    if !offered_actions.is_empty() {
+        match req.action.as_deref() {
+            Some(requested) => {
+                if !offered_actions.iter().any(|act| act.kind == requested) {
+                    return Err(ApiError::bad_request(format!(
+                        "recovery action {requested} is not valid for run {id}"
+                    )));
+                }
+                if failed_origin && requested == "reattach_tmux" {
+                    return Err(ApiError::bad_request(
+                        "reattach_tmux is not valid for terminal Failed records",
+                    ));
+                }
+            }
+            None => {
+                if offered_actions.len() > 1 {
+                    return Err(ApiError::conflict_json(json!({
+                        "error": "multiple recovery actions; specify action",
+                        "run_id": id,
+                        "recovery_actions": offered_actions,
+                    })));
+                }
+                if failed_origin
+                    && matches!(offered_actions, [single] if single.kind == "reattach_tmux")
+                {
+                    return Err(ApiError::bad_request(
+                        "reattach_tmux is not valid for terminal Failed records",
+                    ));
+                }
+            }
+        }
+    }
+
     // orgasmic:TASK-2QK4P.1.1 F3 — refuse BEFORE the claim branch, not inside
     // it. The dangerous path is the one with NO claim on disk: it walks straight
     // to `plan_pending_recovery_claim` and mints a fresh replacement, and
     // "there is no authenticated replacement for this origin" is a statement
     // only a completed enumeration can make. An unresolved one must refuse, or
     // the new replacement lands beside whatever the unread file was holding.
+    //
+    // orgasmic:TASK-2QK4P.1.1.1 F3 — and it stays IMMEDIATELY before that
+    // branch. Everything moved above this point decides nothing about authority;
+    // everything below can mint it or accept it.
     if failed_origin {
         let unobserved = match origin_links.links_for(
             &state.home,
@@ -9079,7 +9161,7 @@ async fn post_run_recover(
     let mut pending_plan: Option<PendingRecoveryPlan> = None;
     if failed_origin {
         if let Some(claim) = load_recovery_claim(&state.home, &project_id, &id)
-            .map_err(|err| ApiError::internal(format!("recovery claim load failed: {err:?}")))?
+            .map_err(|err| recovery_claim_load_error(&id, err))?
         {
             match claim.status {
                 RecoveryClaimStatus::Committed => {
@@ -9175,11 +9257,8 @@ async fn post_run_recover(
             [] => {
                 if failed_origin {
                     if let Some(claim) =
-                        load_committed_recovery_claim(&state.home, &project_id, &id).map_err(
-                            |err| {
-                                ApiError::internal(format!("recovery claim load failed: {err:?}"))
-                            },
-                        )?
+                        load_committed_recovery_claim(&state.home, &project_id, &id)
+                            .map_err(|err| recovery_claim_load_error(&id, err))?
                     {
                         match committed_claim_is_authoritative(
                             &state.home,
@@ -9977,7 +10056,12 @@ async fn execute_run_recover_action(
 
 async fn recovery_status(state: &ApiState) -> RecoveryResponse {
     let _status_guard = state.recovery_status_lock.lock().await;
-    recovery_status_inner(state, TerminalWindow::default()).await
+    recovery_status_inner(
+        state,
+        TerminalWindow::default(),
+        &mut ProjectOriginAuthority::default(),
+    )
+    .await
 }
 
 /// How much terminal history one inventory response carries.
@@ -10049,7 +10133,21 @@ impl From<RunInventoryQuery> for TerminalWindow {
     }
 }
 
-async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> RecoveryResponse {
+/// orgasmic:TASK-2QK4P.1.1.1 F2 — the authority is a PARAMETER, not a local.
+///
+/// `post_run_recover` calls this to classify the run it was handed, and this
+/// function enumerated every failed-recoverable run's project to do it. The
+/// handler then dropped that authority on the floor and built a second one for
+/// the claim decision, so one POST paid roughly two full passes over the same
+/// session files inside a single decision — and the second pass was not
+/// represented in the inventory metrics at all. Taking the authority from the
+/// caller makes the sharing the type system's business: there is no local left
+/// to forget to reuse, and `cost()` now totals every pass the decision made.
+async fn recovery_status_inner(
+    state: &ApiState,
+    window: TerminalWindow,
+    origin_authority: &mut ProjectOriginAuthority,
+) -> RecoveryResponse {
     let started = std::time::Instant::now();
     let live = state.supervisor.snapshot().await;
     let live_ids: BTreeSet<_> = live.runs.iter().map(|run| run.run_id.as_str()).collect();
@@ -10084,13 +10182,12 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
     // that was really doing the work — a board with no failed-recoverable run
     // opens no session file at all, because `ProjectOriginAuthority` enumerates
     // lazily and only for the projects a claim decision actually reaches.
-    let mut origin_authority = ProjectOriginAuthority::default();
     for mut run in recovered {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
         if run.classification == "failed_recoverable" && run.project_id.is_some() {
-            apply_recovery_claim_to_run(&state.home, &mut origin_authority, &mut run);
+            apply_recovery_claim_to_run(&state.home, origin_authority, &mut run);
         }
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
@@ -10625,16 +10722,25 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
 
     let (mut reattached, mut skipped) = (0usize, 0usize);
     for c in candidates {
-        if c.project_id
+        // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — this hint used to be a bool
+        // and every failure inside it answered "no pending recovery owns this
+        // session", which is the FAIL-OPEN direction: boot then appends a
+        // `Reattach` into a prefix a pending claim owns and that write cannot be
+        // undone. `Unobserved` is therefore treated exactly like ownership, and
+        // a skipped reattach is retried on the next boot.
+        let ownership = c
+            .project_id
             .as_deref()
             .zip(c.worktree.as_deref())
-            .is_some_and(|(project_id, project_root)| {
+            .map(|(project_id, project_root)| {
                 pending_recovery_claim_owns_session(home, project_root, project_id, &c.session_path)
             })
-        {
+            .unwrap_or(ClaimEvidence::Invalid);
+        if !matches!(ownership, ClaimEvidence::Invalid) {
             tracing::info!(
                 run_id = %c.run_id,
                 session_path = %c.session_path.display(),
+                ownership = ?ownership,
                 "boot reattach: pending recovery prefix reserved for locked reconciliation"
             );
             continue;
@@ -11102,6 +11208,8 @@ async fn classify_catalog_entries(
                 worktree_authority: "unrecorded".to_string(),
                 classification: "ambiguous".to_string(),
                 reason: "session JSONL could not be parsed".to_string(),
+                recovery_unobserved: None,
+                suppressed_recovery_actions: Vec::new(),
                 recovery_actions: Vec::new(),
                 recovery_replacement_run_id: None,
                 recovery_replacement_session_path: None,
@@ -11231,6 +11339,8 @@ async fn classify_catalog_entries(
             classification,
             reason,
             recovery_actions,
+            recovery_unobserved: None,
+            suppressed_recovery_actions: Vec::new(),
             recovery_replacement_run_id: None,
             recovery_replacement_session_path: None,
             terminal_at: entry.terminal.as_ref().and_then(TerminalRecord::at),
@@ -11758,6 +11868,21 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
     }))
 }
 
+/// A claim load that could not decide is retryable, not an internal error.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 acceptance 2 — `load_recovery_claim` recomputes the
+/// `authority_tag` to accept the file, so an unreadable key file makes the load
+/// itself unobserved. Reporting that as a 500 would hide the one thing the
+/// caller can act on: retry once the daemon can read its own auth material.
+fn recovery_claim_load_error(origin_run_id: &str, err: RecoveryClaimError) -> ApiError {
+    match err {
+        RecoveryClaimError::Unobserved(reason) => {
+            recovery_origins_unobserved(origin_run_id, reason)
+        }
+        other => ApiError::internal(format!("recovery claim load failed: {other:?}")),
+    }
+}
+
 /// Refuse a recover request whose candidate set could not be enumerated.
 ///
 /// orgasmic:TASK-2QK4P.1.1 — 503 and not 409: nothing is known to conflict, the
@@ -11811,6 +11936,22 @@ enum CommittedClaimAuthority {
     Unobserved(UnobservedSession),
 }
 
+/// Suppress this record's recovery actions because the daemon could not look,
+/// keeping what it would have offered so an authority-independent request check
+/// can still validate against it.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 — the claim on disk is deliberately left alone
+/// (ruling 1: unobserved never quarantines), so the next pass — which may read
+/// the file fine — still finds it and the rescue keeps its idempotency.
+fn suppress_unobserved_recovery(run: &mut RecoveredRun, reason: &str) {
+    run.suppressed_recovery_actions = std::mem::take(&mut run.recovery_actions);
+    run.recovery_unobserved = Some(reason.to_string());
+    run.reason = format!(
+        "{}; recovery origin enumeration unresolved ({reason})",
+        run.reason
+    );
+}
+
 fn apply_recovery_claim_to_run(
     home: &Home,
     authority: &mut ProjectOriginAuthority,
@@ -11826,15 +11967,21 @@ fn apply_recovery_claim_to_run(
         run.recovery_actions.clear();
         return;
     };
-    let Ok(resolved) = resolve_authoritative_recovery_claim(
+    let resolved = match resolve_authoritative_recovery_claim(
         home,
         project_root,
         project_id,
         &run.run_id,
         authority,
-    ) else {
-        run.recovery_actions.clear();
-        return;
+    ) {
+        Ok(resolved) => resolved,
+        // orgasmic:TASK-2QK4P.1.1.1 — an error here is an observation failure
+        // too, so it suppresses through the same field rather than by silently
+        // emptying the action list.
+        Err(err) => {
+            suppress_unobserved_recovery(run, &format!("{err:?}"));
+            return;
+        }
     };
     let claim = match resolved {
         ResolvedRecoveryClaim::Valid(claim) | ResolvedRecoveryClaim::Reconstructed(claim) => claim,
@@ -11850,11 +11997,7 @@ fn apply_recovery_claim_to_run(
         // alone, so the next pass — which may read the file fine — still finds
         // it and the rescue stays idempotent.
         ResolvedRecoveryClaim::Unobserved(reason) => {
-            run.recovery_actions.clear();
-            run.reason = format!(
-                "{}; recovery origin enumeration unresolved ({reason:?})",
-                run.reason
-            );
+            suppress_unobserved_recovery(run, &format!("{reason:?}"));
             return;
         }
         ResolvedRecoveryClaim::Missing => return,
@@ -11862,8 +12005,18 @@ fn apply_recovery_claim_to_run(
     if claim.status != RecoveryClaimStatus::Committed {
         return;
     }
-    if !verify_committed_claim_against_session(home, project_root, &claim) {
-        return;
+    // orgasmic:TASK-2QK4P.1.1.1 F1(b) — this is a SECOND read of the same
+    // session, after the resolver's. `false` used to leave the recovery actions
+    // standing, so an observation failure in the window between the two reads
+    // offered "start a recovery run" for an origin that already has a live
+    // authenticated replacement.
+    match verify_committed_claim_against_session(home, project_root, &claim) {
+        ClaimEvidence::Valid => {}
+        ClaimEvidence::Invalid => return,
+        ClaimEvidence::Unobserved(reason) => {
+            suppress_unobserved_recovery(run, &format!("{reason:?}"));
+            return;
+        }
     }
     run.recovery_replacement_run_id = Some(claim.replacement_run_id.clone());
     run.recovery_replacement_session_path = Some(claim.replacement_session_path.clone());
@@ -30325,8 +30478,9 @@ pub(crate) mod tests {
             let committed = load_recovery_claim(&home, "orgasmic", "run-reconstruct-claim")
                 .unwrap()
                 .unwrap();
-            assert!(
+            assert_eq!(
                 verify_committed_claim_against_session(&home, &project_root, &committed),
+                ClaimEvidence::Valid,
                 "newly committed claim must verify before {mutation} mutation"
             );
             let session_count = std::fs::read_dir(&sessions_dir).unwrap().count();
@@ -30765,6 +30919,189 @@ pub(crate) mod tests {
         let _ = running.join.await;
     }
 
+    /// orgasmic:TASK-2QK4P.1.1.1 F2 / acceptance 4 — ONE recover POST, ONE
+    /// enumeration, MEASURED AT THE ENDPOINT.
+    ///
+    /// `one_authority_serves_every_claim_in_a_project` cannot see this defect,
+    /// and the reason is worth stating: it hands both callers the SAME
+    /// `ProjectOriginAuthority` and then counts through that object. The
+    /// endpoint's defect is that it built TWO — `recovery_status_inner`
+    /// constructed its own to classify the run, `post_run_recover` discarded it
+    /// and constructed another for the claim decision — so the second pass was
+    /// invisible to `cost()` and absent from the inventory metrics entirely.
+    /// Against the round-three measurement of 1.15 GiB / 340 ms per pass, that
+    /// is roughly a second full pass paid before any action executes.
+    ///
+    /// The count therefore lives outside both objects, in
+    /// `recovery_claim::origin_enumeration_passes`.
+    ///
+    /// Injection: give `recovery_status_inner` its own authority again. The
+    /// delta becomes 2 and this goes red.
+    // orgasmic:TASK-2QK4P.1.1.1
+    #[tokio::test]
+    async fn one_recover_post_enumerates_the_project_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        write_failed_recoverable_session(
+            &project_root,
+            "run-scan-count",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let canonical = project_root.canonicalize().unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let before = crate::recovery_claim::origin_enumeration_passes(&canonical);
+        let resp = reqwest::Client::new()
+            .post(format!(
+                "http://{}/api/runs/run-scan-count/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "req-scan-count",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "recover must succeed for the count to mean anything: {}",
+            resp.status()
+        );
+        let after = crate::recovery_claim::origin_enumeration_passes(&canonical);
+        assert_eq!(
+            after - before,
+            1,
+            "one recover decision must enumerate the project's session files ONCE — the \
+             inventory classification and the claim/mint decision are the same decision and \
+             must share one authority"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1.1 F3 — the refusal must not preempt validation
+    /// that needs no authority.
+    ///
+    /// An INVALID action against an otherwise valid failed record is decidable
+    /// from the record alone. The up-front 503 ran first, so that request
+    /// answered "service unavailable, retry" whenever any unrelated session file
+    /// in the project happened to be unreadable — and silently became the
+    /// actionable 400 once the file was repaired. A caller cannot tell a
+    /// malformed request from a transient one, and retrying is exactly the wrong
+    /// response to a typo.
+    ///
+    /// The ordering fix is not a relaxation: the same unreadable file still
+    /// makes a WELL-FORMED request refuse with 503, because that request would
+    /// reach the branch that mints authority.
+    ///
+    /// Injection: move the completeness check back ahead of action validation.
+    /// The 400 becomes a 503.
+    // orgasmic:TASK-2QK4P.1.1.1
+    #[tokio::test]
+    async fn an_invalid_action_answers_400_even_while_the_enumeration_is_unresolved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        write_failed_recoverable_session(
+            &project_root,
+            "run-order-check",
+            "protocol_end_without_finalize",
+            false,
+        );
+        // An UNRELATED session file with a line torn in its middle: every line
+        // behind the tear is unread, so the origin enumeration cannot complete.
+        let torn = project_sessions_dir(&project_root).join("run-unrelated-torn.jsonl");
+        std::fs::create_dir_all(torn.parent().unwrap()).unwrap();
+        std::fs::write(
+            &torn,
+            "{\"seq\":1,\"kind\":\"lifecycle\",\"event\":{\"phase\":\n\
+             {\"seq\":2,\"kind\":\"driver_event\",\"event\":{\"type\":\"text_chunk\",\"text\":\"after\"}}\n",
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let post = |action: &'static str, request_id: &'static str| {
+            let addr = running.addr;
+            let token = token.clone();
+            async move {
+                reqwest::Client::new()
+                    .post(format!("http://{addr}/api/runs/run-order-check/recover"))
+                    .bearer_auth(&token)
+                    .json(&json!({
+                        "action": action,
+                        "project": "orgasmic",
+                        "force_inert": true,
+                        "request_id": request_id,
+                    }))
+                    .send()
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let resp = post("not_a_recovery_action", "req-order-bad").await;
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "an action this record never offers is decidable without any authority, so an \
+             unreadable sibling file must not turn it into a retryable 503"
+        );
+
+        // reattach_tmux is offered by the resolver but is never valid for a
+        // terminal Failed record — also authority-independent.
+        let resp = post("reattach_tmux", "req-order-reattach").await;
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "the terminal-Failed reattach refusal needs no authority either"
+        );
+
+        // And the safety refusal is untouched: a well-formed request that would
+        // MINT still refuses while the enumeration is unresolved.
+        let resp = post("start_recovery_run", "req-order-good").await;
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            "the ordering fix must not relax the refusal for a request that can mint authority"
+        );
+
+        // Repair, and the well-formed request proceeds — while the malformed
+        // one still answers exactly what it answered before.
+        std::fs::remove_file(&torn).unwrap();
+        let resp = post("not_a_recovery_action", "req-order-bad-2").await;
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "the answer to a malformed request must not depend on an unrelated file"
+        );
+        let resp = post("start_recovery_run", "req-order-good").await;
+        assert!(
+            resp.status().is_success(),
+            "the refusal must be transient: {}",
+            resp.status()
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
     #[tokio::test]
     async fn forged_recovery_claim_does_not_suppress_actions_without_session_proof() {
         use crate::recovery_claim::{
@@ -30784,7 +31121,24 @@ pub(crate) mod tests {
         );
         let forged_path = project_sessions_dir(&project_root).join("recover-forged.jsonl");
         std::fs::create_dir_all(forged_path.parent().unwrap()).unwrap();
-        std::fs::write(&forged_path, "{}\n").unwrap();
+        // orgasmic:TASK-2QK4P.1.1.1 F4 — this used to be `{}\n`, which is a
+        // COMPLETE malformed line, and the scanner used to forgive any malformed
+        // line at EOF. It no longer does (only a non-newline-terminated torn
+        // fragment is forgiven), so `{}\n` would now make this file UNREADABLE
+        // and suppress the whole project's actions for a different reason
+        // entirely — round three's ruling, not this test's property.
+        //
+        // The property here is "a committed claim with NO session proof is not
+        // authoritative", so the file is now a well-formed session that simply
+        // carries no `RecoveryOrigin`. The unreadable case is asserted below, on
+        // purpose, so the two facts stay pinned apart.
+        std::fs::write(
+            &forged_path,
+            "{\"seq\":0,\"time\":\"2026-08-08T00:00:00Z\",\"run_id\":\"run-forged-replacement\",\
+             \"runtime_id\":\"rt-forged\",\"boot_id\":\"boot-forged\",\"kind\":\"driver_event\",\
+             \"event\":{\"type\":\"text_chunk\",\"text\":\"forged, and provably not a link\"}}\n",
+        )
+        .unwrap();
         let spec = PendingRecoveryClaimSpec {
             project_id: "orgasmic".into(),
             origin_run_id: "run-forged-claim".into(),
@@ -30875,6 +31229,44 @@ pub(crate) mod tests {
             legitimate.status().is_success(),
             "status and POST under the same origin authority must replace a quarantined forged claim: {}",
             legitimate.status()
+        );
+
+        // orgasmic:TASK-2QK4P.1.1.1 F4 — and the OTHER fact, kept beside it so a
+        // later edit cannot quietly merge them. A session file whose final line
+        // is complete but malformed is not a file that lacks a link; it is a
+        // file the daemon could not read, and round three's ruling is that an
+        // unresolved enumeration suppresses recovery actions without touching
+        // anything on disk. "No proof" and "no reading" are different answers.
+        std::fs::write(
+            project_sessions_dir(&project_root).join("recover-unreadable.jsonl"),
+            "{}\n",
+        )
+        .unwrap();
+        let recovery: serde_json::Value = reqwest::Client::new()
+            .get(format!("http://{}/api/recovery/status", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let failed = recovery["failed_recoverable_runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == "run-forged-claim")
+            .expect("the origin is still a failed-recoverable record");
+        assert!(
+            failed["recovery_actions"]
+                .as_array()
+                .is_none_or(|actions| actions.is_empty()),
+            "a complete-but-malformed final line makes the enumeration unresolved, and an \
+             unresolved enumeration suppresses actions: {failed}"
+        );
+        assert!(
+            failed["recovery_unobserved"].is_string(),
+            "and it must say WHY the actions are gone, so the caller can retry: {failed}"
         );
 
         let _ = running.shutdown.send(());

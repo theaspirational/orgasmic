@@ -1,0 +1,16 @@
+# One line. Run from the repo root by `orgasmic verify TASK-2QK4P.1.1.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build their own Home under a temp root that must see neither.
+#
+# The WHOLE `recovery_claim::` filter, for the same reason round three used it:
+# this round's claim is about a CLASS — a `bool` that means both "I verified and
+# it is false" and "I could not check" — and the class is only legible from the
+# whole set. Four must go red and twenty-seven must stay green, including every
+# regression rounds one through three shipped, because the fix is a change of
+# ANSWER at the failure sites and not a change of behaviour anywhere else.
+#
+# `--test-threads=1` because every one of these writes a claim directory and a
+# session directory under its own tempdir and the panic text must be
+# attributable to one test.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib recovery_claim:: -- --test-threads=1

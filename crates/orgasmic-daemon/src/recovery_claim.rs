@@ -173,6 +173,109 @@ fn arm_pending_reconcile_after_open_hook(replacement_run_id: &str, hook: Box<dyn
         .expect("pending reconcile hook lock") = Some((replacement_run_id.to_string(), hook));
 }
 
+/// Test-only injection of an `authority_key` READ FAILURE, keyed by the token
+/// path so tests in this binary cannot consume each other's arming.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 acceptance 7 — "an nth authority-key read failure".
+/// The value is a countdown: the call that decrements it to zero fails. There is
+/// no filesystem fault that can fail the Nth read of one file and not the
+/// others, and the whole point of F1(a) is that a failure at a PARTICULAR
+/// position inside one enumeration changes the answer, so the position has to
+/// be steerable.
+#[cfg(test)]
+static AUTHORITY_KEY_FAULTS: std::sync::Mutex<Option<BTreeMap<PathBuf, u32>>> =
+    std::sync::Mutex::new(None);
+
+/// Fail the `nth` (1-based) `authority_key` read under this `home`, then stop.
+#[cfg(test)]
+fn arm_authority_key_fault(home: &Home, nth: u32) {
+    assert!(nth >= 1, "reads are counted from one");
+    AUTHORITY_KEY_FAULTS
+        .lock()
+        .expect("authority key fault lock")
+        .get_or_insert_with(BTreeMap::new)
+        .insert(home.auth_token(), nth);
+}
+
+/// Did the armed fault actually FIRE? A test that loops over read positions
+/// needs this to tell "position n does not exist on this path" from "position n
+/// exists and was survived".
+#[cfg(test)]
+fn authority_key_fault_fired(home: &Home) -> bool {
+    !AUTHORITY_KEY_FAULTS
+        .lock()
+        .expect("authority key fault lock")
+        .as_ref()
+        .is_some_and(|map| map.contains_key(&home.auth_token()))
+}
+
+#[cfg(test)]
+fn disarm_authority_key_fault(home: &Home) {
+    if let Some(map) = AUTHORITY_KEY_FAULTS
+        .lock()
+        .expect("authority key fault lock")
+        .as_mut()
+    {
+        map.remove(&home.auth_token());
+    }
+}
+
+#[cfg(test)]
+fn authority_key_fault(home: &Home) -> Result<(), RecoveryClaimError> {
+    let mut slot = AUTHORITY_KEY_FAULTS
+        .lock()
+        .expect("authority key fault lock");
+    let Some(map) = slot.as_mut() else {
+        return Ok(());
+    };
+    let token = home.auth_token();
+    let Some(remaining) = map.get_mut(&token) else {
+        return Ok(());
+    };
+    *remaining -= 1;
+    if *remaining == 0 {
+        map.remove(&token);
+        return Err(RecoveryClaimError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "injected authority key read failure",
+        )));
+    }
+    Ok(())
+}
+
+/// Test-only count of COMPLETED origin enumerations per project root.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 F2 — `one_authority_serves_every_claim_in_a_project`
+/// counts files through `ProjectOriginAuthority::cost()`, which can only see
+/// passes made through the object it was handed. The endpoint's defect is that
+/// it builds TWO objects in one decision, so the count has to live outside both.
+/// Keyed by project root because tests in this binary run concurrently under
+/// their own temp roots.
+#[cfg(test)]
+static ORIGIN_ENUMERATION_PASSES: std::sync::Mutex<Option<BTreeMap<PathBuf, u32>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn record_origin_enumeration_pass(project_root: &Path) {
+    *ORIGIN_ENUMERATION_PASSES
+        .lock()
+        .expect("origin enumeration counter lock")
+        .get_or_insert_with(BTreeMap::new)
+        .entry(project_root.to_path_buf())
+        .or_insert(0) += 1;
+}
+
+/// Passes recorded for `project_root` since the process started.
+#[cfg(test)]
+pub fn origin_enumeration_passes(project_root: &Path) -> u32 {
+    ORIGIN_ENUMERATION_PASSES
+        .lock()
+        .expect("origin enumeration counter lock")
+        .as_ref()
+        .and_then(|map| map.get(project_root).copied())
+        .unwrap_or(0)
+}
+
 /// Take the hook only when it was armed for `replacement_run_id`.
 #[cfg(test)]
 fn take_pending_reconcile_after_open_hook(
@@ -190,6 +293,8 @@ fn take_pending_reconcile_after_open_hook(
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[must_use = "a recovery-claim resolution states its own observability; dropping \
+              it turns `I could not decide` back into `there is nothing here`"]
 pub enum ResolvedRecoveryClaim {
     Valid(RecoveryClaim),
     Reconstructed(RecoveryClaim),
@@ -301,8 +406,24 @@ fn recovery_claim_has_complete_plan(claim: &RecoveryClaim) -> bool {
         && claim.run_options.is_some()
 }
 
+/// Read the daemon-owned host auth material.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — EVERY failure of this function is an
+/// observation failure, never a statement about any claim, so it is reported as
+/// one. `Path::exists()` was the entry point's own instance of the class: it
+/// answers `false` for "the file is not there" AND for "I could not stat it",
+/// and the `false` branch calls [`crate::auth::load_or_generate`], which mints
+/// and WRITES a fresh token — invalidating every `authority_tag` on the host.
+/// `try_exists` keeps the missing-file case (first boot legitimately generates)
+/// and turns an unreadable one into a refusal.
 fn authority_key(home: &Home) -> Result<Vec<u8>, RecoveryClaimError> {
-    if !home.auth_token().exists() {
+    #[cfg(test)]
+    authority_key_fault(home)?;
+    if !home
+        .auth_token()
+        .try_exists()
+        .map_err(RecoveryClaimError::Io)?
+    {
         crate::auth::load_or_generate(home).map_err(|_| RecoveryClaimError::CorruptClaim)?;
     }
     #[cfg(unix)]
@@ -363,12 +484,43 @@ fn authority_tag(home: &Home, claim: &RecoveryClaim) -> Result<String, RecoveryC
     Ok(mac.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> bool {
-    let (Some(actual), Ok(expected)) = (claim.authority_tag.as_deref(), authority_tag(home, claim))
-    else {
-        return false;
+/// Is this claim's `authority_tag` one this daemon minted?
+///
+/// orgasmic:TASK-2QK4P.1.1.1 F1(a) — THE ROUND-FOUR DEFECT, and the shape the
+/// whole task is about. This returned `bool`, and `authority_tag` is fallible:
+/// a key-file read failure arrived at every caller as "not authentic". The two
+/// callers concluded opposite, both wrong, things from that:
+///
+/// - [`index_recovery_origins_in_session`] `continue`d, DROPPING the link, and
+///   the enumerator still labelled the set `Complete` — so a transient failure
+///   while indexing one of two authenticated links let the resolver return
+///   `Valid` on the survivor. An observation failure became ABSENCE.
+/// - [`verify_committed_claim_against_session`] and [`load_recovery_claim`]
+///   read it as invalid evidence and QUARANTINED a live rescue's claim. An
+///   observation failure became INVALID EVIDENCE.
+///
+/// A claim carrying no tag at all, or one whose recomputed tag differs, is a
+/// verified negative and still returns [`ClaimEvidence::Invalid`].
+fn claim_has_valid_authority(home: &Home, claim: &RecoveryClaim) -> ClaimEvidence {
+    let Some(actual) = claim.authority_tag.as_deref() else {
+        return ClaimEvidence::Invalid;
     };
-    actual.as_bytes().ct_eq(expected.as_bytes()).into()
+    let key = match authority_key(home) {
+        Ok(key) => key,
+        Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::AuthorityKeyUnreadable),
+    };
+    // A claim that cannot be canonicalized cannot be the value this daemon
+    // minted, because minting serializes it — so this is a decided negative
+    // about the claim, not a failed observation. `serde_json` cannot in fact
+    // fail on this shape; the arm exists so the classification is stated.
+    let Ok(payload) = authority_payload(claim) else {
+        return ClaimEvidence::Invalid;
+    };
+    let expected: String = hmac_sha256(&key, &payload)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    ClaimEvidence::verified(actual.as_bytes().ct_eq(expected.as_bytes()).into())
 }
 
 #[cfg(any(test, not(unix)))]
@@ -623,8 +775,20 @@ impl SessionDirectory {
         // the retained directory authority resolves to `/private/var/...`.
         // Canonicalize only the parent for membership; the actual file is
         // still opened relative to the retained directory fd with O_NOFOLLOW.
-        if parent.canonicalize().map_err(RecoveryClaimError::Io)? != self.canonical_path {
-            return Err(RecoveryClaimError::CorruptClaim);
+        // orgasmic:TASK-2QK4P.1.1.1 — the two failures here are different facts.
+        // A parent that RESOLVES ELSEWHERE is decided: the path is not a member.
+        // A canonicalize that FAILS for any reason other than `NotFound` decided
+        // nothing, and its `io` error is preserved so `session_read_evidence`
+        // can tell them apart instead of collapsing both into "not a member".
+        let resolved_parent = match parent.canonicalize() {
+            Ok(resolved) => resolved,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Err(RecoveryClaimError::ForeignSessionPath)
+            }
+            Err(err) => return Err(RecoveryClaimError::Io(err)),
+        };
+        if resolved_parent != self.canonical_path {
+            return Err(RecoveryClaimError::ForeignSessionPath);
         }
         let name = path
             .file_name()
@@ -712,7 +876,8 @@ impl SessionDirectory {
         let file = unsafe { File::from_raw_fd(fd) };
         let metadata = file.metadata().map_err(RecoveryClaimError::Io)?;
         if !metadata.is_file() {
-            return Err(RecoveryClaimError::CorruptClaim);
+            // Decided: the name exists and is not a regular file.
+            return Err(RecoveryClaimError::ForeignSessionPath);
         }
         use std::os::unix::fs::MetadataExt;
         Ok(SessionFile {
@@ -804,8 +969,15 @@ fn reconcile_stale_claim_temp(
         return Ok(());
     };
     let final_name = claim_file_name(origin_run_id)?;
-    if dir.read_regular(&final_name).is_ok() {
-        return Ok(());
+    // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — `is_ok()` here meant "a real
+    // claim already exists, leave the temps alone", and its `false` also meant
+    // "I could not read it". The `false` path can RENAME a temp onto that exact
+    // name, so an unreadable final claim would have been overwritten by a
+    // crash-interrupted one.
+    match dir.read_regular(&final_name) {
+        Ok(_) => return Ok(()),
+        Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
     }
     let prefix = format!("{final_name}.tmp.");
     let mut valid = Vec::new();
@@ -814,17 +986,38 @@ fn reconcile_stale_claim_temp(
         .into_iter()
         .filter(|name| name.starts_with(&prefix))
     {
-        let parsed = dir
-            .read_regular(&name)
-            .ok()
+        // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — the `else` arm below DELETES,
+        // so a predicate that could not look may not reach it. The authority
+        // check is the fallible one: an unreadable key file used to answer
+        // `false` here and remove a crash-interrupted temp claim that the very
+        // next retry would have promoted to the real one.
+        let raw = match dir.read_regular(&name) {
+            Ok(raw) => Some(raw),
+            // The entry went away between `names()` and here; there is nothing
+            // left to delete and nothing to promote.
+            Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                continue
+            }
+            Err(err) => return Err(err),
+        };
+        let parsed = raw
             .and_then(|raw| serde_json::from_str::<RecoveryClaim>(&raw).ok())
             .filter(|claim| {
                 claim.project_id == project_id
                     && claim.origin_run_id == origin_run_id
                     && recovery_claim_has_complete_plan(claim)
-                    && claim_has_valid_authority(home, claim)
             });
-        if parsed.is_some() {
+        let authentic = match parsed
+            .as_ref()
+            .map(|claim| claim_has_valid_authority(home, claim))
+        {
+            None | Some(ClaimEvidence::Invalid) => false,
+            Some(ClaimEvidence::Valid) => true,
+            Some(ClaimEvidence::Unobserved(reason)) => {
+                return Err(RecoveryClaimError::Unobserved(reason))
+            }
+        };
+        if authentic {
             valid.push(name);
         } else {
             let _ = dir.remove(&name);
@@ -959,10 +1152,18 @@ pub fn load_recovery_claim(
     if claim.project_id != project_id || claim.origin_run_id != origin_run_id {
         return Err(RecoveryClaimError::CorruptClaim);
     }
-    if !recovery_claim_has_complete_plan(&claim) || !claim_has_valid_authority(home, &claim) {
+    if !recovery_claim_has_complete_plan(&claim) {
         return Err(RecoveryClaimError::CorruptClaim);
     }
-    Ok(Some(claim))
+    // orgasmic:TASK-2QK4P.1.1.1 F1(b) — `CorruptClaim` here is what the resolver
+    // QUARANTINES on, so an unreadable auth key must not spell itself that way:
+    // it would rename a live rescue's claim on a transient failure and the
+    // handler would then mint a competitor beside the running replacement.
+    match claim_has_valid_authority(home, &claim) {
+        ClaimEvidence::Valid => Ok(Some(claim)),
+        ClaimEvidence::Invalid => Err(RecoveryClaimError::CorruptClaim),
+        ClaimEvidence::Unobserved(reason) => Err(RecoveryClaimError::Unobserved(reason)),
+    }
 }
 
 /// Routing guard for daemon boot reattach. A pending recovery owns the exact
@@ -973,64 +1174,125 @@ pub fn load_recovery_claim(
 ///
 /// This is only a routing hint: recovery authorization still comes from the
 /// full handle-bound claim/session verification under the per-origin lock.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — a hint, but a fail-OPEN one, so it
+/// is in the enumeration. Every failure here used to answer `false` = "no
+/// pending recovery owns this session", and the caller then let boot's generic
+/// reattach insert a `Reattach` event into a prefix a pending claim owns. A
+/// [`ClaimEvidence::Unobserved`] answer must be treated as ownership by the
+/// caller: skipping a reattach is retried on the next boot, while writing into
+/// the reserved prefix is not undoable.
 pub fn pending_recovery_claim_owns_session(
     home: &Home,
     project_root: &Path,
     project_id: &str,
     session_path: &Path,
-) -> bool {
+) -> ClaimEvidence {
     #[cfg(unix)]
     {
-        let Ok(session_dir) = SessionDirectory::open(project_root) else {
-            return false;
-        };
-        let Ok(candidate_name) = session_dir.name_for_path(session_path) else {
-            return false;
-        };
-        let Ok(Some(dir)) = ClaimDirectory::open(home, project_id, false) else {
-            return false;
-        };
-        let Ok(names) = dir.names() else {
-            return false;
-        };
-        names.into_iter().any(|name| {
-            if !name.ends_with(".json") {
-                return false;
+        let session_dir = match SessionDirectory::open(project_root) {
+            Ok(dir) => dir,
+            Err(err) => {
+                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
             }
-            dir.read_regular(&name)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<RecoveryClaim>(&raw).ok())
-                .is_some_and(|claim| {
-                    claim.status == RecoveryClaimStatus::Pending
-                        && claim.project_id == project_id
-                        && claim_has_valid_authority(home, &claim)
-                        && session_dir
-                            .name_for_path(&claim.replacement_session_path)
-                            .is_ok_and(|name| name == candidate_name)
-                        && recovery_claim_has_complete_plan(&claim)
-                })
-        })
+        };
+        let candidate_name = match session_dir.name_for_path(session_path) {
+            Ok(name) => name,
+            // The session being reattached is not a member of this project's
+            // sessions directory, so no claim of this project can own it.
+            Err(RecoveryClaimError::ForeignSessionPath)
+            | Err(RecoveryClaimError::InvalidIdentifier) => return ClaimEvidence::Invalid,
+            Err(err) => {
+                return session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable)
+            }
+        };
+        let dir = match ClaimDirectory::open(home, project_id, false) {
+            Ok(Some(dir)) => dir,
+            // No claim directory at all is a decided absence.
+            Ok(None) => return ClaimEvidence::Invalid,
+            Err(err) => {
+                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+            }
+        };
+        let names = match dir.names() {
+            Ok(names) => names,
+            Err(err) => {
+                return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+            }
+        };
+        for name in names {
+            if !name.ends_with(".json") {
+                continue;
+            }
+            let raw = match dir.read_regular(&name) {
+                Ok(raw) => raw,
+                Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                    continue
+                }
+                Err(err) => {
+                    return session_read_evidence(&err, UnobservedSession::SessionUnreadable)
+                }
+            };
+            let Ok(claim) = serde_json::from_str::<RecoveryClaim>(&raw) else {
+                continue;
+            };
+            if claim.status != RecoveryClaimStatus::Pending
+                || claim.project_id != project_id
+                || !recovery_claim_has_complete_plan(&claim)
+            {
+                continue;
+            }
+            match claim_has_valid_authority(home, &claim) {
+                ClaimEvidence::Valid => {}
+                ClaimEvidence::Invalid => continue,
+                unobserved @ ClaimEvidence::Unobserved(_) => return unobserved,
+            }
+            match session_dir.name_for_path(&claim.replacement_session_path) {
+                Ok(name) if name == candidate_name => return ClaimEvidence::Valid,
+                Ok(_)
+                | Err(RecoveryClaimError::ForeignSessionPath)
+                | Err(RecoveryClaimError::InvalidIdentifier) => continue,
+                Err(err) => {
+                    return session_read_evidence(&err, UnobservedSession::SessionPathUnresolvable)
+                }
+            }
+        }
+        ClaimEvidence::Invalid
     }
     #[cfg(not(unix))]
     {
         let _ = project_root;
         let root = recovery_claims_root(home).join(project_id);
-        std::fs::read_dir(root)
-            .ok()
-            .into_iter()
-            .flatten()
-            .flatten()
-            .any(|entry| {
-                std::fs::read_to_string(entry.path())
-                    .ok()
-                    .and_then(|raw| serde_json::from_str::<RecoveryClaim>(&raw).ok())
-                    .is_some_and(|claim| {
-                        claim.status == RecoveryClaimStatus::Pending
-                            && claim.project_id == project_id
-                            && claim.replacement_session_path == session_path
-                            && recovery_claim_has_complete_plan(&claim)
-                    })
-            })
+        let entries = match std::fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return ClaimEvidence::Invalid
+            }
+            Err(_) => {
+                return ClaimEvidence::Unobserved(UnobservedSession::SessionDirectoryUnavailable)
+            }
+        };
+        for entry in entries {
+            let Ok(entry) = entry else {
+                return ClaimEvidence::Unobserved(UnobservedSession::SessionDirectoryUnavailable);
+            };
+            let raw = match std::fs::read_to_string(entry.path()) {
+                Ok(raw) => raw,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return ClaimEvidence::Unobserved(UnobservedSession::SessionUnreadable),
+            };
+            let Ok(claim) = serde_json::from_str::<RecoveryClaim>(&raw) else {
+                continue;
+            };
+            if claim.status == RecoveryClaimStatus::Pending
+                && claim.project_id == project_id
+                && claim.replacement_session_path == session_path
+                && recovery_claim_has_complete_plan(&claim)
+            {
+                return ClaimEvidence::Valid;
+            }
+        }
+        ClaimEvidence::Invalid
     }
 }
 
@@ -1130,6 +1392,102 @@ pub enum UnobservedSession {
     /// A `RecoveryOrigin` named an origin session that could not be read, so
     /// the link can neither be admitted nor dismissed.
     OriginSessionUnreadable,
+    /// The daemon's host auth material could not be read, so no `authority_tag`
+    /// can be recomputed and NOTHING is known about any claim's authenticity.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1 F1(a) — this is the round-four instance of the
+    /// class. `authority_tag` is fallible and its failure used to arrive at
+    /// every caller as the boolean `false`, which reads as "not authentic".
+    AuthorityKeyUnreadable,
+    /// A path naming a session file could not be resolved against the pinned
+    /// sessions directory because the resolution itself failed — not because
+    /// the path resolved elsewhere, which is a decidable answer.
+    SessionPathUnresolvable,
+}
+
+/// What one predicate on the recovery-authority path actually established.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — THE GENERATING SHAPE OF FOUR REVIEW
+/// ROUNDS WAS A `bool` THAT MEANT BOTH "I VERIFIED AND IT IS FALSE" AND "I
+/// COULD NOT CHECK". Rounds one through three each closed one instance:
+///
+/// ```text
+/// round 1  an EMPTY catalog index            read as proof of non-contradiction
+/// round 2  a ONE-ELEMENT catalog index       read as proof of uniqueness
+/// round 3  a FAILED per-file scan            read as an empty-but-complete file
+/// round 4  a FAILED AUTHORITY VERIFICATION   read as "not authentic" / "invalid"
+/// ```
+///
+/// Round three made the collapse unrepresentable in [`IndexedRecoveryOrigins`]
+/// and [`AuthoritativeOriginLinks`] — and then handed those types a `bool`
+/// computed by [`claim_has_valid_authority`], which had the same defect. So
+/// this type is not another point fix: it is the return type every fallible
+/// predicate on the path now shares, and the two collapses it closes fail in
+/// OPPOSITE directions, which is why one type could not be enough at one site.
+///
+/// - [`Self::Invalid`] is a VERIFIED negative. A caller may destroy evidence on
+///   it: quarantine the claim, drop the link, mint a replacement.
+/// - [`Self::Unobserved`] is a statement about the OBSERVER. A caller must fail
+///   closed and retry — never act, and never quarantine
+///   (orgasmic:TASK-2QK4P.1.1 ruling 1, still binding).
+///
+/// The one question to ask of every predicate that returns this: *what does a
+/// caller conclude from the negative, and is that conclusion still right when
+/// the reason was "I could not look"?*
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "a fallible predicate states its own observability; dropping it \
+              turns `I could not check` back into `I checked and it is false`"]
+pub enum ClaimEvidence {
+    /// Observed, and the property holds.
+    Valid,
+    /// Observed, and the property does not hold. The evidence itself is bad.
+    Invalid,
+    /// NOT observed. Deliberately carries no boolean to mistake for an answer.
+    Unobserved(UnobservedSession),
+}
+
+impl ClaimEvidence {
+    /// `Valid` when `held`, `Invalid` otherwise — for the parts of a predicate
+    /// that are pure comparisons over already-observed bytes.
+    fn verified(held: bool) -> Self {
+        if held {
+            Self::Valid
+        } else {
+            Self::Invalid
+        }
+    }
+}
+
+/// Classify a session-read failure as bad evidence or as a failed observation.
+///
+/// orgasmic:TASK-2QK4P.1.1.1 — the split is what keeps `Unobserved` honest in
+/// BOTH directions. `NotFound` is a verified fact: the file a claim names is
+/// not there, and refusing to act on that would freeze every genuinely dead
+/// rescue. Every other `io` failure — `EACCES`, `EIO`, `EMFILE`, a mid-read
+/// interruption — is the observer failing, and so is a parse failure, because
+/// an unreadable file is not an empty one. `InvalidIdentifier` and
+/// `CorruptClaim` from the path-membership check are statements about the
+/// PATH the claim carries, which is content the claim itself supplied.
+fn session_read_evidence(err: &RecoveryClaimError, reason: UnobservedSession) -> ClaimEvidence {
+    match err {
+        RecoveryClaimError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+            ClaimEvidence::Invalid
+        }
+        RecoveryClaimError::Io(_) => ClaimEvidence::Unobserved(reason),
+        // The strict whole-file envelope parse rejects a file it cannot read as
+        // envelopes, and a swapped device/inode means the bytes just read
+        // belong to a different file. Neither states that the file lacks the
+        // link, so both are the observer failing.
+        RecoveryClaimError::CorruptClaim => ClaimEvidence::Unobserved(reason),
+        RecoveryClaimError::Unobserved(reason) => ClaimEvidence::Unobserved(*reason),
+        // The path the claim carries does not name a regular file directly
+        // inside this project's pinned sessions directory. That is decided, and
+        // it is decided about content the claim supplied.
+        RecoveryClaimError::ForeignSessionPath | RecoveryClaimError::InvalidIdentifier => {
+            ClaimEvidence::Invalid
+        }
+        _ => ClaimEvidence::Invalid,
+    }
 }
 
 /// Result of one origin-index pass over a session file.
@@ -1296,9 +1654,23 @@ pub fn index_recovery_origins_in_session(
             };
             if claim_snapshot.status != RecoveryClaimStatus::Committed
                 || !recovery_claim_has_complete_plan(&claim_snapshot)
-                || !claim_has_valid_authority(home, &claim_snapshot)
             {
                 continue;
+            }
+            // orgasmic:TASK-2QK4P.1.1.1 F1(a) — a `continue` on an UNOBSERVED
+            // authority check drops a link that may be a second authority, out
+            // of a set this function then labels `Complete`. That is exactly
+            // the state rounds one through three exist to prevent, reached
+            // through the authenticator instead of through the index.
+            match claim_has_valid_authority(home, &claim_snapshot) {
+                ClaimEvidence::Valid => {}
+                ClaimEvidence::Invalid => continue,
+                ClaimEvidence::Unobserved(reason) => {
+                    return IndexedRecoveryOrigins::Unobserved {
+                        reason,
+                        bytes_inspected,
+                    }
+                }
             }
             if envelope.run_id != replacement_run_id {
                 continue;
@@ -1312,11 +1684,37 @@ pub fn index_recovery_origins_in_session(
             if project_id != containing_project_id {
                 continue;
             }
+            // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — `Result::ok()` on BOTH
+            // sides was the same collapse a third time, and it failed in both
+            // directions at once: one side erroring dropped a possibly-second
+            // authority out of a `Complete` set, and BOTH sides erroring
+            // compared `None == None` and ADMITTED a link whose file identity
+            // had not been established. Neither side may be answered by a
+            // failure.
             #[cfg(unix)]
-            if session_dir.name_for_path(&replacement_session_path).ok()
-                != session_dir.name_for_path(session_path).ok()
             {
-                continue;
+                let indexed_name = match session_dir.name_for_path(session_path) {
+                    Ok(name) => name,
+                    Err(_) => {
+                        return IndexedRecoveryOrigins::Unobserved {
+                            reason: UnobservedSession::SessionPathUnresolvable,
+                            bytes_inspected,
+                        }
+                    }
+                };
+                match session_dir.name_for_path(&replacement_session_path) {
+                    Ok(name) if name == indexed_name => {}
+                    // Decided: the link names a path that is not this file.
+                    Ok(_)
+                    | Err(RecoveryClaimError::ForeignSessionPath)
+                    | Err(RecoveryClaimError::InvalidIdentifier) => continue,
+                    Err(_) => {
+                        return IndexedRecoveryOrigins::Unobserved {
+                            reason: UnobservedSession::SessionPathUnresolvable,
+                            bytes_inspected,
+                        }
+                    }
+                }
             }
             #[cfg(not(unix))]
             if replacement_session_path != session_path {
@@ -1487,6 +1885,8 @@ fn enumerate_recovery_origin_links(
     project_id: &str,
 ) -> (AuthoritativeOriginLinks, OriginEnumerationCost) {
     let dir = project_sessions_dir(project_root);
+    #[cfg(test)]
+    record_origin_enumeration_pass(project_root);
     let mut links = Vec::new();
     let mut cost = OriginEnumerationCost::default();
     let entries = match std::fs::read_dir(&dir) {
@@ -1636,10 +2036,19 @@ pub fn resolve_authoritative_recovery_claim(
                     matching_origin_links(authoritative, project_root, project_id, origin_run_id);
                 let uniquely_confirmed =
                     matches!(matching.as_slice(), [only] if only.claim == claim);
-                if uniquely_confirmed
-                    && verify_committed_claim_against_session(home, project_root, &claim)
-                {
-                    return Ok(ResolvedRecoveryClaim::Valid(claim));
+                if uniquely_confirmed {
+                    // orgasmic:TASK-2QK4P.1.1.1 F1(b) — the enumeration above
+                    // completed, and this read can still fail. `false` used to
+                    // fall through to the quarantine below, which destroys a
+                    // live rescue's idempotency on an observation failure and
+                    // lets `POST /recover` mint a competitor.
+                    match verify_committed_claim_against_session(home, project_root, &claim) {
+                        ClaimEvidence::Valid => return Ok(ResolvedRecoveryClaim::Valid(claim)),
+                        ClaimEvidence::Unobserved(reason) => {
+                            return Ok(ResolvedRecoveryClaim::Unobserved(reason))
+                        }
+                        ClaimEvidence::Invalid => {}
+                    }
                 }
                 quarantine_invalid_claim(home, project_id, origin_run_id)?;
                 return reconstruct_or_quarantine(
@@ -1658,6 +2067,12 @@ pub fn resolve_authoritative_recovery_claim(
         Err(RecoveryClaimError::CorruptClaim) => {
             quarantine_invalid_claim(home, project_id, origin_run_id)?;
             reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, authoritative)
+        }
+        // orgasmic:TASK-2QK4P.1.1.1 acceptance 2 — the load could not decide
+        // whether the claim on disk is authentic. That is not `CorruptClaim`
+        // and must not reach the quarantine arm above.
+        Err(RecoveryClaimError::Unobserved(reason)) => {
+            Ok(ResolvedRecoveryClaim::Unobserved(reason))
         }
         Err(err) => Err(err),
     }
@@ -1685,18 +2100,36 @@ fn reconstruct_or_quarantine(
     }
     if let [link] = matching.as_slice() {
         let reconstructed = reconstruct_claim_from_origin(link);
-        if !claim_has_valid_authority(home, &reconstructed)
-            || !verify_committed_claim_against_session(home, project_root, &reconstructed)
-        {
-            return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
+        // orgasmic:TASK-2QK4P.1.1.1 F1(b) — both checks are fallible, and
+        // `InvalidQuarantined` on an unobserved one is the ruling from round
+        // three violated one call deeper: it suppresses the reconstruction AND
+        // reports a decided negative the caller may destroy evidence on.
+        for evidence in [
+            claim_has_valid_authority(home, &reconstructed),
+            verify_committed_claim_against_session(home, project_root, &reconstructed),
+        ] {
+            match evidence {
+                ClaimEvidence::Valid => {}
+                ClaimEvidence::Invalid => return Ok(ResolvedRecoveryClaim::InvalidQuarantined),
+                ClaimEvidence::Unobserved(reason) => {
+                    return Ok(ResolvedRecoveryClaim::Unobserved(reason))
+                }
+            }
         }
         write_claim_atomic_or_reconcile(home, &reconstructed)?;
         return Ok(ResolvedRecoveryClaim::Reconstructed(reconstructed));
     }
-    if load_recovery_claim(home, project_id, origin_run_id)?.is_some() {
-        return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
+    match load_recovery_claim(home, project_id, origin_run_id) {
+        Ok(Some(_)) => Ok(ResolvedRecoveryClaim::InvalidQuarantined),
+        Ok(None) => Ok(ResolvedRecoveryClaim::Missing),
+        // `Missing` is permission to MINT. It may not be reached by a load that
+        // could not say whether a claim is there.
+        Err(RecoveryClaimError::Unobserved(reason)) => {
+            Ok(ResolvedRecoveryClaim::Unobserved(reason))
+        }
+        Err(RecoveryClaimError::CorruptClaim) => Ok(ResolvedRecoveryClaim::InvalidQuarantined),
+        Err(err) => Err(err),
     }
-    Ok(ResolvedRecoveryClaim::Missing)
 }
 
 pub fn load_committed_recovery_claim(
@@ -2154,53 +2587,80 @@ fn recovery_claim_snapshot_in_session(
     })
 }
 
+/// Does this committed claim still match the replacement session it names?
+///
+/// orgasmic:TASK-2QK4P.1.1.1 F1(b) — THE OTHER ROUND-FOUR DEFECT, and it fails
+/// in the OPPOSITE direction to [`claim_has_valid_authority`]'s use in the
+/// indexer, which is why one type change at one site could not catch both. This
+/// returned `bool`, and it mapped the replacement-session open, the origin
+/// session open, every read and every parse failure to `false`. The resolver
+/// reads `false` as INVALID EVIDENCE: it quarantines the claim, can then report
+/// `Missing`, and `POST /runs/:id/recover` reads `Missing` as permission to
+/// plan a NEW replacement. One transient read failure therefore destroyed a
+/// valid live rescue AND minted a competitor beside it.
+///
+/// `NotFound` stays [`ClaimEvidence::Invalid`]: a replacement session that is
+/// genuinely gone is a decided fact, and refusing to act on it would freeze
+/// every dead rescue behind a permanent 503.
 pub fn verify_committed_claim_against_session(
     home: &Home,
     project_root: &Path,
     claim: &RecoveryClaim,
-) -> bool {
-    if claim.status != RecoveryClaimStatus::Committed
-        || !recovery_claim_has_complete_plan(claim)
-        || !claim_has_valid_authority(home, claim)
-    {
-        return false;
+) -> ClaimEvidence {
+    if claim.status != RecoveryClaimStatus::Committed || !recovery_claim_has_complete_plan(claim) {
+        return ClaimEvidence::Invalid;
+    }
+    match claim_has_valid_authority(home, claim) {
+        ClaimEvidence::Valid => {}
+        other => return other,
     }
     #[cfg(unix)]
-    let Ok(session_dir) = SessionDirectory::open(project_root) else {
-        return false;
+    let session_dir = match SessionDirectory::open(project_root) {
+        Ok(dir) => dir,
+        Err(err) => {
+            return session_read_evidence(&err, UnobservedSession::SessionDirectoryUnavailable)
+        }
     };
     #[cfg(unix)]
-    let Ok(envelopes) = session_dir.read_path(&claim.replacement_session_path) else {
-        return false;
+    let envelopes = match session_dir.read_path(&claim.replacement_session_path) {
+        Ok(envelopes) => envelopes,
+        Err(err) => return session_read_evidence(&err, UnobservedSession::SessionUnreadable),
     };
     #[cfg(not(unix))]
-    let Ok(envelopes) = orgasmic_core::session::read_session_file(&claim.replacement_session_path) else {
-        return false;
+    let envelopes = match orgasmic_core::session::read_session_file(&claim.replacement_session_path)
+    {
+        Ok(envelopes) => envelopes,
+        Err(err) => {
+            return session_read_evidence(
+                &RecoveryClaimError::Io(std::io::Error::other(err.to_string())),
+                UnobservedSession::SessionUnreadable,
+            )
+        }
     };
     let Some(first) = envelopes.first() else {
-        return false;
+        return ClaimEvidence::Invalid;
     };
     if first.run_id != claim.replacement_run_id {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if first.runtime_id != claim.replacement_runtime_id {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if claim
         .boot_id
         .as_deref()
         .is_some_and(|boot| first.boot_id != boot)
     {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     let Some(meta_project) = session_run_meta_project(&envelopes) else {
-        return false;
+        return ClaimEvidence::Invalid;
     };
     if meta_project != claim.project_id {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if !session_has_acquire(&envelopes) {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     let Some((replacement_run_id, replacement_session_path, action)) = recovery_origin_in_session(
         &envelopes,
@@ -2208,13 +2668,13 @@ pub fn verify_committed_claim_against_session(
         &claim.origin_run_id,
         &claim.request_id,
     ) else {
-        return false;
+        return ClaimEvidence::Invalid;
     };
     if claim.replacement_run_id != replacement_run_id
         || claim.replacement_session_path != replacement_session_path
         || claim.action.as_deref() != Some(action.as_str())
     {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     let origin_path_ok = envelopes.iter().rev().find_map(|envelope| {
         if envelope.kind != SessionEventKind::Lifecycle {
@@ -2230,20 +2690,20 @@ pub fn verify_committed_claim_against_session(
         }
     });
     let Some((origin_session_path, link_target)) = origin_path_ok else {
-        return false;
+        return ClaimEvidence::Invalid;
     };
     if claim.origin_session_path.as_ref() != Some(&origin_session_path) {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if claim
         .target
         .as_deref()
         .is_some_and(|target| Some(target) != link_target.as_deref())
     {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if !claim_immutable_plan_matches_session(claim, &envelopes) {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     if recovery_claim_snapshot_in_session(
         &envelopes,
@@ -2254,23 +2714,37 @@ pub fn verify_committed_claim_against_session(
     .as_ref()
         != Some(claim)
     {
-        return false;
+        return ClaimEvidence::Invalid;
     }
     let Some(origin_path) = claim.origin_session_path.as_ref() else {
-        return false;
+        return ClaimEvidence::Invalid;
     };
+    // orgasmic:TASK-2QK4P.1.1.1 F1(b) — the ORIGIN read is the second collapse
+    // in this function and the one the resolver reaches after a cached complete
+    // enumeration, so it is the one a repro can hit without touching the
+    // enumeration at all.
     #[cfg(unix)]
-    let Ok(origin_envelopes) = session_dir.read_path(origin_path) else {
-        return false;
+    let origin_envelopes = match session_dir.read_path(origin_path) {
+        Ok(envelopes) => envelopes,
+        Err(err) => return session_read_evidence(&err, UnobservedSession::OriginSessionUnreadable),
     };
     #[cfg(not(unix))]
-    let Ok(origin_envelopes) = orgasmic_core::session::read_session_file(origin_path) else {
-        return false;
+    let origin_envelopes = match orgasmic_core::session::read_session_file(origin_path) {
+        Ok(envelopes) => envelopes,
+        Err(err) => {
+            return session_read_evidence(
+                &RecoveryClaimError::Io(std::io::Error::other(err.to_string())),
+                UnobservedSession::OriginSessionUnreadable,
+            )
+        }
     };
-    origin_envelopes
-        .first()
-        .is_some_and(|origin| origin.run_id == claim.origin_run_id)
-        && session_run_meta_project(&origin_envelopes).as_deref() == Some(claim.project_id.as_str())
+    ClaimEvidence::verified(
+        origin_envelopes
+            .first()
+            .is_some_and(|origin| origin.run_id == claim.origin_run_id)
+            && session_run_meta_project(&origin_envelopes).as_deref()
+                == Some(claim.project_id.as_str()),
+    )
 }
 
 fn claim_planned_boot_id(claim: &RecoveryClaim) -> &str {
@@ -2590,6 +3064,16 @@ pub enum RecoveryClaimError {
     CorruptClaim,
     MissingClaim,
     DeadPlannedHandle,
+    /// The path does not name a regular file directly inside the project's
+    /// pinned sessions directory. Split out of [`Self::CorruptClaim`] by
+    /// orgasmic:TASK-2QK4P.1.1.1 because it is a DECIDED negative about a path
+    /// the claim supplied, while `CorruptClaim` on a session read means the
+    /// bytes could not be understood — which is the observer failing.
+    ForeignSessionPath,
+    /// A predicate could not observe what it was asked about. Distinct from
+    /// [`Self::CorruptClaim`] so no caller can quarantine on it
+    /// (orgasmic:TASK-2QK4P.1.1.1 acceptance 2).
+    Unobserved(UnobservedSession),
     Io(std::io::Error),
 }
 
@@ -3044,11 +3528,10 @@ mod tests {
             "an invalidated record must leave the production collector silent: {blind:?}"
         );
 
-        assert!(verify_committed_claim_against_session(
-            &home,
-            &project_root,
-            &committed
-        ));
+        assert_eq!(
+            verify_committed_claim_against_session(&home, &project_root, &committed),
+            ClaimEvidence::Valid
+        );
         let resolved = resolve_authoritative_recovery_claim(
             &home,
             &project_root,
@@ -3149,11 +3632,10 @@ mod tests {
         // The loaded claim verifies against its OWN replacement transcript,
         // which is precisely why an index that has not seen the other one must
         // not be enough. The other replacement is equally authenticated.
-        assert!(verify_committed_claim_against_session(
-            &home,
-            &project_root,
-            &committed
-        ));
+        assert_eq!(
+            verify_committed_claim_against_session(&home, &project_root, &committed),
+            ClaimEvidence::Valid
+        );
 
         TwoReplacements {
             home,
@@ -3334,11 +3816,10 @@ mod tests {
             run_options: None,
             spawn_started: false,
         };
-        assert!(!verify_committed_claim_against_session(
-            &home,
-            &project_root,
-            &claim
-        ));
+        assert_eq!(
+            verify_committed_claim_against_session(&home, &project_root, &claim),
+            ClaimEvidence::Invalid
+        );
     }
 
     #[test]
@@ -3854,11 +4335,10 @@ mod tests {
             run_options: None,
             spawn_started: false,
         };
-        assert!(!verify_committed_claim_against_session(
-            &home,
-            &project_root,
-            &claim
-        ));
+        assert_eq!(
+            verify_committed_claim_against_session(&home, &project_root, &claim),
+            ClaimEvidence::Invalid
+        );
     }
 
     #[cfg(unix)]
@@ -4375,11 +4855,10 @@ mod tests {
         // The claim verifies against its own transcript — `verify` reads the
         // whole file — so the ONLY thing that could refuse it is the bounded
         // enumeration failing to find the link it just verified.
-        assert!(verify_committed_claim_against_session(
-            &home,
-            &project_root,
-            &committed
-        ));
+        assert_eq!(
+            verify_committed_claim_against_session(&home, &project_root, &committed),
+            ClaimEvidence::Valid
+        );
 
         let resolved = resolve_authoritative_recovery_claim(
             &home,
@@ -4556,29 +5035,493 @@ mod tests {
         );
     }
 
-    /// orgasmic:TASK-2QK4P.1.1 acceptance 1 — THE PIN.
+    /// One healthy committed claim with its replacement and origin sessions on
+    /// disk, ready to resolve `Valid`.
+    fn seed_one_healthy_claim(root: &Path, origin_run_id: &str) -> (Home, PathBuf, RecoveryClaim) {
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            origin_run_id,
+            "req-healthy",
+            "boot-healthy",
+            false,
+        );
+        write_origin_session(&spec, "rt-healthy-origin", "boot-dead");
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let committed = commit_recovery_claim(
+            &home,
+            "orgasmic",
+            origin_run_id,
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-healthy".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: Some("stable draft".into()),
+            },
+        )
+        .unwrap();
+        write_committed_replacement(&committed);
+        (home, project_root, committed)
+    }
+
+    /// Make `path` unreadable and hand back a guard that restores it, so a
+    /// failed assertion cannot leave a 000-mode file inside a `TempDir` that
+    /// then fails to clean up.
+    struct OwnedRestore(PathBuf);
+
+    impl OwnedRestore {
+        fn deny(path: PathBuf) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for OwnedRestore {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = if self.0.is_dir() { 0o700 } else { 0o600 };
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(mode));
+        }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1.1 F1(a) — THE ROUND-FOUR BLOCK SHIP, RUNNING.
     ///
-    /// The compiler is the primary mechanism and this test is the tripwire on
-    /// it. What actually stops a fourth round is the SHAPE:
+    /// The review derived this from the production error-collapse path and said
+    /// plainly that it built no running reproduction. This is it.
     ///
-    ///   - `IndexedRecoveryOrigins` is an enum with no `Default`, so
-    ///     `IndexedRecoveryOrigins::default()` — the exact spelling of all three
-    ///     round-three error paths — does not compile.
-    ///   - Its `Unobserved` variant carries NO links, so there is no empty
-    ///     success to return from an error path and nothing partial to reach for
-    ///     at a call site.
-    ///   - Reading `links` requires a `match`, and a `match` requires an arm for
-    ///     `Unobserved`. Ignoring the unresolved case is still possible, but only
-    ///     by typing the word — which is what makes it visible in review.
-    ///   - `#[must_use]` plus the workspace's `-D warnings` makes dropping the
-    ///     result outright a build failure.
+    /// Two daemon-HMAC-authenticated replacements exist for one origin — the
+    /// state `duplicate_authenticated_replacements_fail_closed` rules a safety
+    /// violation. Both files are readable, both scans succeed, and the
+    /// enumeration completes. What fails is ONE `authority_key` read, somewhere
+    /// inside the pass. `claim_has_valid_authority` collapsed that to `false`,
+    /// the indexer `continue`d and DROPPED that link, and
+    /// `enumerate_recovery_origin_links` still returned
+    /// `AuthoritativeOriginLinks::Complete`. The resolver then saw exactly one
+    /// link, equal to the claim it had loaded, and returned `Valid` — the exact
+    /// state rounds one through three exist to prevent, reached through the
+    /// authenticator instead of through the index.
     ///
-    /// Structure, not behaviour, is what regressed three times, so this asserts
-    /// structure. It reads only the PRODUCTION half of this file, so the
-    /// forbidden spellings quoted here cannot match themselves.
-    // orgasmic:TASK-2QK4P.1.1
+    /// The fault is swept across read positions because `read_dir` order is not
+    /// ours to choose: whichever position hides the OTHER replacement is the
+    /// dangerous one, and the claim here is about all of them.
+    ///
+    /// Injection: return `false` from `claim_has_valid_authority` on an
+    /// unreadable key. Some sweep position then returns `Valid(`.
+    // orgasmic:TASK-2QK4P.1.1.1
     #[test]
-    fn the_origin_index_result_cannot_spell_failure_as_an_empty_success() {
+    fn an_authority_key_read_failure_cannot_hide_a_second_authenticated_replacement() {
+        for nth in 1..=6u32 {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().canonicalize().unwrap();
+            let seeded = seed_two_authenticated_replacements(&root, "run-keyfault-origin");
+
+            arm_authority_key_fault(&seeded.home, nth);
+            let resolved = resolve_authoritative_recovery_claim(
+                &seeded.home,
+                &seeded.project_root,
+                "orgasmic",
+                "run-keyfault-origin",
+                &mut ProjectOriginAuthority::default(),
+            );
+            let fired = authority_key_fault_fired(&seeded.home);
+            disarm_authority_key_fault(&seeded.home);
+
+            let resolved = resolved.unwrap();
+            assert!(
+                !matches!(resolved, ResolvedRecoveryClaim::Valid(_)),
+                "a failed authority-key read at position {nth} must never confirm uniqueness — \
+                 there are TWO authenticated replacements and one of them was merely not \
+                 authenticated, got {resolved:?}"
+            );
+            if fired {
+                // The failure happened during the enumeration or the load, so
+                // nothing about this origin is decidable and the claim on disk
+                // must survive untouched.
+                assert!(
+                    matches!(
+                        resolved,
+                        ResolvedRecoveryClaim::Unobserved(
+                            UnobservedSession::AuthorityKeyUnreadable
+                        )
+                    ) || matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+                    "position {nth} fired and must answer unobserved (or fail closed on the \
+                     duplicate it did observe), got {resolved:?}"
+                );
+            }
+
+            // And with the key readable the same origin fails closed on the
+            // duplicate, which is what the dropped link was hiding.
+            let resolved = resolve_authoritative_recovery_claim(
+                &seeded.home,
+                &seeded.project_root,
+                "orgasmic",
+                "run-keyfault-origin",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .unwrap();
+            assert!(
+                matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+                "after repair the duplicate must be visible again, got {resolved:?}"
+            );
+        }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1.1 acceptance 7 — an nth authority-key read
+    /// failure against a HEALTHY claim: no `Valid`, no quarantine, then normal
+    /// resolution after repair.
+    ///
+    /// This is F1(a)'s sibling in the opposite direction. `load_recovery_claim`
+    /// recomputes the tag to accept the claim file and mapped an unreadable key
+    /// to `RecoveryClaimError::CorruptClaim` — which is the error the resolver
+    /// QUARANTINES on. One transient failure therefore renamed a live rescue's
+    /// claim, and `post_run_recover` then found no plan and minted a competitor.
+    ///
+    /// Injection: map the key-read failure back to `false`/`CorruptClaim`. Some
+    /// sweep position then quarantines a claim nothing was wrong with.
+    // orgasmic:TASK-2QK4P.1.1.1
+    #[test]
+    fn an_nth_authority_key_read_failure_never_quarantines_a_healthy_claim() {
+        let mut fired_at_least_once = false;
+        for nth in 1..=6u32 {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().canonicalize().unwrap();
+            let (home, project_root, committed) =
+                seed_one_healthy_claim(&root, "run-keyfault-healthy");
+
+            arm_authority_key_fault(&home, nth);
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-keyfault-healthy",
+                &mut ProjectOriginAuthority::default(),
+            );
+            let fired = authority_key_fault_fired(&home);
+            disarm_authority_key_fault(&home);
+            let resolved = resolved.unwrap();
+
+            if fired {
+                fired_at_least_once = true;
+                assert!(
+                    matches!(
+                        resolved,
+                        ResolvedRecoveryClaim::Unobserved(
+                            UnobservedSession::AuthorityKeyUnreadable
+                        )
+                    ),
+                    "a key read that failed at position {nth} decided nothing, got {resolved:?}"
+                );
+            } else {
+                assert!(
+                    matches!(resolved, ResolvedRecoveryClaim::Valid(_)),
+                    "position {nth} never fired, so the answer must be the healthy one, got \
+                     {resolved:?}"
+                );
+            }
+            // No quarantine and no rewrite: the claim file is byte-identical.
+            assert!(!quarantine_exists(
+                &home,
+                "orgasmic",
+                "run-keyfault-healthy"
+            ));
+            assert_eq!(
+                load_recovery_claim(&home, "orgasmic", "run-keyfault-healthy").unwrap(),
+                Some(committed.clone()),
+                "position {nth} must leave the claim exactly as it found it"
+            );
+
+            // Repair: the very same call resolves normally.
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-keyfault-healthy",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .unwrap();
+            match resolved {
+                ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+                other => panic!("after repair the rescue must resolve valid, got {other:?}"),
+            }
+        }
+        assert!(
+            fired_at_least_once,
+            "the sweep proved nothing if the injected fault never fired"
+        );
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1.1 F1(b) — THE OTHER ROUND-FOUR BLOCK SHIP,
+    /// RUNNING, and the one that fails in the opposite direction.
+    ///
+    /// The enumeration COMPLETES and is cached — `ProjectOriginAuthority`
+    /// already holds `Complete` for this project — so nothing round three built
+    /// is involved. Then the read that `verify_committed_claim_against_session`
+    /// makes fails: the replacement session in one pass, the origin session in
+    /// the other. That function returned a bare `bool`, so the resolver read a
+    /// transient `EACCES` as INVALID EVIDENCE: it quarantined a claim it had
+    /// just matched against a complete link set, `reconstruct_or_quarantine`
+    /// hit the same failure again and answered `InvalidQuarantined`, and
+    /// `Missing` is one step further along the same path — after which
+    /// `POST /runs/:id/recover` plans a NEW replacement beside the live one.
+    ///
+    /// Injection: return `false` from the two session reads. Both phases then
+    /// quarantine.
+    // orgasmic:TASK-2QK4P.1.1.1
+    #[test]
+    fn a_read_failure_after_a_cached_complete_enumeration_never_quarantines() {
+        for target in ["replacement", "origin"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().canonicalize().unwrap();
+            let (home, project_root, committed) =
+                seed_one_healthy_claim(&root, "run-verify-fault-origin");
+
+            // PREMISE: one COMPLETE enumeration, cached before anything breaks.
+            // Whatever happens below is therefore about the claim verification
+            // and not about the candidate set.
+            let mut authority = ProjectOriginAuthority::default();
+            let links = authority.links_for(&home, &project_root, "orgasmic");
+            assert!(
+                matches!(links, AuthoritativeOriginLinks::Complete(found) if found.len() == 1),
+                "the enumeration must complete and find exactly this claim's link: {links:?}"
+            );
+            let passes_after_caching = origin_enumeration_passes(&project_root);
+
+            let victim = match target {
+                "replacement" => committed.replacement_session_path.clone(),
+                _ => committed.origin_session_path.clone().unwrap(),
+            };
+            let restore = OwnedRestore::deny(victim.clone());
+
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-verify-fault-origin",
+                &mut authority,
+            )
+            .unwrap();
+            assert!(
+                matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
+                "an unreadable {target} session decides nothing about a claim whose candidate \
+                 set was fully enumerated, got {resolved:?}"
+            );
+            assert_eq!(
+                passes_after_caching,
+                origin_enumeration_passes(&project_root),
+                "the cached enumeration must be reused, not rebuilt"
+            );
+
+            // No quarantine, and — the part `Missing` would have destroyed —
+            // the claim is still exactly where the live rescue left it.
+            assert!(!quarantine_exists(
+                &home,
+                "orgasmic",
+                "run-verify-fault-origin"
+            ));
+            assert_eq!(
+                load_recovery_claim(&home, "orgasmic", "run-verify-fault-origin").unwrap(),
+                Some(committed.clone())
+            );
+            // And no second replacement session was created beside the live one.
+            let sessions = std::fs::read_dir(project_sessions_dir(&project_root))
+                .unwrap()
+                .flatten()
+                .count();
+            assert_eq!(
+                sessions, 2,
+                "origin plus one replacement, and nothing minted"
+            );
+
+            drop(restore);
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-verify-fault-origin",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .unwrap();
+            match resolved {
+                ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+                other => panic!(
+                    "after repair the {target} read succeeds and the rescue must resolve valid, \
+                     got {other:?}"
+                ),
+            }
+        }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1.1 acceptance 3 — THE BEHAVIOURAL PIN.
+    ///
+    /// A source-text pin cannot express the property this round is about. The
+    /// property is "no predicate on the recovery-authority path answers a
+    /// DECIDED negative when it could not look", and that is a statement about
+    /// what every fallible call site concludes, not about how any declaration is
+    /// spelled. `the_origin_index_result_cannot_spell_failure_as_an_empty_success`
+    /// guards the shape of the two round-three types and was structurally blind
+    /// to all of F1 — so this test guards the behaviour, over the whole class,
+    /// by injecting each observation failure the path can actually suffer and
+    /// demanding the same two answers of every one of them:
+    ///
+    ///   1. never `Valid` — an unproven claim is not a confirmed one;
+    ///   2. never destructive — no quarantine, and the claim file survives
+    ///      byte-identical, because `InvalidQuarantined` and `Missing` are both
+    ///      permission for the handler to mint a competitor.
+    ///
+    /// The fixture is deliberately HEALTHY: every one of these resolves `Valid`
+    /// with nothing injected, so any answer other than `Unobserved` here is the
+    /// injection being read as a fact about the claim.
+    // orgasmic:TASK-2QK4P.1.1.1
+    #[test]
+    fn no_observation_failure_on_the_authority_path_confirms_or_destroys() {
+        // (name, how to break observation, the reason it must be reported as)
+        type Break = fn(&Home, &Path, &RecoveryClaim) -> Box<dyn std::any::Any>;
+        let cases: Vec<(&str, Break)> = vec![
+            ("authority key unreadable", |home, _root, _claim| {
+                struct Disarm(Home);
+                impl Drop for Disarm {
+                    fn drop(&mut self) {
+                        disarm_authority_key_fault(&self.0);
+                    }
+                }
+                // Position 1 is inside the enumeration for this fixture, which
+                // is the site F1(a) is about.
+                arm_authority_key_fault(home, 1);
+                Box::new(Disarm(home.clone()))
+            }),
+            ("replacement session unreadable", |_home, _root, claim| {
+                let path = claim.replacement_session_path.clone();
+                Box::new(OwnedRestore::deny(path))
+            }),
+            ("origin session unreadable", |_home, _root, claim| {
+                let path = claim.origin_session_path.clone().unwrap();
+                Box::new(OwnedRestore::deny(path))
+            }),
+            ("sessions directory unreadable", |_home, root, _claim| {
+                Box::new(OwnedRestore::deny(project_sessions_dir(root)))
+            }),
+            (
+                "a sibling session is torn mid-file",
+                |_home, root, _claim| {
+                    let sibling = project_sessions_dir(root).join("run-unrelated-torn.jsonl");
+                    std::fs::write(&sibling, "").unwrap();
+                    tear_a_line_in_the_middle(&sibling);
+                    struct Remove(PathBuf);
+                    impl Drop for Remove {
+                        fn drop(&mut self) {
+                            let _ = std::fs::remove_file(&self.0);
+                        }
+                    }
+                    Box::new(Remove(sibling))
+                },
+            ),
+        ];
+
+        for (name, break_observation) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = tmp.path().canonicalize().unwrap();
+            let (home, project_root, committed) = seed_one_healthy_claim(&root, "run-class-pin");
+
+            // The control: with nothing injected this resolves `Valid`, so the
+            // difference below is the injection and nothing else.
+            let control = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-class-pin",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .unwrap();
+            assert!(
+                matches!(control, ResolvedRecoveryClaim::Valid(_)),
+                "[{name}] the fixture must be healthy before the injection, got {control:?}"
+            );
+
+            let restore = break_observation(&home, &project_root, &committed);
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-class-pin",
+                &mut ProjectOriginAuthority::default(),
+            );
+            let quarantined = quarantine_exists(&home, "orgasmic", "run-class-pin");
+            drop(restore);
+
+            let resolved = resolved.unwrap_or_else(|err| {
+                panic!("[{name}] an observation failure is not an error: {err:?}")
+            });
+            assert!(
+                matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
+                "[{name}] a predicate that could not look must answer unobserved, got {resolved:?}"
+            );
+            assert!(
+                !quarantined,
+                "[{name}] unobserved never quarantines: renaming the claim turns one failed \
+                 observation into the permanent loss of this rescue's idempotency"
+            );
+            assert_eq!(
+                load_recovery_claim(&home, "orgasmic", "run-class-pin").unwrap(),
+                Some(committed.clone()),
+                "[{name}] the claim on disk must survive the failed observation"
+            );
+
+            // Repair, and the rescue is exactly where it was.
+            let repaired = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                "run-class-pin",
+                &mut ProjectOriginAuthority::default(),
+            )
+            .unwrap();
+            match repaired {
+                ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+                other => panic!("[{name}] repair must restore normal resolution, got {other:?}"),
+            }
+        }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 acceptance 1, RE-AUTHORED FOR TASK-2QK4P.1.1.1
+    /// acceptance 3 — THE STRUCTURAL PIN, AND WHAT IT CANNOT SAY.
+    ///
+    /// # This pin passed on the defect, which is worse than not having it
+    ///
+    /// The round-three version asserted `code.contains("Unobserved {\n
+    /// reason: UnobservedSession,")` — a PREFIX. Adding a `links` field after
+    /// the checked prefix kept it green, so the one thing the pin existed to
+    /// forbid was expressible without tripping it. It also inspected exactly two
+    /// declarations, which left it structurally blind to every predicate
+    /// TASK-2QK4P.1.1.1 is about. A green source-text assertion that guarantees
+    /// nothing reads as coverage, and reviewers spend rounds trusting it.
+    ///
+    /// So: the variant payload is extracted WHOLE and compared for EQUALITY
+    /// against the exact field set each type is allowed, and the set of pinned
+    /// declarations is now every type on the path that carries the unresolved
+    /// answer.
+    ///
+    /// # What a source-text pin cannot express, stated plainly
+    ///
+    /// The property this round is about is not a shape. It is "no predicate on
+    /// the recovery-authority path answers a DECIDED negative when it could not
+    /// look", and that is a claim about what each of ~20 fallible call sites
+    /// concludes — a `continue`, a `quarantine_invalid_claim`, a `Missing`, a
+    /// `false` folded into an `&&`. No amount of grepping this file settles it,
+    /// and a pin that pretended otherwise would be the round-three pin again.
+    ///
+    /// `no_observation_failure_on_the_authority_path_confirms_or_destroys` is
+    /// where that property is actually pinned, by injecting each observation
+    /// failure the path can suffer and demanding the same answer from all of
+    /// them. This test guards the SHAPE those behaviours rest on; that one
+    /// guards the behaviour. Neither is a substitute for the other.
+    // orgasmic:TASK-2QK4P.1.1, TASK-2QK4P.1.1.1
+    #[test]
+    fn the_recovery_authority_types_cannot_spell_failure_as_a_decided_negative() {
         let source = include_str!("recovery_claim.rs");
         let production = source
             .split("\nmod tests {")
@@ -4589,7 +5532,7 @@ mod tests {
             "the split must actually remove the tests module"
         );
         // Comment lines are dropped, so the forbidden spellings this test names
-        // — including the ones the type's own doc comment quotes as history —
+        // — including the ones the types' own doc comments quote as history —
         // are matched only where they would actually compile.
         let code: String = production
             .lines()
@@ -4597,7 +5540,20 @@ mod tests {
             .map(|line| format!("{line}\n"))
             .collect();
 
-        for name in ["IndexedRecoveryOrigins", "AuthoritativeOriginLinks"] {
+        // EVERY type on the authority path that carries the unresolved answer,
+        // with the EXACT payload its unresolved variant is allowed to have.
+        // Equality, not containment: an added field is a red test.
+        let pinned: [(&str, &str); 4] = [
+            (
+                "IndexedRecoveryOrigins",
+                "Unobserved { reason: UnobservedSession, bytes_inspected: u64, }",
+            ),
+            ("AuthoritativeOriginLinks", "Unobserved(UnobservedSession),"),
+            ("ClaimEvidence", "Unobserved(UnobservedSession),"),
+            ("ResolvedRecoveryClaim", "Unobserved(UnobservedSession),"),
+        ];
+
+        for (name, expected_variant) in pinned {
             let header = format!("pub enum {name} ");
             let start = code.find(&header).unwrap_or_else(|| {
                 panic!(
@@ -4629,18 +5585,101 @@ mod tests {
                 "{name} must be #[must_use] so dropping it is a build failure under -D warnings; \
                  its attributes are:\n{attributes}"
             );
-        }
 
-        // The unresolved variants carry no links, so there is nothing partial to
-        // reach for even after a caller has matched.
-        for variant in [
-            "Unobserved {\n        reason: UnobservedSession,",
-            "Unobserved(UnobservedSession),",
-        ] {
-            assert!(
-                code.contains(variant),
-                "the unresolved variant must carry only a reason, never links: expected\n{variant}"
+            // The variant payload, WHOLE. Round three checked a prefix of this
+            // and a `links` field appended after the prefix kept it green.
+            let body = enum_body(&code, start);
+            let variant = unobserved_variant(&body).unwrap_or_else(|| {
+                panic!("{name} must carry an `Unobserved` variant; its body is:\n{body}")
+            });
+            assert_eq!(
+                variant, expected_variant,
+                "{name}::Unobserved must carry ONLY the reason it could not observe. Anything \
+                 else is a partial result a caller can reach for, which is the collapse wearing \
+                 a new field name."
             );
         }
+
+        // And the two predicates the review named must not have gone back to
+        // answering `bool`, which is what handed round three's types the same
+        // defect they were built to make unrepresentable.
+        for predicate in [
+            "fn claim_has_valid_authority",
+            "pub fn verify_committed_claim_against_session",
+            "pub fn pending_recovery_claim_owns_session",
+        ] {
+            let start = code
+                .find(predicate)
+                .unwrap_or_else(|| panic!("{predicate} must still exist"));
+            let signature =
+                &code[start..code[start..].find(" {\n").map_or(code.len(), |o| start + o)];
+            assert!(
+                !signature.contains("-> bool"),
+                "{predicate} must not answer `bool`: `false` there means both `I verified and it \
+                 is false` and `I could not check`, and four review rounds were that one shape. \
+                 Its signature is:\n{signature}"
+            );
+        }
+    }
+
+    /// The `{ .. }` body of the enum whose `pub enum` header starts at `start`.
+    fn enum_body(code: &str, start: usize) -> String {
+        let open = start + code[start..].find('{').expect("enum body opens");
+        let mut depth = 0usize;
+        for (offset, ch) in code[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return code[open..=open + offset].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("enum body never closes");
+    }
+
+    /// The `Unobserved` variant of `body`, whitespace-normalized, from the
+    /// variant name through its closing delimiter INCLUSIVE — so a field added
+    /// anywhere inside it changes this string.
+    fn unobserved_variant(body: &str) -> Option<String> {
+        let start = body.find("Unobserved")?;
+        let rest = &body[start..];
+        let end = match rest[.."Unobserved".len() + 1].chars().last()? {
+            '(' => {
+                let close = rest.find(')')? + 1;
+                // Include the trailing comma so a variant cannot be renamed
+                // into a struct variant and still match.
+                close + rest[close..].find(',').map_or(0, |o| o + 1)
+            }
+            _ => {
+                let open = rest.find('{')?;
+                let mut depth = 0usize;
+                let mut close = open;
+                for (offset, ch) in rest[open..].char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = open + offset + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                close
+            }
+        };
+        Some(
+            rest[..end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(" ,", ","),
+        )
     }
 }

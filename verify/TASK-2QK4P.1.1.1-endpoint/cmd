@@ -1,0 +1,12 @@
+# One line. Run from the repo root by `orgasmic verify TASK-2QK4P.1.1.1-endpoint`.
+#
+# The PRODUCTION path for F2 and F3, split into its own artifact because they
+# live in the api binary and the filter wide enough to catch them alongside the
+# unit regressions also catches
+# `api::tests::recovery_reattaches_tmux_session_when_handle_exists`, a
+# registered flake (TASK-X0PV1) — and a pinned signature must not depend on a
+# flake's mood. `--exact` for the same reason.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build their own Home under a temp root that must see neither.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact api::tests::one_recover_post_enumerates_the_project_once api::tests::an_invalid_action_answers_400_even_while_the_enumeration_is_unresolved --test-threads=1
