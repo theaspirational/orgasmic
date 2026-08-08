@@ -1,0 +1,243 @@
+# TASK-RMA18.1.1.1 — implementer summary
+
+All five findings closed. Two commits on `task-rma18.1.1.1-impl`: `fbeed37` (the
+fix) and `9087cef` (two older injection proofs re-authored because this round
+moved their patch context).
+
+**F-A was reproduced on the production prune path before it was fixed**, per
+ruling 4. The reviewer could not, being read-only. The red, from the unfixed
+tree with only the new test added:
+
+```
+the untracked file inside the nested repository must SURVIVE the prune, got:
+RECLAIMED PATH=<tmp>/home/worktrees/orgasmic/task-goneindexsub BYTES=29490 SIZE=28.8KiB
+PRUNE_SUMMARY RECLAIMED=1 BYTES=29490 SIZE=28.8KiB KEPT=0 SKIPPED=0
+```
+
+The source reading of the three predicates was right. A populated independent
+repository holding uncommitted work was deleted, with no salvage, on the one
+branch that never salvages.
+
+## Changed
+
+### `crates/orgasmic-cli/src/manager.rs`
+
+**F-A — `walk_worktree` replaces `directory_bytes`.** One walk, two answers: the
+recursive size it already produced, plus `nested_git` — the first NESTED entry
+named `.git`, **of any type**, as a path relative to the worktree root. It
+descends by `openat(O_NOFOLLOW|O_DIRECTORY)` from the worktree handle exactly as
+before, so no `PathBuf` walk was introduced. `ManagedWorktree` carries the
+result; `worktree_submodule_refusal` takes it as a third argument and consults it
+**only in the `NoRepository` arm**. Depth 1 is excluded, so the worktree's own
+dangling `.git` — always present on `RepoGone`, since that is what classified it
+— is not its own refusal.
+
+Type-agnostic per the reviewer's first correction: a submodule initialised inside
+a linked worktree has a `.git` **file** naming an admin directory that, once the
+repository is gone, is gone too. A directory-only predicate returns false on the
+likeliest shape. `the_worktrees_own_dangling_git_link_is_not_a_nested_repository`
+and `a_repo_gone_worktree_is_refused_over_a_nested_git_of_any_type` pin both
+directions, the latter using the `.git`-as-FILE shape specifically.
+
+**Ordering (acceptance 2) — nothing moved, and nothing needed to.** The
+reviewer's statement that "the refusal currently sits ABOVE the size walk" is
+inverted. The walk runs in `scan_managed_worktrees`, which is the *first* thing
+`worktree_prune` does — before the cleanup lock, before the reservation, and long
+before the refusal, which runs inside `reclaim_managed_worktree` under the guard
+(`manager.rs`: walk at the classification loop, refusal at the top of
+`reclaim_managed_worktree`). So the `NoRepository` leg consumes a result computed
+*earlier*, not later, and no reordering of a destructive path was performed. What
+that does cost is stated at the call site and under Residual Risk.
+
+**F-B — the help sentence.** The false conjunction is split in two. The refusal
+is still described as categorical and as running before every removal including
+repo-gone; index-reading is now attributed only to the branch that has an index;
+and the repo-gone branch states its own, explicitly **weaker**, check ("the
+anchored walk of the tree's own contents refuses any NESTED `.git` entry, of any
+type, and nothing else there is checked"). A closing sentence says there is no
+`--force` on this verb.
+
+**F-C — deleted, not rewritten.** "It is re-taken before EACH subprocess" is gone;
+the comment now points at the three-window enumeration in the doc comment. No
+third description was composed.
+
+**F-D + correction 2 — `advice` split three ways.** `submodule_advice` (offers
+`--force` conditionally, "while the repository is still there"), `record_advice`
+for the record-unreadable refusals — split index, symlinked `.gitmodules`,
+unparsed index — which now says plainly that nothing here claims a submodule
+exists, and a third remedy inline in the `NoRepository` refusal that names the
+offending path, says `git worktree remove --force` **cannot** run because the
+repository it would run against is the one that is gone, and tells the operator
+to delete the named path themselves.
+
+**One change beyond the finding list, and it is not cleanup.** `entry_names`
+now calls `rewinddir` on the stream. `dup` shares the *file description* — and
+therefore the directory read offset — with the caller's handle, so a **second**
+enumeration of the same handle resumed at EOF and returned an empty list, which
+every caller here reads as "this directory is empty". In a destructive verb that
+is a fail-open in both directions: no nested repository to refuse over, and
+nothing left to remove. Found by the new unit test, which walks one handle twice.
+I found no live path that enumerates the same handle twice today (production
+opens a fresh child handle per walk), so I am reporting this as a **latent**
+fail-open the new predicate would otherwise depend on, not a shipped defect.
+
+### `crates/orgasmic-cli/tests/dispatch.rs`
+
+`worktree_prune_refuses_a_repo_gone_worktree_holding_a_nested_repository` —
+acceptance 4. `RepoGone` + `update-index --cacheinfo 160000` gitlink + standalone
+populated clone + no `.gitmodules`. Git's own refusal is measured first, while the
+repository is whole (exit non-zero, stderr naming submodules); both `git status`
+modes report clean; the index entry mode is asserted `160000`; `--dry-run` pins
+the `RepoGone` classification so a green cannot come from `Unclaimed`. Asserts the
+sentinel survives, the `KEPT` line names `vendor/sub/.git`, the impossible
+`--force` remedy is not offered, and nothing claims to have salvaged.
+
+### `crates/orgasmic-cli/tests/cli_parity.rs`
+
+The pin is now **structural rather than keyword**, at sentence granularity: no
+sentence naming the repo-gone branch may contain "index", and some sentence
+naming it must also name the nested-`.git`-of-any-type check. Deleting the claim
+therefore no longer satisfies it. Two supporting changes: matching happens on
+unwrapped text (a phrase straddling a source newline was invisible to the old
+line-oriented `contains`, which I hit while proving the pin), and a floor on the
+sentence count so a broken splitter goes red instead of vacuously green.
+
+**Proven to bite.** I restored the shipped false sentence and re-ran; the test
+failed quoting it back:
+
+```
+worktree-prune help attributes the INDEX to the repo-gone branch in one sentence
+("the submodule refusal is categorical and runs before every removal this verb makes,
+the repo-gone one included; it reads the worktree's own index for gitlinks as git does,
+plus `.gitmodules`, and a submodule record it cannot read is itself a refusal")
+```
+
+**What it still cannot do, stated because acceptance 5 asked for it explicitly.**
+`cli_parity` reads clap output; it constrains the SHAPE of the claim, never its
+truth. Truth is constrained by the three `dispatch.rs` regressions that run the
+real verb against fixtures git itself refuses. The doc comment says so and names
+all three, so the next reader does not mistake this for a truth pin.
+
+### `verify/`
+
+- `verify/TASK-RMA18.1.1.1/` — new. Injects the disclosed carve-out back by
+  passing `None` for `nested_git` at the reclaim call site, leaving every other
+  refusal live. Red re-measured; `RECLAIMED … BYTES=29490` matches the pre-fix
+  reproduction byte for byte.
+- `verify/TASK-RMA18.1.1-placement/` — acceptance 8 / F-E. Moves the whole
+  refusal block back below the `RepoGone` early return, changing no predicate.
+  Red: `RECLAIMED … BYTES=2243`.
+- `verify/TASK-RMA18.1.1/` and `verify/TASK-RMA18.1/` — **re-authored**, and
+  called out because it is a change to shipped proof. Both went stale in the
+  literal sense only: splitting `advice` and giving the `NoRepository` arm a body
+  moved their context lines. The injected changes are identical in effect, and
+  both reds were re-measured against the re-authored patches rather than carried
+  over. Each `cmd` file records the re-authoring inline.
+
+## Verification Gates
+
+Every cargo invocation ran under a syspolicyd watchdog (10s sampling, kill at
+≥400% held 60s). It never fired. Highest peak observed: **388.6%**, during
+`orgasmic verify TASK-RMA18.1.1.1` — close to the threshold, not held.
+`run-tests.sh`'s own stamp for the same class of work read `rate 0.0895`, which
+is the averaging the brief warned about.
+
+- **F-A red → green.** Red quoted above, from the unfixed tree. Green below.
+- **All `worktree_prune_*`, `--test-threads=1`: 13 passed, 0 failed, 15.70s** —
+  the 12 that existed plus the new one. Freshly compiled, not a prebuilt binary.
+- **`cli_parity`: 7 passed** with the strengthened pin; separately proven red on
+  the shipped false sentence.
+- **`manager::tests`: 68 passed, 0 failed** (66 before, plus the two new ones).
+  Run as `--bin orgasmic` — `orgasmic-cli` has no lib target.
+- **`scripts/run-tests.sh -p orgasmic-cli` — VERDICT block, quoted whole:**
+
+```
+VERDICT
+======================================================================
+  suite    : cargo test -p orgasmic-cli --no-fail-fast -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events
+  log      : /var/folders/.../orgasmic-run-tests.uVigjQ/suite.log
+  registry : verify/flake-registry.toml (7 entries, every owner open)
+  billed   : legacy_drivers_and_explicit_pairs_emit_equivalent_start_events — NOT RUN (--skip applied to every invocation)
+  failures : 0
+  crashed  : none — every failing target reported a failure list
+  cargo    : exited 0 (0 all green, 101 libtest reported failures)
+  ignored  : 1 test(s) carrying #[ignore]
+  cfg-off  : passed — the pause rendezvous hooks are compiled out without debug_assertions
+  environ  : complete — no tool requirement was waived
+  host     : calm (threshold syspolicyd_rate>=1.50; load=8.76 elevated (>=8.0), corroborating only)
+             before  load=8.76 syspolicyd_time=99:34.77
+             after   load=7.42 syspolicyd_time=99:50.05
+             delta   load=8.76 syspolicyd_cpu=15.3 wall_s=171
+             rate    0.0895
+
+verdict: GREEN — no failures.
+======================================================================
+```
+
+  `environ: complete` is the tooling-sentinel result the gotchas file requires
+  alongside any test claim for these crates: nothing was waived.
+
+- **`cargo clippy --workspace --all-targets -- -D warnings`: exit 0.**
+- **`cargo fmt --all --check`: exit 0.**
+- **`orgasmic verify`, all five, each PASS (red matched the pinned signature,
+  tree byte-identical after revert, green):** `TASK-RMA18`, `TASK-RMA18.1`,
+  `TASK-RMA18.1.1`, `TASK-RMA18.1.1-placement`, `TASK-RMA18.1.1.1`.
+
+Two false starts, reported because they are part of the record. My first `KEPT`
+wording dropped the word "submodule" and broke
+`worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule`; and my own
+new test asserted the refusal must not contain `--force` at all, which is wrong —
+naming the flag to say it is unavailable is the point. Both were fixed and
+re-run, not asserted around.
+
+## Unmet Criteria
+
+None. All nine acceptance items are met.
+
+## Residual Risk
+
+1. **`nested_git` is a classification-time observation consumed under the
+   guard.** It describes the same *identity* the handle was just re-proven to be,
+   so it cannot have drifted onto another directory — but it can be stale about
+   that directory's *contents*. A nested repository created between the scan and
+   the reclaim is not seen. This is the price of the single-boolean approach the
+   brief preferred over a second traversal; the reverse case (one deleted after
+   the scan) only produces a spurious refusal, which costs a re-run. Closing it
+   needs the walk repeated under the guard, which is the full descent this
+   deliberately avoids.
+2. **The walk skips unreadable entries**, inherited from the size walk, where an
+   under-count was the honest choice. For this signal that is a fail-open: a
+   `.git` under a directory that fails to open is not seen. It is why the signal
+   only ever *adds* to the other refusals and replaces none.
+3. **`MAX_DEPTH` is 64.** A nested repository deeper than that is not seen. Same
+   bound the size number and the removal already carry.
+4. **The heuristic is deliberately over-broad in the keep direction.** A
+   repo-gone worktree holding a vendored `.git` that git would have let you
+   delete is now kept, and the operator must delete it by hand. This is ruling 1
+   plus the project's standing cost asymmetry, scoped to a state that only arises
+   once the repository has already disappeared.
+5. **On `RepoGone`, the new refusal shadows the `.gitmodules` branch** when a
+   nested `.git` is present — both would refuse, but the operator now sees the
+   nested-repository message. That is why
+   `worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule` now
+   passes through the new arm rather than the old one. Its assertions still hold
+   unchanged (`vendor/sub` matches inside `vendor/sub/.git`), which I checked
+   rather than assumed after it went red on the first wording.
+6. **Not run, and therefore not claimed:** the full workspace suite (only
+   `-p orgasmic-cli`, which is what the brief gated on), the `orgasmic-daemon`
+   suite, and the UI checks. Nothing outside `orgasmic-cli` was touched, and
+   `clippy --workspace --all-targets` compiled every crate and target.
+7. **Non-Unix is untested.** Everything new is `#[cfg(unix)]`, consistent with the
+   surrounding code.
+8. **`rewinddir` (item under Changed) is the one change outside the finding
+   list.** It is one line, it is a fail-open in a destructive verb's enumeration
+   primitive, and the new predicate's soundness under repeated use depends on it.
+   I could not find a live path that hits it today. If the reviewer would rather
+   see it split out, it reverts cleanly on its own — but the unit test that found
+   it goes red if it does.
+9. **Same-family review is likely again** (TASK-52NJS). The strongest independent
+   checks a reviewer can make here without re-running anything: the F-A red is
+   quoted verbatim above and is reproducible by checking out `dc6a863` and
+   cherry-picking only the new test; and the cli_parity pin's bite is reproducible
+   by restoring the old help sentence, which is printed in full in the failure
+   message.
