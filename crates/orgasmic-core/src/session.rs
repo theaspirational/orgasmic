@@ -1346,23 +1346,110 @@ pub fn scan_session_lifecycle_reader<R: std::io::Read + std::io::Seek>(
     let mut final_line_retained = false;
     for window in [prefix.as_slice(), tail.as_slice()] {
         for line in window.split(|byte| *byte == b'\n') {
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
+            match retain_lifecycle_line(&mut scan, line)? {
+                LineOutcome::Blank => {}
+                LineOutcome::Dropped => final_line_retained = false,
+                LineOutcome::Retained => final_line_retained = true,
             }
-            if !line_is_lifecycle_relevant(line) {
-                scan.skipped_transcript_lines += 1;
-                final_line_retained = false;
-                continue;
-            }
-            scan.envelopes.push(serde_json::from_slice(line)?);
-            final_line_retained = true;
         }
     }
     // A truncated scan whose tail window held no complete line proves nothing
     // about the file's final envelope, whatever the prefix ended with.
     scan.final_envelope_retained = final_line_retained && !(scan.truncated && tail.is_empty());
 
+    Ok(scan)
+}
+
+/// What one raw line contributed to a scan.
+enum LineOutcome {
+    /// Whitespace only; it is not an event and says nothing about the last one.
+    Blank,
+    /// Transcript, rejected by the retention filter without being parsed.
+    Dropped,
+    /// Parsed and pushed onto [`SessionLifecycleScan::envelopes`].
+    Retained,
+}
+
+/// Apply the retention filter to one raw line, shared by the bounded and the
+/// complete scan so the two can never disagree about what a session file says.
+fn retain_lifecycle_line(
+    scan: &mut SessionLifecycleScan,
+    line: &[u8],
+) -> Result<LineOutcome, SessionError> {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    if line.iter().all(u8::is_ascii_whitespace) {
+        return Ok(LineOutcome::Blank);
+    }
+    if !line_is_lifecycle_relevant(line) {
+        scan.skipped_transcript_lines += 1;
+        return Ok(LineOutcome::Dropped);
+    }
+    scan.envelopes.push(serde_json::from_slice(line)?);
+    Ok(LineOutcome::Retained)
+}
+
+/// Buffer size for the complete scan's line reader. Sized to the page-cache
+/// read granularity rather than to any session fact.
+const COMPLETE_SCAN_READ_BUFFER_BYTES: usize = 256 * 1024;
+
+/// Full lifecycle enumeration of one session JSONL, streamed.
+///
+/// Same retention filter and the same strictness on malformed
+/// lifecycle-relevant lines as [`scan_session_lifecycle`], but EVERY line is
+/// examined, so [`SessionLifecycleScan::truncated`] is always false and the
+/// result is a statement about the whole file rather than about two windows.
+///
+/// orgasmic:TASK-2QK4P.1.1 — this exists because a bounded scan's skipped
+/// middle is UNKNOWN, and a caller that must not read unknown as absent needs
+/// somewhere to escalate to. Streaming rather than a whole-file read is the
+/// point: peak memory is one line plus the retained envelopes, never
+/// `file_bytes`, so escalating on a multi-gigabyte transcript costs I/O and
+/// not address space.
+pub fn scan_session_lifecycle_complete(
+    path: impl AsRef<Path>,
+) -> Result<SessionLifecycleScan, SessionError> {
+    let mut file = File::open(path.as_ref())?;
+    let file_bytes = file.metadata()?.len();
+    scan_session_lifecycle_complete_reader(&mut file, file_bytes)
+}
+
+/// [`scan_session_lifecycle_complete`] over an already-open handle, for callers
+/// holding a pinned, identity-validated descriptor.
+pub fn scan_session_lifecycle_complete_reader<R: std::io::Read + std::io::Seek>(
+    file: &mut R,
+    file_bytes: u64,
+) -> Result<SessionLifecycleScan, SessionError> {
+    use std::io::{BufRead, BufReader, SeekFrom};
+
+    file.seek(SeekFrom::Start(0))?;
+    let mut scan = SessionLifecycleScan {
+        file_bytes,
+        ..SessionLifecycleScan::default()
+    };
+    let mut reader = BufReader::with_capacity(COMPLETE_SCAN_READ_BUFFER_BYTES, file);
+    let mut line = Vec::new();
+    // First bytes of the last non-blank line, kept so the file's final run id
+    // can be probed without holding the line itself.
+    let mut final_line_header = Vec::new();
+    let mut final_line_retained = false;
+    loop {
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line)?;
+        if read == 0 {
+            break;
+        }
+        scan.bytes_inspected += read as u64;
+        let raw = line.strip_suffix(b"\n").unwrap_or(&line);
+        match retain_lifecycle_line(&mut scan, raw)? {
+            LineOutcome::Blank => continue,
+            LineOutcome::Dropped => final_line_retained = false,
+            LineOutcome::Retained => final_line_retained = true,
+        }
+        final_line_header.clear();
+        final_line_header.extend_from_slice(&raw[..raw.len().min(ENVELOPE_HEADER_PROBE_BYTES)]);
+    }
+    scan.final_line_run_id = window_final_line_run_id(&final_line_header);
+    scan.final_envelope_retained = final_line_retained;
     Ok(scan)
 }
 

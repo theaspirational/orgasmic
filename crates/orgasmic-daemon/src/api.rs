@@ -69,13 +69,13 @@ use crate::governance::SandboxPermissionsPatch;
 use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
-    commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
-    load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
+    commit_recovery_claim, load_committed_recovery_claim, load_recovery_claim,
+    mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
     resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    CommitRecoveryDetails, IndexedRecoveryOrigin, PendingRecoveryClaimSpec, PendingRecoveryPlan,
+    CommitRecoveryDetails, PendingRecoveryClaimSpec, PendingRecoveryPlan, ProjectOriginAuthority,
     RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions,
-    ResolvedRecoveryClaim, SessionDirectory, SessionFile,
+    ResolvedRecoveryClaim, SessionDirectory, SessionFile, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -7890,17 +7890,9 @@ async fn recovery_status_for_run(state: &ApiState, run_id: &str) -> RecoveryResp
     )
     .await;
 
-    let indexed_origins = recovered
-        .iter()
-        .any(|run| run.run_id == run_id && run.classification == "failed_recoverable")
-        .then(|| {
-            collect_recovery_origin_index(
-                &state.home,
-                &board,
-                Some(&state.run_catalog),
-                &mut InventoryStageMetrics::default(),
-            )
-        });
+    // One authority for this whole lookup, built lazily: a board with no
+    // failed-recoverable run never enumerates anything.
+    let mut origin_authority = ProjectOriginAuthority::default();
     let mut response = RecoveryResponse {
         boot_id: state.boot.boot_id.clone(),
         acquisition_paused: live.acquisition_paused,
@@ -7919,11 +7911,7 @@ async fn recovery_status_for_run(state: &ApiState, run_id: &str) -> RecoveryResp
             continue;
         }
         if run.classification == "failed_recoverable" && run.project_id.is_some() {
-            apply_recovery_claim_to_run(
-                &state.home,
-                indexed_origins.as_deref().unwrap_or_default(),
-                &mut run,
-            );
+            apply_recovery_claim_to_run(&state.home, &mut origin_authority, &mut run);
         }
         match run.classification.as_str() {
             "interrupted" => response.interrupted_runs.push(run),
@@ -9051,13 +9039,9 @@ async fn post_run_recover(
     if let Some(hook) = take_recovery_post_origin_authority_hook(&id) {
         hook();
     }
-    let board = state.index.snapshot().await.board;
-    let indexed_origins = collect_recovery_origin_index(
-        &state.home,
-        &board,
-        Some(&state.run_catalog),
-        &mut InventoryStageMetrics::default(),
-    );
+    // One authoritative enumeration for this whole recover decision, shared by
+    // every claim branch below (orgasmic:TASK-2QK4P.1.1 F3/F4).
+    let mut origin_links = ProjectOriginAuthority::default();
 
     let failed_origin = prior.classification == "failed_recoverable";
     let request_id = req
@@ -9073,28 +9057,34 @@ async fn post_run_recover(
         {
             match claim.status {
                 RecoveryClaimStatus::Committed => {
-                    if committed_claim_is_authoritative(
+                    match committed_claim_is_authoritative(
                         &state.home,
                         &origin_authority.project_root,
                         &project_id,
                         &id,
-                        &indexed_origins,
+                        &mut origin_links,
                         &claim,
                     ) {
-                        if claim.request_id == request_id {
-                            // TASK-6AYEJ.3: this answers with a REPLACEMENT run
-                            // id without running the recovery action, so it is
-                            // one of the paths that used to hand the caller a
-                            // live replacement with no ledger link at all.
-                            record_recovery_replacement_association_from_claim(
-                                &state,
-                                req.project.as_deref(),
-                                &claim,
-                            )
-                            .await?;
-                            return recovery_response_from_claim(&claim);
+                        CommittedClaimAuthority::Unobserved(reason) => {
+                            return Err(recovery_origins_unobserved(&id, reason))
                         }
-                        return Err(recovery_claim_conflict(&id, &claim));
+                        CommittedClaimAuthority::NotAuthoritative => {}
+                        CommittedClaimAuthority::Authoritative => {
+                            if claim.request_id == request_id {
+                                // TASK-6AYEJ.3: this answers with a REPLACEMENT run
+                                // id without running the recovery action, so it is
+                                // one of the paths that used to hand the caller a
+                                // live replacement with no ledger link at all.
+                                record_recovery_replacement_association_from_claim(
+                                    &state,
+                                    req.project.as_deref(),
+                                    &claim,
+                                )
+                                .await?;
+                                return recovery_response_from_claim(&claim);
+                            }
+                            return Err(recovery_claim_conflict(&id, &claim));
+                        }
                     }
                 }
                 RecoveryClaimStatus::Pending => {
@@ -9110,25 +9100,32 @@ async fn post_run_recover(
                         ApiError::internal(format!("recovery claim reconcile failed: {err:?}"))
                     })?;
                     if let Some(plan) = plan {
-                        if plan.claim.status == RecoveryClaimStatus::Committed
-                            && committed_claim_is_authoritative(
+                        if plan.claim.status == RecoveryClaimStatus::Committed {
+                            match committed_claim_is_authoritative(
                                 &state.home,
                                 &origin_authority.project_root,
                                 &project_id,
                                 &id,
-                                &indexed_origins,
+                                &mut origin_links,
                                 &plan.claim,
-                            )
-                        {
-                            // Same as above, reached one crash earlier: the
-                            // pending claim reconciled straight to Committed.
-                            record_recovery_replacement_association_from_claim(
-                                &state,
-                                req.project.as_deref(),
-                                &plan.claim,
-                            )
-                            .await?;
-                            return recovery_response_from_claim(&plan.claim);
+                            ) {
+                                CommittedClaimAuthority::Unobserved(reason) => {
+                                    return Err(recovery_origins_unobserved(&id, reason))
+                                }
+                                CommittedClaimAuthority::Authoritative => {
+                                    // Same as above, reached one crash earlier:
+                                    // the pending claim reconciled straight to
+                                    // Committed.
+                                    record_recovery_replacement_association_from_claim(
+                                        &state,
+                                        req.project.as_deref(),
+                                        &plan.claim,
+                                    )
+                                    .await?;
+                                    return recovery_response_from_claim(&plan.claim);
+                                }
+                                CommittedClaimAuthority::NotAuthoritative => {}
+                            }
                         }
                         pending_plan = Some(plan);
                     }
@@ -9158,18 +9155,24 @@ async fn post_run_recover(
                             },
                         )?
                     {
-                        if committed_claim_is_authoritative(
+                        match committed_claim_is_authoritative(
                             &state.home,
                             &origin_authority.project_root,
                             &project_id,
                             &id,
-                            &indexed_origins,
+                            &mut origin_links,
                             &claim,
                         ) {
-                            if claim.request_id == request_id {
-                                return recovery_response_from_claim(&claim);
+                            CommittedClaimAuthority::Unobserved(reason) => {
+                                return Err(recovery_origins_unobserved(&id, reason))
                             }
-                            return Err(recovery_claim_conflict(&id, &claim));
+                            CommittedClaimAuthority::Authoritative => {
+                                if claim.request_id == request_id {
+                                    return recovery_response_from_claim(&claim);
+                                }
+                                return Err(recovery_claim_conflict(&id, &claim));
+                            }
+                            CommittedClaimAuthority::NotAuthoritative => {}
                         }
                     }
                 }
@@ -10042,30 +10045,26 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
     let mut failed_recoverable_runs = Vec::new();
     let mut terminal_noop_runs = Vec::new();
     let mut ambiguous_runs = Vec::new();
-    // Recovery-origin indexing is a whole-board session scan. Rebuilding it
-    // once per failed tombstone made GET /runs O(failed_runs * session_bytes)
-    // and effectively unbounded on projects with large transcripts.
-    let indexed_origins = recovered
-        .iter()
-        .any(|run| run.classification == "failed_recoverable")
-        .then(|| {
-            collect_recovery_origin_index(
-                &state.home,
-                &board,
-                Some(&state.run_catalog),
-                &mut metrics,
-            )
-        });
+    // Recovery-origin indexing is a per-project session scan. Rebuilding it once
+    // per failed tombstone made GET /runs O(failed_runs * session_bytes) and
+    // effectively unbounded on projects with large transcripts, so ONE authority
+    // serves this whole pass (orgasmic:TASK-2QK4P.1.1 F4).
+    //
+    // orgasmic:TASK-FZB6T.1 finding 3 was closed by deriving the candidate files
+    // from the run catalog, and that is exactly what TASK-2QK4P.1 had to undo:
+    // the catalog drops a record on every lifecycle append, so it cannot state
+    // what it has not looked at, and authority over a lease may not be decided
+    // from a set that cannot. What survives of FZB6T.1's property is the part
+    // that was really doing the work — a board with no failed-recoverable run
+    // opens no session file at all, because `ProjectOriginAuthority` enumerates
+    // lazily and only for the projects a claim decision actually reaches.
+    let mut origin_authority = ProjectOriginAuthority::default();
     for mut run in recovered {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
         if run.classification == "failed_recoverable" && run.project_id.is_some() {
-            apply_recovery_claim_to_run(
-                &state.home,
-                indexed_origins.as_deref().unwrap_or_default(),
-                &mut run,
-            );
+            apply_recovery_claim_to_run(&state.home, &mut origin_authority, &mut run);
         }
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
@@ -10091,6 +10090,9 @@ async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> Reco
             .then(a.run_id.cmp(&b.run_id))
     });
 
+    let origin_cost = origin_authority.cost();
+    metrics.origin_index_files = origin_cost.files;
+    metrics.origin_index_bytes_inspected = origin_cost.bytes_inspected;
     metrics.interrupted = interrupted_runs.len() as u64;
     metrics.reattached = reattached_runs.len() as u64;
     metrics.failed_recoverable = failed_recoverable_runs.len() as u64;
@@ -11730,31 +11732,62 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
     }))
 }
 
+/// Refuse a recover request whose candidate set could not be enumerated.
+///
+/// orgasmic:TASK-2QK4P.1.1 — 503 and not 409: nothing is known to conflict, the
+/// daemon simply could not look. The claim on disk is untouched, so a retry once
+/// the file is readable resolves normally and the rescue keeps its idempotency.
+fn recovery_origins_unobserved(origin_run_id: &str, reason: UnobservedSession) -> ApiError {
+    ApiError::service_unavailable(json!({
+        "error": "recovery origin enumeration did not complete; refusing to decide authority",
+        "origin_run_id": origin_run_id,
+        "reason": format!("{reason:?}"),
+    }))
+}
+
 fn committed_claim_is_authoritative(
     home: &Home,
     project_root: &FsPath,
     project_id: &str,
     origin_run_id: &str,
-    indexed_origins: &[IndexedRecoveryOrigin],
+    authority: &mut ProjectOriginAuthority,
     claim: &RecoveryClaim,
-) -> bool {
-    matches!(
-        resolve_authoritative_recovery_claim(
-            home,
-            project_root,
-            project_id,
-            origin_run_id,
-            indexed_origins,
-        ),
-        Ok(ResolvedRecoveryClaim::Valid(resolved)
-            | ResolvedRecoveryClaim::Reconstructed(resolved))
-            if resolved.status == RecoveryClaimStatus::Committed && resolved == *claim
-    )
+) -> CommittedClaimAuthority {
+    match resolve_authoritative_recovery_claim(
+        home,
+        project_root,
+        project_id,
+        origin_run_id,
+        authority,
+    ) {
+        Ok(
+            ResolvedRecoveryClaim::Valid(resolved) | ResolvedRecoveryClaim::Reconstructed(resolved),
+        ) if resolved.status == RecoveryClaimStatus::Committed && resolved == *claim => {
+            CommittedClaimAuthority::Authoritative
+        }
+        // orgasmic:TASK-2QK4P.1.1 F1/F2 — a failed enumeration must not read as
+        // "this claim is not authoritative". That answer sends the handler on to
+        // the no-plan branch, where it mints a SECOND replacement beside the one
+        // the unread file may already hold. Unknown gets its own answer and the
+        // caller refuses.
+        Ok(ResolvedRecoveryClaim::Unobserved(reason)) => {
+            CommittedClaimAuthority::Unobserved(reason)
+        }
+        _ => CommittedClaimAuthority::NotAuthoritative,
+    }
+}
+
+/// Three answers, because two were never enough.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommittedClaimAuthority {
+    Authoritative,
+    NotAuthoritative,
+    Unobserved(UnobservedSession),
 }
 
 fn apply_recovery_claim_to_run(
     home: &Home,
-    indexed_origins: &[IndexedRecoveryOrigin],
+    authority: &mut ProjectOriginAuthority,
     run: &mut RecoveredRun,
 ) {
     if run.classification != "failed_recoverable" {
@@ -11772,7 +11805,7 @@ fn apply_recovery_claim_to_run(
         project_root,
         project_id,
         &run.run_id,
-        indexed_origins,
+        authority,
     ) else {
         run.recovery_actions.clear();
         return;
@@ -11782,6 +11815,20 @@ fn apply_recovery_claim_to_run(
         ResolvedRecoveryClaim::InvalidQuarantined => {
             run.recovery_actions.clear();
             run.reason = format!("{}; recovery claim invalid/quarantined", run.reason);
+            return;
+        }
+        // orgasmic:TASK-2QK4P.1.1 — the actions are cleared exactly as for a
+        // quarantine, because offering "start a recovery run" while a second
+        // authenticated replacement may sit in an unread file is the duplicate
+        // authority this whole path exists to prevent. The claim on disk is left
+        // alone, so the next pass — which may read the file fine — still finds
+        // it and the rescue stays idempotent.
+        ResolvedRecoveryClaim::Unobserved(reason) => {
+            run.recovery_actions.clear();
+            run.reason = format!(
+                "{}; recovery origin enumeration unresolved ({reason:?})",
+                run.reason
+            );
             return;
         }
         ResolvedRecoveryClaim::Missing => return,
@@ -11799,81 +11846,6 @@ fn apply_recovery_claim_to_run(
         "{}; recovery replacement {}",
         run.reason, claim.replacement_run_id
     );
-}
-
-/// Index the durable `RecoveryOrigin` links across the board.
-///
-/// orgasmic:TASK-FZB6T.1 finding 3 — this used to `read_dir` every project's
-/// sessions directory and open **every** session file, on every inventory pass
-/// that found a single failed-recoverable run. That is the whole-board rescan
-/// the catalog exists to remove, reintroduced by a different route: a board
-/// with one failed tombstone paid a bounded scan of all 197 files per poll,
-/// forever.
-///
-/// The catalog is authority on which sessions can carry a link. A
-/// `RecoveryOrigin` is a lifecycle envelope, lifecycle envelopes are retained
-/// verbatim by the catalog, and [`RunCatalogEntry::replacement_run_id`] is set
-/// from exactly those envelopes at index time. So the set of candidates is a
-/// map filter, and only a session the catalog already says carries a link is
-/// opened — which on a board with no recovery in flight is none of them.
-///
-/// `catalog` is `None` only where no catalog is available; the fallback is the
-/// old whole-directory enumeration, so the answer can never be *smaller* than
-/// before for want of an index.
-pub(crate) fn collect_recovery_origin_index(
-    home: &Home,
-    board: &[BoardEntry],
-    catalog: Option<&crate::run_catalog::RunCatalog>,
-    metrics: &mut InventoryStageMetrics,
-) -> Vec<IndexedRecoveryOrigin> {
-    let mut links = Vec::new();
-    let mut seen_dirs = std::collections::BTreeSet::new();
-    for entry in board {
-        let Ok(project_root) = entry.path.canonicalize() else {
-            continue;
-        };
-        let Ok(identity) =
-            read_existing_project_identity(&project_root.join(".orgasmic/project.org"))
-        else {
-            continue;
-        };
-        if identity.project_id != entry.id {
-            continue;
-        }
-        let project_id = identity.project_id.as_str();
-        let dir = project_sessions_dir(&project_root);
-        let Ok(canonical_dir) = dir.canonicalize() else {
-            continue;
-        };
-        if !seen_dirs.insert(canonical_dir.clone()) {
-            continue;
-        }
-        let candidates: Vec<PathBuf> = match catalog {
-            Some(catalog) => catalog
-                .entries_for_project(&project_root)
-                .into_iter()
-                .filter(|entry| entry.replacement_run_id.is_some())
-                .map(|entry| entry.session_path)
-                .collect(),
-            None => {
-                let Ok(entries) = std::fs::read_dir(&canonical_dir) else {
-                    continue;
-                };
-                entries
-                    .flatten()
-                    .map(|file| file.path())
-                    .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
-                    .collect()
-            }
-        };
-        for path in candidates {
-            let indexed = index_recovery_origins_in_session(home, &project_root, &path, project_id);
-            metrics.origin_index_files += 1;
-            metrics.origin_index_bytes_inspected += indexed.bytes_inspected;
-            links.extend(indexed.links);
-        }
-    }
-    links
 }
 
 /// Backend-owned, ordered, harness-aware recovery action resolver (dec_052).
@@ -17765,6 +17737,20 @@ impl ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: message.into(),
             body: None,
+        }
+    }
+    /// [`Self::unavailable`] with a structured body, so a caller can tell an
+    /// unresolved observation apart from a refusal to serve.
+    fn service_unavailable(body: Value) -> Self {
+        let message = body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("service unavailable")
+            .to_string();
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message,
+            body: Some(body),
         }
     }
 }

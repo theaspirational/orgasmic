@@ -1,7 +1,7 @@
 // orgasmic:task_A6FGF, task_QPKCD, task_6ZTFM, task_3TEDA
 //! Daemon-owned, project-scoped recovery claims for Failed tombstone rescue idempotency.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -195,6 +195,18 @@ pub enum ResolvedRecoveryClaim {
     Reconstructed(RecoveryClaim),
     InvalidQuarantined,
     Missing,
+    /// The candidate set could not be enumerated, so nothing about this origin
+    /// is decidable right now.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1 — this is deliberately NOT
+    /// [`Self::InvalidQuarantined`]. Both suppress recovery authority, but
+    /// `InvalidQuarantined` also renames the claim on disk, and a transient
+    /// read failure that did that would convert one failed observation into the
+    /// permanent loss of a live rescue's idempotency: the claim is gone, the
+    /// handler finds no pending plan, and it mints a second replacement beside
+    /// the one already running. Unknown completeness is not invalid evidence.
+    /// A caller must fail closed and retry, never act and never destroy.
+    Unobserved(UnobservedSession),
 }
 
 #[derive(Debug, Clone)]
@@ -639,6 +651,14 @@ impl SessionDirectory {
         self.open_path(path, false)?.scan_lifecycle_checked(budget)
     }
 
+    /// [`Self::scan_path`] with no budget: every line is examined, so the
+    /// result carries no skipped middle. The escalation
+    /// [`complete_session_scan`] reaches for when a bounded scan truncated.
+    fn scan_path_complete(&self, path: &Path) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+        self.open_path(path, false)?
+            .scan_lifecycle_complete_checked()
+    }
+
     pub(crate) fn open_path(
         &self,
         path: &Path,
@@ -733,6 +753,16 @@ impl SessionFile {
         let mut file = self.file.try_clone().map_err(RecoveryClaimError::Io)?;
         let file_bytes = file.metadata().map_err(RecoveryClaimError::Io)?.len();
         orgasmic_core::scan_session_lifecycle_reader(&mut file, file_bytes, budget)
+            .map_err(|_| RecoveryClaimError::CorruptClaim)
+    }
+
+    pub(crate) fn scan_lifecycle_complete_checked(
+        &self,
+    ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+        self.validate_current()?;
+        let mut file = self.file.try_clone().map_err(RecoveryClaimError::Io)?;
+        let file_bytes = file.metadata().map_err(RecoveryClaimError::Io)?.len();
+        orgasmic_core::scan_session_lifecycle_complete_reader(&mut file, file_bytes)
             .map_err(|_| RecoveryClaimError::CorruptClaim)
     }
 
@@ -1083,12 +1113,107 @@ fn session_prompt_draft(envelopes: &[SessionEnvelope]) -> Option<String> {
     })
 }
 
-/// Result of one bounded origin-index pass over a session file.
-#[derive(Debug, Default)]
-pub struct IndexedRecoveryOrigins {
-    pub links: Vec<IndexedRecoveryOrigin>,
-    /// Bytes read to produce `links`, reported as an inventory stage metric.
-    pub bytes_inspected: u64,
+/// Why one origin-index pass could not state what a session file contains.
+///
+/// Every variant is an OBSERVATION failure, never a statement about the file's
+/// contents. That distinction is the whole point: an unreadable file is not an
+/// empty one, and a claim must not be renamed invalid because a read failed
+/// (orgasmic:TASK-2QK4P.1.1, reviewer open question 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnobservedSession {
+    /// The project's pinned sessions directory could not be opened.
+    SessionDirectoryUnavailable,
+    /// The session file could not be opened, read, or parsed — including a
+    /// malformed lifecycle-relevant line, which the scanner rejects the file
+    /// for rather than skipping.
+    SessionUnreadable,
+    /// A `RecoveryOrigin` named an origin session that could not be read, so
+    /// the link can neither be admitted nor dismissed.
+    OriginSessionUnreadable,
+}
+
+/// Result of one origin-index pass over a session file.
+///
+/// orgasmic:TASK-2QK4P.1.1 — THE POINT OF THIS TYPE IS THE VARIANT THAT
+/// CARRIES NO LINKS.
+///
+/// Rounds one through three of TASK-2QK4P were one defect: an observation that
+/// FAILED was reported as an observation that SUCCEEDED and found nothing. Each
+/// round closed the instance it was handed and left the class alive one layer
+/// down, and round three's layer was this function's own return type — a struct
+/// with a `links` field and a `Default`, so `IndexedRecoveryOrigins::default()`
+/// was a legal spelling of "I could not read the file" that every caller read
+/// as "the file has no links".
+///
+/// So this is an enum and not a struct with an `ok` flag, it derives no
+/// `Default`, and [`Self::Unobserved`] has NO links field. What that forces:
+///
+/// - The three error paths below cannot return an empty success, because there
+///   is no empty success to return — `Complete` must be constructed with a
+///   `links` vector the function actually produced.
+/// - A caller cannot reach `links` without matching, and cannot match without
+///   writing an arm for `Unobserved`. Discarding the unresolved case is still
+///   possible, but only by typing the word, which is what makes it reviewable.
+/// - `#[must_use]` means dropping the result entirely is a warning, and the
+///   workspace builds with `-D warnings`.
+///
+/// `the_origin_index_result_cannot_spell_failure_as_an_empty_success` pins the
+/// shape so a future edit that re-adds `Default` is a red test rather than a
+/// fourth review round.
+#[derive(Debug)]
+#[must_use = "an origin-index pass states its own completeness; dropping it \
+              turns `I did not observe` back into `I observed nothing`"]
+pub enum IndexedRecoveryOrigins {
+    /// The whole file was observed. `links` is every recovery-origin link it
+    /// carries — an empty vector here is a real statement of absence.
+    Complete {
+        links: Vec<IndexedRecoveryOrigin>,
+        /// Bytes read, reported as an inventory stage metric.
+        bytes_inspected: u64,
+    },
+    /// The file was NOT observed. There is deliberately nothing here to mistake
+    /// for a result.
+    Unobserved {
+        reason: UnobservedSession,
+        bytes_inspected: u64,
+    },
+}
+
+/// A lifecycle scan that is COMPLETE for the whole file.
+///
+/// Bounded first, because that is what keeps a whole-board pass cheap; if the
+/// bounded windows skipped a middle, the middle is read
+/// ([`orgasmic_core::scan_session_lifecycle_complete_reader`], streaming).
+///
+/// orgasmic:TASK-2QK4P.1.1 F2 — [`SessionScanBudget::DEFAULT`] is a 128 KiB
+/// prefix and a 64 KiB tail, and `SessionLifecycleScan::truncated` documents
+/// that the gap between them is UNKNOWN rather than absent. Origin indexing
+/// decides recovery authority from "no other link exists in this file", which
+/// is exactly a statement about the gap, so it may never read a truncated scan
+/// as an answer. Nothing bounds a `RecoveryOrigin` envelope to either window:
+/// the committed snapshot it embeds repeats the run's `PromptDraft`, and that
+/// draft carries uncapped `git diff --stat` output.
+#[cfg(unix)]
+fn complete_session_scan(
+    session_dir: &SessionDirectory,
+    session_path: &Path,
+) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+    let scan = session_dir.scan_path(session_path, SessionScanBudget::DEFAULT)?;
+    if !scan.truncated {
+        return Ok(scan);
+    }
+    session_dir.scan_path_complete(session_path)
+}
+
+#[cfg(not(unix))]
+fn complete_session_scan(session_path: &Path) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+    let scan = orgasmic_core::scan_session_lifecycle(session_path, SessionScanBudget::DEFAULT)
+        .map_err(|_| RecoveryClaimError::CorruptClaim)?;
+    if !scan.truncated {
+        return Ok(scan);
+    }
+    orgasmic_core::scan_session_lifecycle_complete(session_path)
+        .map_err(|_| RecoveryClaimError::CorruptClaim)
 }
 
 pub fn index_recovery_origins_in_session(
@@ -1097,35 +1222,45 @@ pub fn index_recovery_origins_in_session(
     session_path: &Path,
     containing_project_id: &str,
 ) -> IndexedRecoveryOrigins {
-    // Recovery-origin links are lifecycle envelopes appended after the run
-    // ended. Reading them must not cost the run's transcript.
-    let budget = SessionScanBudget::DEFAULT;
     #[cfg(unix)]
-    let Ok(session_dir) = SessionDirectory::open(project_root) else {
-        return IndexedRecoveryOrigins::default();
+    let session_dir = match SessionDirectory::open(project_root) {
+        Ok(dir) => dir,
+        Err(_) => {
+            return IndexedRecoveryOrigins::Unobserved {
+                reason: UnobservedSession::SessionDirectoryUnavailable,
+                bytes_inspected: 0,
+            }
+        }
     };
     #[cfg(unix)]
-    let Ok(scan) = session_dir.scan_path(session_path, budget) else {
-        return IndexedRecoveryOrigins::default();
-    };
+    let scan = complete_session_scan(&session_dir, session_path);
     #[cfg(not(unix))]
-    let Ok(scan) = orgasmic_core::scan_session_lifecycle(session_path, budget) else {
-        return IndexedRecoveryOrigins::default();
+    let scan = complete_session_scan(session_path);
+    let scan = match scan {
+        Ok(scan) => scan,
+        Err(_) => {
+            return IndexedRecoveryOrigins::Unobserved {
+                reason: UnobservedSession::SessionUnreadable,
+                bytes_inspected: 0,
+            }
+        }
     };
     let mut bytes_inspected = scan.bytes_inspected;
-    let empty = || IndexedRecoveryOrigins {
-        links: Vec::new(),
-        bytes_inspected,
+    let complete = |links: Vec<IndexedRecoveryOrigin>, bytes_inspected: u64| {
+        IndexedRecoveryOrigins::Complete {
+            links,
+            bytes_inspected,
+        }
     };
     let envelopes = scan.envelopes;
     let Some(first) = envelopes.first() else {
-        return empty();
+        return complete(Vec::new(), bytes_inspected);
     };
     let Some(run_meta_project) = session_run_meta_project(&envelopes) else {
-        return empty();
+        return complete(Vec::new(), bytes_inspected);
     };
     if run_meta_project != containing_project_id {
-        return empty();
+        return complete(Vec::new(), bytes_inspected);
     }
     let draft_prompt = session_prompt_draft(&envelopes);
     let mut links = Vec::new();
@@ -1201,15 +1336,23 @@ pub fn index_recovery_origins_in_session(
             if !origin_session_path.is_absolute() {
                 continue;
             }
+            // orgasmic:TASK-2QK4P.1.1 F1 — a `continue` here would DROP a link
+            // that may be a second authority, which is the unsafe direction:
+            // the resolver's uniqueness test only fails closed on a set it can
+            // trust to be whole. An origin session that cannot be read leaves
+            // this link undecidable, and undecidable is unobserved.
             #[cfg(unix)]
-            let Ok(origin_scan) = session_dir.scan_path(&origin_session_path, budget) else {
-                continue;
-            };
+            let origin_scan = complete_session_scan(&session_dir, &origin_session_path);
             #[cfg(not(unix))]
-            let Ok(origin_scan) =
-                orgasmic_core::scan_session_lifecycle(&origin_session_path, budget)
-            else {
-                continue;
+            let origin_scan = complete_session_scan(&origin_session_path);
+            let origin_scan = match origin_scan {
+                Ok(scan) => scan,
+                Err(_) => {
+                    return IndexedRecoveryOrigins::Unobserved {
+                        reason: UnobservedSession::OriginSessionUnreadable,
+                        bytes_inspected,
+                    }
+                }
             };
             bytes_inspected += origin_scan.bytes_inspected;
             let origin_envelopes = origin_scan.envelopes;
@@ -1237,10 +1380,7 @@ pub fn index_recovery_origins_in_session(
             });
         }
     }
-    IndexedRecoveryOrigins {
-        links,
-        bytes_inspected,
-    }
+    complete(links, bytes_inspected)
 }
 
 pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin) -> RecoveryClaim {
@@ -1263,38 +1403,138 @@ fn matching_origin_links<'a>(
         .collect()
 }
 
-/// Every recovery-origin link that exists on disk under one project, or `None`
-/// when the enumeration could not be COMPLETED.
+/// Cost of building one project's authoritative link set, reported so an
+/// operator can read the slow path's price off an inventory response.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OriginEnumerationCost {
+    pub files: u64,
+    pub bytes_inspected: u64,
+}
+
+/// Every recovery-origin link that exists on disk under one project, or the
+/// statement that the enumeration did NOT complete.
 ///
-/// orgasmic:TASK-2QK4P.1 — this is the slow path, and it exists because the
-/// fast path cannot state its own completeness. `indexed_origins` is derived
-/// from the run catalog, whose candidate files are the records it happens to
-/// hold; an empty slice is produced both by "the one live record was
-/// temporarily invalidated" and by "the candidate set is incomplete", and
-/// nothing in the slice distinguishes them. This asks the filesystem instead,
-/// so the answer is a statement about what exists rather than about what was
-/// cached.
+/// orgasmic:TASK-2QK4P.1 — this is the filesystem answer, and it exists because
+/// the run catalog cannot state its own completeness. The catalog's candidate
+/// files are the records it happens to hold, and the session writer invalidates
+/// a record on every lifecycle append, so an empty catalog-derived set is
+/// produced both by "the one live record was temporarily invalidated" and by
+/// "the candidate set never contained the file". Nothing in that set
+/// distinguishes them.
 ///
-/// `None` is the third answer and it is not "nothing found": a sessions
-/// directory that cannot be opened, or a directory entry that cannot be read,
-/// leaves the enumeration incomplete, and an incomplete enumeration is not
-/// permission to decide recovery authority.
+/// orgasmic:TASK-2QK4P.1.1 — and [`Self::Unobserved`] is the third answer,
+/// which is not "nothing found". A sessions directory that cannot be opened, a
+/// directory entry that cannot be read, an unreadable member file or one
+/// malformed lifecycle line all leave the enumeration incomplete, and an
+/// incomplete enumeration is not permission to decide recovery authority. Like
+/// [`IndexedRecoveryOrigins`] it derives no `Default` and its unresolved
+/// variant carries no links, so no call site can spell failure as an empty set.
+#[derive(Debug)]
+#[must_use = "an origin enumeration states its own completeness; dropping it \
+              turns `I did not observe` back into `I observed nothing`"]
+pub enum AuthoritativeOriginLinks {
+    Complete(Vec<IndexedRecoveryOrigin>),
+    Unobserved(UnobservedSession),
+}
+
+/// One complete per-project authoritative snapshot, built at most once per
+/// inventory or recover decision and shared across every claim that decision
+/// resolves.
+///
+/// orgasmic:TASK-2QK4P.1.1 F4 — the enumeration is a whole-directory scan, so
+/// doing it inside each resolver call made a project with N committed claims
+/// pay N passes over the same files on every poll. Memoizing by project root
+/// keeps the safety property (the answer is the filesystem's, never a cache
+/// consulted as authority) while paying for it once: this map lives for the
+/// duration of ONE decision and is dropped with it, so it can never become the
+/// stale index the whole task exists to stop trusting.
+#[derive(Default)]
+pub struct ProjectOriginAuthority {
+    by_project: BTreeMap<PathBuf, AuthoritativeOriginLinks>,
+    cost: OriginEnumerationCost,
+}
+
+impl ProjectOriginAuthority {
+    pub fn cost(&self) -> OriginEnumerationCost {
+        self.cost
+    }
+
+    /// Enumerate this project once, then answer from that one enumeration.
+    pub fn links_for(
+        &mut self,
+        home: &Home,
+        project_root: &Path,
+        project_id: &str,
+    ) -> &AuthoritativeOriginLinks {
+        if !self.by_project.contains_key(project_root) {
+            let (links, cost) = enumerate_recovery_origin_links(home, project_root, project_id);
+            self.cost.files += cost.files;
+            self.cost.bytes_inspected += cost.bytes_inspected;
+            self.by_project.insert(project_root.to_path_buf(), links);
+        }
+        &self.by_project[project_root]
+    }
+}
+
 fn enumerate_recovery_origin_links(
     home: &Home,
     project_root: &Path,
     project_id: &str,
-) -> Option<Vec<IndexedRecoveryOrigin>> {
+) -> (AuthoritativeOriginLinks, OriginEnumerationCost) {
     let dir = project_sessions_dir(project_root);
     let mut links = Vec::new();
-    for entry in std::fs::read_dir(&dir).ok()? {
-        let path = entry.ok()?.path();
+    let mut cost = OriginEnumerationCost::default();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => {
+            return (
+                AuthoritativeOriginLinks::Unobserved(
+                    UnobservedSession::SessionDirectoryUnavailable,
+                ),
+                cost,
+            )
+        }
+    };
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(_) => {
+                return (
+                    AuthoritativeOriginLinks::Unobserved(
+                        UnobservedSession::SessionDirectoryUnavailable,
+                    ),
+                    cost,
+                )
+            }
+        };
         if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
             continue;
         }
-        links
-            .extend(index_recovery_origins_in_session(home, project_root, &path, project_id).links);
+        cost.files += 1;
+        // orgasmic:TASK-2QK4P.1.1 F1 — the `Unobserved` arm is the finding. A
+        // member file that could not be indexed used to contribute an empty
+        // `links` vector, and the union was then labelled authoritative: one
+        // unreadable JSONL, or one malformed lifecycle line in it, was enough
+        // to hide a second daemon-authenticated replacement and let the
+        // resolver return `Valid` for a claim it had not proved unique.
+        match index_recovery_origins_in_session(home, project_root, &path, project_id) {
+            IndexedRecoveryOrigins::Complete {
+                links: found,
+                bytes_inspected,
+            } => {
+                cost.bytes_inspected += bytes_inspected;
+                links.extend(found);
+            }
+            IndexedRecoveryOrigins::Unobserved {
+                reason,
+                bytes_inspected,
+            } => {
+                cost.bytes_inspected += bytes_inspected;
+                return (AuthoritativeOriginLinks::Unobserved(reason), cost);
+            }
+        }
     }
-    Some(links)
+    (AuthoritativeOriginLinks::Complete(links), cost)
 }
 
 pub fn resolve_authoritative_recovery_claim(
@@ -1302,8 +1542,28 @@ pub fn resolve_authoritative_recovery_claim(
     project_root: &Path,
     project_id: &str,
     origin_run_id: &str,
-    indexed_origins: &[IndexedRecoveryOrigin],
+    authority: &mut ProjectOriginAuthority,
 ) -> Result<ResolvedRecoveryClaim, RecoveryClaimError> {
+    // orgasmic:TASK-2QK4P.1.1 F3/F4 — ONE authoritative set, taken before the
+    // branch, so every branch below decides from the same evidence. The
+    // committed branch used to enumerate the filesystem while the missing and
+    // corrupt branches took a catalog-derived slice, which left the same hole
+    // open with a different caller; and enumerating inside the branch made a
+    // project with several committed claims rescan its session files once per
+    // claim on every poll. `authority` is memoized per project for the life of
+    // one inventory or recover decision and dropped with it.
+    let authoritative = match authority.links_for(home, project_root, project_id) {
+        AuthoritativeOriginLinks::Complete(links) => links.as_slice(),
+        // Unobserved is NOT invalid. It suppresses recovery authority — the
+        // caller must not act on a claim whose uniqueness is unproven — but it
+        // must not quarantine, because a transient read failure that renamed a
+        // valid committed claim would turn one failed observation into the
+        // permanent loss of that rescue's idempotency, and the handler would
+        // then mint a second replacement beside the live one.
+        AuthoritativeOriginLinks::Unobserved(reason) => {
+            return Ok(ResolvedRecoveryClaim::Unobserved(*reason))
+        }
+    };
     let loaded = load_recovery_claim(home, project_id, origin_run_id);
     match loaded {
         Ok(Some(claim)) => {
@@ -1312,9 +1572,9 @@ pub fn resolve_authoritative_recovery_claim(
                 // candidate set that can state its own COMPLETENESS, never from
                 // a silent one.
                 //
-                // `indexed_origins` comes from `collect_recovery_origin_index`,
-                // whose candidate files are the run-catalog records that happen
-                // to be loaded. The catalog is a cache with holes ON PURPOSE:
+                // The obvious cheap candidate set is the run catalog, whose
+                // records are the ones that happen to be loaded. The catalog is
+                // a cache with holes ON PURPOSE:
                 // the session writer calls
                 // [`crate::run_catalog::RunCatalog::invalidate_session`] on
                 // every lifecycle append, which REMOVES the record so the next
@@ -1343,38 +1603,32 @@ pub fn resolve_authoritative_recovery_claim(
                 // false quarantine is a retry, the cost of a false `Valid` is
                 // two daemons believing they hold the same lease.
                 //
-                // So `indexed_origins` is not consulted here AT ALL, and that is
-                // deliberate rather than an oversight. A ONE-element fast index
-                // states no more about completeness than an empty one: the
-                // catalog can just as easily hold the record for the replacement
-                // this claim names while a SECOND authenticated replacement's
-                // record sits invalidated, and that is the likelier arrangement
-                // of the two, not the rarer. Enumerating only on a zero match
-                // would close the hole one link wide and leave it open at one.
+                // So a catalog-derived index is not consulted here AT ALL, and
+                // that is deliberate rather than an oversight. A ONE-element
+                // fast index states no more about completeness than an empty
+                // one: the catalog can just as easily hold the record for the
+                // replacement this claim names while a SECOND authenticated
+                // replacement's record sits invalidated, and that is the
+                // likelier arrangement of the two, not the rarer. Enumerating
+                // only on a zero match would close the hole one link wide and
+                // leave it open at one.
                 //
                 // The candidate set is therefore always the filesystem's, and it
                 // has three answers, not two: exactly one link equal to this
                 // claim (accept), more than one or one that disagrees (the
-                // duplicate-replacement violation), and `None` — the enumeration
-                // itself did not complete, which is unresolved completeness and
-                // fails closed exactly like multiplicity does.
+                // duplicate-replacement violation), and `Unobserved` — the
+                // enumeration itself did not complete, handled above, which
+                // suppresses authority exactly like multiplicity does but
+                // without renaming the claim.
                 //
-                // The cost is one bounded lifecycle scan per session file under
-                // this ONE project, per committed-claim resolution, on the
-                // inventory path `apply_recovery_claim_to_run` walks. That is
-                // paid knowingly: a committed claim exists only for a
-                // failed-recoverable run mid-rescue, the scan budget caps each
-                // file at `SessionScanBudget::DEFAULT`, and the alternative is
-                // deciding a lease-holder from a cache that cannot say what it
-                // has not looked at.
-                let Some(authoritative) =
-                    enumerate_recovery_origin_links(home, project_root, project_id)
-                else {
-                    quarantine_invalid_claim(home, project_id, origin_run_id)?;
-                    return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
-                };
+                // The cost is one lifecycle scan per session file under this ONE
+                // project, once per inventory or recover decision rather than
+                // once per claim, and unbounded only for files whose bounded
+                // windows skipped a middle. That is paid knowingly: the
+                // alternative is deciding a lease-holder from a cache that
+                // cannot say what it has not looked at.
                 let matching =
-                    matching_origin_links(&authoritative, project_root, project_id, origin_run_id);
+                    matching_origin_links(authoritative, project_root, project_id, origin_run_id);
                 let uniquely_confirmed =
                     matches!(matching.as_slice(), [only] if only.claim == claim);
                 if uniquely_confirmed
@@ -1388,40 +1642,39 @@ pub fn resolve_authoritative_recovery_claim(
                     project_root,
                     project_id,
                     origin_run_id,
-                    &authoritative,
+                    authoritative,
                 );
             }
             Ok(ResolvedRecoveryClaim::Valid(claim))
         }
-        Ok(None) => reconstruct_or_quarantine(
-            home,
-            project_root,
-            project_id,
-            origin_run_id,
-            indexed_origins,
-        ),
+        Ok(None) => {
+            reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, authoritative)
+        }
         Err(RecoveryClaimError::CorruptClaim) => {
             quarantine_invalid_claim(home, project_id, origin_run_id)?;
-            reconstruct_or_quarantine(
-                home,
-                project_root,
-                project_id,
-                origin_run_id,
-                indexed_origins,
-            )
+            reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, authoritative)
         }
         Err(err) => Err(err),
     }
 }
 
+/// Rebuild a lost or corrupt claim from session truth, or refuse.
+///
+/// orgasmic:TASK-2QK4P.1.1 F3 — `authoritative` must come from
+/// [`ProjectOriginAuthority`] and nowhere else. `Missing` says "no
+/// daemon-authenticated replacement exists for this origin", which the caller
+/// reads as permission to mint one; that is only true of a set that has stated
+/// its own completeness. Handing this a catalog-derived slice made `Missing`
+/// reachable while a real replacement was live and appending — the same defect
+/// as the committed branch, one caller over.
 fn reconstruct_or_quarantine(
     home: &Home,
     project_root: &Path,
     project_id: &str,
     origin_run_id: &str,
-    indexed_origins: &[IndexedRecoveryOrigin],
+    authoritative: &[IndexedRecoveryOrigin],
 ) -> Result<ResolvedRecoveryClaim, RecoveryClaimError> {
-    let matching = matching_origin_links(indexed_origins, project_root, project_id, origin_run_id);
+    let matching = matching_origin_links(authoritative, project_root, project_id, origin_run_id);
     if matching.len() > 1 {
         return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
     }
@@ -2402,6 +2655,72 @@ mod tests {
         )
     }
 
+    /// The lifecycle envelopes of a committed replacement transcript, in write
+    /// order, with the `RecoveryOrigin` LAST — the production order, and the one
+    /// orgasmic:TASK-2QK4P.1.1 F2 turns on: `PromptDraft` is written before the
+    /// link, the link's embedded claim snapshot repeats that draft, and the
+    /// draft carries uncapped `git diff --stat` output.
+    fn committed_replacement_events(claim: &RecoveryClaim) -> Vec<serde_json::Value> {
+        let mut events = vec![
+            serde_json::to_value(Lifecycle::Acquire {
+                task_id: claim.task_id.clone().unwrap(),
+                kind: claim.kind.clone().unwrap(),
+                worker_id: claim.worker_id.clone().unwrap(),
+            })
+            .unwrap(),
+            serde_json::to_value(Lifecycle::RunMeta {
+                transport: claim.transport.clone().unwrap(),
+                harness: claim.harness.clone(),
+                project_id: Some(claim.project_id.clone()),
+                worktree: claim.worktree.clone(),
+                last_path: claim.last_path.clone(),
+                stdout_path: claim.stdout_path.clone(),
+                dispatch_attempt_token: None,
+                role: claim.role.clone(),
+                requires_worker_finalize: claim.requires_worker_finalize,
+                credential_mode: None,
+                driver_config: claim.driver_config.clone().unwrap(),
+            })
+            .unwrap(),
+        ];
+        if let Some(native) = claim.planned_native_runtime.as_ref() {
+            events.push(
+                serde_json::to_value(Lifecycle::NativeRuntime {
+                    provider: native.provider.clone(),
+                    session_id: native.session_id.clone(),
+                    session_path: native.session_path.clone(),
+                    launch_argv: native.launch_argv.clone(),
+                    resume_argv: native.resume_argv.clone(),
+                })
+                .unwrap(),
+            );
+        }
+        if let Some(prompt) = claim.draft_prompt.as_ref() {
+            events.push(
+                serde_json::to_value(Lifecycle::PromptDraft {
+                    text: prompt.clone(),
+                    sent: false,
+                })
+                .unwrap(),
+            );
+        }
+        events.push(
+            serde_json::to_value(Lifecycle::RecoveryOrigin {
+                project_id: claim.project_id.clone(),
+                origin_run_id: claim.origin_run_id.clone(),
+                origin_session_path: claim.origin_session_path.clone().unwrap(),
+                request_id: claim.request_id.clone(),
+                replacement_run_id: claim.replacement_run_id.clone(),
+                replacement_session_path: claim.replacement_session_path.clone(),
+                action: claim.action.clone().unwrap(),
+                target: claim.target.clone(),
+                claim: Some(serde_json::to_value(claim).unwrap()),
+            })
+            .unwrap(),
+        );
+        events
+    }
+
     fn write_committed_replacement(claim: &RecoveryClaim) {
         let identity = RuntimeIdentity {
             run_id: claim.replacement_run_id.clone(),
@@ -2410,80 +2729,28 @@ mod tests {
         };
         let mut writer =
             orgasmic_core::SessionWriter::open(&claim.replacement_session_path, identity).unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::Acquire {
-                    task_id: claim.task_id.clone().unwrap(),
-                    kind: claim.kind.clone().unwrap(),
-                    worker_id: claim.worker_id.clone().unwrap(),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::RunMeta {
-                    transport: claim.transport.clone().unwrap(),
-                    harness: claim.harness.clone(),
-                    project_id: Some(claim.project_id.clone()),
-                    worktree: claim.worktree.clone(),
-                    last_path: claim.last_path.clone(),
-                    stdout_path: claim.stdout_path.clone(),
-                    dispatch_attempt_token: None,
-                    role: claim.role.clone(),
-                    requires_worker_finalize: claim.requires_worker_finalize,
-                    credential_mode: None,
-                    driver_config: claim.driver_config.clone().unwrap(),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        if let Some(native) = claim.planned_native_runtime.as_ref() {
-            writer
-                .append(
-                    SessionEventKind::Lifecycle,
-                    serde_json::to_value(Lifecycle::NativeRuntime {
-                        provider: native.provider.clone(),
-                        session_id: native.session_id.clone(),
-                        session_path: native.session_path.clone(),
-                        launch_argv: native.launch_argv.clone(),
-                        resume_argv: native.resume_argv.clone(),
-                    })
-                    .unwrap(),
-                )
-                .unwrap();
+        for event in committed_replacement_events(claim) {
+            writer.append(SessionEventKind::Lifecycle, event).unwrap();
         }
-        if let Some(prompt) = claim.draft_prompt.as_ref() {
-            writer
-                .append(
-                    SessionEventKind::Lifecycle,
-                    serde_json::to_value(Lifecycle::PromptDraft {
-                        text: prompt.clone(),
-                        sent: false,
-                    })
-                    .unwrap(),
-                )
-                .unwrap();
+    }
+
+    /// The links one session file carries, asserting the pass COMPLETED.
+    ///
+    /// Tests that mean "this file contains these links" must not accept an
+    /// `Unobserved` pass as an empty one — that is the very substitution
+    /// orgasmic:TASK-2QK4P.1.1 exists to make impossible in production, and a
+    /// test helper that quietly did it would hide the next regression.
+    fn complete_links(
+        home: &Home,
+        project_root: &Path,
+        session_path: &Path,
+    ) -> Vec<IndexedRecoveryOrigin> {
+        match index_recovery_origins_in_session(home, project_root, session_path, "orgasmic") {
+            IndexedRecoveryOrigins::Complete { links, .. } => links,
+            IndexedRecoveryOrigins::Unobserved { reason, .. } => {
+                panic!("{session_path:?} was expected to be observable, got {reason:?}")
+            }
         }
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::RecoveryOrigin {
-                    project_id: claim.project_id.clone(),
-                    origin_run_id: claim.origin_run_id.clone(),
-                    origin_session_path: claim.origin_session_path.clone().unwrap(),
-                    request_id: claim.request_id.clone(),
-                    replacement_run_id: claim.replacement_run_id.clone(),
-                    replacement_session_path: claim.replacement_session_path.clone(),
-                    action: claim.action.clone().unwrap(),
-                    target: claim.target.clone(),
-                    claim: Some(serde_json::to_value(claim).unwrap()),
-                })
-                .unwrap(),
-            )
-            .unwrap();
     }
 
     #[test]
@@ -2588,29 +2855,19 @@ mod tests {
         second.authority_tag = Some(authority_tag(&home, &second).unwrap());
         write_committed_replacement(&second);
 
-        let mut links = index_recovery_origins_in_session(
+        let mut links = complete_links(&home, &project_root, &first.replacement_session_path);
+        links.extend(complete_links(
             &home,
             &project_root,
-            &first.replacement_session_path,
-            "orgasmic",
-        )
-        .links;
-        links.extend(
-            index_recovery_origins_in_session(
-                &home,
-                &project_root,
-                &second.replacement_session_path,
-                "orgasmic",
-            )
-            .links,
-        );
+            &second.replacement_session_path,
+        ));
         assert_eq!(links.len(), 2, "both daemon-authenticated links must index");
         let resolved = resolve_authoritative_recovery_claim(
             &home,
             &project_root,
             "orgasmic",
             "run-duplicate-origin",
-            &links,
+            &mut ProjectOriginAuthority::default(),
         )
         .unwrap();
         assert!(matches!(
@@ -2619,14 +2876,10 @@ mod tests {
         ));
     }
 
-    /// One project shaped the way `collect_recovery_origin_index` requires it:
-    /// a real `.orgasmic/project.org` whose id matches the board entry's, under
-    /// a canonical root — the collector canonicalizes `entry.path`, and the
-    /// links it emits carry that canonical root.
-    fn seed_indexed_project(
-        root: &Path,
-        project_id: &str,
-    ) -> (PathBuf, Vec<crate::index::BoardEntry>) {
+    /// One project shaped the way the run catalog requires it: a real
+    /// `.orgasmic/project.org` whose id matches, under a CANONICAL root, since
+    /// the links the index emits carry that root and the resolver matches on it.
+    fn seed_indexed_project(root: &Path, project_id: &str) -> PathBuf {
         let project_root = root.join("proj");
         std::fs::create_dir_all(project_root.join(".orgasmic")).unwrap();
         std::fs::write(
@@ -2636,13 +2889,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let board = vec![crate::index::BoardEntry {
-            id: project_id.into(),
-            path: project_root.clone(),
-            branch: "main".into(),
-            status: "active".into(),
-        }];
-        (project_root, board)
+        project_root
     }
 
     fn write_origin_session(spec: &PendingRecoveryClaimSpec, runtime_id: &str, boot_id: &str) {
@@ -2677,15 +2924,27 @@ mod tests {
             .unwrap();
     }
 
-    /// The PRODUCTION candidate set for one inventory pass: the real collector,
-    /// driven from a board entry and a real [`crate::run_catalog::RunCatalog`].
+    /// The candidate set a run-catalog-derived index can offer, reproduced
+    /// exactly as `collect_recovery_origin_index` built it before
+    /// orgasmic:TASK-2QK4P.1.1 removed it: the project's catalog records that
+    /// name a replacement, indexed one file at a time.
+    ///
+    /// It is a PREMISE here and never evidence. These tests assert what the
+    /// cache holds precisely so that the resolver's answer below is
+    /// demonstrably independent of it — an empty result and a one-element
+    /// result are both states in which the resolver must still decide from the
+    /// filesystem.
     fn collector_links(
         home: &Home,
-        board: &[crate::index::BoardEntry],
+        project_root: &Path,
         catalog: &crate::run_catalog::RunCatalog,
     ) -> Vec<IndexedRecoveryOrigin> {
-        let mut metrics = crate::api::InventoryStageMetrics::default();
-        crate::api::collect_recovery_origin_index(home, board, Some(catalog), &mut metrics)
+        catalog
+            .entries_for_project(project_root)
+            .into_iter()
+            .filter(|entry| entry.replacement_run_id.is_some())
+            .flat_map(|entry| complete_links(home, project_root, &entry.session_path))
+            .collect()
     }
 
     fn refresh_catalog(catalog: &crate::run_catalog::RunCatalog, project_root: &Path) {
@@ -2729,7 +2988,7 @@ mod tests {
         let root = tmp.path().canonicalize().unwrap();
         let home = Home::at(root.join("home"));
         home.ensure().unwrap();
-        let (project_root, board) = seed_indexed_project(&root, "orgasmic");
+        let project_root = seed_indexed_project(&root, "orgasmic");
         let (spec, _) = sample_spec(
             &home,
             &project_root,
@@ -2763,7 +3022,7 @@ mod tests {
         // collector is not globally blind. With the replacement's record loaded
         // it indexes exactly the one link, so the silence below is the
         // invalidation and nothing else.
-        let seen = collector_links(&home, &board, &catalog);
+        let seen = collector_links(&home, &project_root, &catalog);
         assert_eq!(
             seen.len(),
             1,
@@ -2774,7 +3033,7 @@ mod tests {
         // The live replacement appends, the writer invalidates its record, and
         // the collector's candidate FILES lose the only file carrying the link.
         catalog.invalidate_session(&committed.replacement_session_path);
-        let blind = collector_links(&home, &board, &catalog);
+        let blind = collector_links(&home, &project_root, &catalog);
         assert!(
             blind.is_empty(),
             "an invalidated record must leave the production collector silent: {blind:?}"
@@ -2790,7 +3049,7 @@ mod tests {
             &project_root,
             "orgasmic",
             "run-blind-origin",
-            &blind,
+            &mut ProjectOriginAuthority::default(),
         )
         .unwrap();
         match resolved {
@@ -2817,7 +3076,6 @@ mod tests {
     struct TwoReplacements {
         home: Home,
         project_root: PathBuf,
-        board: Vec<crate::index::BoardEntry>,
         catalog: crate::run_catalog::RunCatalog,
         committed: RecoveryClaim,
         second: RecoveryClaim,
@@ -2830,7 +3088,7 @@ mod tests {
     fn seed_two_authenticated_replacements(root: &Path, origin_run_id: &str) -> TwoReplacements {
         let home = Home::at(root.join("home"));
         home.ensure().unwrap();
-        let (project_root, board) = seed_indexed_project(root, "orgasmic");
+        let project_root = seed_indexed_project(root, "orgasmic");
         let (spec, _) = sample_spec(
             &home,
             &project_root,
@@ -2876,7 +3134,7 @@ mod tests {
         // PREMISE: both links are real, and the production collector finds both
         // while their records are loaded. Whatever the collector reports below
         // is therefore the invalidation and nothing else.
-        let seen = collector_links(&home, &board, &catalog);
+        let seen = collector_links(&home, &project_root, &catalog);
         assert_eq!(
             seen.len(),
             2,
@@ -2895,7 +3153,6 @@ mod tests {
         TwoReplacements {
             home,
             project_root,
-            board,
             catalog,
             committed,
             second,
@@ -2933,7 +3190,7 @@ mod tests {
         seeded
             .catalog
             .invalidate_session(&seeded.second.replacement_session_path);
-        let blind = collector_links(&seeded.home, &seeded.board, &seeded.catalog);
+        let blind = collector_links(&seeded.home, &seeded.project_root, &seeded.catalog);
         assert!(
             blind.is_empty(),
             "two invalidated records must leave the production collector silent: {blind:?}"
@@ -2944,7 +3201,7 @@ mod tests {
             &seeded.project_root,
             "orgasmic",
             "run-hidden-origin",
-            &blind,
+            &mut ProjectOriginAuthority::default(),
         )
         .unwrap();
         assert!(
@@ -2979,7 +3236,7 @@ mod tests {
         seeded
             .catalog
             .invalidate_session(&seeded.second.replacement_session_path);
-        let partial = collector_links(&seeded.home, &seeded.board, &seeded.catalog);
+        let partial = collector_links(&seeded.home, &seeded.project_root, &seeded.catalog);
         assert_eq!(
             partial.len(),
             1,
@@ -2995,7 +3252,7 @@ mod tests {
             &seeded.project_root,
             "orgasmic",
             "run-hidden-origin",
-            &partial,
+            &mut ProjectOriginAuthority::default(),
         )
         .unwrap();
         assert!(
@@ -3436,15 +3693,12 @@ mod tests {
             .unwrap();
         drop(writer);
 
-        let links =
-            index_recovery_origins_in_session(&home, &project_root, &replacement_path, "orgasmic")
-                .links;
         let resolved = resolve_authoritative_recovery_claim(
             &home,
             &project_root,
             "orgasmic",
             "run-corrupt-origin",
-            &links,
+            &mut ProjectOriginAuthority::default(),
         )
         .unwrap();
         assert!(matches!(resolved, ResolvedRecoveryClaim::Reconstructed(_)));
@@ -3686,13 +3940,695 @@ mod tests {
             )
             .unwrap();
         drop(writer);
-        assert!(index_recovery_origins_in_session(
+        assert!(complete_links(&home, &project_root, &replacement_path).is_empty());
+    }
+
+    // ===================================================================
+    // orgasmic:TASK-2QK4P.1.1 — round three, and the class rather than the
+    // instance.
+    //
+    // Rounds one and two each closed the case they were handed and left the
+    // same sentence true one layer down: AN OBSERVATION THAT FAILED WAS
+    // REPORTED AS AN OBSERVATION THAT SUCCEEDED AND FOUND NOTHING. Round one
+    // was an EMPTY catalog index read as non-contradiction; round two a
+    // ONE-ELEMENT index read as uniqueness; round three is a per-file scan
+    // that FAILED read as an empty-but-complete file, and a bounded scan's
+    // skipped middle read as absence.
+    // ===================================================================
+
+    /// A raw session line, written without [`orgasmic_core::SessionWriter`].
+    ///
+    /// The writer refuses `text_chunk` driver events on pane transports and
+    /// caps driver payloads, both correct in production and both in the way of
+    /// building the one shape this file must contain: a transcript large enough
+    /// to push a lifecycle line out of BOTH bounded scan windows.
+    fn raw_session_line(
+        seq: u64,
+        identity: &RuntimeIdentity,
+        kind: SessionEventKind,
+        event: serde_json::Value,
+    ) -> String {
+        let envelope = SessionEnvelope {
+            seq,
+            time: chrono::Utc::now(),
+            run_id: identity.run_id.clone(),
+            runtime_id: identity.runtime_id.clone(),
+            boot_id: identity.boot_id.clone(),
+            kind,
+            event,
+        };
+        let mut line = serde_json::to_string(&envelope).unwrap();
+        line.push('\n');
+        line
+    }
+
+    /// Bytes of one transcript line. Under
+    /// [`orgasmic_core::session`]'s retention filter these are `driver_event`
+    /// lines that are not lifecycle-bearing, so they are dropped unparsed —
+    /// exactly what a real TUI transcript costs a scan.
+    const FILLER_LINE_BYTES: usize = 32 * 1024;
+
+    /// The same replacement transcript [`write_committed_replacement`] writes,
+    /// with `filler_before` bytes of transcript between the head lifecycle
+    /// events and the `RecoveryOrigin`, and `filler_after` bytes behind it.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1 F2 — with `filler_before` past
+    /// [`SessionScanBudget::DEFAULT`]'s 128 KiB prefix and `filler_after` past
+    /// its 64 KiB tail, the authenticated link sits in the region a bounded scan
+    /// SKIPS. `SessionLifecycleScan::truncated` says that region is unknown; the
+    /// bug was reading it as empty.
+    fn write_committed_replacement_with_gap(
+        claim: &RecoveryClaim,
+        filler_before: usize,
+        filler_after: usize,
+    ) {
+        let identity = RuntimeIdentity {
+            run_id: claim.replacement_run_id.clone(),
+            runtime_id: claim.replacement_runtime_id.clone(),
+            boot_id: claim.boot_id.clone().unwrap(),
+        };
+        let mut events = committed_replacement_events(claim);
+        let origin_event = events.pop().expect("recovery_origin is written last");
+        let mut out = String::new();
+        let mut seq = 0_u64;
+        let push_filler = |out: &mut String, seq: &mut u64, bytes: usize| {
+            let mut written = 0;
+            while written < bytes {
+                let line = raw_session_line(
+                    *seq,
+                    &identity,
+                    SessionEventKind::DriverEvent,
+                    serde_json::json!({"type": "text_chunk", "text": "x".repeat(FILLER_LINE_BYTES)}),
+                );
+                written += line.len();
+                *seq += 1;
+                out.push_str(&line);
+            }
+        };
+        for event in events {
+            out.push_str(&raw_session_line(
+                seq,
+                &identity,
+                SessionEventKind::Lifecycle,
+                event,
+            ));
+            seq += 1;
+        }
+        push_filler(&mut out, &mut seq, filler_before);
+        let origin_offset = out.len();
+        out.push_str(&raw_session_line(
+            seq,
+            &identity,
+            SessionEventKind::Lifecycle,
+            origin_event,
+        ));
+        seq += 1;
+        push_filler(&mut out, &mut seq, filler_after);
+
+        std::fs::create_dir_all(claim.replacement_session_path.parent().unwrap()).unwrap();
+        std::fs::write(&claim.replacement_session_path, &out).unwrap();
+
+        // PREMISE, asserted rather than assumed: the link really is outside BOTH
+        // windows. Without this the test could pass for the boring reason that
+        // the file was small enough to be read whole.
+        let budget = SessionScanBudget::DEFAULT;
+        assert!(
+            origin_offset as u64 > budget.prefix_bytes,
+            "recovery_origin at {origin_offset} must be past the {} byte prefix window",
+            budget.prefix_bytes
+        );
+        assert!(
+            (out.len() - origin_offset) as u64 > budget.tail_bytes,
+            "recovery_origin must be more than the {} byte tail window from the end",
+            budget.tail_bytes
+        );
+        let bounded =
+            orgasmic_core::scan_session_lifecycle(&claim.replacement_session_path, budget)
+                .expect("the bounded scan itself must succeed; the link is skipped, not malformed");
+        assert!(bounded.truncated, "the fixture must truncate");
+        assert!(
+            !bounded.envelopes.iter().any(|envelope| matches!(
+                serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                Ok(Lifecycle::RecoveryOrigin { .. })
+            )),
+            "the bounded scan must NOT see the link — that is the whole fixture"
+        );
+    }
+
+    /// Append a line the lifecycle scanner must reject the whole file for.
+    ///
+    /// `"kind":"lifecycle"` in the envelope header makes the retention filter
+    /// keep the line, and the truncated body then fails to parse. That is the
+    /// production shape of a torn append: a real daemon crash mid-write leaves
+    /// exactly this.
+    fn append_malformed_lifecycle_line(session_path: &Path) {
+        use std::io::Write as _;
+        let mut file = OpenOptions::new().append(true).open(session_path).unwrap();
+        file.write_all(b"{\"seq\":9001,\"kind\":\"lifecycle\",\"event\":{\"phase\":\n")
+            .unwrap();
+    }
+
+    fn quarantine_exists(home: &Home, project_id: &str, origin_run_id: &str) -> bool {
+        claim_path(home, project_id, origin_run_id)
+            .unwrap()
+            .with_extension("json.quarantine")
+            .exists()
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F1 — a member file that could not be INDEXED is
+    /// not a member file that contains NOTHING.
+    ///
+    /// Two daemon-HMAC-authenticated replacements exist for one origin. The
+    /// loaded claim's own session is readable and verifies. The second one's
+    /// JSONL carries one malformed lifecycle line, so its scan fails — and
+    /// before this round that failure returned `IndexedRecoveryOrigins::default()`,
+    /// an empty-but-successful pass, which the enumerator folded into a union it
+    /// then labelled AUTHORITATIVE. The resolver saw exactly one link, equal to
+    /// the claim it had loaded, and returned `Valid` — silently choosing one of
+    /// two lease-holders and never discovering the other.
+    ///
+    /// Injection: make the scan-failure paths return an empty `Complete`. This
+    /// then returns `Valid`.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn a_scan_failure_in_a_second_replacement_is_not_an_empty_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let seeded = seed_two_authenticated_replacements(&root, "run-hidden-origin");
+        append_malformed_lifecycle_line(&seeded.second.replacement_session_path);
+
+        // The pass over that one file now states failure rather than emptiness.
+        let indexed = index_recovery_origins_in_session(
+            &seeded.home,
+            &seeded.project_root,
+            &seeded.second.replacement_session_path,
+            "orgasmic",
+        );
+        assert!(
+            matches!(
+                indexed,
+                IndexedRecoveryOrigins::Unobserved {
+                    reason: UnobservedSession::SessionUnreadable,
+                    ..
+                }
+            ),
+            "one malformed lifecycle line must make the pass unobserved, got {indexed:?}"
+        );
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-hidden-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
+            "an unindexable member file must leave the enumeration unresolved rather than \
+             confirming uniqueness, got {resolved:?}"
+        );
+
+        // Ruling 1: unresolved is not invalid. The claim is untouched, so the
+        // rescue keeps its idempotency across the failure.
+        assert_eq!(
+            load_recovery_claim(&seeded.home, "orgasmic", "run-hidden-origin").unwrap(),
+            Some(seeded.committed.clone())
+        );
+        assert!(!quarantine_exists(
+            &seeded.home,
+            "orgasmic",
+            "run-hidden-origin"
+        ));
+
+        // And what the malformed line was HIDING really was a safety violation:
+        // repair the file and the same resolver finds two authorities.
+        let repaired = std::fs::read_to_string(&seeded.second.replacement_session_path).unwrap();
+        let repaired: String = repaired
+            .lines()
+            .filter(|line| serde_json::from_str::<SessionEnvelope>(line).is_ok())
+            .map(|line| format!("{line}\n"))
+            .collect();
+        std::fs::write(&seeded.second.replacement_session_path, repaired).unwrap();
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-hidden-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+            "with the file readable the second authenticated replacement must fail closed, got \
+             {resolved:?}"
+        );
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F1, the other direction and the reviewer's open
+    /// question 1 as a ruling: a transient read failure must not DESTROY a valid
+    /// live rescue.
+    ///
+    /// One committed claim, one replacement, both fine — and an unrelated
+    /// sibling JSONL in the same sessions directory that cannot be scanned. The
+    /// enumeration is unresolved, so authority is suppressed; but the claim is
+    /// not renamed, and once the sibling is gone the very same claim resolves
+    /// `Valid`. Had `Unobserved` been folded into `InvalidQuarantined`, one
+    /// unreadable file anywhere in the directory would have permanently
+    /// quarantined a live rescue and let the handler mint a second replacement
+    /// beside it — a BLOCK SHIP in the opposite direction.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn an_unreadable_sibling_session_suppresses_authority_without_destroying_the_claim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
             &home,
             &project_root,
-            &replacement_path,
-            "orgasmic"
+            "run-transient-origin",
+            "req-transient",
+            "boot-transient",
+            false,
+        );
+        write_origin_session(&spec, "rt-transient-origin", "boot-dead");
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let committed = commit_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-transient-origin",
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-transient".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: Some("stable draft".into()),
+            },
         )
-        .links
-        .is_empty());
+        .unwrap();
+        write_committed_replacement(&committed);
+
+        let sibling = project_sessions_dir(&project_root).join("run-unrelated-torn.jsonl");
+        std::fs::write(&sibling, "").unwrap();
+        append_malformed_lifecycle_line(&sibling);
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-transient-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
+            "an unreadable sibling must suppress authority, got {resolved:?}"
+        );
+        assert_eq!(
+            load_recovery_claim(&home, "orgasmic", "run-transient-origin").unwrap(),
+            Some(committed.clone()),
+            "and it must NOT rename the claim: unknown completeness is not invalid evidence"
+        );
+        assert!(!quarantine_exists(
+            &home,
+            "orgasmic",
+            "run-transient-origin"
+        ));
+
+        std::fs::remove_file(&sibling).unwrap();
+        let resolved = resolve_authoritative_recovery_claim(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-transient-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        match resolved {
+            ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+            other => panic!("the rescue must survive the transient failure, got {other:?}"),
+        }
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F2 — a bounded scan's SKIPPED MIDDLE is unknown,
+    /// and reading it as absence hides a second authority.
+    ///
+    /// The second replacement's transcript is larger than the 128 KiB prefix
+    /// plus 64 KiB tail, and its authenticated `RecoveryOrigin` sits in the gap
+    /// between them. `SessionLifecycleScan` documents that gap as unknown; the
+    /// enumerator ignored `truncated` and labelled the union of retained links
+    /// authoritative, so the resolver saw one link — the loaded claim's own —
+    /// and returned `Valid`.
+    ///
+    /// The production route to a link that far in is the one the review named:
+    /// `PromptDraft` is written BEFORE `RecoveryOrigin`, the committed snapshot
+    /// embedded in the link REPEATS that draft, and the draft carries uncapped
+    /// `git diff --stat` output. The fixture reaches the same state with
+    /// transcript bytes, which is cheaper to build and identical to the scanner.
+    ///
+    /// Injection: drop the escalation in `complete_session_scan` and index from
+    /// the bounded scan. This then returns `Valid`.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn a_recovery_origin_outside_both_scan_windows_still_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let seeded = seed_two_authenticated_replacements(&root, "run-buried-origin");
+        std::fs::remove_file(&seeded.second.replacement_session_path).unwrap();
+        write_committed_replacement_with_gap(&seeded.second, 192 * 1024, 128 * 1024);
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-buried-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+            "a second authenticated replacement whose link sits in the bounded scan's skipped \
+             middle must still fail closed, got {resolved:?}"
+        );
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F2, the direction that made the round-two fix
+    /// produce the very duplicate it existed to prevent.
+    ///
+    /// Here the buried link is the LOADED claim's own. Under the bounded scan
+    /// the enumeration finds no matching link, `uniquely_confirmed` is false,
+    /// and the committed claim is QUARANTINED — and because the catalog uses the
+    /// same bounded scanner, no later pass can rediscover it. The refusal is
+    /// PERMANENT rather than the retry the code comment claimed, and the handler
+    /// then reaches the no-plan branch and mints another replacement beside the
+    /// live one.
+    ///
+    /// Injection: drop the escalation in `complete_session_scan`. This then
+    /// returns `Missing` with the claim quarantined.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn a_buried_link_does_not_permanently_destroy_its_own_committed_claim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+        let (spec, _) = sample_spec(
+            &home,
+            &project_root,
+            "run-buried-solo-origin",
+            "req-buried",
+            "boot-buried",
+            false,
+        );
+        write_origin_session(&spec, "rt-buried-origin", "boot-dead");
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let committed = commit_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-buried-solo-origin",
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-buried".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: Some("stable draft".into()),
+            },
+        )
+        .unwrap();
+        write_committed_replacement_with_gap(&committed, 192 * 1024, 128 * 1024);
+
+        // The claim verifies against its own transcript — `verify` reads the
+        // whole file — so the ONLY thing that could refuse it is the bounded
+        // enumeration failing to find the link it just verified.
+        assert!(verify_committed_claim_against_session(
+            &home,
+            &project_root,
+            &committed
+        ));
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &home,
+            &project_root,
+            "orgasmic",
+            "run-buried-solo-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        match resolved {
+            ResolvedRecoveryClaim::Valid(valid) => assert_eq!(valid, committed),
+            other => panic!(
+                "a committed claim whose own link sits in the skipped middle must not be \
+                 quarantined — that loss is permanent, got {other:?}"
+            ),
+        }
+        assert!(!quarantine_exists(
+            &home,
+            "orgasmic",
+            "run-buried-solo-origin"
+        ));
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F3 — the missing/corrupt branch, which is the
+    /// same defect wearing a different hat.
+    ///
+    /// `Ok(None)` and `CorruptClaim` used to reconstruct from the
+    /// CATALOG-derived slice while the committed branch enumerated the
+    /// filesystem. With the replacement's catalog record invalidated — which the
+    /// session writer does on every lifecycle append, so a LIVE replacement is
+    /// exactly the case — the slice is silent, reconstruction returns `Missing`,
+    /// and `post_run_recover` reads `Missing` as permission to mint a new claim
+    /// and session BESIDE the authenticated replacement already on disk.
+    ///
+    /// Two phases, because `Missing` is dangerous at both widths: one
+    /// replacement must RECONSTRUCT rather than report `Missing`, and two must
+    /// fail closed.
+    ///
+    /// Injection: reconstruct from the catalog-derived index. Phase one then
+    /// returns `Missing`.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn a_missing_claim_reconstructs_from_the_same_authoritative_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let seeded = seed_two_authenticated_replacements(&root, "run-missing-origin");
+        // The second replacement is not on disk for phase one; the catalog is
+        // rebuilt from what remains so its premise below is about invalidation
+        // and not about a record for a file that no longer exists.
+        std::fs::remove_file(&seeded.second.replacement_session_path).unwrap();
+        refresh_catalog(&seeded.catalog, &seeded.project_root);
+        // The claim file is gone — a lost claim is the branch under test.
+        std::fs::remove_file(claim_path(&seeded.home, "orgasmic", "run-missing-origin").unwrap())
+            .unwrap();
+
+        // PREMISE: both live records are invalidated, so a catalog-derived
+        // candidate set is silent. That silence is what used to become `Missing`.
+        seeded
+            .catalog
+            .invalidate_session(&seeded.committed.replacement_session_path);
+        let blind = collector_links(&seeded.home, &seeded.project_root, &seeded.catalog);
+        assert!(
+            blind.is_empty(),
+            "an invalidated record must leave a catalog-derived set silent: {blind:?}"
+        );
+
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-missing-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        match resolved {
+            ResolvedRecoveryClaim::Reconstructed(claim) => {
+                assert_eq!(claim, seeded.committed)
+            }
+            other => panic!(
+                "a lost claim whose authenticated replacement is on disk must be reconstructed, \
+                 never reported Missing — Missing is permission to mint a second one, got {other:?}"
+            ),
+        }
+
+        // Phase two: the second authenticated replacement is back and the claim
+        // is lost again. `Missing` here would put a THIRD replacement beside two.
+        std::fs::remove_file(claim_path(&seeded.home, "orgasmic", "run-missing-origin").unwrap())
+            .unwrap();
+        write_committed_replacement(&seeded.second);
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-missing-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::InvalidQuarantined),
+            "two authenticated replacements must fail closed on the missing branch too, got \
+             {resolved:?}"
+        );
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 F4 — ONE authoritative snapshot per decision,
+    /// shared across claims, pinned by the FILE-SCAN COUNT.
+    ///
+    /// The inventory loop calls the resolver once per failed-recoverable record.
+    /// Round two enumerated inside the resolver, so a project with two committed
+    /// claims rescanned every session file in the project twice on every poll —
+    /// `GET /runs` back to `O(failed_runs × session_bytes)`, which is precisely
+    /// what the caller had removed on purpose.
+    ///
+    /// Injection: build a fresh `ProjectOriginAuthority` per resolver call. The
+    /// count doubles and this goes red.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn one_authority_serves_every_claim_in_a_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = seed_indexed_project(&root, "orgasmic");
+
+        for (origin, boot) in [
+            ("run-multi-a", "boot-multi-a"),
+            ("run-multi-b", "boot-multi-b"),
+        ] {
+            let (spec, _) = sample_spec(&home, &project_root, origin, "req-multi", boot, false);
+            write_origin_session(&spec, &format!("rt-{origin}"), "boot-dead");
+            let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+            let committed = commit_recovery_claim(
+                &home,
+                "orgasmic",
+                origin,
+                CommitRecoveryDetails {
+                    runtime_id: plan.claim.replacement_runtime_id.clone(),
+                    boot_id: boot.into(),
+                    action: "start_recovery_run".into(),
+                    target: "worker".into(),
+                    draft_prompt: Some("stable draft".into()),
+                },
+            )
+            .unwrap();
+            write_committed_replacement(&committed);
+        }
+        let files_on_disk = std::fs::read_dir(project_sessions_dir(&project_root))
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .count() as u64;
+        assert_eq!(files_on_disk, 4, "two origins and two replacements");
+
+        let mut authority = ProjectOriginAuthority::default();
+        for origin in ["run-multi-a", "run-multi-b"] {
+            let resolved = resolve_authoritative_recovery_claim(
+                &home,
+                &project_root,
+                "orgasmic",
+                origin,
+                &mut authority,
+            )
+            .unwrap();
+            assert!(
+                matches!(resolved, ResolvedRecoveryClaim::Valid(_)),
+                "{origin} must resolve valid, got {resolved:?}"
+            );
+        }
+        assert_eq!(
+            authority.cost().files,
+            files_on_disk,
+            "the project's session files must be scanned ONCE for the whole decision, not once \
+             per claim"
+        );
+    }
+
+    /// orgasmic:TASK-2QK4P.1.1 acceptance 1 — THE PIN.
+    ///
+    /// The compiler is the primary mechanism and this test is the tripwire on
+    /// it. What actually stops a fourth round is the SHAPE:
+    ///
+    ///   - `IndexedRecoveryOrigins` is an enum with no `Default`, so
+    ///     `IndexedRecoveryOrigins::default()` — the exact spelling of all three
+    ///     round-three error paths — does not compile.
+    ///   - Its `Unobserved` variant carries NO links, so there is no empty
+    ///     success to return from an error path and nothing partial to reach for
+    ///     at a call site.
+    ///   - Reading `links` requires a `match`, and a `match` requires an arm for
+    ///     `Unobserved`. Ignoring the unresolved case is still possible, but only
+    ///     by typing the word — which is what makes it visible in review.
+    ///   - `#[must_use]` plus the workspace's `-D warnings` makes dropping the
+    ///     result outright a build failure.
+    ///
+    /// Structure, not behaviour, is what regressed three times, so this asserts
+    /// structure. It reads only the PRODUCTION half of this file, so the
+    /// forbidden spellings quoted here cannot match themselves.
+    // orgasmic:TASK-2QK4P.1.1
+    #[test]
+    fn the_origin_index_result_cannot_spell_failure_as_an_empty_success() {
+        let source = include_str!("recovery_claim.rs");
+        let production = source
+            .split("\nmod tests {")
+            .next()
+            .expect("this file has a tests module");
+        assert!(
+            production.len() < source.len(),
+            "the split must actually remove the tests module"
+        );
+        // Comment lines are dropped, so the forbidden spellings this test names
+        // — including the ones the type's own doc comment quotes as history —
+        // are matched only where they would actually compile.
+        let code: String = production
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+
+        for name in ["IndexedRecoveryOrigins", "AuthoritativeOriginLinks"] {
+            let header = format!("pub enum {name} ");
+            let start = code.find(&header).unwrap_or_else(|| {
+                panic!(
+                    "{name} must stay an enum: a struct with a links field is what let an error \
+                     path return an empty success"
+                )
+            });
+            assert!(
+                !code.contains(&format!("impl Default for {name}")),
+                "{name} must not implement Default; `{name}` + `::default()` was round three's \
+                 error path"
+            );
+            let default_call = format!("{name}{}", "::default()");
+            assert!(
+                !code.contains(&default_call),
+                "{default_call} must not appear: it is the collapse itself"
+            );
+            let head = &code[..start];
+            let attr_start = head
+                .rfind("#[derive(")
+                .expect("the enum carries a derive attribute");
+            let attributes = &head[attr_start..];
+            assert!(
+                !attributes.contains("Default"),
+                "{name} must not derive Default; its attributes are:\n{attributes}"
+            );
+            assert!(
+                attributes.contains("#[must_use"),
+                "{name} must be #[must_use] so dropping it is a build failure under -D warnings; \
+                 its attributes are:\n{attributes}"
+            );
+        }
+
+        // The unresolved variants carry no links, so there is nothing partial to
+        // reach for even after a caller has matched.
+        for variant in [
+            "Unobserved {\n        reason: UnobservedSession,",
+            "Unobserved(UnobservedSession),",
+        ] {
+            assert!(
+                code.contains(variant),
+                "the unresolved variant must carry only a reason, never links: expected\n{variant}"
+            );
+        }
     }
 }
