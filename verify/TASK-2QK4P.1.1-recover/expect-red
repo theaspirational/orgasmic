@@ -1,0 +1,25 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# Same injection as `verify/TASK-2QK4P.1.1` — it restores round two's USE of the
+# observation types at all four sites the review named, plus the missing
+# up-front refusal in `post_run_recover`.
+exit: 101
+
+# ===== THE DAEMON MINTED A SECOND AUTHORITY IT COULD NOT RULE OUT ==========
+#
+# A failed-recoverable origin with NO claim on disk, and a session file in the
+# same project whose line is torn in the MIDDLE, so every line behind the tear
+# is unread. `POST /runs/<id>/recover` is a request to CREATE a replacement, and
+# creating one is sound only if the daemon can state that no authenticated
+# replacement already exists for this origin. Under the injection it cannot make
+# that statement and mints anyway.
+#
+# `left: 200` is the admission itself: not an error, not a conflict — a
+# successful recovery response handing back a brand-new replacement run beside
+# whatever the unread bytes hold. The fix answers 503, which says the daemon
+# could not look rather than that something conflicts, leaves the tree
+# untouched, and lets the same request succeed once the file is readable.
+contains: an unresolved origin enumeration must refuse rather than mint a replacement
+contains: left: 200
+contains: right: 503
+contains: test result: FAILED. 0 passed; 1 failed

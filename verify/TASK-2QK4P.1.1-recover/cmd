@@ -1,0 +1,11 @@
+# One line. Run from the repo root by `orgasmic verify TASK-2QK4P.1.1-recover`.
+#
+# The PRODUCTION path for F3, split into its own artifact because the wider
+# `recover` filter that would catch it alongside the unit regressions also
+# catches `api::tests::recovery_reattaches_tmux_session_when_handle_exists`, a
+# registered flake (TASK-X0PV1), and a pinned signature must not depend on a
+# flake's mood. `verify/TASK-2QK4P.1.1` carries the unit half.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test builds its own Home under a temp root that must see neither.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact api::tests::recover_refuses_to_mint_while_a_session_file_is_unreadable --test-threads=1
