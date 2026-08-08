@@ -383,7 +383,7 @@ that gitlink record is gone with it — the admin directory holding it is what
 vanished — and git has no verdict left to reproduce, so that branch is checked a
 DIFFERENT way, neither strictly stronger nor strictly weaker: `.gitmodules`
 lives in the tree rather than that directory, so it survives and is still read
-there, and ON TOP of it the anchored walk of the tree's own contents refuses any
+there, and ON TOP of it the anchored walk of the tree's own contents refuses a
 NESTED `.git` entry, of any type — which can KEEP a worktree over a vendored
 repository git itself would have let you delete. A worktree whose repository is
 gone cannot be salvaged, so unless something refuses it, it is removed with NO
@@ -4156,19 +4156,22 @@ fn worktree_submodule_refusal(
                 return Some(format!(
                     "{} has no repository behind it, so no index and no `modules` directory \
                      survive to say whether it contains a submodule — but its own `.gitmodules` \
-                     does survive inside the tree, and names an initialized submodule at \
-                     {module}. Its uncommitted work cannot be salvaged, because there is nothing \
-                     left to salvage into, and this branch removes with NO salvage at all — so \
-                     it is kept. `git worktree remove --force` CANNOT run here, since the \
-                     repository it would run against is the one that is gone, and this verb has \
-                     no `--force` of its own: rescue what you need, then remove {module} \
-                     yourself and re-run",
+                     does survive inside the tree, and names {module}, which this verb found to \
+                     be a directory it could not list or listed as NON-EMPTY (it does not \
+                     distinguish the two, and neither is a licence to delete). Its uncommitted \
+                     work cannot be salvaged, because there is nothing left to salvage into, and \
+                     this branch removes with NO salvage at all — so it is kept. `git worktree \
+                     remove --force` CANNOT run here, since the repository it would run against \
+                     is the one that is gone, and this verb has no `--force` of its own: rescue \
+                     what you need, then remove {module} yourself and re-run",
                     path.display()
                 ));
             }
             return Some(format!(
-                "{} contains an initialized submodule at {module}, and `git worktree remove` \
-                 refuses such a worktree outright — {submodule_advice}",
+                "{} records a submodule at {module}, which this verb found to be a directory it \
+                 could not list or listed as NON-EMPTY (it does not distinguish the two, and \
+                 neither is a licence to delete), and `git worktree remove` refuses a worktree \
+                 holding an initialized submodule outright — {submodule_advice}",
                 path.display()
             ));
         }

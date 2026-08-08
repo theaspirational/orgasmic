@@ -1,0 +1,31 @@
+# One line. Run from the repo root by `orgasmic verify TASK-RMA18.1.1.1.1`.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and this test boots its own daemon against a temp home that must see neither.
+#
+# THE RUNG FOR TASK-RMA18.1.1.1.1 — the node that had none, which is why
+# TASK-RMA18.1.1.1.1.1 finding R3 was filed. Its findings 1 and 2 are one shape:
+# on `RepoGone` a surviving `.gitmodules` naming a populated directory is a
+# refusal all of its own, and the remedy the ORDINARY arm offers there is
+# impossible — `submodule_advice` says "while the repository is still there …
+# `git worktree remove --force`", and the repository being gone is exactly what
+# put the worktree on this branch. So the repo-gone leg needs its own message.
+#
+# THE FIXTURE IS THE ONE ARM NOTHING ELSE COVERS. `git submodule update --init`
+# inside a LINKED worktree writes the submodule's `.git` as a FILE (measured on
+# git 2.52.0), which the walk finds, so the nested-`.git` arm returns BEFORE
+# `gitmodules_paths` is ever called — that is how
+# `worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule` stopped
+# exercising this arm while staying green. This fixture removes that entry and
+# ASSERTS no nested `.git` remains anywhere, so `.gitmodules` is the only record
+# left; then it asserts WHICH arm answered, not merely that some refusal did.
+# git's own verdict is taken first, in the exact post-deletion state, and
+# `--dry-run` pins the `RepoGone` classification before the destructive run.
+#
+# The injection changes no predicate and no placement. It deletes the repo-gone
+# leg's `if repo_gone { … }` message, so that branch falls through to the
+# ordinary arm — the tree refuses, the sentinel survives, and the REPORT is the
+# defect: it names no `.gitmodules`, and it offers an escape the operator cannot
+# perform. Both fail-open shapes of `nonempty_dir_under` stay live, every other
+# refusal stays live, and nothing about what gets deleted changes.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_a_repo_gone_worktree_whose_gitmodules_names_a_populated_directory

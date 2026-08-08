@@ -1,0 +1,31 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 859e097..584c07a 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -4152,21 +4152,11 @@ fn worktree_submodule_refusal(
+             // `.gitmodules` inside the tree, so the message names it — that is
+             // also what distinguishes this refusal from the nested-`.git` one
+             // above, which names the entry the walk found instead.
+-            if repo_gone {
+-                return Some(format!(
+-                    "{} has no repository behind it, so no index and no `modules` directory \
+-                     survive to say whether it contains a submodule — but its own `.gitmodules` \
+-                     does survive inside the tree, and names {module}, which this verb found to \
+-                     be a directory it could not list or listed as NON-EMPTY (it does not \
+-                     distinguish the two, and neither is a licence to delete). Its uncommitted \
+-                     work cannot be salvaged, because there is nothing left to salvage into, and \
+-                     this branch removes with NO salvage at all — so it is kept. `git worktree \
+-                     remove --force` CANNOT run here, since the repository it would run against \
+-                     is the one that is gone, and this verb has no `--force` of its own: rescue \
+-                     what you need, then remove {module} yourself and re-run",
+-                    path.display()
+-                ));
+-            }
++            // INJECTION: the `.gitmodules` arm's own message for the repo-gone
++            // branch is gone, so that branch falls through to the ordinary arm
++            // and offers a `--force` escape whose condition is the one that put
++            // the worktree here — TASK-RMA18.1.1.1.1 finding 2, restored.
++            let _ = repo_gone;
+             return Some(format!(
+                 "{} records a submodule at {module}, which this verb found to be a directory it \
+                  could not list or listed as NON-EMPTY (it does not distinguish the two, and \
