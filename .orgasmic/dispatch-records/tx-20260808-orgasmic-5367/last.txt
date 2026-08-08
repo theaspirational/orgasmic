@@ -1,0 +1,80 @@
+# Verdict
+
+**REJECT — BLOCK SHIP.** TASK-2QK4P.1 (authoritative recovery enumeration) still admits false completeness, and its bounded authoritative scan can permanently quarantine a live, valid rescue. Both conditions are explicitly pre-authorized block-ship states in the brief.
+
+The round correctly reproduces and closes the original zero-link and one-link catalog holes for readable, small session files. The new source of authority is not itself authoritative, however: per-file scan failures and skipped middle regions are still collapsed into “no link.”
+
+# Findings
+
+## P1 HIGH correctness — per-file scan failures are reported as a complete enumeration
+
+`crates/orgasmic-daemon/src/recovery_claim.rs:1094-1114,1282-1297`
+
+`enumerate_recovery_origin_links` returns `None` only when `read_dir` itself fails or a directory entry cannot be read. For each readable `*.jsonl` entry it calls `index_recovery_origins_in_session`, but that function converts `SessionDirectory::open`, `scan_path`, and non-Unix scan errors into `IndexedRecoveryOrigins::default()`—an empty, apparently successful result. The outer function then returns `Some(links)` and the resolver treats that set as complete.
+
+That recreates the rejected safety state through the filesystem slow path: keep the loaded claim's session readable, place a second daemon-authenticated replacement in another JSONL, then make that second file fail its lifecycle scan (an unreadable file or a malformed lifecycle line is enough). The resolver sees exactly one link equal to the loaded claim and returns `Valid`, never discovering the second authority.
+
+The three new collector-shaped tests all use small, readable, well-formed JSONLs. They therefore stay green if the production scanner is changed to return empty for every per-file error; none asserts that an unindexable directory member makes enumeration unresolved. This answers C4: yes, production code can be wrong in the dangerous direction while all three tests pass.
+
+Recorded as `reviewer.finding` tx `tx-20260808-orgasmic-5375`.
+
+## P1 HIGH correctness — the bounded “authoritative” scan treats its skipped middle as absence and can permanently refuse a live rescue
+
+`crates/orgasmic-core/src/session.rs:1162-1165,1312-1366`; `crates/orgasmic-daemon/src/recovery_claim.rs:1094-1122,1370-1392`; `crates/orgasmic-daemon/src/supervisor.rs:1383-1395,2309-2341`; `crates/orgasmic-daemon/src/api.rs:8716-8765,9222-9232`
+
+`SessionLifecycleScan` explicitly says a truncated scan's skipped middle must be treated as **unknown rather than absent**. `index_recovery_origins_in_session` ignores `scan.truncated` and returns only retained links. The new enumerator then calls that bounded scanner for every file and labels the union authoritative.
+
+The “RecoveryOrigin is near the head” argument is conditionally sound, but the condition is not enforced. Production writes `PromptDraft` before `RecoveryOrigin`; the committed snapshot embedded in `RecoveryOrigin` repeats that draft; and the draft includes uncapped output from `git diff --stat`. A sufficiently large diff stat can push the envelope past the 128 KiB prefix or make the lifecycle line itself cross that boundary. Once more than 64 KiB of later driver output exists, the envelope is outside the tail too. A huge transcript alone does not cause the miss, but a production-generated oversized lifecycle prefix plus later transcript does, and no size invariant prevents it.
+
+On that miss, the loaded committed claim is quarantined at lines 1385-1392. The catalog uses the same bounded scanner, so a later reconstruction cannot rediscover the link; the refusal is persistent rather than the comment's claimed “retry.” The handler can subsequently reach the no-plan branch and mint another replacement. This is both a live-rescue refusal and a route back to duplicate authority.
+
+Recorded as `reviewer.finding` tx `tx-20260808-orgasmic-5376`.
+
+## P1 HIGH correctness, pre-existing/out-of-scope — missing/corrupt claim reconstruction is the same hidden-authority defect
+
+`crates/orgasmic-daemon/src/recovery_claim.rs:1396-1441`; `crates/orgasmic-daemon/src/api.rs:9235-9335`; test at `crates/orgasmic-daemon/src/recovery_claim.rs:3325-3454`
+
+C5 is reachable and is the same defect wearing a different hat. `Ok(None)` and `CorruptClaim` still pass the catalog-derived `indexed_origins` into `reconstruct_or_quarantine`. If a real replacement's catalog record is invalidated during a lifecycle append, the slice is silent and reconstruction returns `Missing`. `post_run_recover` then sees no pending plan and creates a new claim/session beside the authenticated replacement already on disk.
+
+The existing corrupt-claim regression proves reconstruction only after constructing and passing a literal visible link. It does not drive `RunCatalog`, invalidate that replacement, or cover a second authenticated replacement. This branch predates `a503213` and was disclosed as next-round scope, so I classify it as pre-existing/out-of-scope rather than a regression in this commit; its impact is still HIGH because it can create competing authenticated replacements.
+
+Recorded as `reviewer.finding` tx `tx-20260808-orgasmic-5377`.
+
+## P2 MEDIUM performance — per-claim enumeration reintroduces the inventory complexity the caller says it removed
+
+`crates/orgasmic-daemon/src/api.rs:10045-10068`; `crates/orgasmic-daemon/src/recovery_claim.rs:1362-1372`
+
+The inventory intentionally builds `indexed_origins` once because rebuilding an origin set for every failed tombstone made `GET /runs` `O(failed_runs × session_bytes)`. The loop then calls `apply_recovery_claim_to_run` for each failed-recoverable record, and every committed claim now performs a fresh bounded scan of every JSONL in its project.
+
+The stated cost is bounded per **claim**, not per inventory. Multiple committed claims in one project rescan the same files repeatedly on every poll. `rg -n "remove_recovery_claim\\("` finds only the function definition, so there is no in-tree cleanup call that bounds accumulated committed claims. On the cited 198-file board the unit cost is roughly 38 MiB per claim before origin-session follow-up scans; the aggregate remains proportional to committed failed runs.
+
+Avoiding a cache as the safety authority is reasonable. Re-enumerating inside each resolver call is not required by that choice: build one complete per-project authoritative snapshot for the inventory decision and share it across claims, or use an explicitly complete generation with a safe fallback.
+
+Recorded as `reviewer.finding` tx `tx-20260808-orgasmic-5378`.
+
+# Open Questions
+
+1. Unknown completeness should not be represented as invalid evidence. I recommend a distinct `Unresolved` result that suppresses recovery authority without renaming a valid committed claim; persistent unreadability can otherwise turn a transient observation failure into durable loss of idempotency.
+2. For authoritative enumeration, the cleanest current-tree option appears to be a streaming full lifecycle scan on bounded-scan uncertainty, with per-file errors propagated and one per-project result shared across the inventory pass. An explicit catalog generation can work too, but only if its completeness contract includes invalidation and scan failures rather than merely cache freshness.
+3. The missing/corrupt-claim branch needs a follow-up round even after the committed branch is repaired. `Missing` is safe only after a complete candidate set proves there is no authenticated replacement.
+
+# Verification Notes
+
+Independent checks performed on implementation commit `a503213` merged as `c4af3c6`:
+
+- Read the live TASK-2QK4P.1 heading, `project.org`, `gotchas.org`, the implementation diff, the resolver/scanner/caller paths, and all three files under `verify/TASK-2QK4P.1/`.
+- `git diff --check a503213^ a503213`: exit 0. The commit touches `recovery_claim.rs`, the `pub(crate)` visibility word in `api.rs`, and the verification artifact.
+- Re-executed the already-built daemon test binary from the implementer worktree at HEAD `a503213`, with `ORGASMIC_RUN_ID` and `ORGASMIC_HOME` removed from the child environment: `recovery_claim::` returned **20 passed, 0 failed** in 1.02s. This independently covers the two hidden-duplicate tests, the partial-index test, the surviving-claim test, and `duplicate_authenticated_replacements_fail_closed`.
+- Re-executed `recovery_faults_kill_real_daemon_and_preserve_original_pane` from the already-built integration-test binary **3/3** with one test thread: 9.27s, 8.96s, 8.94s; all passed. This independently confirms the original TASK-2QK4P production defect remains fixed under repetition.
+- No cargo invocation was made, so the cargo-only syspolicyd watchdog requirement was not triggered. Existing binaries were deliberately reused as the brief requested.
+- Manager-provided daemon-suite evidence says `verdict: GREEN — no failures` at host rate 0.7012; I did not independently rerun that suite. The clippy, fmt, and `orgasmic verify TASK-2QK4P.1` results likewise remain prior-run claims. I inspected the injection artifact but did not execute it because it temporarily mutates source and this reviewer is strictly read-only.
+- Not checked: workspace-wide tests, fresh compilation, daemon-suite VERDICT reproduction, clippy, fmt, MSRV 1.87, non-Unix behavior, real-board latency, or a running unreadable/>192 KiB reproduction. The two block-ship findings are derived from exact source paths and the scanner's explicit unknown-on-truncation contract; the target tests passing does not exercise those states.
+
+Task tier: **risky**. Triggers: P0 priority, parent-task coupling, and a recovery authority safety path. Produced diff breadth is one crate and five files, but the safety-path trigger sets the risky floor.
+
+# Fix Directions
+
+1. Change `index_recovery_origins_in_session` to return a result/completeness type. Propagate file-open, scan, and malformed lifecycle errors through `enumerate_recovery_origin_links`; never turn them into an empty successful candidate set.
+2. Do not use `SessionScanBudget::DEFAULT` as proof of global absence. On `scan.truncated` where uniqueness is not provable, perform a full streaming lifecycle enumeration or use another source with an explicit completeness contract. Keep unresolved observation separate from invalid/quarantined data.
+3. Add production-shaped regressions for: a second authenticated replacement whose JSONL contains a malformed lifecycle line; an authenticated `RecoveryOrigin` outside both scan windows in a >192 KiB replacement transcript; and missing/corrupt claim reconstruction with the replacement catalog record invalidated. Each must prove the visible claim is never returned `Valid`, while a single valid live rescue is not permanently destroyed.
+4. Build the authoritative per-project link set once per inventory/recover decision and reuse it for every claim. Add metrics and a multi-claim test that pins file-scan count, then measure the real board before landing.
