@@ -4117,7 +4117,22 @@ mod tests {
         let seeded = seed_two_authenticated_replacements(&root, "run-hidden-origin");
         append_malformed_lifecycle_line(&seeded.second.replacement_session_path);
 
-        // The pass over that one file now states failure rather than emptiness.
+        let resolved = resolve_authoritative_recovery_claim(
+            &seeded.home,
+            &seeded.project_root,
+            "orgasmic",
+            "run-hidden-origin",
+            &mut ProjectOriginAuthority::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
+            "an unindexable member file must leave the enumeration unresolved rather than \
+             confirming uniqueness, got {resolved:?}"
+        );
+
+        // And the pass over that one file states failure rather than emptiness,
+        // which is the mechanism the admission above rests on.
         let indexed = index_recovery_origins_in_session(
             &seeded.home,
             &seeded.project_root,
@@ -4133,20 +4148,6 @@ mod tests {
                 }
             ),
             "one malformed lifecycle line must make the pass unobserved, got {indexed:?}"
-        );
-
-        let resolved = resolve_authoritative_recovery_claim(
-            &seeded.home,
-            &seeded.project_root,
-            "orgasmic",
-            "run-hidden-origin",
-            &mut ProjectOriginAuthority::default(),
-        )
-        .unwrap();
-        assert!(
-            matches!(resolved, ResolvedRecoveryClaim::Unobserved(_)),
-            "an unindexable member file must leave the enumeration unresolved rather than \
-             confirming uniqueness, got {resolved:?}"
         );
 
         // Ruling 1: unresolved is not invalid. The claim is untouched, so the
