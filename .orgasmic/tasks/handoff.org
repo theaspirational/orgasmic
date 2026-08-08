@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         568fdc9
+:LIVENESS:         19074b4
 :LIVENESS_AT:      [2026-08-08 Sat]
 :UPDATED_AT:       [2026-08-08 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -435,18 +435,55 @@ PRACTICES THAT PAID OFF, with this session as the evidence:
   manager.
 
 ** In flight
-TWO DISPATCHES LIVE, both armed with a completion watcher (see below):
+ONE DISPATCH LIVE, and a REINSTALL is queued behind it on operator instruction.
 
-- TASK-RMA18.1.1 implementer =tx-20260808-orgasmic-5328=, claude/opus-5/high,
-  worktree =~/.orgasmic/worktrees/orgasmic/task-rma18-1-1=. Round FOUR on the
-  prune delete path.
-- TASK-2QK4P reviewer =tx-20260808-orgasmic-5331=, codex/gpt-5.6-sol,
-  worktree =~/.orgasmic/worktrees/orgasmic/task-2qk4p-review=. Cross-family
-  review is RESTORED — the operator authorised gpt-5.6-sol for review on
-  2026-08-08, which ends the same-family exception that governed 08-07.
-  The TASK-2QK4P IMPLEMENTER dispatch =tx-20260808-orgasmic-5306= is still open
-  =[reported]= and cannot close until this verdict lands (merge sha =1c0d2b0=,
-  worker commit =724973d=).
+- TASK-2QK4P.1.1.1 implementer =tx-20260808-orgasmic-5454=, claude, worktree
+  =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1=. Round FOUR on the recovery
+  path: the enumeration of every predicate that answers =false= when it could
+  not look. Started 16:24 org time (19:24 system — *org timestamps run 3h behind
+  the system clock on this machine*, which matters when you judge whether a
+  worker is overdue). Budget ~2.5h. Watcher armed on the started_tx.
+
+=== The prune chain is DONE and MERGED — round seven landed
+TASK-RMA18.1.1.1.1.1 merged as =19074b4=. Two commits, =2b9bdb9= + =26e2370=.
+R1 deleted the last unbounded universal from the =worktree-prune= help (a
+DELETION by manager ruling, so it cannot introduce a fourth false statement);
+R2 grew the =cli_parity= quantifier ban to five literals and made the doc comment
+admit both clauses ban a WORDING, not a class; R3 authored
+=verify/TASK-RMA18.1.1.1.1/=, the rung the chain lacked; R4 hedged BOTH submodule
+refusals to what =nonempty_dir_under= actually observes — it returns =true= for
+"could not list" as well as "non-empty", so neither arm may claim it saw an
+initialized submodule. *No behaviour changed in round seven.*
+
+Manager-verified independently, not taken from the report: the merge left
+=.orgasmic/tx/2026-08.org= byte-identical (blob =439c542f=), so it did not repeat
+round three's revert; and all SIX verify injections =git apply --check= clean on
+the merged tree, which is what proves R4's rewrite moved no patch context.
+
+=== The reinstall, and what it deliberately does NOT carry
+The operator authorised "wait for round seven then reinstall". A reinstall
+REQUIRES A ZERO-WORKER WINDOW — booting out the LaunchAgent cycles the mux and
+kills every live dispatch — so it waits for TASK-2QK4P.1.1.1 above.
+
+*It packages main at =19074b4=, and deliberately does NOT wait to fold in
+TASK-2QK4P.1.1.1.* The prune chain carries two independent reviewer approvals;
+2QK4P.1.1.1 will have none until its review round runs. Shipping unreviewed
+daemon behaviour into the operator binary because it happened to finish first is
+the wrong trade. Its branch stays unmerged until reviewed.
+
+Recipe, traps, and the pre-tested probe live in the session memory
+=orgasmic-runtime-reinstall=. The probe was re-validated against the round-seven
+tree BEFORE the swap: ="neither strictly stronger nor strictly weaker"=,
+="nested repository"=, ="while the repository is still there"= are each *0 in the
+installed binary* (inode =533819939=, built 2026-08-07) and present in the new
+source, with ="worktree-prune"= as the control proving the grep works.
+
+*Round seven closes with BOTH waiver flags, and that is the designed path, not a
+hack*: =--no-review-required= waives the default-branch MERGE gate, and
+=--fix-round-final= waives the fix round's OWN review round. They are two
+different gates and deliberately not one flag (TASK-4WKNX). Both demand a
+=--reason= and both record on the close tx, so the waiver is auditable rather
+than silent.
 
 *ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE YOU DO ANYTHING ELSE.*
 Nothing in orgasmic wakes a manager (TASK-D6N77). The daemon knows the run
