@@ -1,16 +1,28 @@
 diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
-index 6180be4..d88a219 100644
+index 5934487..d88a219 100644
 --- a/crates/orgasmic-daemon/src/api.rs
 +++ b/crates/orgasmic-daemon/src/api.rs
-@@ -9051,13 +9051,7 @@ async fn post_run_recover(
+@@ -9051,25 +9051,7 @@ async fn post_run_recover(
      // "there is no authenticated replacement for this origin" is a statement
      // only a completed enumeration can make. An unresolved one must refuse, or
      // the new replacement lands beside whatever the unread file was holding.
 -    if failed_origin {
--        if let AuthoritativeOriginLinks::Unobserved(reason) =
--            origin_links.links_for(&state.home, &origin_authority.project_root, &project_id)
--        {
--            return Err(recovery_origins_unobserved(&id, *reason));
+-        let unobserved = match origin_links.links_for(
+-            &state.home,
+-            &origin_authority.project_root,
+-            &project_id,
+-        ) {
+-            AuthoritativeOriginLinks::Unobserved(reason) => Some(*reason),
+-            AuthoritativeOriginLinks::Complete(_) => None,
+-        };
+-        if let Some(reason) = unobserved {
+-            // A swapped or symlinked ORIGIN session is one of the ways the
+-            // enumeration cannot complete, and it has its own, more specific
+-            // refusal. Report that one: "the origin you took authority over is
+-            // no longer the file you took it over" is actionable, while "the
+-            // enumeration did not complete" is not.
+-            origin_authority.envelopes()?;
+-            return Err(recovery_origins_unobserved(&id, reason));
 -        }
 -    }
 +    // INJECTION (F3): mint without proving the origin has no replacement.
