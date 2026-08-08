@@ -8783,6 +8783,304 @@ async fn worktree_prune_refuses_a_worktree_containing_an_initialized_submodule()
     let _ = running.join.await;
 }
 
+/// TASK-RMA18.1.1 finding 1: the refusal asked `.gitmodules`; GIT ASKS THE
+/// INDEX. A gitlink committed with `git update-index --cacheinfo 160000` and
+/// populated by an ordinary standalone clone has NO `.gitmodules` entry and NO
+/// worktree admin `modules/` directory, so neither implemented branch fired and
+/// this verb recursively deleted a tree git refuses to touch.
+///
+/// The fixture proves git's own verdict FIRST — `git status` and
+/// `git status --ignore-submodules=none` both empty, `git worktree remove`
+/// exiting 128 with `working trees containing submodules cannot be moved or
+/// removed` — so the refusal under test is git's, not this suite's invention.
+/// The sentinel SURVIVING is the assertion.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_a_submodule_recorded_only_in_the_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+
+    // A real second repository, cloned in as a PLAIN repository below — never
+    // registered as a submodule, so nothing ever writes `.gitmodules`.
+    let sub_origin = tmp.path().join("subrepo");
+    std::fs::create_dir_all(&sub_origin).unwrap();
+    write(&sub_origin.join("lib.txt"), "library source");
+    run_git(&sub_origin, &["init", "-b", "main"]);
+    run_git(&sub_origin, &["config", "user.email", "tester@example.com"]);
+    run_git(&sub_origin, &["config", "user.name", "Test User"]);
+    run_git(&sub_origin, &["add", "."]);
+    run_git(&sub_origin, &["commit", "-m", "sub init"]);
+    let sub_head = run_git(&sub_origin, &["rev-parse", "HEAD"]);
+
+    // The whole fixture premise in one command: a mode-160000 index entry, and
+    // no other record of the submodule anywhere.
+    run_git(
+        &project_root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{sub_head},vendor/sub"),
+        ],
+    );
+    run_git(&project_root, &["commit", "-m", "gitlink, no .gitmodules"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-indexsub",
+        "task-indexsub-impl",
+        &head,
+    );
+    // A worker that needs the dependency to build clones it itself. This is the
+    // shape `git submodule update --init` never touched: no `.gitmodules` to
+    // read, so no admin `modules/` directory is ever created either.
+    let checkout = worktree.join("vendor/sub");
+    let _ = std::fs::remove_dir(&checkout);
+    run_git(
+        &worktree,
+        &[
+            "clone",
+            sub_origin.to_str().unwrap(),
+            checkout.to_str().unwrap(),
+        ],
+    );
+    // Ignored inside the nested repository, so the parent reports CLEAN and the
+    // deletion happens with no salvage and no refusal.
+    write(&checkout.join(".git/info/exclude"), "SENTINEL.txt\n");
+    let sentinel = checkout.join("SENTINEL.txt");
+    write(&sentinel, "uncommitted worker output no salvage can reach");
+
+    // Fixture premises, MEASURED: neither of the two branches TASK-RMA18.1
+    // implemented has anything to fire on.
+    assert!(
+        !worktree.join(".gitmodules").exists(),
+        "fixture premise: there must be no .gitmodules for the old predicate to read"
+    );
+    let admin = project_root.join(".git/worktrees/task-indexsub");
+    assert!(
+        !admin.join("modules").exists(),
+        "fixture premise: the worktree admin directory must hold no `modules` directory"
+    );
+    assert_eq!(
+        run_git(&worktree, &["ls-files", "-s", "vendor/sub"])
+            .split_whitespace()
+            .next()
+            .unwrap_or_default(),
+        "160000",
+        "fixture premise: the index entry must be a gitlink"
+    );
+    for args in [
+        ["status", "--porcelain"].as_slice(),
+        ["status", "--porcelain", "--ignore-submodules=none"].as_slice(),
+    ] {
+        let porcelain = run_git(&worktree, args);
+        assert!(
+            porcelain.trim().is_empty(),
+            "fixture premise: `git {}` must report the tree clean, got:\n{porcelain}",
+            args.join(" ")
+        );
+    }
+    let refusal = Command::new("git")
+        .args(["worktree", "remove", worktree.to_str().unwrap()])
+        .current_dir(&project_root)
+        .output()
+        .expect("git worktree remove");
+    assert!(
+        !refusal.status.success()
+            && String::from_utf8_lossy(&refusal.stderr).contains("submodules"),
+        "fixture premise: git itself must refuse this removal, got status={} stderr={}",
+        refusal.status,
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+
+    let running = boot(home.clone()).await;
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+
+    assert!(
+        sentinel.is_file(),
+        "the untracked file inside the submodule must SURVIVE the prune, got:\n{stdout}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "the worktree itself must survive, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "the worktree must not be reclaimed, got:\n{stdout}"
+    );
+    let kept = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("KEPT PATH={}", worktree.display())))
+        .unwrap_or_else(|| panic!("a KEPT line naming the worktree, got:\n{stdout}"));
+    assert!(
+        kept.contains("submodule") && kept.contains("vendor/sub"),
+        "the report must say WHY it was kept and NAME the submodule, got:\n{kept}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-RMA18.1.1 finding 2: the categorical submodule refusal sat BELOW the
+/// `RepoGone` early return, so it guarded only the `Unclaimed` branch. The
+/// `RepoGone` branch is the one that deletes with NO salvage at all, and it
+/// reached `remove_child` without ever consulting the refusal — reachable with
+/// the ORDINARY submodule shape, no exotic index required.
+///
+/// Same fixture as
+/// `worktree_prune_refuses_a_worktree_containing_an_initialized_submodule`,
+/// including its proof that git refuses the removal, plus one move: the linked
+/// worktree's admin directory goes away, which is exactly what classifies the
+/// worktree `RepoGone`. `--dry-run` pins that classification before the
+/// destructive run, so a green here cannot come from the `Unclaimed` path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_a_repo_gone_worktree_containing_a_submodule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+
+    let sub_origin = tmp.path().join("subrepo");
+    std::fs::create_dir_all(&sub_origin).unwrap();
+    write(&sub_origin.join("lib.txt"), "library source");
+    run_git(&sub_origin, &["init", "-b", "main"]);
+    run_git(&sub_origin, &["config", "user.email", "tester@example.com"]);
+    run_git(&sub_origin, &["config", "user.name", "Test User"]);
+    run_git(&sub_origin, &["add", "."]);
+    run_git(&sub_origin, &["commit", "-m", "sub init"]);
+
+    run_git(
+        &project_root,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub_origin.to_str().unwrap(),
+            "vendor/sub",
+        ],
+    );
+    run_git(&project_root, &["add", "-A"]);
+    run_git(&project_root, &["commit", "-m", "add submodule"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-gonesub",
+        "task-gonesub-impl",
+        &head,
+    );
+    run_git(
+        &worktree,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+        ],
+    );
+    let sentinel = worktree.join("vendor/sub/SENTINEL.txt");
+    write(&sentinel, "uncommitted worker output no salvage can reach");
+
+    // git's own verdict, taken while the repository is still whole — this is
+    // the refusal the verb must reproduce.
+    let refusal = Command::new("git")
+        .args(["worktree", "remove", worktree.to_str().unwrap()])
+        .current_dir(&project_root)
+        .output()
+        .expect("git worktree remove");
+    assert!(
+        !refusal.status.success()
+            && String::from_utf8_lossy(&refusal.stderr).contains("submodules"),
+        "fixture premise: git itself must refuse this removal, got status={} stderr={}",
+        refusal.status,
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+
+    // Now take the admin directory away. The submodule checkout and its
+    // sentinel are untouched; only the classification changes.
+    let admin = project_root.join(".git/worktrees/task-gonesub");
+    std::fs::rename(&admin, admin.with_extension("moved")).unwrap();
+    assert!(
+        worktree.join(".git").is_file() && sentinel.is_file(),
+        "fixture premise: the .git link and the sentinel must both still be there"
+    );
+
+    let running = boot(home.clone()).await;
+    let planned = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune", "--dry-run"],
+    );
+    let would = planned
+        .lines()
+        .find(|line| line.starts_with(&format!("WOULD_RECLAIM PATH={}", worktree.display())))
+        .unwrap_or_else(|| panic!("a WOULD_RECLAIM line naming the worktree, got:\n{planned}"));
+    assert!(
+        would.contains("repo gone"),
+        "fixture premise: this must reach the RepoGone branch, not Unclaimed, got:\n{would}"
+    );
+
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+
+    assert!(
+        sentinel.is_file(),
+        "the untracked file inside the submodule must SURVIVE the prune, got:\n{stdout}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "the worktree itself must survive, got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(&format!("RECLAIMED PATH={}", worktree.display())),
+        "the worktree must not be reclaimed, got:\n{stdout}"
+    );
+    let kept = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("KEPT PATH={}", worktree.display())))
+        .unwrap_or_else(|| panic!("a KEPT line naming the worktree, got:\n{stdout}"));
+    assert!(
+        kept.contains("submodule") && kept.contains("vendor/sub"),
+        "the report must say WHY it was kept and NAME the submodule, got:\n{kept}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-M47E5: a worktree an OPEN dispatch names is never reclaimed, whatever
 /// its run health, and the refusal says why. Ending a dispatch is
 /// `dispatch-close`'s authority, not this verb's.

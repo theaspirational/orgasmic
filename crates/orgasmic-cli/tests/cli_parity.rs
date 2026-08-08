@@ -84,6 +84,12 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
 /// This pins the two claims that were false, in both directions: the help must
 /// NOT claim git gates the removal, and it MUST name the refusals this verb
 /// performs for itself — including the submodule one TASK-RMA18 omitted.
+///
+/// TASK-RMA18.1.1 findings 1 and 2 rotted it again from the other side: the text
+/// named the submodule refusal but described a repo-gone worktree as simply
+/// "removed with NO salvage", with no mention that the refusal precedes that
+/// branch too, and the refusal read `.gitmodules` where git reads the INDEX. So
+/// `categorical` and `index` are pinned as well.
 #[test]
 fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
     let help = help_for(&["manager".to_string(), "worktree-prune".to_string()]);
@@ -95,7 +101,14 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
              the removal goes through this verb's own anchored handle:\n{help}"
         );
     }
-    for required in ["anchored", "submodule", "locked", "dirty"] {
+    for required in [
+        "anchored",
+        "submodule",
+        "locked",
+        "dirty",
+        "categorical",
+        "index",
+    ] {
         assert!(
             lower.contains(required),
             "worktree-prune help must name {required:?} — an operator running a destructive \
