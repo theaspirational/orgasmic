@@ -373,9 +373,12 @@ verb that releases it. Salvages a dirty tree to refs/orgasmic/salvage/<sha>
 first, then removes it through this verb's OWN anchored directory handle rather
 than by handing a pathname to `git worktree remove`. It refuses what a
 non-forced `git worktree remove` refuses, checked here: a LOCKED worktree, one
-containing an INITIALIZED SUBMODULE, and one still dirty after salvage. A
-worktree whose repo is gone cannot be salvaged, so it is removed with NO
-salvage, and the report says so.")]
+containing an INITIALIZED SUBMODULE, and one still dirty after salvage. The
+submodule refusal is CATEGORICAL and runs before EVERY removal this verb makes,
+the repo-gone one included; it reads the worktree's own INDEX for gitlinks as
+git does, plus `.gitmodules`, and a submodule record it cannot read is itself a
+refusal. A worktree whose repo is gone cannot be salvaged, so unless something
+refuses it, it is removed with NO salvage, and the report says so.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -3927,34 +3930,412 @@ fn worktree_head_oid(worktree: &Path) -> Option<String> {
 ///      which is why an UNINITIALIZED submodule — an empty placeholder — is not
 ///      a refusal, matching git).
 ///
-/// Branch 2 reads `.gitmodules`, where git reads the worktree's index. The index
-/// is a binary format this cannot parse through a handle, and the reachable case
-/// the finding names — a worker running `git submodule update --init` in order
-/// to build — requires a `.gitmodules` entry. Branch 1 covers the gitlink whose
-/// `.gitmodules` entry was edited away.
-// orgasmic:TASK-RMA18.1
+/// BRANCH 2'S SOURCE OF TRUTH IS THE INDEX, which is where git's own
+/// `validate_no_submodules` reads it: it walks every cache entry and considers
+/// only the ones whose mode is `S_IFGITLINK` (0160000). TASK-RMA18.1 read
+/// `.gitmodules` instead, and TASK-RMA18.1.1 finding 1 measured the divergence
+/// on the production path — a gitlink committed with `git update-index
+/// --cacheinfo 160000` and populated by an ordinary standalone clone has no
+/// `.gitmodules` entry and creates no admin `modules/` directory, so neither
+/// implemented branch fired and the tree was deleted while git itself exits 128
+/// on it. `.gitmodules` is still read ON TOP of the index, never instead of it:
+/// it costs nothing and can only add refusals.
+///
+/// UNKNOWN MEANS KEEP. An index that should exist and does not open, does not
+/// parse, or defers to a shared split index is a REFUSAL, not an empty one. The
+/// one case that is not a refusal is a worktree with NO REPOSITORY BEHIND IT AT
+/// ALL — a `RepoGone` orphan, where the admin directory the index lives in is
+/// provably absent rather than unreadable. That case has no index for anything
+/// to have been fail-open about, git has no verdict to reproduce (it cannot run
+/// `worktree remove` without the repository), and refusing it would make the
+/// `RepoGone` reclamation this verb exists for impossible. There, `.gitmodules`
+/// and the admin `modules/` check are the whole predicate; see
+/// [`worktree_index_gitlinks`].
+// orgasmic:TASK-RMA18.1,TASK-RMA18.1.1
 #[cfg(unix)]
 fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<String> {
+    let advice = "no salvage can capture what is inside a submodule, because the parent records \
+                  it as a gitlink. Remove the submodule's checkout yourself, or remove the \
+                  worktree with `git worktree remove --force` once you have rescued its contents";
     if worktree_admin_dir_holds_modules(worktree, path) {
         return Some(format!(
             "{} contains an initialized submodule (its worktree admin directory holds a \
              `modules` directory), and `git worktree remove` refuses such a worktree outright \
-             — no salvage can capture what is inside a submodule, because the parent records it \
-             as a gitlink. Remove the submodule's checkout yourself, or remove the worktree with \
-             `git worktree remove --force` once you have rescued its contents",
+             — {advice}",
             path.display()
         ));
     }
-    for module in gitmodules_paths(worktree) {
+
+    let mut candidates = Vec::new();
+    match worktree_index_gitlinks(worktree, path) {
+        WorktreeIndexGitlinks::Recorded(paths) => candidates.extend(paths),
+        WorktreeIndexGitlinks::NoRepository => {}
+        WorktreeIndexGitlinks::Unreadable(detail) => {
+            return Some(format!(
+                "the index that records whether {} contains a submodule could not be read \
+                 ({detail}), and this verb does not delete a tree whose submodule record it \
+                 cannot check — {advice}",
+                path.display()
+            ))
+        }
+    }
+    match gitmodules_paths(worktree) {
+        Ok(paths) => candidates.extend(paths),
+        Err(detail) => {
+            return Some(format!(
+                "{} has a `.gitmodules` that could not be read ({detail}), and this verb does \
+                 not delete a tree whose submodule record it cannot check — {advice}",
+                path.display()
+            ))
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+
+    for module in candidates {
         if nonempty_dir_under(worktree, &module) {
             return Some(format!(
                 "{} contains an initialized submodule at {module}, and `git worktree remove` \
-                 refuses such a worktree outright — no salvage can capture what is inside a \
-                 submodule, because the parent records it as a gitlink. Remove the submodule's \
-                 checkout yourself, or remove the worktree with `git worktree remove --force` \
-                 once you have rescued its contents",
+                 refuses such a worktree outright — {advice}",
                 path.display()
             ));
+        }
+    }
+    None
+}
+
+/// What the worktree's OWN index says about gitlinks, read through the anchored
+/// handle wherever the index is inside the anchored tree.
+///
+/// The index a linked worktree uses is its own, under the admin directory its
+/// `.git` file names (`.git/worktrees/<id>/index`, measured on git 2.52.0) —
+/// NOT the project repository's `.git/index`. Reading the wrong one is fail-open
+/// in exactly the way this task exists to close, so the two cases are resolved
+/// separately: when `.git` is a real DIRECTORY the index is `.git/index` and is
+/// opened `openat`-relative to the worktree handle; when `.git` is a linked
+/// worktree's `gitdir:` FILE the admin directory is outside anything this verb
+/// anchors or deletes, and is resolved by pathname — the same boundary
+/// [`worktree_repo_state`] and [`worktree_admin_dir_holds_modules`] already take.
+///
+/// A repository whose index file is simply ABSENT reports no gitlinks, because
+/// that is exactly what git sees: git reads the index, and a missing index is an
+/// empty one. Every other failure to reach or parse it is [`Unreadable`], which
+/// the caller turns into a refusal.
+///
+/// [`Unreadable`]: WorktreeIndexGitlinks::Unreadable
+// orgasmic:TASK-RMA18.1.1
+#[cfg(unix)]
+enum WorktreeIndexGitlinks {
+    /// The index was read and parsed. These are its mode-0160000 paths.
+    Recorded(Vec<String>),
+    /// There is no repository behind this worktree, so there is no index. NOT
+    /// the same as an index that could not be read.
+    NoRepository,
+    /// The index should exist and could not be opened or parsed. Refuse.
+    Unreadable(String),
+}
+
+#[cfg(unix)]
+fn worktree_index_gitlinks(worktree: &std::fs::File, path: &Path) -> WorktreeIndexGitlinks {
+    use std::io::Read;
+
+    let read_index = |mut file: std::fs::File| -> WorktreeIndexGitlinks {
+        let mut bytes = Vec::new();
+        if let Err(err) = file.read_to_end(&mut bytes) {
+            return WorktreeIndexGitlinks::Unreadable(format!("index did not read: {err}"));
+        }
+        match index_gitlink_paths(&bytes) {
+            Ok(paths) => WorktreeIndexGitlinks::Recorded(paths),
+            Err(detail) => WorktreeIndexGitlinks::Unreadable(detail),
+        }
+    };
+
+    let dot_git = std::ffi::OsStr::new(".git");
+    let index = std::ffi::OsStr::new("index");
+    let kind = match anchored_dir::stat_at(worktree, dot_git) {
+        Ok(kind) => kind,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return WorktreeIndexGitlinks::NoRepository
+        }
+        Err(err) => {
+            return WorktreeIndexGitlinks::Unreadable(format!(".git did not stat: {err}"));
+        }
+    };
+    if kind.is_symlink() {
+        return WorktreeIndexGitlinks::Unreadable(
+            ".git is a symlink, so what it names cannot be read through this worktree's handle"
+                .to_string(),
+        );
+    }
+    if kind.is_dir() {
+        let admin = match anchored_dir::open_child_dir(worktree, dot_git) {
+            Ok(anchored_dir::ChildOpen::Dir(admin)) => admin,
+            Ok(_) => {
+                return WorktreeIndexGitlinks::Unreadable(
+                    ".git did not open as a directory".to_string(),
+                )
+            }
+            Err(err) => {
+                return WorktreeIndexGitlinks::Unreadable(format!(".git did not open: {err}"))
+            }
+        };
+        return match anchored_dir::open_child_file(&admin, index) {
+            Ok(file) => read_index(file),
+            // git reads the index; a repository that has never written one has
+            // no entries and therefore no gitlinks.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                WorktreeIndexGitlinks::Recorded(Vec::new())
+            }
+            Err(err) => {
+                WorktreeIndexGitlinks::Unreadable(format!(".git/index did not open: {err}"))
+            }
+        };
+    }
+
+    let mut contents = String::new();
+    if let Err(err) = anchored_dir::open_child_file(worktree, dot_git)
+        .and_then(|mut file| file.read_to_string(&mut contents))
+    {
+        return WorktreeIndexGitlinks::Unreadable(format!(".git did not read: {err}"));
+    }
+    let Some(gitdir) = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))
+        .map(str::trim)
+    else {
+        return WorktreeIndexGitlinks::Unreadable(
+            ".git is a file that names no `gitdir:`, so this worktree's index cannot be located"
+                .to_string(),
+        );
+    };
+    let resolved = if Path::new(gitdir).is_absolute() {
+        PathBuf::from(gitdir)
+    } else {
+        path.join(gitdir)
+    };
+    match std::fs::symlink_metadata(&resolved) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return WorktreeIndexGitlinks::NoRepository
+        }
+        Err(err) => {
+            return WorktreeIndexGitlinks::Unreadable(format!(
+                "gitdir {gitdir} did not stat: {err}"
+            ))
+        }
+    }
+    match std::fs::File::open(resolved.join("index")) {
+        Ok(file) => read_index(file),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            WorktreeIndexGitlinks::Recorded(Vec::new())
+        }
+        Err(err) => {
+            WorktreeIndexGitlinks::Unreadable(format!("{gitdir}/index did not open: {err}"))
+        }
+    }
+}
+
+/// Every mode-0160000 path in a git index file, or why it could not be read.
+///
+/// Format: `DIRC`, a version, an entry count, then that many entries, then
+/// extensions, then a trailing hash. Versions 2, 3 and 4 are the ones git
+/// writes. The object hash length is NOT recorded in the header — a SHA-256
+/// repository writes 32-byte object ids into the same layout — so both lengths
+/// are tried and the one whose entries land EXACTLY on a well-formed extension
+/// chain and trailing hash wins. Nothing is guessed: if neither length parses
+/// cleanly this returns an error, and the caller refuses.
+///
+/// A SPLIT INDEX is refused rather than answered partially: its entries are a
+/// delta against a shared index that is not this file, so the gitlinks visible
+/// here are not the whole set. Measured on git 2.52.0, it is caught by BOTH of
+/// the checks that can see it — a `link` extension in the extension chain, and
+/// the empty-pathname entries git writes for the positions the shared index
+/// still owns.
+///
+/// The FIRST attempt's error is the one reported: SHA-1 is git's default, so
+/// when both lengths fail its diagnosis is the one that describes the file.
+// orgasmic:TASK-RMA18.1.1
+#[cfg(unix)]
+fn index_gitlink_paths(bytes: &[u8]) -> std::result::Result<Vec<String>, String> {
+    if bytes.len() < 12 || &bytes[..4] != b"DIRC" {
+        return Err("not a git index file".to_string());
+    }
+    let version = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    if !(2..=4).contains(&version) {
+        return Err(format!("unsupported git index version {version}"));
+    }
+    let count = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+
+    let mut first: Option<String> = None;
+    for hash_len in [20usize, 32usize] {
+        match index_entries(bytes, version, count, hash_len) {
+            Ok(paths) => return Ok(paths),
+            Err(detail) => {
+                if first.is_none() {
+                    first = Some(detail);
+                }
+            }
+        }
+    }
+    Err(first.unwrap_or_else(|| "index did not parse".to_string()))
+}
+
+/// One parse attempt at a fixed object-hash length. Errors on ANY inconsistency,
+/// which is what makes trying both hash lengths sound.
+#[cfg(unix)]
+fn index_entries(
+    bytes: &[u8],
+    version: u32,
+    count: usize,
+    hash_len: usize,
+) -> std::result::Result<Vec<String>, String> {
+    const GITLINK_MODE: u32 = 0o160000;
+
+    let malformed = |what: &str| format!("malformed index ({what})");
+    let end = bytes
+        .len()
+        .checked_sub(hash_len)
+        .ok_or_else(|| malformed("shorter than its trailing hash"))?;
+    let mut off = 12usize;
+    let mut previous: Vec<u8> = Vec::new();
+    let mut gitlinks = Vec::new();
+
+    for _ in 0..count {
+        let start = off;
+        let fixed = 40 + hash_len + 2;
+        if off + fixed > end {
+            return Err(malformed("entry runs past the end"));
+        }
+        let mode = u32::from_be_bytes([
+            bytes[off + 24],
+            bytes[off + 25],
+            bytes[off + 26],
+            bytes[off + 27],
+        ]);
+        let flags = u16::from_be_bytes([bytes[off + 40 + hash_len], bytes[off + 41 + hash_len]]);
+        off += fixed;
+        if flags & 0x4000 != 0 {
+            if version < 3 {
+                return Err(malformed("extended flags in a version-2 entry"));
+            }
+            if off + 2 > end {
+                return Err(malformed("extended flags run past the end"));
+            }
+            off += 2;
+        }
+
+        let name = if version < 4 {
+            let nul = bytes[off..end]
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or_else(|| malformed("unterminated path"))?;
+            let name = bytes[off..off + nul].to_vec();
+            let declared = (flags & 0x0FFF) as usize;
+            if declared != 0x0FFF && declared != name.len() {
+                return Err(malformed("path length disagrees with the entry flags"));
+            }
+            off += nul + 1;
+            // git pads every v2/v3 entry with NULs to a multiple of 8.
+            while !(off - start).is_multiple_of(8) {
+                if off >= end {
+                    return Err(malformed("padding runs past the end"));
+                }
+                if bytes[off] != 0 {
+                    return Err(malformed("entry padding is not NUL"));
+                }
+                off += 1;
+            }
+            name
+        } else {
+            // Version 4 prefix-compresses paths: a varint saying how many bytes
+            // to strip off the END of the previous path, then the new suffix,
+            // NUL-terminated, with no padding.
+            let (strip, consumed) = index_varint(&bytes[off..end])
+                .ok_or_else(|| malformed("truncated path-compression varint"))?;
+            off += consumed;
+            let nul = bytes[off..end]
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or_else(|| malformed("unterminated path"))?;
+            let keep = previous
+                .len()
+                .checked_sub(strip)
+                .ok_or_else(|| malformed("path compression strips more than the previous path"))?;
+            let mut name = previous[..keep].to_vec();
+            name.extend_from_slice(&bytes[off..off + nul]);
+            off += nul + 1;
+            name
+        };
+        if name.is_empty() {
+            // Measured on git 2.52.0: this is how a SPLIT INDEX marks the
+            // positions its shared index still owns. Either way the file does
+            // not describe the whole tree.
+            return Err(
+                "this index has an entry with no path, which is how a SPLIT INDEX defers to a \
+                 shared index this cannot see"
+                    .to_string(),
+            );
+        }
+        if mode & 0o170000 == GITLINK_MODE {
+            let name = String::from_utf8(name.clone())
+                .map_err(|_| malformed("gitlink path is not valid UTF-8"))?;
+            gitlinks.push(name);
+        }
+        previous = name;
+    }
+
+    // Whatever follows the entries must be a well-formed extension chain ending
+    // exactly at the trailing hash. This is the check that makes picking the
+    // object-hash length by trial sound rather than a guess.
+    while off < end {
+        if off + 8 > end {
+            return Err(malformed("extension header runs past the end"));
+        }
+        let signature = &bytes[off..off + 4];
+        if !signature.iter().all(|byte| byte.is_ascii_alphanumeric()) {
+            return Err(malformed("extension signature is not alphanumeric"));
+        }
+        if signature == b"link" {
+            return Err(
+                "this worktree uses a SPLIT INDEX, so the gitlinks in its own index are not the \
+                 whole set"
+                    .to_string(),
+            );
+        }
+        let size = u32::from_be_bytes([
+            bytes[off + 4],
+            bytes[off + 5],
+            bytes[off + 6],
+            bytes[off + 7],
+        ]) as usize;
+        off = off
+            .checked_add(8 + size)
+            .ok_or_else(|| malformed("extension length overflows"))?;
+        if off > end {
+            return Err(malformed("extension runs past the end"));
+        }
+    }
+    if off != end {
+        return Err(malformed("entries do not end at the trailing hash"));
+    }
+    Ok(gitlinks)
+}
+
+/// git's `decode_varint`, used by index version 4 for path compression.
+#[cfg(unix)]
+fn index_varint(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut value: usize = 0;
+    for (read, byte) in bytes.iter().enumerate() {
+        if read == 0 {
+            value = (*byte & 0x7f) as usize;
+        } else {
+            value = value.checked_add(1)?.checked_mul(128)? + (*byte & 0x7f) as usize;
+        }
+        if *byte & 0x80 == 0 {
+            return Some((value, read + 1));
+        }
+        if read >= 9 {
+            return None;
         }
     }
     None
@@ -4010,17 +4391,38 @@ fn worktree_admin_dir_holds_modules(worktree: &std::fs::File, path: &Path) -> bo
 }
 
 /// `submodule.<name>.path` values from the worktree's `.gitmodules`, read
-/// through the anchored handle. An absent or unreadable file yields none.
+/// through the anchored handle.
+///
+/// An ABSENT file records nothing and is `Ok(none)`. A file that is there and
+/// cannot be read is an ERROR, which the caller turns into a refusal: this is a
+/// destructive path, and a `.gitmodules` that exists but did not open is exactly
+/// the "unknown" that must not read as "no submodules" (TASK-RMA18.1.1).
+// orgasmic:TASK-RMA18.1.1
 #[cfg(unix)]
-fn gitmodules_paths(worktree: &std::fs::File) -> Vec<String> {
+fn gitmodules_paths(worktree: &std::fs::File) -> std::result::Result<Vec<String>, String> {
     use std::io::Read;
 
+    let name = std::ffi::OsStr::new(".gitmodules");
+    match anchored_dir::stat_at(worktree, name) {
+        Ok(kind) if kind.is_dir() => {
+            return Err(".gitmodules is a directory, not a file".to_string())
+        }
+        Ok(kind) if kind.is_symlink() => {
+            return Err(
+                ".gitmodules is a symlink, so what it names cannot be read through this \
+                 worktree's handle"
+                    .to_string(),
+            )
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!(".gitmodules did not stat: {err}")),
+    }
     let mut contents = String::new();
-    if anchored_dir::open_child_file(worktree, std::ffi::OsStr::new(".gitmodules"))
+    if let Err(err) = anchored_dir::open_child_file(worktree, name)
         .and_then(|mut file| file.read_to_string(&mut contents))
-        .is_err()
     {
-        return Vec::new();
+        return Err(format!(".gitmodules did not read: {err}"));
     }
     let mut paths = Vec::new();
     let mut in_submodule = false;
@@ -4046,7 +4448,7 @@ fn gitmodules_paths(worktree: &std::fs::File) -> Vec<String> {
             }
         }
     }
-    paths
+    Ok(paths)
 }
 
 /// git's branch 2: is `rel` a NON-EMPTY directory inside this worktree?
@@ -4194,23 +4596,44 @@ fn git_would_remove_worktree(
 /// can redirect what is destroyed.
 ///
 /// THE WINDOW THAT REMAINS, stated rather than papered over (TASK-RMA18.1
-/// finding 2). Every `git` step below is a SUBPROCESS and a subprocess can only
-/// be given a PATHNAME, which it resolves itself, inside itself, after this
-/// process has stopped looking. `assert_path_names` immediately before each one
-/// narrows that window to the subprocess's own resolution but cannot close it:
-/// an actor able to rebind `<root>/<name>` to a clean decoy and back, between
-/// an assert and the `execve` that follows it, gets git to answer about the
-/// decoy. What that buys the actor is bounded and worth naming precisely:
-///   - it CANNOT redirect the deletion, which never resolves a pathname;
+/// finding 2, CORRECTED by TASK-RMA18.1.1 finding 3 — the correction was to the
+/// STATEMENT, not to the code, because the narrower guarantee the old wording
+/// claimed is not one this shape can offer). Every `git` step below is a
+/// SUBPROCESS and a subprocess can only be given a PATHNAME, which it resolves
+/// itself, inside itself, after this process has stopped looking.
+/// `assert_path_names` proves the pathname reaches the classified identity AT
+/// THE MOMENT IT RUNS, and it runs at three points here: before the
+/// dirty-or-clean read, before salvage, and before `git_would_remove_worktree`.
+/// It does NOT run before every path-resolving `execve`, and the real windows
+/// are therefore wider than one assert-to-`execve` gap:
+///   - `worktree_head_oid` runs `git rev-parse` after the assert that preceded
+///     `worktree_has_uncommitted_changes`, with no assert of its own;
+///   - `salvage_worktree_onto` runs `add`, `write-tree`, `commit-tree`,
+///     `diff-tree`, `checkout --detach`, a second status and the salvage-ref
+///     commands behind ONE assert;
+///   - `git_would_remove_worktree` runs `git worktree list` FIRST and resolves
+///     the worktree pathname only afterwards, for `git status` — so an actor
+///     does not need to hit a narrow gap at all. It can wait out the whole
+///     `worktree list` subprocess, bind a clean decoy for the `status` call, and
+///     bind the original back before the final assert.
+///
+/// What all of that buys the actor is bounded, and that bound is the real
+/// mitigation:
+///   - it CANNOT redirect the deletion, which never resolves a pathname — the
+///     `unlinkat` goes through the anchored handle and re-proves the identity;
 ///   - it CAN make the CLEAN CHECK — described below as the last gate between
 ///     this verb and a worker's unrecoverable output — answer about a tree
-///     other than the one deleted, so a dirty, unsalvaged worktree is removed;
+///     other than the one deleted, so the inode removed can be a dirty,
+///     unsalvaged one;
 ///   - it CAN make the salvage commit the decoy's contents instead.
 ///
 /// Closing it needs git to accept a directory handle, which `git worktree` does
 /// not offer (TASK-RMA18 ruled on that), or the clean decision to be computed
-/// here from the handle the way the submodule refusal now is.
-// orgasmic:TASK-M47E5,TASK-M47E5.2,TASK-RMA18,TASK-RMA18.1
+/// here from the handle the way the submodule refusal now is. Adding an assert
+/// before each subprocess would not close it either — the third case above is a
+/// window BETWEEN two subprocesses of one call — so the asserts stay where they
+/// are and this comment describes what they actually cover.
+// orgasmic:TASK-M47E5,TASK-M47E5.2,TASK-RMA18,TASK-RMA18.1,TASK-RMA18.1.1
 #[cfg(unix)]
 fn reclaim_managed_worktree(
     project_root: &Path,
@@ -4251,6 +4674,23 @@ fn reclaim_managed_worktree(
         }
     };
 
+    // The submodule refusal is CATEGORICAL, and it runs ABOVE EVERY DESTRUCTIVE
+    // BRANCH — including `RepoGone`, which returns straight through
+    // `remove_child` below and is the ONE branch that deletes with no salvage at
+    // all. It used to sit under that early return, so it guarded only the
+    // `Unclaimed` path and a repo-gone worktree holding an ordinary populated
+    // submodule was deleted outright (TASK-RMA18.1.1 finding 2).
+    //
+    // It also runs BEFORE the salvage, not only inside `git_would_remove_worktree`
+    // after it. Salvage cannot capture anything inside a submodule (the parent
+    // records a gitlink), so running it first would mutate a tree that is going
+    // to be kept anyway — staging its index and detaching its HEAD — for no gain.
+    // Computed from the HANDLE, so this one decision needs no pathname and no
+    // subprocess.
+    if let Some(reason) = worktree_submodule_refusal(&child.dir, &worktree.path) {
+        return kept(format!("refusing to remove it: {reason}"));
+    }
+
     if let WorktreeDisposition::RepoGone { .. } = worktree.disposition {
         // TASK-M47E5.2 finding 3: classification happened before the multi-GB
         // size walk and before the reservation, and this is the ONE path that
@@ -4276,16 +4716,6 @@ fn reclaim_managed_worktree(
         }
         drop(child);
         return removal_outcome(root.remove_child(&worktree.name, worktree.identity), None);
-    }
-
-    // The submodule refusal is CATEGORICAL and it runs BEFORE the salvage, not
-    // only inside `git_would_remove_worktree` after it. Salvage cannot capture
-    // anything inside a submodule (the parent records a gitlink), so running it
-    // first would mutate a tree that is going to be kept anyway — staging its
-    // index and detaching its HEAD — for no gain. Computed from the HANDLE, so
-    // this one decision needs no pathname and no subprocess (TASK-RMA18.1).
-    if let Some(reason) = worktree_submodule_refusal(&child.dir, &worktree.path) {
-        return kept(format!("refusing to remove it: {reason}"));
     }
 
     // Everything below hands `worktree.path` to a `git` subprocess, which cannot
@@ -9247,9 +9677,17 @@ mod tests {
     /// WAS `cfg!(debug_assertions)`; deleting the `#[cfg]` from the hook left it
     /// green. Here the left-hand side comes from calling the hook and watching
     /// for its `.reached` sidecar, so deleting the `#[cfg]` makes the release
-    /// leg go red — that is what `scripts/run-tests.sh --release-gates` runs it
-    /// for, and it is the only leg where the claim is live.
-    // orgasmic:TASK-RMA18,TASK-RMA18.1
+    /// leg go red.
+    ///
+    /// That leg is not a flag (TASK-RMA18.1.1 finding 4: there is no
+    /// `--release-gates`, and `run-tests.sh` forwards unknown arguments to
+    /// cargo, so following that name got a cargo argument error). It runs
+    /// AUTOMATICALLY for any invocation whose scope covers `orgasmic-cli` —
+    /// `scripts/run-tests.sh -p orgasmic-cli` or `scripts/run-tests.sh
+    /// --workspace` — as a second `cargo test -p orgasmic-cli --bin orgasmic`
+    /// under `RUSTFLAGS=-C debug-assertions=off` in its own target directory.
+    /// It is the only leg where the claim below is live.
+    // orgasmic:TASK-RMA18,TASK-RMA18.1,TASK-RMA18.1.1
     #[test]
     fn the_pause_rendezvous_hooks_park_only_in_debug_builds() {
         let tmp = tempfile::tempdir().unwrap();
@@ -11783,5 +12221,202 @@ mod tests {
             "unfinished work\n"
         );
         assert!(worktree_has_uncommitted_changes(&fixture.worktree).unwrap());
+    }
+
+    /// A repository with one ordinary file and one GITLINK, written by git
+    /// itself. `extra` goes to `git init`, `index_args` to `update-index`, so
+    /// the object format and index version are git's to choose rather than this
+    /// test's to encode. Returns the index bytes.
+    #[cfg(unix)]
+    fn git_written_index(extra: &[&str], index_args: &[&str]) -> Vec<u8> {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        let mut init = vec!["init", "-q", "-b", "main"];
+        init.extend_from_slice(extra);
+        git(&init);
+        git(&["config", "user.email", "tester@example.com"]);
+        git(&["config", "user.name", "Test User"]);
+        std::fs::write(root.join("a.txt"), "ordinary file").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-m", "init"]);
+        let head = git(&["rev-parse", "HEAD"]);
+        let mut update = vec!["update-index"];
+        update.extend_from_slice(index_args);
+        let cacheinfo = format!("160000,{head},vendor/sub");
+        update.extend_from_slice(&["--add", "--cacheinfo", &cacheinfo]);
+        git(&update);
+        std::fs::read(root.join(".git/index")).unwrap()
+    }
+
+    /// TASK-RMA18.1.1 finding 1: the delete-path predicate now reads the INDEX,
+    /// so its parser is checked against indexes GIT WROTE rather than against
+    /// bytes this test encoded — including the two layouts that change the
+    /// entry stride, a SHA-256 object format (32-byte object ids in the same
+    /// layout, with nothing in the header to announce it) and index version 4
+    /// (prefix-compressed, unpadded paths).
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_reads_the_gitlinks_git_wrote() {
+        for (label, init, index_args) in [
+            ("default", [].as_slice(), [].as_slice()),
+            (
+                "sha256",
+                ["--object-format=sha256"].as_slice(),
+                [].as_slice(),
+            ),
+            ("v4", [].as_slice(), ["--index-version", "4"].as_slice()),
+        ] {
+            let bytes = git_written_index(init, index_args);
+            assert_eq!(
+                index_gitlink_paths(&bytes).unwrap_or_else(|err| panic!("{label}: {err}")),
+                vec!["vendor/sub".to_string()],
+                "{label}: the mode-160000 entry is the only gitlink, and `a.txt` is not one"
+            );
+        }
+    }
+
+    /// UNKNOWN MEANS KEEP. Every one of these is an index this cannot trust, and
+    /// each must be an ERROR rather than "no submodules" — the caller turns the
+    /// error into a refusal, and turning it into an empty answer is exactly the
+    /// fail-open this task exists to close.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_fails_closed_on_anything_it_cannot_trust() {
+        let good = git_written_index(&[], &[]);
+        assert!(index_gitlink_paths(&good).is_ok(), "control must parse");
+
+        for (label, bytes) in [
+            ("empty", Vec::new()),
+            ("not an index", b"NOTDIRC and then some".to_vec()),
+            ("truncated mid-entry", good[..good.len() / 2].to_vec()),
+            ("trailing hash chopped", good[..good.len() - 4].to_vec()),
+            ("entry count overstated", {
+                let mut bytes = good.clone();
+                bytes[8..12].copy_from_slice(&99u32.to_be_bytes());
+                bytes
+            }),
+            ("unsupported version", {
+                let mut bytes = good.clone();
+                bytes[4..8].copy_from_slice(&9u32.to_be_bytes());
+                bytes
+            }),
+        ] {
+            assert!(
+                index_gitlink_paths(&bytes).is_err(),
+                "{label}: an index that cannot be trusted must be an error, not an empty answer"
+            );
+        }
+    }
+
+    /// The predicate must fire on a POPULATED gitlink checkout and NOT on an
+    /// uninitialized placeholder — git's own rule is `!is_empty_dir`, and a
+    /// refusal that fired on empty placeholders would make the verb useless for
+    /// every worktree of a repository that has any submodule at all.
+    ///
+    /// Both halves are measured on ONE linked worktree, through the same
+    /// anchored handle the delete path uses, with the submodule recorded ONLY in
+    /// the index — no `.gitmodules`, no admin `modules/` directory — so it is
+    /// the index-derived branch that is under test in both directions.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn worktree_submodule_refusal_fires_on_a_populated_gitlink_and_not_a_placeholder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let git = |root: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        git(&project, &["init", "-q", "-b", "main"]);
+        git(&project, &["config", "user.email", "tester@example.com"]);
+        git(&project, &["config", "user.name", "Test User"]);
+        std::fs::write(project.join("a.txt"), "ordinary file").unwrap();
+        git(&project, &["add", "a.txt"]);
+        git(&project, &["commit", "-m", "init"]);
+        let head = git(&project, &["rev-parse", "HEAD"]);
+        git(
+            &project,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{head},vendor/sub"),
+            ],
+        );
+        git(&project, &["commit", "-m", "gitlink, no .gitmodules"]);
+
+        let worktree = tmp.path().join("wt");
+        git(
+            &project,
+            &["worktree", "add", "-q", worktree.to_str().unwrap(), "HEAD"],
+        );
+        assert!(
+            !worktree.join(".gitmodules").exists(),
+            "fixture premise: nothing but the index records this submodule"
+        );
+        let handle = std::fs::File::open(&worktree).unwrap();
+
+        // `git worktree add` leaves an EMPTY placeholder for an uninitialized
+        // submodule, and git removes such a worktree without --force.
+        assert!(worktree.join("vendor/sub").is_dir());
+        assert_eq!(
+            worktree_submodule_refusal(&handle, &worktree),
+            None,
+            "an uninitialized submodule placeholder must stay removable"
+        );
+
+        std::fs::write(worktree.join("vendor/sub/lib.txt"), "checked out").unwrap();
+        let reason = worktree_submodule_refusal(&handle, &worktree)
+            .expect("a populated gitlink checkout must be refused");
+        assert!(
+            reason.contains("vendor/sub"),
+            "the refusal must name the submodule it found, got: {reason}"
+        );
+    }
+
+    /// A SPLIT INDEX holds a delta against a shared index this never opens, so
+    /// the gitlinks visible in it are not the whole set. git writes one on
+    /// demand, so the fixture is git's own, and the answer must be a refusal
+    /// rather than the partial list.
+    // orgasmic:TASK-RMA18.1.1
+    #[cfg(unix)]
+    #[test]
+    fn index_gitlink_paths_refuses_a_split_index() {
+        let bytes = git_written_index(&[], &["--split-index"]);
+        let err = index_gitlink_paths(&bytes)
+            .expect_err("a split index must not answer for the shared index it defers to");
+        assert!(
+            err.contains("SPLIT INDEX"),
+            "the refusal must name why it refused, got: {err}"
+        );
+        assert!(
+            bytes.windows(4).any(|window| window == b"link"),
+            "fixture premise: git must actually have written a split index here"
+        );
     }
 }

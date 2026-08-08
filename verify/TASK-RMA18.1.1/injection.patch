@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 23d41bc..a166680 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -3968,7 +3968,8 @@ fn worktree_submodule_refusal(worktree: &std::fs::File, path: &Path) -> Option<S
+ 
+     let mut candidates = Vec::new();
+     match worktree_index_gitlinks(worktree, path) {
+-        WorktreeIndexGitlinks::Recorded(paths) => candidates.extend(paths),
++        // INJECTION: ask `.gitmodules` where git asks the index.
++        WorktreeIndexGitlinks::Recorded(_) => {}
+         WorktreeIndexGitlinks::NoRepository => {}
+         WorktreeIndexGitlinks::Unreadable(detail) => {
+             return Some(format!(
