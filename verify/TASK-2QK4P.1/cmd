@@ -3,38 +3,12 @@
 # `env -u ...` because a dispatch leaks its run id and home into subprocesses,
 # and these tests build their own Home under a temp root that must see neither.
 #
-# The WHOLE `recovery_claim::` filter rather than the one failing test, because
-# the finding is about the WIDTH of a branch and the width is only legible from
-# what stays green beside the red:
-#
-#   - `a_hidden_duplicate_authenticated_replacement_fails_closed_through_the_collector`
-#     is the finding. Two daemon-HMAC-authenticated replacements exist for one
-#     origin, a real `RunCatalog` has invalidated BOTH live records the way the
-#     session writer does on every lifecycle append, and the candidate set the
-#     production `collect_recovery_origin_index` returns is therefore EMPTY.
-#     Under the injection the resolver reads that emptiness as
-#     non-contradiction, verifies only the claim it loaded, and returns `Valid`
-#     — silently choosing one of two authorities and never discovering the
-#     other.
-#
-#   - `a_partially_loaded_index_does_not_confirm_uniqueness` is the same defect
-#     one link wider. Only the second replacement's record is invalidated, so
-#     the collector holds exactly one link and that link IS the loaded claim's.
-#     An index that reads as unanimous confirmation still says nothing about the
-#     file it was not holding, and the injected predicate returns `Valid` here
-#     too — which is why the fix does not consult the catalog-derived index on
-#     this branch at all rather than only on a zero match.
-#
-#   - `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`
-#     stays GREEN under the injection. That is the point: the injected predicate
-#     is correct about the 409 TASK-2QK4P was filed for, and the dispute is only
-#     over what it also admits. A red here would mean the injection broke
-#     something wholesale instead of reproducing the finding.
-#
-#   - `duplicate_authenticated_replacements_fail_closed` stays GREEN under the
-#     injection too. It reaches the resolver through a literal two-element
-#     slice, so it never observes the hidden state at all — which is exactly why
-#     it could not catch this, and why the collector-driven test above exists.
+# The WHOLE `recovery_claim::` filter rather than the failing tests alone,
+# because the finding is about the WIDTH of a branch and the width is only
+# legible from what stays green beside the red — above all
+# `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`,
+# the 409 the injected predicate genuinely fixes. `expect-red` names every test
+# the injection moves and why.
 #
 # `--test-threads=1` because every one of these tests writes a claim directory
 # and a session directory under its own tempdir and the panic text must be

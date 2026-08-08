@@ -1,0 +1,84 @@
+# Pinned from the real red run of 2026-08-08 with the injection applied.
+#
+# The injection is not a revert of the commit — the commit's centrepiece is a
+# TYPE change, and reverting the type would only prove that deleted code is
+# absent. It keeps the type and restores the USE that round two shipped, at all
+# four sites the review named:
+#
+#   F1  every per-file observation failure returns an empty `Complete` instead
+#       of `Unobserved`, and an unreadable origin session drops its link;
+#       the enumerator folds an unobserved member in as if the file were empty
+#   F2  `complete_session_scan` stops escalating and indexes from the bounded
+#       128 KiB / 64 KiB windows alone, so the skipped middle reads as absence
+#   F3  the missing/corrupt branch reconstructs from a silent catalog-derived
+#       slice instead of the authoritative set
+#   F4  the per-project authority never memoizes, so every claim re-enumerates
+exit: 101
+
+# ===== AN OBSERVATION THAT FAILED, REPORTED AS ONE THAT FOUND NOTHING ======
+#
+# F1, the block-ship state, RUNNING rather than derived. Two daemon-HMAC-
+# authenticated replacements exist for one origin; the second one's JSONL
+# carries a single malformed lifecycle line, the shape a crash mid-append
+# leaves. Under the injection that file's scan failure becomes an empty
+# successful pass, the union is labelled authoritative, the resolver sees
+# exactly one link equal to the claim it loaded, and it returns `Valid` —
+# choosing one of two lease-holders and never discovering the other.
+contains: an unindexable member file must leave the enumeration unresolved rather than confirming uniqueness, got Valid(
+
+# F1 in the OTHER direction, and the reviewer's open question 1 as a ruling.
+# One valid committed claim, one valid replacement, and one unrelated unreadable
+# sibling JSONL in the same directory. Unknown completeness must suppress
+# authority WITHOUT renaming the claim; under the injection the sibling's
+# failure vanishes and the claim is handed back as `Valid` on evidence the
+# daemon never actually read.
+contains: an unreadable sibling must suppress authority, got Valid(
+
+# F2, the block-ship state, RUNNING. The second replacement's transcript is
+# larger than the 128 KiB prefix plus the 64 KiB tail and its authenticated
+# `RecoveryOrigin` sits in the gap. `SessionLifecycleScan` documents that gap as
+# UNKNOWN; the injection reads it as absence and returns `Valid`.
+contains: a second authenticated replacement whose link sits in the bounded scan's skipped middle must still fail closed, got Valid(
+
+# F2's worse half: the same buried link, but it is the LOADED claim's own. The
+# enumeration finds no matching link, the committed claim is QUARANTINED, and
+# because every reader used the same bounded scanner the loss is PERMANENT
+# rather than the retry the code comment claimed. `Missing` is then permission
+# for the handler to mint a second replacement beside the live one — the safety
+# fix producing the very duplicate authority it exists to prevent.
+contains: a committed claim whose own link sits in the skipped middle must not be quarantined — that loss is permanent, got Missing
+
+# F3, the same defect one caller over. The claim file is lost, one authenticated
+# replacement is on disk, and its catalog record is invalidated exactly as the
+# session writer does on every lifecycle append. Reconstructing from that silent
+# slice reports `Missing`, and `post_run_recover` reads `Missing` as permission
+# to mint a new claim and session beside the replacement already running.
+contains: a lost claim whose authenticated replacement is on disk must be reconstructed, never reported Missing — Missing is permission to mint a second one, got Missing
+
+# F4, measured rather than argued. One project, four session files, two
+# committed claims, one inventory decision. Enumerating inside each resolver
+# call scans the project twice — `GET /runs` back to O(failed_runs x
+# session_bytes), which is what the caller had removed on purpose.
+contains: the project's session files must be scanned ONCE for the whole decision, not once per claim
+
+# ===== AND THE CLASS, NOT JUST THE INSTANCES ===============================
+#
+# SIX failures out of twenty-seven. The twenty-one that stay green are the
+# point:
+#
+#   - `the_origin_index_result_cannot_spell_failure_as_an_empty_success` — THE
+#     PIN — stays GREEN, and that is deliberate. The injection changes which
+#     variant the code CONSTRUCTS, not the type's shape, so the pin correctly
+#     does not fire. The pin guards the shape; these six guard the use. A red
+#     pin under this injection would mean the pin is measuring behaviour and has
+#     stopped guarding structure.
+#   - every regression rounds one and two shipped stays GREEN, including
+#     `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`
+#     (the 409 that started the chain) and
+#     `duplicate_authenticated_replacements_fail_closed` (the uniqueness rule).
+#     They are blind to all four findings, which is why there was a round three.
+#
+# A binary that collapses wholesale, a seventh failure, or a red in the pin or
+# in either round-two regression, is a different failure and has not reproduced
+# what this artifact claims.
+contains: test result: FAILED. 21 passed; 6 failed

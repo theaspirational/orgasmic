@@ -1,30 +1,41 @@
-# Pinned from the real red run of 2026-08-08 with the injection applied.
+# RE-AUTHORED 2026-08-08 by TASK-2QK4P.1.1. The original artifact was pinned
+# against a `resolve_authoritative_recovery_claim` that took the catalog-derived
+# `indexed_origins` as a parameter, and its injection restored the 724973d
+# predicate over that parameter. TASK-2QK4P.1.1 REMOVED the parameter — the
+# committed, missing and corrupt branches now all decide from one filesystem
+# enumeration that states its own completeness — so the old patch no longer
+# applies and, per `verify/README.md`, a stale proof is re-authored against a
+# defect that reproduces rather than skipped.
 #
-# The injection is surgical rather than a revert of the commit: it restores the
-# 724973d predicate verbatim over the catalog-derived index alone —
-# `matching.len() > 1 || any(link.claim != claim)`, with `matching.len() > 1`
-# retained — and deletes nothing else. `enumerate_recovery_origin_links` stays
-# in the file and goes dead, which is why the red run also carries a `dead_code`
-# warning; that warning is incidental and is not part of the signature.
+# The finding is unchanged and so is what it admits. The injection models the
+# same incomplete candidate set the run catalog produced, at the width the
+# finding calls the likelier one: keep only the link for the replacement the
+# loaded claim NAMES, which is what a catalog holding that record while a SECOND
+# authenticated replacement's record sits invalidated hands back. The predicate
+# is 724973d's verbatim, `matching.len() > 1` retained.
+#
+# What DID change is the failure count, and the reason is itself the fix. With
+# no catalog-derived input left to blind, every uniqueness test now reaches the
+# resolver through the same filesystem enumeration, so an injection that blinds
+# it blinds them all equally. The two-width narrative the original artifact told
+# was a property of the parameter this round deleted.
 exit: 101
 
 # ===== THE RESOLVER PICKED AN AUTHORITY IT COULD NOT SEE ALL OF =============
 #
-# TWO failures, and they are the same defect at two widths.
-#
 # Width 1 — a SILENT index. Both replacements are live and appending, so both
-# catalog records are invalidated and the production collector reports nothing.
-# The injected predicate reads that emptiness as "nothing contradicts the claim
-# I loaded" and returns `Valid`.
+# catalog records are invalidated and a catalog-derived set reports nothing. The
+# injected predicate reads that emptiness as "nothing contradicts the claim I
+# loaded" and returns `Valid`.
 contains: a second authenticated replacement hidden by an invalidated catalog record must still fail closed, got Valid(
 
 # Width 2 — a PARTIALLY LOADED index, and the likelier arrangement of the two
-# because it needs one live appender rather than two. The collector holds
-# exactly one link, that link IS the loaded claim's, and the index therefore
-# reads as unanimous confirmation. It is not: the second authenticated
-# replacement's record is simply not loaded. `matching.len() > 1` is false, so
-# the injected predicate finds nothing contradictory and returns `Valid` here
-# too. This is the case a fix that enumerated only on a zero match would miss.
+# because it needs one live appender rather than two. The set holds exactly one
+# link, that link IS the loaded claim's, and it therefore reads as unanimous
+# confirmation. It is not: the second authenticated replacement's record is
+# simply not loaded. `matching.len() > 1` is false, so the injected predicate
+# finds nothing contradictory and returns `Valid` here too. This is the case a
+# fix that enumerated only on a zero match would miss.
 contains: an index holding one link and blind to a second authenticated replacement must not confirm uniqueness, got Valid(
 
 # `Valid(` in both panics is the admission itself — `/api/runs/<id>/recover`
@@ -34,17 +45,26 @@ contains: an index holding one link and blind to a second authenticated replacem
 # with a timestamp and are deliberately not pinned.
 contains: origin_run_id: "run-hidden-origin"
 
-# ===== AND NOTHING ELSE MOVED ==============================================
+# ===== AND THE 409 THIS PREDICATE GENUINELY FIXES STAYS GREEN ===============
 #
-# EXACTLY TWO failures out of twenty. The eighteen that stay green include both
-# tests that would otherwise make this look like a wholesale break rather than a
-# width dispute:
+# FIVE failures out of twenty-seven, and the one that must NOT move is the one
+# the injected predicate is right about:
 #   - `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`
-#     (the 409 the injected predicate genuinely fixes — it must NOT go red), and
-#   - `duplicate_authenticated_replacements_fail_closed` (the uniqueness rule,
-#     which passes here only because its literal two-element slice never reaches
-#     the hidden state — which is exactly why it could not catch this).
-# A binary that collapses wholesale, a third failure, or a red in either of
-# those two, is a different failure and has not reproduced what this artifact
-# claims.
-contains: test result: FAILED. 18 passed; 2 failed
+#     is the 409 TASK-2QK4P was filed for. It stays GREEN, which is what makes
+#     this a width dispute rather than a wholesale break.
+#
+# The three failures beyond the two pinned above are the uniqueness rule reached
+# through other fixtures, and they move now only because TASK-2QK4P.1.1 removed
+# the catalog-derived parameter that used to keep them insulated:
+#   - `duplicate_authenticated_replacements_fail_closed` (the rule itself; it
+#     used to reach the resolver through a literal two-element slice, which is
+#     exactly why it could not catch this finding),
+#   - `a_scan_failure_in_a_second_replacement_is_not_an_empty_file` and
+#     `a_recovery_origin_outside_both_scan_windows_still_fails_closed`
+#     (TASK-2QK4P.1.1's own regressions, whose second replacement is likewise
+#     filtered out of the injected candidate set).
+#
+# A binary that collapses wholesale, a sixth failure, or a red in
+# `committed_claim_survives_a_catalog_that_invalidated_its_live_replacement`, is
+# a different failure and has not reproduced what this artifact claims.
+contains: test result: FAILED. 22 passed; 5 failed

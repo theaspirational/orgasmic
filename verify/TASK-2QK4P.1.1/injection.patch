@@ -1,0 +1,98 @@
+diff --git a/crates/orgasmic-daemon/src/recovery_claim.rs b/crates/orgasmic-daemon/src/recovery_claim.rs
+index 102656d..4021d14 100644
+--- a/crates/orgasmic-daemon/src/recovery_claim.rs
++++ b/crates/orgasmic-daemon/src/recovery_claim.rs
+@@ -1198,11 +1198,9 @@ fn complete_session_scan(
+     session_dir: &SessionDirectory,
+     session_path: &Path,
+ ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+-    let scan = session_dir.scan_path(session_path, SessionScanBudget::DEFAULT)?;
+-    if !scan.truncated {
+-        return Ok(scan);
+-    }
+-    session_dir.scan_path_complete(session_path)
++    // INJECTION (orgasmic:TASK-2QK4P.1.1 F2): index from the bounded scan and
++    // treat its skipped middle as absence, exactly as a503213 did.
++    session_dir.scan_path(session_path, SessionScanBudget::DEFAULT)
+ }
+ 
+ #[cfg(not(unix))]
+@@ -1226,8 +1224,10 @@ pub fn index_recovery_origins_in_session(
+     let session_dir = match SessionDirectory::open(project_root) {
+         Ok(dir) => dir,
+         Err(_) => {
+-            return IndexedRecoveryOrigins::Unobserved {
+-                reason: UnobservedSession::SessionDirectoryUnavailable,
++            // INJECTION (F1): an observation that failed, reported as one
++            // that succeeded and found nothing.
++            return IndexedRecoveryOrigins::Complete {
++                links: Vec::new(),
+                 bytes_inspected: 0,
+             }
+         }
+@@ -1239,8 +1239,10 @@ pub fn index_recovery_origins_in_session(
+     let scan = match scan {
+         Ok(scan) => scan,
+         Err(_) => {
+-            return IndexedRecoveryOrigins::Unobserved {
+-                reason: UnobservedSession::SessionUnreadable,
++            // INJECTION (F1): an observation that failed, reported as one
++            // that succeeded and found nothing.
++            return IndexedRecoveryOrigins::Complete {
++                links: Vec::new(),
+                 bytes_inspected: 0,
+             }
+         }
+@@ -1347,12 +1349,8 @@ pub fn index_recovery_origins_in_session(
+             let origin_scan = complete_session_scan(&origin_session_path);
+             let origin_scan = match origin_scan {
+                 Ok(scan) => scan,
+-                Err(_) => {
+-                    return IndexedRecoveryOrigins::Unobserved {
+-                        reason: UnobservedSession::OriginSessionUnreadable,
+-                        bytes_inspected,
+-                    }
+-                }
++                // INJECTION (F1): drop the undecidable link instead.
++                Err(_) => continue,
+             };
+             bytes_inspected += origin_scan.bytes_inspected;
+             let origin_envelopes = origin_scan.envelopes;
+@@ -1466,7 +1464,8 @@ impl ProjectOriginAuthority {
+         project_root: &Path,
+         project_id: &str,
+     ) -> &AuthoritativeOriginLinks {
+-        if !self.by_project.contains_key(project_root) {
++        // INJECTION (F4): never memoize; re-enumerate per claim.
++        if true {
+             let (links, cost) = enumerate_recovery_origin_links(home, project_root, project_id);
+             self.cost.files += cost.files;
+             self.cost.bytes_inspected += cost.bytes_inspected;
+@@ -1525,12 +1524,11 @@ fn enumerate_recovery_origin_links(
+                 cost.bytes_inspected += bytes_inspected;
+                 links.extend(found);
+             }
++            // INJECTION (F1): fold it in as if the file were empty.
+             IndexedRecoveryOrigins::Unobserved {
+-                reason,
+-                bytes_inspected,
++                bytes_inspected, ..
+             } => {
+                 cost.bytes_inspected += bytes_inspected;
+-                return (AuthoritativeOriginLinks::Unobserved(reason), cost);
+             }
+         }
+     }
+@@ -1647,9 +1645,9 @@ pub fn resolve_authoritative_recovery_claim(
+             }
+             Ok(ResolvedRecoveryClaim::Valid(claim))
+         }
+-        Ok(None) => {
+-            reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, authoritative)
+-        }
++        // INJECTION (F3): the catalog-derived slice, silent while the
++        // replacement's record is invalidated.
++        Ok(None) => reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, &[]),
+         Err(RecoveryClaimError::CorruptClaim) => {
+             quarantine_invalid_claim(home, project_id, origin_run_id)?;
+             reconstruct_or_quarantine(home, project_root, project_id, origin_run_id, authoritative)
