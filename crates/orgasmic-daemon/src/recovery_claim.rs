@@ -1854,6 +1854,10 @@ pub enum UnobservedSession {
     ClaimStoreUnreadable,
     /// A claim file inside the store could not be opened, stat'd or read.
     ClaimFileUnreadable,
+    /// The daemon could not determine whether the exact tmux session reserved
+    /// by a spawned recovery claim still exists. A tmux client/probe failure
+    /// is not evidence that the replacement died.
+    TmuxHandleUnobserved,
 }
 
 /// What an operator would have to DO about an unobserved answer.
@@ -1881,6 +1885,9 @@ pub enum Remediation {
     /// The daemon-owned claim store under `<home>/state/recovery-claims/` could
     /// not be opened, listed or read.
     RepairClaimStore,
+    /// The daemon could not query tmux for a spawned recovery claim's exact
+    /// planned session.
+    RepairTmux,
 }
 
 impl Remediation {
@@ -1891,6 +1898,7 @@ impl Remediation {
             Self::RepairSessionStore => "repair_session_store",
             Self::RepairAuthKey => "repair_auth_key",
             Self::RepairClaimStore => "repair_claim_store",
+            Self::RepairTmux => "repair_tmux",
         }
     }
 
@@ -1917,6 +1925,11 @@ impl Remediation {
                  could not be opened, listed or read. Restore read and execute \
                  access to it and retry."
             }
+            Self::RepairTmux => {
+                "The daemon could not query tmux for the planned recovery session. \
+                 Restore the local tmux client/server and retry; the pending claim \
+                 remains unchanged until the session can be observed."
+            }
         }
     }
 }
@@ -1934,6 +1947,7 @@ impl UnobservedSession {
             }
             Self::AuthorityKeyUnreadable => Remediation::RepairAuthKey,
             Self::ClaimStoreUnreadable | Self::ClaimFileUnreadable => Remediation::RepairClaimStore,
+            Self::TmuxHandleUnobserved => Remediation::RepairTmux,
         }
     }
 
@@ -1947,6 +1961,7 @@ impl UnobservedSession {
             Self::SessionPathUnresolvable => "session_path_unresolvable",
             Self::ClaimStoreUnreadable => "claim_store_unreadable",
             Self::ClaimFileUnreadable => "claim_file_unreadable",
+            Self::TmuxHandleUnobserved => "tmux_handle_unobserved",
         }
     }
 }
@@ -3674,6 +3689,17 @@ pub fn reconcile_pending_claim(
         boot_id,
     );
     let tmux_observation = pending_recovery_claim_planned_handle_observation(claim);
+    // A spawned claim has already acquired its recovery authority. Do not
+    // touch its replacement JSONL (including merely opening or creating it)
+    // unless tmux can prove the planned handle is present or absent. An I/O or
+    // client failure is a retryable observation failure, never proof that it
+    // is safe to relaunch or reconcile this durable intent.
+    if claim.spawn_started && tmux_observation == TmuxSessionObservation::Unobserved {
+        return Err(RecoveryClaimError::Unobserved(UnobservedEvidence::about(
+            UnobservedSession::TmuxHandleUnobserved,
+            format!("tmux/{}", claim.replacement_run_id),
+        )));
+    }
     let tmux_live = tmux_observation == TmuxSessionObservation::Present;
     let session_dir = SessionDirectory::open(project_root)?;
     let (session_file, created_for_pending_append) =

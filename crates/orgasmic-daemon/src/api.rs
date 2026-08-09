@@ -9829,9 +9829,7 @@ async fn post_run_recover(
                         &origin_authority.project_root,
                         &claim,
                     )
-                    .map_err(|err| {
-                        ApiError::internal(format!("recovery claim reconcile failed: {err:?}"))
-                    })?;
+                    .map_err(|err| recovery_claim_reconcile_error(&id, err))?;
                     if let Some(plan) = plan {
                         if plan.claim.status == RecoveryClaimStatus::Committed {
                             match committed_claim_is_authoritative(
@@ -12566,6 +12564,24 @@ fn recovery_claim_load_error(origin_run_id: &str, err: RecoveryClaimError) -> Ap
             }
         },
         other => ApiError::internal(format!("recovery claim load failed: {other:?}")),
+    }
+}
+
+/// A pending recovery claim that cannot be reconciled because its exact tmux
+/// handle was unobservable must remain pending. In particular, do not turn a
+/// local tmux client failure into the generic 500/409 path that can lead a
+/// caller to treat the durable replacement authority as dead.
+fn recovery_claim_reconcile_error(origin_run_id: &str, err: RecoveryClaimError) -> ApiError {
+    match err {
+        RecoveryClaimError::Unobserved(evidence) => ApiError::service_unavailable(json!({
+            "error": "recovery claim reconciliation could not observe its planned handle; retry",
+            "origin_run_id": origin_run_id,
+            "reason": evidence.reason.tag(),
+            "subject": evidence.subject,
+            "remediation": evidence.remediation.class(),
+            "remediation_hint": evidence.remediation.hint(),
+        })),
+        other => ApiError::internal(format!("recovery claim reconcile failed: {other:?}")),
     }
 }
 
@@ -21174,7 +21190,7 @@ pub(crate) mod tests {
         // A session append can still fail after admission preflight. Inject at
         // the writer boundary itself: the supervisor has a retained append
         // handle, so filesystem replacement cannot prove this path failed.
-        let append_failure = crate::writer::test_hooks::fail_next_session_append(
+        let append_failure = state.writer.fail_next_session_append(
             &acquire.run_id,
             &project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
         );

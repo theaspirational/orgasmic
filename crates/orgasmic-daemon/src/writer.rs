@@ -38,22 +38,16 @@ use crate::events::{EventBus, EventPayload, Topic};
 #[doc(hidden)]
 pub mod test_hooks {
     use super::*;
-    #[cfg(test)]
-    use std::sync::OnceLock;
 
     static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
     static SYNC_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
     static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
-    /// The session-append seam is keyed by its exact writer target rather than
-    /// a process-global "next append" counter. Daemon unit tests run in
-    /// parallel, and another run's lifecycle append must never consume this
-    /// failure before the test that armed it reaches the writer.
-    #[cfg(test)]
-    static SESSION_APPEND_FAILURES: OnceLock<
-        std::sync::Mutex<HashMap<(String, PathBuf), Arc<SessionAppendFailure>>>,
-    > = OnceLock::new();
 
+    /// Per-`WriterHandle` failure observation for lifecycle persistence tests.
+    /// It deliberately has no process-global registry: two writers may append
+    /// the same run/path concurrently, and only the handle that armed this
+    /// seam may consume it.
     #[cfg(test)]
     #[derive(Debug)]
     pub(crate) struct SessionAppendFailure {
@@ -62,15 +56,20 @@ pub mod test_hooks {
 
     #[cfg(test)]
     impl SessionAppendFailure {
+        pub(crate) fn new() -> Self {
+            Self {
+                attempts: AtomicU64::new(0),
+            }
+        }
+
         pub(crate) fn attempt_count(&self) -> u64 {
             self.attempts.load(Ordering::SeqCst)
         }
-    }
 
-    #[cfg(test)]
-    fn session_append_failures(
-    ) -> &'static std::sync::Mutex<HashMap<(String, PathBuf), Arc<SessionAppendFailure>>> {
-        SESSION_APPEND_FAILURES.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+        pub(crate) fn fail(&self) -> Result<()> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            bail!("injected session lifecycle append failure");
+        }
     }
 
     pub fn reset() {
@@ -94,43 +93,6 @@ pub mod test_hooks {
 
     pub fn fail_next_sync(count: usize) {
         FAIL_NEXT_SYNC.store(count, Ordering::SeqCst);
-    }
-
-    /// Fail the next append for exactly `(run_id, session_path)` and return
-    /// that target's own observation counter. Unlike a filesystem trick, this
-    /// executes after the retained writer handle is selected.
-    #[cfg(test)]
-    pub(crate) fn fail_next_session_append(
-        run_id: &str,
-        session_path: &Path,
-    ) -> Arc<SessionAppendFailure> {
-        let key = (run_id.to_string(), session_path.to_path_buf());
-        let failure = Arc::new(SessionAppendFailure {
-            attempts: AtomicU64::new(0),
-        });
-        let previous = session_append_failures()
-            .lock()
-            .expect("session append failure hooks")
-            .insert(key, Arc::clone(&failure));
-        assert!(
-            previous.is_none(),
-            "a session append failure was already armed for this exact target"
-        );
-        failure
-    }
-
-    #[cfg(test)]
-    pub(crate) fn before_session_append(run_id: &str, session_path: &Path) -> Result<()> {
-        let key = (run_id.to_string(), session_path.to_path_buf());
-        let failure = session_append_failures()
-            .lock()
-            .expect("session append failure hooks")
-            .remove(&key);
-        let Some(failure) = failure else {
-            return Ok(());
-        };
-        failure.attempts.fetch_add(1, Ordering::SeqCst);
-        bail!("injected session lifecycle append failure");
     }
 
     pub(crate) fn before_sync() -> Result<()> {
@@ -243,6 +205,8 @@ enum WriterCommand {
     Session {
         req: SessionAppend,
         reply: oneshot::Sender<Result<SessionAppendResult>>,
+        #[cfg(test)]
+        injected_failure: Option<Arc<test_hooks::SessionAppendFailure>>,
     },
     Rewrite {
         req: FileRewrite,
@@ -384,6 +348,20 @@ pub struct WriterHandle {
     deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
+    /// Test-only, handle-local lifecycle fault. This state is intentionally
+    /// owned by the handle (and its clones), not by the writer process or a
+    /// global key: dropping all clones drops an unconsumed arm, and another
+    /// WriterHandle with an identical run/path cannot see it.
+    #[cfg(test)]
+    session_append_failure: Arc<std::sync::Mutex<Option<ArmedSessionAppendFailure>>>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct ArmedSessionAppendFailure {
+    run_id: String,
+    session_path: PathBuf,
+    failure: Arc<test_hooks::SessionAppendFailure>,
 }
 
 /// An exclusive hold on a set of session paths, held for the whole of a
@@ -704,11 +682,65 @@ impl WriterHandle {
 
     pub async fn append_session(&self, req: SessionAppend) -> Result<SessionAppendResult> {
         let (reply, rx) = oneshot::channel();
+        #[cfg(test)]
+        let injected_failure = self.take_session_append_failure(&req);
         self.tx
-            .send(WriterCommand::Session { req, reply })
+            .send(WriterCommand::Session {
+                req,
+                reply,
+                #[cfg(test)]
+                injected_failure,
+            })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         rx.await.map_err(|_| anyhow!("writer reply dropped"))?
+    }
+
+    /// Fail the next matching lifecycle append sent through this exact writer
+    /// handle. The test seam fires after the retained `SessionWriter` has been
+    /// selected, which proves the lifecycle persistence rollback path without
+    /// relying on a filesystem replacement race.
+    #[cfg(test)]
+    pub(crate) fn fail_next_session_append(
+        &self,
+        run_id: &str,
+        session_path: &Path,
+    ) -> Arc<test_hooks::SessionAppendFailure> {
+        let failure = Arc::new(test_hooks::SessionAppendFailure::new());
+        let mut armed = self
+            .session_append_failure
+            .lock()
+            .expect("writer handle session append failure hook");
+        assert!(
+            armed.is_none(),
+            "a session append failure was already armed for this writer handle"
+        );
+        *armed = Some(ArmedSessionAppendFailure {
+            run_id: run_id.to_string(),
+            session_path: session_path.to_path_buf(),
+            failure: Arc::clone(&failure),
+        });
+        failure
+    }
+
+    #[cfg(test)]
+    fn take_session_append_failure(
+        &self,
+        req: &SessionAppend,
+    ) -> Option<Arc<test_hooks::SessionAppendFailure>> {
+        let mut armed = self
+            .session_append_failure
+            .lock()
+            .expect("writer handle session append failure hook");
+        let matches = armed.as_ref().is_some_and(|armed| {
+            armed.run_id == req.run_id && armed.session_path == req.session_path
+        });
+        matches.then(|| {
+            armed
+                .take()
+                .expect("matching writer append failure")
+                .failure
+        })
     }
 
     /// Take an exclusive hold on a set of session paths for the whole of a
@@ -959,6 +991,8 @@ pub fn spawn_with_catalog(
         deferred_appends,
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
+        #[cfg(test)]
+        session_append_failure: Arc::new(std::sync::Mutex::new(None)),
     }
 }
 
@@ -1039,6 +1073,8 @@ fn injected_write_stall(pending: &PendingWrite) -> Option<std::time::Duration> {
 struct DeferredSessionAppend {
     req: SessionAppend,
     reply: oneshot::Sender<Result<SessionAppendResult>>,
+    #[cfg(test)]
+    injected_failure: Option<Arc<test_hooks::SessionAppendFailure>>,
 }
 
 async fn writer_loop(
@@ -1097,17 +1133,35 @@ async fn writer_loop(
                     let _ = reply.send(result);
                 }
             }
-            WriterCommand::Session { req, reply } => {
+            WriterCommand::Session {
+                req,
+                reply,
+                #[cfg(test)]
+                injected_failure,
+            } => {
                 // orgasmic:TASK-FZB6T.3 finding 1 — the check is here, BEFORE
                 // anything is opened. A held path's append waits for the
                 // transaction that holds it and then lands in whatever file the
                 // path holds, instead of racing a rename onto an inode the
                 // rename is about to orphan.
                 if leased.contains(&req.session_path) {
-                    deferred.push(DeferredSessionAppend { req, reply });
+                    deferred.push(DeferredSessionAppend {
+                        req,
+                        reply,
+                        #[cfg(test)]
+                        injected_failure,
+                    });
                     deferred_appends.store(deferred.len(), Ordering::SeqCst);
                 } else {
-                    run_session_append(&mut session_handles, &events, catalog.as_ref(), req, reply);
+                    run_session_append(
+                        &mut session_handles,
+                        &events,
+                        catalog.as_ref(),
+                        req,
+                        reply,
+                        #[cfg(test)]
+                        injected_failure,
+                    );
                 }
             }
             WriterCommand::Rewrite { req, reply } => {
@@ -1246,6 +1300,8 @@ async fn writer_loop(
                         catalog.as_ref(),
                         entry.req,
                         entry.reply,
+                        #[cfg(test)]
+                        entry.injected_failure,
                     );
                 }
             }
@@ -1286,6 +1342,7 @@ fn run_session_append(
     catalog: Option<&crate::run_catalog::RunCatalog>,
     req: SessionAppend,
     reply: oneshot::Sender<Result<SessionAppendResult>>,
+    #[cfg(test)] injected_failure: Option<Arc<test_hooks::SessionAppendFailure>>,
 ) {
     let SessionAppend {
         run_id,
@@ -1314,6 +1371,8 @@ fn run_session_append(
         authority,
         kind,
         event,
+        #[cfg(test)]
+        injected_failure,
     );
     if let Ok(ref ok) = result {
         events.publish(
@@ -1669,6 +1728,7 @@ fn append_session_inner(
     authority: Option<crate::recovery_claim::SessionFile>,
     kind: SessionEventKind,
     event: Value,
+    #[cfg(test)] injected_failure: Option<Arc<test_hooks::SessionAppendFailure>>,
 ) -> Result<SessionAppendResult> {
     let writer = match handles.get_mut(run_id) {
         Some(w) => w,
@@ -1693,7 +1753,9 @@ fn append_session_inner(
         }
     };
     #[cfg(test)]
-    test_hooks::before_session_append(run_id, session_path)?;
+    if let Some(injected_failure) = injected_failure {
+        injected_failure.fail()?;
+    }
     let seq = writer
         .append(kind, event)
         .with_context(|| format!("append session {}", session_path.display()))?;
@@ -2215,29 +2277,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn targeted_session_append_failure_cannot_be_consumed_by_another_run() {
+    async fn handle_local_session_append_failure_cannot_be_consumed_by_another_writer() {
         let tmp = tempfile::tempdir().unwrap();
         let target_path = tmp.path().join("target.jsonl");
-        let unrelated_path = tmp.path().join("unrelated.jsonl");
-        let handle = spawn(EventBus::new());
-        let failure = test_hooks::fail_next_session_append("run-target", &target_path);
+        let armed_handle = spawn(EventBus::new());
+        let other_handle = spawn(EventBus::new());
+        let failure = armed_handle.fail_next_session_append("run-target", &target_path);
 
-        // This is deliberately queued through the same writer task first. A
-        // process-global fail-next hook would make this append steal the
-        // failure and leave the intended lifecycle mutation falsely green.
-        handle
+        // The tuple is intentionally identical. A process-global target map
+        // lets this different writer consume the arm; a WriterHandle-local
+        // hook leaves it untouched until the exact handle sends its command.
+        other_handle
             .append_session(SessionAppend {
-                run_id: "run-unrelated".into(),
-                session_path: unrelated_path.clone(),
-                identity: RuntimeIdentity::new("run-unrelated", "boot-test"),
+                run_id: "run-target".into(),
+                session_path: target_path.clone(),
+                identity: RuntimeIdentity::new("run-target", "boot-other"),
                 authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::json!({"phase": "acquire"}),
             })
             .await
-            .expect("unrelated session append must not consume the target seam");
+            .expect("a distinct WriterHandle must not consume the armed seam");
 
-        let err = handle
+        let err = armed_handle
             .append_session(SessionAppend {
                 run_id: "run-target".into(),
                 session_path: target_path.clone(),
@@ -2252,10 +2314,11 @@ mod tests {
             .to_string()
             .contains("injected session lifecycle append failure"));
         assert_eq!(failure.attempt_count(), 1);
-        assert!(unrelated_path.exists());
+        let raw = std::fs::read_to_string(&target_path).unwrap();
+        assert!(raw.contains("\"phase\":\"acquire\""));
         assert!(
-            std::fs::read(&target_path).unwrap().is_empty(),
-            "the selected writer may open its retained handle, but must not append a lifecycle envelope"
+            !raw.contains("manager_terminal_claim"),
+            "the armed handle may open its retained writer, but must not append its lifecycle envelope"
         );
     }
 
