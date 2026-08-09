@@ -25625,3 +25625,116 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-08 Sat 22:19:57 implementer.reported TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5535
+:TIME:         [2026-08-08 Sat 22:19:57]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:RUN_ID:       run-20260808T211349-c25bc4d4527c46d8b99de433f4fdc472
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1.1
+:SHA:          a71f09dcf23ea9ff0eae83e78b954697f2beb8c7
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260808-orgasmic-5531/last.txt
+:END:
+
+* TX 2026-08-08 Sat 22:22:56 manager.evidence TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5536
+:TIME:         [2026-08-08 Sat 22:22:56]
+:TYPE:         manager.evidence
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:       Acceptance 5 CLOSED by the manager on a rested host, confirming the implementer's classification rather than overriding it: scripts/run-tests.sh -p orgasmic-daemon at a71f09d is GREEN — failures 0, cargo exited 0, host calm at rate 0.1070, load 1.69, wall 114s, watchdog peak 50.5%. The implementer reported RED and refused to claim the gate, with two proper controls: run 8 put its own new API test under #[ignore] and the same supervisor probe/sweep tests still failed, and runs 6-7 on the unmodified baseline HEAD in a sibling worktree were GREEN twice while interleaved with its own RED runs. Its syspolicyd rate climbed monotonically 0.36 to 1.46 across eleven runs and did not recover after a five-minute idle, after roughly two hours of continuous cargo. The failing family is always supervisor probe/sweep latency (a_probe_child_that_never_exits, a_probe_child_that_exits_leaving_a_descendant, a_hung_mux_binary), every one isolation-green, in a file this branch does not touch. Measured here at load 1.69 the whole suite is clean, which is exactly what the control experiments predicted.
+:GATE:         scripts/run-tests.sh -p orgasmic-daemon
+:VERDICT_LINE: GREEN — no failures
+:TREE:         a71f09d
+:SYSPOLICYD_RATE: 0.1070
+:WATCHDOG_PEAK: 50.5%
+:END:
+
+* TX 2026-08-08 Sat 22:23:39 manager.evidence TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260808-orgasmic-5537
+:TIME:         [2026-08-08 Sat 22:23:39]
+:TYPE:         manager.evidence
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:       P1a's red proof INDEPENDENTLY REPLAYED by the manager, not carried from the report. Baseline at a71f09d: RunsView.test.tsx 4 passed. Deleted the single line recoveredRows('failed_recoverable', data.failed_recoverable ?? []) from flattenRuns and nothing else: 2 failed, 2 passed — the two new diagnostic tests red, both pre-existing tests still green — while npm run typecheck (tsc --noEmit) exited 0 IN THE SAME BROKEN STATE. Worktree restored byte-clean afterwards and re-run: 4 passed. This measures the point the manager wrote into the round-six acceptance and which neither the round-five report nor the reviewer finding stated: a field the backend sends and the frontend type omits is not a TypeScript error, because structural typing ignores extra properties arriving on the wire, so a typecheck can never have been the pin for this defect and only a rendering test can hold it. The claim is now measured twice, by the implementer and by the manager, on the same tree.
+:TREE:         a71f09d
+:INJECTION:    one line removed from flattenRuns
+:VITEST:       2 failed 2 passed
+:TSC_UNDER_INJECTION: exit 0
+:END:
+
+* TX 2026-08-09 Sun 07:10:35 task.state_transitioned TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5538
+:TIME:         [2026-08-09 Sun 07:10:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2QK4P.1.1.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-09 Sun 07:10:39 manager.dispatch_started TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5539
+:TIME:         [2026-08-09 Sun 07:10:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1.1-review
+:BRANCH:       task-2qk4p.1.1.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-1-1-review/task-2qk4p-1-1-1-1-1-review-brief.md
+:STARTED_AT:   [2026-08-09 Sun 07:10:39]
+:LIVENESS:     a71f09dcf23ea9ff0eae83e78b954697f2beb8c7
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:REVIEWS_TX:   tx-20260808-orgasmic-5531
+:REASON_INITIAL: Cross-family review of round six, the round that decides whether main becomes packageable again. codex/gpt-5.6-sol wrote the rejections that opened rounds three through six. This round authored no verify/ artifact, so the content-filter trigger is absent by construction; the incremental-finding rule stays. Manager-verified before dispatch: acceptance 5 is MET on a rested host (tx-…-5536, rate 0.1070, wall 114s, watchdog peak 50.5%) confirming the author's environment classification rather than overriding it; and P1a's red proof was REPLAYED independently (tx-…-5537) — deleting the one flattenRuns line reds the two new tests while tsc --noEmit exits 0 in the same broken state, worktree restored byte-clean. The brief asks two questions the report cannot answer for itself: whether the new boot test actually reaches Supervisor::reattach in its unfaulted phase rather than merely mirroring the decision, and whether the six reachable names that disappeared from the derivation (935 to 929, leaf set identical at 93 keys) were test noise rather than production reachability. NO --effort passed (TASK-TH906); runs at the machine default xhigh.
+:END:
+
+* TX 2026-08-09 Sun 07:10:39 run.created TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5540
+:TIME:         [2026-08-09 Sun 07:10:39]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1.1.1.1-reviewer-20260809T071038.jsonl
+:REASON:       Cross-family review of round six, the round that decides whether main becomes packageable again. codex/gpt-5.6-sol wrote the rejections that opened rounds three through six. This round authored no verify/ artifact, so the content-filter trigger is absent by construction; the incremental-finding rule stays. Manager-verified before dispatch: acceptance 5 is MET on a rested host (tx-…-5536, rate 0.1070, wall 114s, watchdog peak 50.5%) confirming the author's environment classification rather than overriding it; and P1a's red proof was REPLAYED independently (tx-…-5537) — deleting the one flattenRuns line reds the two new tests while tsc --noEmit exits 0 in the same broken state, worktree restored byte-clean. The brief asks two questions the report cannot answer for itself: whether the new boot test actually reaches Supervisor::reattach in its unfaulted phase rather than merely mirroring the decision, and whether the six reachable names that disappeared from the derivation (935 to 929, leaf set identical at 93 keys) were test noise rather than production reachability. NO --effort passed (TASK-TH906); runs at the machine default xhigh.
+:RUN_ID:       run-20260809T071038-d5cbd88d11cc404fb473935a0a345ae6
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-1-1-review/task-2qk4p-1-1-1-1-1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-1-1-review/task-2qk4p-1-1-1-1-1-review-2c07d82345d243b8a405d1ed452646d2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2qk4p-1-1-1-1-1-review/task-2qk4p-1-1-1-1-1-review-2c07d82345d243b8a405d1ed452646d2-stdout.log
+:DISPATCH_ATTEMPT: 2c07d82345d243b8a405d1ed452646d2
+:DISPATCH_TX:  tx-20260809-orgasmic-5539
+:MODEL_OVERRIDE: gpt-5.6-sol
+:END:

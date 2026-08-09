@@ -1845,3 +1845,164 @@ audit of the three re-authored artifacts stands as evidence: all apply clean,
 same target files, no =new file mode=, =cmd= unchanged, 12 of 12 non-count
 =contains:= signatures byte-identical, only two count lines moved and both
 upward.
+
+* IN_REVIEW TASK-2QK4P.1.1.1.1.1 close the two proof gaps: the operator surface that never receives the diagnostic, and the boot regression that never enters the boot route
+:PROPERTIES:
+:ID: TASK-2QK4P.1.1.1.1.1
+:IMPLEMENTS: TASK-2QK4P.1.1.1.1
+:PRIORITY: P0
+:END:
+
+** READ THIS FIRST — STATUS
+FIX ROUND for TASK-2QK4P.1.1.1.1, opened by a =REJECT= (=tx-20260808-orgasmic-5524=,
+codex/gpt-5.6-sol cross-family). Round five is MERGED as =aa4274b=.
+
+*THIS IS THE NARROW ROUND, AND THAT IS THE NEWS.* Round five's rejection carries
+*ZERO behaviour block-ships.* The reviewer calls the Unix backend fixes for
+F1/F3/F4/F5 substantially correct with green focused regressions, and answered
+EVERY design question in the round's favour:
+
+: C3  the errno direction is sound; EISDIR/ENAMETOOLONG are observed path facts
+: C4  an absent sessions dir as Complete([]) is safe — ENOENT proves no entries
+:     exist there, and claims load independently
+: C5  the test-only readdir branch faithfully creates the errno-bearing NULL
+: C7  compile-time-only exhaustiveness is the right answer for F4
+: C9  project-wide refusal SHOULD stay — isolating an unreadable member and
+:     calling the remainder complete recreates the original uniqueness defect
+: C10 the write-side leftovers are legitimate follow-ups
+
+*Do not reopen any of those.* Both blockers are about PROOF and PLUMBING.
+
+*MAIN STILL MUST NOT BE PACKAGED INTO A RUNTIME UNTIL P1a CLOSES.* The F3 wedge
+is fixed in the daemon — the refusal now carries a sanitized subject and a
+remediation hint — and it is invisible to the operator. Installed runtime is
+=ed0ebbc=, unaffected.
+
+** Findings to close
+*** P1a (HIGH, bug/operability) — the F3 operator notice is wired to buckets that can never carry it
+=crates/orgasmic-daemon/src/api.rs:12084-12090=, =:7552-7569=;
+=ui/src/lib/types.ts:445-452=; =ui/src/components/RunsView.tsx:54-62=
+
+The daemon applies =recovery_unobserved*= only to =failed_recoverable= records
+and =GET /runs= serializes them under =failed_recoverable=. *=RecoveryInventoryResponse=
+does not have that field*, and =flattenRuns= flattens only =live=, =interrupted=,
+=reattached=, =ambiguous=, =terminal_noop=. So =recoveryUnobservedNotice= runs
+only on classifications that cannot carry the diagnostic, and *the permanently
+refused recoveries are absent from the table altogether.* The operator still
+cannot see the named file or the documented repair.
+
+*Manager-confirmed independently by reading both files.* This is exactly the
+surface round five declared untested ("=ui/node_modules= is not installed …
+unchecked by =tsc= … that is an untested surface and I am naming it"). The
+declaration was honest; the surface was broken.
+
+*AND — THIS IS THE PART NEITHER THE REPORT NOR THE FINDING SAYS — =tsc= WOULD NOT
+HAVE CAUGHT IT.* A field the backend sends and the frontend type omits is not a
+type error; TypeScript's structural typing ignores extra properties on the wire.
+=npm run typecheck= is therefore NOT the fix and NOT the pin. *Only a component
+test that renders a =failed_recoverable= response can hold this.*
+
+*** P1b (HIGH, test/acceptance) — F2's regression never enters the production boot route
+=crates/orgasmic-daemon/src/recovery_claim.rs:6649-6715=;
+=crates/orgasmic-daemon/src/api.rs:10709-10790=
+
+=f2_a_failed_readdir_is_not_a_complete_directory= calls
+=pending_recovery_claim_owns_session= directly, asserts the returned enum is not
+=Invalid=, and compares a session file *no exercised code can write*. It never
+invokes =boot_reattach_ownership=, =reattach_live_runs_on_boot= or
+=Supervisor::reattach=. Change boot to reattach on =ClaimEvidence::Unobserved=
+and this regression stays green.
+
+*Manager-confirmed: =boot_reattach_ownership= has exactly ONE caller in the whole
+tree — the production one at =api.rs:10768= — and the two mentions in
+=recovery_claim.rs= are both COMMENTS.* Round five extracted that function
+"so the test exercises the real expression", and then the test did not. The
+comment at =:6698= documents the equivalence instead of executing it.
+
+*** P2a (MEDIUM, test) — the non-UTF-8 regression has no teeth on the platform that runs it
+=crates/orgasmic-daemon/src/recovery_claim.rs:6728-6790=
+
+On APFS/HFS+ the invalid-byte fixture is rejected with =EILSEQ=, so the
+byte-preservation half never runs — the reviewer's =--nocapture= run printed
+exactly that. What remains is a =Vec<OsString>= type assertion, and *it cannot
+catch the old defect*: =names()= could call =to_str()= again, silently drop
+=Err= entries, and still return =Vec<OsString>=.
+
+*** P2b (MEDIUM, test/tooling) — the derivation has no coverage self-check and its residual report is incomplete
+=scripts/derive-observation-surface.py:195-243=, =:362-370=
+
+Three concrete parser defects in the current tree: the next-={=-after-=fn= rule
+gives semicolon-only trait/extern declarations unrelated bodies
+(=WorkEvidenceProbe::observe= at =supervisor.rs:4834=, =setsid= at
+=modes/stdio.rs:584=); the test-module regex misses =pub(crate) mod tests=,
+including the large API test module; and =--report-dynamic= scans bodies only, so
+it emits one row and omits the reachable =&dyn WorkerDriver= signature plus
+=driver.acquire(..)= call at =supervisor.rs:1735-1790=.
+
+So 935/96 is a *test/macro-inflated superset, not a checked production call
+graph* — and an overapproximation is exactly what can mask an underapproximation.
+*The reviewer looked and did NOT find an authority-decision leaf missing from the
+superset, and explicitly declined to make this a second derivation block-ship.*
+Treat it as tooling debt with teeth, not as a re-derivation.
+
+** Acceptance
+1. *P1a: fix the contract AND pin it with a rendering test.* Add
+   =failed_recoverable: RecoveredRun[]= to =RecoveryInventoryResponse=, flatten
+   and render it in =RunsView=, and add a *component test* whose mocked
+   =failed_recoverable= record proves the reason cell visibly contains BOTH the
+   sanitized subject and the remediation text. *A typecheck is not an acceptable
+   substitute and will be rejected as one* — see the note under P1a. State how you
+   ran the UI tests; =ui/node_modules= was absent in round five's worktree and
+   that is part of why this shipped broken.
+2. *P1b: route the fault through the production boot decision.* Make the
+   nth-entry =readdir= seam reachable from an API-level boot test, put a real boot
+   candidate through =reattach_live_runs_on_boot= (or through an extracted
+   decision that OWNS the reattach call, not one that merely mirrors it), assert
+   *no supervisor reattach and a byte-identical JSONL* while faulted, then clear
+   the fault and prove normal routing. *The red proof is the acceptance*: show the
+   test failing when boot is changed to reattach on =Unobserved=.
+3. *P2a: make the non-UTF-8 assertion executable where this project actually
+   runs.* Either add a platform-independent raw-dirent / name-decoding seam that
+   feeds invalid bytes through the production collection and filter logic, or gate
+   a Linux job that executes the byte assertions. *Prove the old
+   drop/lossy-conversion implementation reds* — a test that cannot red is the
+   thing this round is closing.
+4. *P2b: give the derivation self-checks.* At minimum: assert the lexer consumed
+   to EOF; assert declaration-vs-body ownership (a semicolon-only declaration has
+   no body); exclude =cfg(test)= including restricted visibility
+   (=pub(crate) mod tests=); assert every indexed item was accounted for; and find
+   dynamic call sites in SIGNATURES, not only bodies. Keep the stated
+   receiver-inference residual — it is honest and it stays. A Rust parser or
+   type-aware graph is the better answer if it is reachable in this round; say so
+   either way.
+5. =scripts/run-tests.sh -p orgasmic-daemon= GREEN with the VERDICT block quoted.
+   The manager measured GREEN on a calm host for round five
+   (=tx-20260808-orgasmic-5515=, rate 0.0044, wall 113s). If you get INCONCLUSIVE,
+   *report INCONCLUSIVE* — round five did exactly that and it was right.
+
+** Do NOT re-open
+The six design rulings quoted at the top. The write-side raw =Io= leftovers
+(=ClaimDirectory::{rename,remove,sync}=, =write_claim_atomic=) and the race-only
+=reconcile_pending_claim= 500 are recorded FOLLOW-UPS, not this round.
+=tmux_session_exists=, the non-unix collapse and =recovery_origin_authority='s
+400-instead-of-503 remain out of scope by standing ruling.
+
+** What the review did NOT run
+=recovery_claim::= 39 passed, =f4_= 3 passed, the exact F3 backend
+diagnostic/repair regression 1 passed, the exact POST refuse-then-repair
+regression 1 passed, =required_test_tooling_is_present= passed. It ran the
+derivation script itself (935/96, three ClaimDirectory leaves present) and
+=--report-dynamic=, which is how P2b was found.
+
+*Not run:* the full daemon wrapper (it accepted the manager's calm-host GREEN and
+quoted it), the recovery-fault repetition, clippy, fmt, the workspace suite, MSRV
+1.87, non-unix, real-board latency, and every =orgasmic verify= replay. *No
+running production F2 boot fault injection exists — that absence IS P1b.*
+*=npm run typecheck= and =npm test -- RunsView= could not run at all* (no local
+toolchain, =vitest= absent, and the available TypeScript reports the existing
+=baseUrl= TS5101 deprecation). *That is a large part of why P1a shipped.*
+
+It did not read any =verify/*/injection.patch= body, by instruction
+(TASK-52NJS trip four). The manager's audit stands: 5/5 apply clean, hunk counts
+unchanged, no =new file mode=, no =cmd= changed, 17/17 non-count =contains:=
+signatures byte-identical.
