@@ -25916,3 +25916,16 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       Ruled by the round-six reviewer (tx-20260809-orgasmic-5548) as C8: file a new owned task rather than let TASK-X0PV1 silently absorb a different family.
 :END:
+
+
+* TX 2026-08-09 Sun 07:53:44 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5553
+:TIME:         [2026-08-09 Sun 07:53:44]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       handoff-current
+:REASON:       RUNTIME REINSTALLED on operator instruction 2026-08-09: ed0ebbc -> 2cf6ea7, in a genuine zero-worker window (tmux gone, manager state runs:[], 0 cargo, syspolicyd 0.1%). Swap proven by INODE on both the file and the running process: 544827231 -> 547698415, daemon PID 68592 -> 7958. Probe pre-tested against the OLD binary and discriminating: repair_session_file / claim_store_unreadable / RepairAuthKey / recovery_unobserved all 0 before and 1..2 after, control worktree-prune unchanged at 4. Codesign intact: Identifier=com.theaspirational.orgasmic, cert root a70531007cd128ff. TCC intact: tasks list --ids over the Documents-hosted project returns 652 lines, zero permission errors in daemon.err.log. FUNCTIONAL end-to-end on the installed binary: orgasmic recovery serves failed_recoverable_runs with 4 records and inventory.failed_recoverable=4 — the bucket round six's UI fix consumes. Rollback dir ~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260809 holds ed0ebbc. Two refinements to the recorded traps: tar -xzO into a pipe printed BLANK for every probe INCLUDING the control even with the correct ./bin/orgasmic member, so extract to a temp dir and probe the file; and launchctl bootstrap returned rc=0 this time where 2026-08-08 it returned rc=5, so the exit code is noise either way and only the inode decides.
+:END:
