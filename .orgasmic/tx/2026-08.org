@@ -26917,3 +26917,277 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-09 Sun 14:10:05 manager.dispatch_started TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5614
+:TIME:         [2026-08-09 Sun 14:10:05]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77.1-review
+:BRANCH:       task-d6n77.1-review2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77.1-review2/task-D6N77.1-review2-brief.md
+:STARTED_AT:   [2026-08-09 Sun 14:10:05]
+:LIVENESS:     53d9fc453951f48b24c3f450ad0f62dbbde92657
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: Adversarial review of Terra round-two candidate 53d9fc4; operator explicitly selected Sol high despite same Codex harness family
+:END:
+
+* TX 2026-08-09 Sun 14:10:05 run.created TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5615
+:TIME:         [2026-08-09 Sun 14:10:05]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-D6N77.1-reviewer-20260809T141005.jsonl
+:REASON:       Adversarial review of Terra round-two candidate 53d9fc4; operator explicitly selected Sol high despite same Codex harness family
+:RUN_ID:       run-20260809T141005-9cf28ea1d49e43da9f908fe3b9078226
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77.1-review2/task-D6N77.1-review2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-D6N77.1-review2/task-D6N77.1-review2-720e808b095747b1a4ff97b299e4cd1c-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-D6N77.1-review2/task-D6N77.1-review2-720e808b095747b1a4ff97b299e4cd1c-stdout.log
+:DISPATCH_ATTEMPT: 720e808b095747b1a4ff97b299e4cd1c
+:DISPATCH_TX:  tx-20260809-orgasmic-5614
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-09 Sun 14:28:32 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5616
+:TIME:         [2026-08-09 Sun 14:28:32]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Claim authority is still caller-supplied JSON/inherited environment under the shared admin bearer; an ordinary bearer client can copy RuntimeIdentity from manager state and claim another terminal. Authenticate a run-scoped caller at the daemon boundary and derive identity/provider server-side.
+:SEVERITY:     HIGH
+:KIND:         security
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         2921
+:END:
+
+* TX 2026-08-09 Sun 14:28:32 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5617
+:TIME:         [2026-08-09 Sun 14:28:32]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Plain manager register now sends every supervised app-launched Claude/Codex manager through terminal promotion, but the daemon accepts only role terminal, so normal app-manager startup is refused instead of remaining idempotent.
+:SEVERITY:     HIGH
+:KIND:         bug
+:FILE:         crates/orgasmic-cli/src/manager.rs
+:LINE:         1586
+:END:
+
+* TX 2026-08-09 Sun 14:28:33 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5618
+:TIME:         [2026-08-09 Sun 14:28:33]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Claim promotion exists only in RunRecord memory; reattach initializes manager_terminal_claim to None and restores the original terminal contract, losing provider, manager role, and singleton lease after restart.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/supervisor.rs
+:LINE:         3029
+:END:
+
+* TX 2026-08-09 Sun 14:28:33 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5619
+:TIME:         [2026-08-09 Sun 14:28:33]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       dispatch-wait parses tx before snapshotting live/in-flight state; a report can append and settle between those reads, leaving stale reported=false plus no live/in-flight run and returning died for a successful finalize.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         3198
+:END:
+
+* TX 2026-08-09 Sun 14:28:33 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5620
+:TIME:         [2026-08-09 Sun 14:28:33]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       dispatch-wait folds only cli_dispatch run.created and ignores ORIGIN=recovery replacement lineage, so a live or reported recovered run is invisible and its generation can return died.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         3223
+:END:
+
+* TX 2026-08-09 Sun 14:28:34 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5621
+:TIME:         [2026-08-09 Sun 14:28:34]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       The tmux composer gate accepts any visible line beginning with a provider glyph; a busy foreground provider with such an output-history line passes and receives the wake instead of a typed busy refusal.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-drivers/src/modes/tmux.rs
+:LINE:         2621
+:END:
+
+* TX 2026-08-09 Sun 14:28:34 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5622
+:TIME:         [2026-08-09 Sun 14:28:34]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       The P1 isolated-daemon concurrency, authenticated-caller, restart/reattach, recovery/wait race, real tmux shell/router, and non-billed dispatch-wait matrix is absent; only a sequential claim test and direct shell marker test were added.
+:SEVERITY:     HIGH
+:KIND:         test
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         20481
+:END:
+
+* TX 2026-08-09 Sun 14:28:34 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5623
+:TIME:         [2026-08-09 Sun 14:28:34]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Backend promotion leaves harness custom, while the UI classifies every manager namespace custom run as Terminal and does not model claimed_manager_provider; claimed managers remain outside the manager/agent groups.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         ui/src/components/manager/runDockLabels.ts
+:LINE:         19
+:END:
+
+* TX 2026-08-09 Sun 14:28:35 reviewer.finding TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5624
+:TIME:         [2026-08-09 Sun 14:28:35]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Tmux target-loss Transport errors fall through to generic API/CLI exit 1 instead of typed unavailable=5, and source-built dispatch-wait help omits the implemented 0/2/3 exit contract.
+:SEVERITY:     MEDIUM
+:KIND:         correctness_docs
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         3104
+:END:
+
+* TX 2026-08-09 Sun 14:30:20 reviewer.reported TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5625
+:TIME:         [2026-08-09 Sun 14:30:20]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:RUN_ID:       run-20260809T141005-9cf28ea1d49e43da9f908fe3b9078226
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5614/last.txt
+:END:
+
+* TX 2026-08-09 Sun 14:31:14 reviewer.done TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5626
+:TIME:         [2026-08-09 Sun 14:31:14]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       Sol high review rejected candidate 53d9fc4 with nine actionable findings; do not merge until authentication, persistence, wait races, composer targeting, UI, exits, and tests are fixed
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: fcf082532ca65de9ebf30e04811fac5c94d168b6..53d9fc453951f48b24c3f450ad0f62dbbde92657
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260809-orgasmic-5614
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5614/last.txt
+:END:
+
+* TX 2026-08-09 Sun 14:31:15 task.state_transitioned TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5627
+:TIME:         [2026-08-09 Sun 14:31:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-D6N77.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-09 Sun 16:39:32 task.edited TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5628
+:TIME:         [2026-08-09 Sun 16:39:32]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-D6N77.1
+:NODE_ID:      TASK-D6N77.1
+:END:
+
+* TX 2026-08-09 Sun 16:39:33 task.state_transitioned TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5629
+:TIME:         [2026-08-09 Sun 16:39:33]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Native Terra/xhigh implementation merged as 0423ae5; independent Sol/high review passed; guarded source and targeted lifecycle/recovery/tmux gates green
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
