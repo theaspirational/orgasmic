@@ -27191,3 +27191,32 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-09 Sun 16:40:01 task.edited TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5630
+:TIME:         [2026-08-09 Sun 16:40:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-D6N77
+:NODE_ID:      TASK-D6N77
+:END:
+
+* TX 2026-08-09 Sun 16:40:01 task.state_transitioned TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5631
+:TIME:         [2026-08-09 Sun 16:40:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       TASK-D6N77.1 completed and merged as 0423ae5; independent Sol/high review passed; guarded manager wake and dispatch-wait matrix green
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
