@@ -25790,3 +25790,78 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-09 Sun 07:35:54 reviewer.finding TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5545
+:TIME:         [2026-08-09 Sun 07:35:54]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:       CORRECTION to tx-20260809-orgasmic-5542 anchors only — the reproduced HIGH test/acceptance finding is at scripts/derive-observation-surface.py:150-219 (strip_noise, especially first-terminator block comments at 183-187), :287-359 (index audit), and :442-457 (the five checks). The counterexample and fix direction in tx-…-5542 are unchanged.
+:END:
+
+* TX 2026-08-09 Sun 07:38:27 reviewer.finding TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5546
+:TIME:         [2026-08-09 Sun 07:38:27]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:       HIGH test/acceptance — scripts/derive-observation-surface.py:308-320,326-369 excludes test modules only, not cfg(test) items/blocks. On b8cd3d2 the old pass reports 935 reachable; current reports 929, but exact seen-set diff is eight removed and two added: current adds recovery_claim.rs:359 readdir_entry_name (a #[cfg(test)] function) and collect (a ghost free-function edge from the local closure call inside a cfg(test)-containing body). Thus the claimed cfg(test) exclusion remains test/macro-inflated and acceptance 4 is unmet. Track cfg attributes on items and blocks or use a Rust parser, then assert neither key is in the production graph.
+:END:
+
+* TX 2026-08-09 Sun 07:42:10 reviewer.reported TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5547
+:TIME:         [2026-08-09 Sun 07:42:10]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:RUN_ID:       run-20260809T071038-d5cbd88d11cc404fb473935a0a345ae6
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5539/last.txt
+:END:
+
+* TX 2026-08-09 Sun 07:43:34 reviewer.done TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5548
+:TIME:         [2026-08-09 Sun 07:43:34]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:REASON:       REJECT confined to P2b, and the shipping question answered YES for the first time in this chain: 'I would reinstall the operator runtime from this tree: the F3 operator path and recovery behavior are sound.' P1a, P1b and P2a are CLOSED — the reviewer found no remaining path where the F3 refusal is invisible, where the F2 boot route reattaches an unobserved claim-owned prefix, or where the raw-dirent regression lacks teeth. It answered the manager's C1: the healthy phase does reach Supervisor::reattach and installs the run, the faulted phase asserts no live supervisor row and byte-identical JSONL, and the sticky fault is keyed to ClaimDirectory::names so it cannot mask run-catalog or session-directory scanning. Both remaining findings are about the DERIVATION SCRIPT, not shipped behaviour. P1: strip_noise closes every block comment at the first */ but Rust block comments NEST, so the input 'fn kept(){} /* outer /* inner */ " */ fn missed(){}' silently drops fn missed while all five advertised self-checks pass — reproduced directly against the branch helper. P2: the cfg(test) exclusion covers modules only, not individual items or blocks, and the exact seen-set diff proves it live — the net 935 to 929 is EIGHT removals plus TWO ADDITIONS, and the additions are recovery_claim.rs:359 readdir_entry_name, an individual cfg(test) function, and a ghost free-function 'collect' edge from a local closure call. That answers the manager's C5 directly: the eight removals are safe noise and the 93-key leaf set is unchanged, but the report did not mention the two additions. RULINGS: C6 at least two of the 48 dynamic rows DO reach authority decisions (Supervisor::reattach and spawn_driver_attach_probe, both to WorkerDriver::attach), so 'a list, not a verdict' is acceptable only as an explicitly retained residual for this narrow round; C7 keep failed_recoverable out of RunningAgentsMenu Recent, RunsView is the diagnostic surface and now carries it correctly; C8 file a NEW owned task for the supervisor probe-child family rather than letting TASK-X0PV1 silently absorb a different family. Disclosed honestly: its first boot-test wrapper attempt died on an unset redirection variable and the retry's launching shell orphaned before preserving cargo's exit code, though the durable log proves the test green; and it did not mutate source to replay the red injections because the reviewer contract is read-only, pointing at the manager's own replay tx-20260808-orgasmic-5537 instead.
+:MODEL:        gpt-5.6-sol
+:WORKER_COMMIT: a71f09d
+:WALL:         31m
+:REVIEWED_DIFF: main..task-2qk4p.1.1.1.1.1-impl
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260809-orgasmic-5539
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5539/last.txt
+:END:
+
+* TX 2026-08-09 Sun 07:43:35 task.state_transitioned TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5549
+:TIME:         [2026-08-09 Sun 07:43:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2QK4P.1.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
