@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         aa4274b
+:LIVENESS:         6b1f6ef
 :LIVENESS_AT:      [2026-08-08 Sat]
 :UPDATED_AT:       [2026-08-08 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -376,311 +376,311 @@ tmux — found by reading the live pane: =gpt-5.6-sol xhigh= against a tx saying
 on a calm host and so became the real finding the 08-07 handoff predicted).
 
 ** Next likely actions
-*ARM A COMPLETION WATCHER ON EVERY DISPATCH.* See =** In flight=. This is now the
-first rule of the loop, ahead of everything below, because skipping it stalls the
-board silently (TASK-D6N77).
+*NOTHING IS IN FLIGHT AND YOU MAY NOT DISPATCH. See =** In flight= — the
+operator suspended the standing authorization and owes the mode decision.* Ask
+first; the list below is what to propose, not what to start.
+
+*ARM A COMPLETION WATCHER ON EVERY DISPATCH* once dispatching resumes. Nothing in
+orgasmic wakes a manager (TASK-D6N77), so a dispatch without a watcher stalls the
+board silently and looks exactly like a worker still working. Poll
+=manager dispatch-status= every 30s for the started_tx; emit on =[reported]= OR
+=[run-gone]=-without-report. *NEVER key on =[pid-gone]=* — tmux prints it always
+because =WORKER_PID=-=.
 
 *ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START.* Nothing
 enforces resolution and the harness default wins SILENTLY (TASK-A55J7). The
-2026-08-08 answer, which is NOT a standing setting: *implementers =tmux / claude
-/ claude-opus-5 / high=; reviewers =tmux / codex / gpt-5.6-sol=.* CROSS-FAMILY
-REVIEW IS RESTORED and the same-family exception is retired — the first
-cross-family review of the session immediately produced a BLOCK SHIP on a path
-three same-family rounds had cleared. *Note =--effort= does not actually reach
-codex (TASK-C7NVH); the pane showed =xhigh= regardless.*
+2026-08-08/09 answer, which is NOT a standing setting: *implementers
+=tmux / claude / claude-opus-5 / high=; reviewers =tmux / codex / gpt-5.6-sol=.*
+Cross-family review is the norm and it earns its keep — codex rejected four of
+the six 2QK4P rounds, each time on something the same family had cleared.
+*=--effort= DOES NOT REACH CODEX AT ALL* (TASK-C7NVH): =codex --help= has no such
+flag (it is =-c model_reasoning_effort=), =--harness-arg= is refused for
+non-custom harnesses, and every codex review this session actually ran at the
+machine default =xhigh= while its tx said otherwise. Do not pass =--effort= to
+codex — recording a value that is not applied is the defect itself.
 
-THE ORDER FROM HERE
-1. IN FLIGHT: close TASK-RMA18.1.1 and TASK-2QK4P when their watchers fire. The
-   2QK4P implementer close needs =--merge-sha 1c0d2b0 --worker-commit 724973d=
-   AFTER its reviewer verdict lands (the default-branch gate).
-2. TASK-D6N77 (P1) — the wake channel. Start with =manager dispatch-wait=; it is
-   small and it converts the autopilot loop from a habit into a command.
-3. TASK-4BBA6 (P1) — syspolicyd watchdog inside =run-tests.sh=. Two of this
+THE ORDER TO PROPOSE, cheapest-leverage first. Every one of these makes the NEXT
+round cheaper, which is the answer to "we are bogged down in routine":
+
+1. *TASK-D6N77 (P1) — the wake channel.* Start with =manager dispatch-wait=; it
+   is small and it converts the autopilot loop from a habit into a command. This
+   is the single biggest source of manual babysitting.
+2. *TASK-GPY3H (P2) — the unowned supervisor probe-child family.* Ruled by the
+   round-six reviewer: file it rather than let TASK-X0PV1 absorb a different
+   family. Three rounds in a row burned an hour each proving "the host, not my
+   change".
+3. *TASK-4BBA6 (P1) — syspolicyd watchdog inside =run-tests.sh=.* Two of this
    project's three reboots were a manager skipping a documented guard.
-4. TASK-C7NVH (P1) — =--effort= silently dropped for codex/cursor-agent/hermes on
-   tmux. A dispatch that records an effort it did not send is lying in the tx log.
-5. TASK-VD0VB (P1) — =cursor-agent= documents =--trust=/=--yolo=/=-f=. Prefer
-   =--trust= but VERIFY what each does.
-6. TASK-8Q92K (P2) — 17 of 90 verify artifacts cannot replay and nothing reports
-   it. The systemic half (a sweep beside =run-tests.sh --check=) is worth more
+4. *TASK-P4XKT (P1) — repeat passing tests / score a pass rate.* A defect at 40%
+   ships green one round in two; that is how TASK-2QK4P survived as long as it
+   did, and what made a one-run-per-commit bisect look conclusive.
+5. *TASK-8Q92K (P2) — 17 of 90 verify artifacts cannot replay and nothing reports
+   it.* The systemic half (a sweep beside =run-tests.sh --check=) is worth more
    than the 17 repairs. *Do not mass-regenerate.*
-7. TASK-QNE3R (P2) — the sequencer marker table is pinned by LABEL, not
-   behaviour; 4 of 7 rows unexercised.
-8. TASK-3HR8R — surface a task parked in =in_review= with no reviewer dispatch.
-9. TASK-K9WWM (P2), TASK-X0PV1 (P2), TASK-STWVB.1.1.1.1.1.1 (P2),
-   TASK-A1KJW (P3), TASK-37WN7 (P3).
-10. Still P1 and untouched: TASK-4DTBZ, TASK-BX5SR, TASK-A55J7, TASK-48SFW,
-    TASK-ADHWZ, TASK-NTNK0, TASK-5M45A.
-
-*A GAP NOBODY OWNS YET, worth a task once someone has measured it:* nothing in
-this pipeline repeats a test or scores a PASS RATE. A defect at 40% ships green
-one round in two, which is how TASK-2QK4P survived however long it did, and it
-is what made the manager's one-run-per-commit bisect look conclusive. The flake
-registry classifies KNOWN flakes; it does not DISCOVER them. Related to
-TASK-X0PV1 but not the same thing.
+6. *TASK-GRCWC (P1)* — the =worktree-prune= fixtures. It is a DESTRUCTIVE verb on
+   the installed binary whose only safety argument has never been executed.
+7. *TASK-SJA9W (P2)* — =dispatch-status= prints a close command that cannot be
+   run as printed, for the whole duration of every review round.
+8. *TASK-TRAEM (P2)* — the derivation script, if a clean =approve= on the 2QK4P
+   chain is wanted. =syn= is the stated better answer.
+9. Still P1 and untouched: =4DTBZ=, =BX5SR=, =A55J7=, =48SFW=, =ADHWZ=, =NTNK0=,
+   =3X5AQ=, =VD0VB=, =YBCYQ=, =VBSG2=, =099T6=.
 
 PRACTICES THAT PAID OFF, with this session as the evidence:
-- *A WORKER THAT CHALLENGES THE BRIEF'S PREMISE IS THE BRIEF WORKING.* Both
-  workers this session contradicted something the manager asserted as fact, and
-  both were right. Write briefs that make that cheap: state the premise, say how
-  it was measured, and say a REJECT of the premise is a valid outcome.
-- *ONE CHEAP INSTRUMENT BEATS AN AFTERNOON OF READING.* The 409 body in a panic
-  message root-caused a defect three rounds had misclassified.
+- *A WORKER THAT CHALLENGES THE BRIEF'S PREMISE IS THE BRIEF WORKING.* Write
+  briefs that make it cheap: state the premise, say how it was measured, and say
+  a REJECT of the premise is a valid outcome.
 - *NAME THE CLAIMS TO ATTACK BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST*, and TELL
-  THE REVIEWER IT MAY RUN TESTS. The 08-07 brief that said not to cost a round;
-  this session's reviewer disproved the central acceptance criterion with two
-  scratch fixtures precisely because it was allowed to build.
-- *TELL A REVIEWER ABOUT THE MANAGER'S OWN ERRORS.* The 2QK4P review brief opens
-  with the false bisect. A reviewer that knows the manager is fallible audits the
-  manager.
+  THE REVIEWER IT MAY RUN TESTS. Three of the round-five brief's ten numbered
+  questions each produced a confirmed finding.
+- *TELL A REVIEWER ABOUT THE MANAGER'S OWN ERRORS.* A reviewer that knows the
+  manager is fallible audits the manager.
+- *A RED PROOF IS THE ACCEPTANCE, NOT THE TEST.* Round six was asked to show the
+  test failing under the defect it names, and the manager REPLAYED one
+  independently (=tx-…-5537=): deleting one =flattenRuns= line reds the two new
+  tests while =tsc --noEmit= exits 0 in the same broken state. *A typecheck could
+  never have been that pin* — structural typing ignores extra wire properties.
+  Neither the report nor the reviewer had said so; it is now measured twice.
+- *THE MANAGER VERIFIES THE REPORT, NOT THE WORKER.* Every round this session had
+  at least one claim that did not survive an independent read — most sharply,
+  round five said its regression exercised =boot_reattach_ownership= when that
+  function had exactly ONE caller in the tree and both mentions in the test file
+  were comments.
 
 ** In flight
-=== STOP AFTER THE ROUND-SIX REVIEW — OPERATOR INSTRUCTION 2026-08-09
+NO DISPATCH IS LIVE, AND THE BOARD HAS NO WORK IN FLIGHT FOR THE FIRST TIME IN
+THIS PROJECT'S RECENT HISTORY. =In Review= IS EMPTY.
+
+=== DO NOT DISPATCH ANYTHING — OPERATOR INSTRUCTION 2026-08-09
 *The standing authorization to dispatch without per-dispatch approval is
-SUSPENDED* once =tx-20260809-orgasmic-5539= returns a verdict. Record it, close
-the round, then *STOP AND PRESENT A PLAN.* Do NOT open round seven or any other
-dispatch. Recorded as =tx-20260809-orgasmic-5543=.
+SUSPENDED* (=tx-20260809-orgasmic-5543=). The operator asked to be shown a plan
+and to choose the next mode. Two of the three decisions are settled; *the third
+is open and it is theirs*:
 
-The operator's reason: six rounds on one defect class consumed the session and
-the board reads as routine; they want to choose the next mode. What they were
-shown: 651 tasks, 513 done, 109 backlog (17 P1 / 52 P2 / 37 P3), 12 in_review —
-*of which the six RMA18 nodes are FINISHED WORK never moved to done* (TASK-3HR8R
-exactly). Manager recommendation already on the table: close the RMA18 nodes,
-then take =D6N77= (wake channel), =P4XKT= (test repetition), =4BBA6= (watchdog
-inside run-tests.sh) and =8Q92K= (17 of 90 verify artifacts cannot replay) —
-the four that make every future round cheaper — instead of another deep chain.
+: 1  reinstall the runtime now?      ANSWERED YES — done, see below
+: 2  run a round seven on the script? ANSWERED NO by closing the node; the
+:                                     findings live on as TASK-TRAEM
+: 3  what mode next?                  *OPEN. ASK. DO NOT PICK IT YOURSELF.*
 
-Also: =TASK-TH906= was CANCELLED as a duplicate of =TASK-C7NVH=. The manager
-filed it without searching the backlog first. *Search before filing.*
+The manager's recommendation on the table for (3): stop opening deep chains and
+take the four that make every future round cheaper — =D6N77= (wake channel),
+=GPY3H= (the unowned probe-child family), =4BBA6= (watchdog inside run-tests.sh),
+=P4XKT= (repeat passing tests) — plus =8Q92K= (17 of 90 verify artifacts cannot
+replay). The operator's own words for why: *"мені здається ми погрязли в рутині"*.
 
-ONE DISPATCH LIVE: TASK-2QK4P.1.1.1.1.1, round SIX — and it is the NARROW one.
+=== THE RUNTIME IS 2cf6ea7 AND IT CARRIES BOTH FINISHED CHAINS
+Reinstalled 2026-08-09. Inode =544827231= → =547698415= on both the file and the
+running process; PID 7958. Rollback dir
+=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260809= holds =ed0ebbc=.
+Recipe and EIGHT traps in session memory =orgasmic-runtime-reinstall=; two were
+learned on this run. Probe pre-tested against the OLD binary and discriminating
+(=repair_session_file=, =claim_store_unreadable=, =RepairAuthKey=,
+=recovery_unobserved= all 0 → 1..2; control =worktree-prune= unchanged at 4).
+TCC intact, 652 task ids read from the Documents-hosted project, zero permission
+errors. *Functional proof on the installed binary, not a debug build:*
+=orgasmic recovery= serves =failed_recoverable_runs= with 4 records and
+=inventory.failed_recoverable = 4=.
 
-- =tx-20260808-orgasmic-5531=, claude / claude-opus-5 / effort high, tmux,
-  worktree =~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1.1.1.1=, from main at
-  the round-five merge =aa4274b=. Started 21:13 org (00:13 system — *org
-  timestamps run 3h behind the system clock here*). Budget ~2h. Watcher armed.
+=== BOTH CHAINS CLOSED — AND WHAT WAS CARRIED OUT OF THEM
+Twelve nodes moved to =done= on 2026-08-09: six =TASK-RMA18= (worktree
+reclamation, seven rounds) and six =TASK-2QK4P= (recovery authority, six rounds).
+*Nothing was closed over an open item* — both residuals were filed FIRST, which
+is the only reason the move was pure bookkeeping:
 
-=== ROUND FIVE WAS REJECTED WITH ZERO BEHAVIOUR BLOCK-SHIPS. That is the news.
-=tx-20260808-orgasmic-5524=, codex/gpt-5.6-sol. The reviewer calls the Unix
-backend fixes for F1/F3/F4/F5 *substantially correct* with green focused
-regressions, and answered EVERY design question in the round's favour:
+- *=TASK-GRCWC= (P1)* — neither =walk_worktree= fail-open (=:3833= MAX_DEPTH,
+  =:3836=/=:3855= unreadable dir) has a fixture, and the =remove_contents=
+  symmetry that makes them safe has been *derived from source three times and
+  executed zero times*. =worktree-prune= is DESTRUCTIVE and IS INSTALLED. The
+  cheap fixture is =chmod 000=.
+- *=TASK-TRAEM= (P2)* — the round-six review's two open findings, both about
+  =scripts/derive-observation-surface.py=, which ships in no binary: =strip_noise=
+  closes block comments at the first =*/= though Rust NESTS them, so valid
+  functions vanish while all five self-checks pass; and the =cfg(test)= exclusion
+  is module-only, proven by the seen-set diff being eight removals PLUS TWO
+  ADDITIONS rather than a net six.
 
-: C3  errno direction sound; EISDIR/ENAMETOOLONG are observed path facts
-: C4  absent sessions dir as Complete([]) is safe — ENOENT proves no entries
-: C5  the test-only readdir branch faithfully creates the errno-bearing NULL
-: C7  compile-time-only exhaustiveness is the right answer for F4
-: C9  project-wide refusal SHOULD stay; isolating a member recreates the defect
-: C10 the write-side leftovers are legitimate follow-ups
+*The round-six reviewer answered the shipping question YES* — "I would reinstall
+the operator runtime from this tree: the F3 operator path and recovery behavior
+are sound" — which is why the reinstall happened despite a REJECT verdict.
 
-*Those six are CLOSED. Do not reopen them.* Both blockers are PROOF and PLUMBING,
-and they share one shape — *a claim about coverage that does not hold*, the same
-defect class as the chain itself, moved from the code into the tests and the
-contract.
-
-: P1a  the F3 diagnostic rides ONLY in `failed_recoverable`, and
-:      RecoveryInventoryResponse omits that bucket while RunsView flattens the
-:      other four → permanently refused recoveries are ABSENT from the table
-: P1b  f2_a_failed_readdir_... calls pending_recovery_claim_owns_session
-:      DIRECTLY; boot_reattach_ownership has exactly ONE caller in the tree, the
-:      production one at api.rs:10768, and both mentions in recovery_claim.rs
-:      are COMMENTS. Round five extracted it "so the test exercises the real
-:      expression" and then the test did not.
-: P2a  the non-UTF-8 test passes on macOS by accepting EILSEQ; its Vec<OsString>
-:      pin cannot catch a reintroduced to_str() drop
-: P2b  the derivation has no coverage self-check and three real parser defects,
-:      so 935/96 is a test-inflated superset — but the reviewer LOOKED for a
-:      missing authority-decision leaf and did not find one, and declined to
-:      make it a second block-ship. Tooling debt with teeth, not a re-derivation.
-
-*Both P1s manager-confirmed independently by reading the files, not taken from
-the report.*
-
-=== THE THING NEITHER THE REPORT NOR THE FINDING SAYS
-*=tsc= WOULD NOT HAVE CAUGHT P1a.* A field the backend sends and the frontend
-type omits is not a type error — TypeScript structural typing ignores extra
-properties on the wire. So "add a typecheck" is NOT the fix and NOT the pin; only
-a component test that renders a =failed_recoverable= response can hold it. That
-is written into round six's acceptance, which says a typecheck will be REJECTED
-as a substitute. Round five's worktree had no =ui/node_modules= and the reviewer
-could not run =npm run typecheck= or =vitest= either — *that is a large part of
-why P1a shipped.*
-
-=== MAIN STILL MUST NOT BE PACKAGED INTO A RUNTIME
-Round five merged as =aa4274b= (=.orgasmic= byte-identical across the merge —
-checked, because round three reverted live daemon writes exactly here). The F3
-wedge is now fixed in the daemon — the refusal carries a sanitized subject and a
-remediation hint — *and it is invisible to the operator until P1a closes.*
-Installed runtime =ed0ebbc= predates all of this and is unaffected.
-
-=== The two mitigations that keep working — reuse both on every review
+=== TWO MITIGATIONS THAT WORK. REUSE BOTH ON EVERY REVIEW.
 1. *The brief FORBIDS reading =verify/*/injection.patch= bodies* and hands the
-   reviewer the manager's own audit instead (round five: 5/5 apply clean, hunk
-   counts unchanged, no =new file mode=, no =cmd= changed, *17/17* non-count
-   =contains:= signatures byte-identical — note the report claimed 12/12 and
-   undercounted; the measured numbers are the ones that went in the brief).
-2. *File each finding as a =reviewer.finding= tx the moment it exists.* Attempt
-   one at the round-four review lost 27 minutes and filed nothing when the
-   content filter killed it (TASK-52NJS trip four). Every review since has
-   ledgered as it went and lost nothing.
+   reviewer the manager's own audit instead. TASK-52NJS trip FOUR killed a review
+   after ~27 minutes of work, right after three =git diff= over those files, and
+   it filed nothing. Every review since has survived.
+2. *File each finding as a =reviewer.finding= tx the MOMENT it exists*, not
+   batched to the end. This is what made the difference between losing everything
+   and losing nothing.
 
-=== Manager does the calm-host suite re-measure, every round
-Rounds four and five both reported INCONCLUSIVE honestly on a loaded host and the
-manager closed the criterion on a calm one (=tx-…-5487= rate 0.1554;
-=tx-…-5515= rate 0.0044, wall 113s, watchdog peak 2.9%). *Expect to do this
-again for round six.* Load reads "elevated" while rate calls the host calm —
-the TASK-4BBA6 divergence; trust the rate.
+=== THE MANAGER RE-MEASURES THE DAEMON SUITE ON A CALM HOST, EVERY ROUND
+Rounds four, five and six ALL reported non-green honestly on a loaded host and
+the manager closed the criterion on a rested one (=tx-…-5487= 0.1554,
+=tx-…-5515= 0.0044, =tx-…-5536= 0.1070). *Load reads "elevated" while the rate
+calls the host calm — trust the RATE* (the TASK-4BBA6 divergence). Round six's
+author supplied two proper controls, which is the standard to hold: its own new
+test under =#[ignore]= produced the same failures, and the unmodified baseline in
+a sibling worktree was GREEN twice while interleaved. That family is now
+=TASK-GPY3H=.
 
-*ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE YOU DO ANYTHING ELSE.*
-Nothing in orgasmic wakes a manager (TASK-D6N77). Poll =manager dispatch-status=
-every 30s for the started_tx and emit on =[reported]= OR =[run-gone]=-without-
-report. *NEVER key on =[pid-gone]=*: tmux prints it always because =WORKER_PID=-=.
-
-=== Filed out of the dispatch machinery this session, still open
-- *TASK-TH906 (P1)* =--effort= silently dropped for every non-claude harness
-  while the ledger records it as fact. Both codex reviews ran at =xhigh=.
-- *TASK-SJA9W (P2)* =dispatch-status= prints a close command that cannot be run.
-
-=== Still open on the other chain
-=worktree-prune= is on the operator binary and neither =walk_worktree= fail-open
-(=:3833=, =:3836=/=:3855=) has a fixture; the =remove_contents= symmetry has been
-derived three times and executed zero times. Cheap fixture is =chmod 000=.
+=== A MANAGER MISTAKE WORTH NOT REPEATING
+=TASK-TH906= was filed and then CANCELLED as an exact duplicate of =TASK-C7NVH=.
+The manager wrote a full task body without searching the backlog first. *At 112
+open items nobody holds the backlog in their head — search before filing.*
 
 ** Divergence / Risks
-THE JUST-MERGED CLOSE HAS TWO KNOWN LIVE DEFECTS (TASK-QGWK7.1.1.1, P1). They
-shipped knowingly, with no BLOCK SHIP, and they are the reason to fix before
-reinstalling. *F-1: a failed record persist is UNRECOVERABLE* — tmp is unlinked
-as soon as the copies succeed, before the commit is attempted, and re-running the
-close hits the already-closed no-op by design, so there is no way back into git
-and the only signal is one =warning:= line. Its rollback is also unguarded (=let
-_ = git restore=), so a lost race there leaves the record STAGED, which is M-0's
-symptom verbatim. *F-2: the =update-ref= CAS compares OIDs, not ref identity*, so
-a same-OID sibling branch checked out in the window can receive the record
-commit. Both manager-verified in source.
+=== CORRECTED 2026-08-09 — four entries in this section had gone FALSE
+They said the opposite of the truth, which is worse than silence, and one of them
+would have blocked a reinstall the operator had already authorised. Re-read the
+whole section before trusting any single line of it.
 
-A CLOSE NOW ADVANCES THE BRANCH, INCLUDING PROMOTE-ONLY =--no-worktree-remove=
-CLOSES. The convention says "a close moves the branch you are on by one commit"
-without saying it covers those too. A manager closing N dispatches in a round
-gets N =chore(orgasmic): dispatch record= commits interleaved with its own work.
-Record commits are also UNSIGNED — =commit-tree= ignores =commit.gpgsign=
-(measured) — so a repo enforcing signatures on push gets unpushable history
-silently. Both are F-7/F-4 docs items on TASK-QGWK7.1.1.1.
+- *=worktree-prune= IS NO LONGER GATED OFF, AND THE RUNTIME HAS BEEN
+  REINSTALLED — TWICE.* The old text said "gated off by construction, both forms
+  exit 1" and "DO NOT REINSTALL THE RUNTIME until TASK-RMA18.1.1 is done AND
+  reviewed". That condition was met on 2026-08-08; the verb has shipped since
+  =ed0ebbc= and is in =2cf6ea7= now.
+- *CODEX IS NOT OUT OF CREDITS.* It ran four reviews on 2026-08-08/09. The real
+  codex risk is the content filter, below.
+- *TASK-QGWK7.1.1.1 IS DONE.* The "two known live defects in the just-merged
+  close" framing, and "the reason to fix before reinstalling", are both spent.
 
-=rebase --abort= DESTROYS A PROMOTED RECORD. Measured, and the staged-only
-baseline loses it identically, so this is PRE-EXISTING rather than new — but it
-is real, and the fix is four =exists()= checks for sequencer state. F-3.
+=== A DISPATCH CAN STILL KILL EVERY OTHER DISPATCH
+=ORGASMIC_HOME= on ANY =orgasmic= invocation rewrites the one per-user LaunchAgent
+and kills every live dispatch (TASK-48SFW). *The single most expensive mistake
+available, and it is one env var.* =ORGASMIC_DAEMON_URL= on the CHILD is safe;
+stripping =ORGASMIC_HOME= from a SPAWNED TEST CHILD's env is different and
+correct. Same family: never run =daemon start= / =daemon stop= from a debug or
+worktree build — it rewrites that same plist.
 
-CODEX IS OUT OF CREDITS AND FAILS LIKE A TRANSPORT. Until the operator restores
-them, do not dispatch codex — and do not read =no server running= as a tmux
-defect without capturing the pane first. (=tmux ls= printing "no server running"
-immediately BEFORE a dispatch is normal: the server starts on demand.)
+=== A PROVIDER CONTENT FILTER CAN KILL A REVIEW MID-RUN AND LOSE EVERYTHING
+TASK-52NJS, trip FOUR on 2026-08-08. A codex review died after ~27 minutes with
+=This content can't be shown / We take extra caution with cybersecurity requests=,
+immediately after three =git diff= over =verify/*/injection.patch=. It filed
+nothing: =last.txt= and =stdout.log= both 0 bytes, worktree unmodified. *The
+trigger is bulk-reading defect-injection patches against an authority/HMAC path*,
+not the subject — codex reviewed earlier rounds of the same chain fine. Two
+mitigations, both proven: forbid opening those files and hand over the manager's
+own audit, and require findings to be ledgered as =reviewer.finding= tx entries
+the moment they exist. Every review since lost nothing.
 
-A DISPATCH CAN STILL KILL EVERY OTHER DISPATCH via =ORGASMIC_HOME= (preamble
-item 2). Unchanged, and the single most expensive mistake available. TASK-48SFW.
+=== A TMUX DISPATCH LEAVES ALMOST NO EVIDENCE WHEN IT DIES — CAPTURE THE PANE
+=stdout.log= is 0 bytes by design and the pane dies with the session. *A
+pane-snapshot watcher is what diagnosed the content-filter kill twice*; without
+it the death is indistinguishable from a crash. TASK-8VBXR is the product-side
+version of this: the stall killer captures the pane to decide to kill, then
+DISCARDS it and tears the session down.
 
-RMUX DIES SILENTLY AND TAKES EVERY PANE WITH IT (TASK-4DTBZ, P1). TMUX IS THE
-DEFAULT. The TASK-4CSMY pane-liveness channel is confirmed reporting in
-production, so the =--governance-json {"stall_timeout_secs":3600}= workaround
-stays retired. Read =event.type=, never the serialized line.
+=== =[pid-gone]= IS NOT A DEATH SIGNAL FOR A TMUX DISPATCH
+=dispatch-status= prints it for every tmux run always, because =WORKER_PID=-=. A
+watcher keyed on it fires instantly and falsely. Use =[run-gone]= (twice in a
+row, to survive startup), a vanished tmux session, or a non-empty =last.txt=.
 
-=[pid-gone]= IS NOT A DEATH SIGNAL FOR A TMUX DISPATCH. =dispatch-status= prints
-it for every tmux run always, because =WORKER_PID=-=. A watcher keyed on it fires
-instantly and falsely. Use =[run-gone]=, the tmux session vanishing, or a
-non-empty =last.txt=. Both watchers this block used that rule and behaved.
+=== MERGE PRECEDES REVIEW, AND THE CLOSE VERB FIGHTS YOU DURING THE REVIEW
+Expect merge → review → fix in =TASK-<id>.N= rounds; roughly half of all reviews
+return REJECT, so SAY SO in the brief or you get softened findings. *ANY verdict
+clears the default-branch merge gate — the verdict steers the next stage, not the
+merge*, which is why a REJECTed round can and should still merge so the next
+fixes forward on a linear tree.
 
-A TMUX DISPATCH LEAVES NO EVIDENCE WHEN IT DIES. =stdout.log= is 0 bytes by
-design and the pane dies with the session, so nothing survives to say why. The
-two 08-07 worker deaths were undiagnosable for exactly this reason. TASK-VD0VB.
+*While an implementer dispatch is reported-but-unmerged — the whole duration of
+every review round — there is no correct close.* =dispatch-status= prints a
+=dispatch-close= command missing its required =--status=; =--status done= is
+refused for want of a merge sha that must not exist yet; and =--status aborted=
+is the only runnable form and records a falsehood. TASK-SJA9W. Leave the
+implementer dispatch OPEN across the review and close it with the merge sha
+afterwards.
 
-=worktree-prune= IS GATED OFF BY CONSTRUCTION and both forms exit 1, including
-=--dry-run=. Two reviews produced six BLOCK SHIP on one delete path; TASK-M47E5.3
-gated rather than patch a third time, and the implementation is KEPT with its
-reclamation tests =#[ignore]=d (visible as the 9 ignored in the dispatch binary).
-TASK-RMA18 owns the redesign. Do not hand-remove a worktree meanwhile —
-=dispatch-close --worktree-remove --branch-delete= is the salvaging path.
+=== A CLOSE ADVANCES THE BRANCH, INCLUDING PROMOTE-ONLY CLOSES
+Still observed 2026-08-09: fourteen =chore(orgasmic): dispatch record <tx>=
+commits in the last sixty, interleaved with the manager's own work. Record
+commits are UNSIGNED — =commit-tree= ignores =commit.gpgsign= (measured) — so a
+repo enforcing signatures on push would get unpushable history silently.
+=rebase --abort= DESTROYS A PROMOTED RECORD (measured; the staged-only baseline
+loses it identically, so it is pre-existing rather than new).
 
-THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY (TASK-BX5SR, P1). Detection
-is =grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log=. If a write fails
+=== THE DAEMON CAN STOP PERSISTING WHILE LOOKING HEALTHY
+TASK-BX5SR, P1. Detection is
+=grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log=. If a write fails
 with "failed to apply changes", check the writer BEFORE assuming OCC contention.
 That log rotates by size (TASK-ZBYH3), so grep the ROLLED generations too.
 
-DO NOT STASH =.orgasmic= TO GET A CLEAN TREE FOR =orgasmic verify=. The daemon
-reads those files, so during the stash window it cannot see its own project and a
-concurrent write fails =404 Not Found: node TASK-XXXXX=. Commit the state first;
-=verify= only needs the tree clean, and committed state is clean.
+=== DO NOT STASH =.orgasmic= TO GET A CLEAN TREE FOR =orgasmic verify=
+The daemon reads those files, so during the stash window it cannot see its own
+project and a concurrent write fails =404 Not Found: node TASK-XXXXX=. Commit the
+state first; =verify= only needs the tree clean, and committed state is clean.
 
-MERGE STILL PRECEDES REVIEW IN PRACTICE. Expect merge -> review -> fix in
-=TASK-<id>.N= rounds. SAY SO in the review brief and tell the reviewer a REJECT is
-still actionable, or you will get softened findings. Roughly half of all reviews
-return REJECT. The convention's step 4/5 ordering is STALE — it says close then
-review, but the default-branch gate demands a reviewer verdict before the
-merge-sha close, and =reviewer.done= precedes =implementer.done= on every task.
+=== =worktree-prune= IS INSTALLED, DESTRUCTIVE, AND ITS SAFETY ARGUMENT HAS NEVER RUN
+TASK-GRCWC, P1. Both =walk_worktree= fail-opens (=:3833= MAX_DEPTH,
+=:3836=/=:3855= an unreadable directory) rely on =remove_contents= propagating
+the same limits rather than swallowing them. *That symmetry has been derived from
+source three times and executed zero times.* A fail-open shape also yields a
+REPORTED PARTIAL REMOVAL, not an untouched worktree, and the help does not say
+so. The cheap fixture is =chmod 000=. Do not make another destructive change to
+this verb before it exists.
 
-CI IS NOT LIVE AND ONE OF ITS PREMISES IS FALSE. =.github/workflows/ci.yml:200-206=
-deliberately fails the lane on exit 4, justified as "host state not attributable
-to this run" — a premise TASK-STWVB.1.1 disproved. Nothing is pushed (main is
-~745 commits ahead of =origin/main=), so no CI run has happened; pushing would
-make it live. Revisit that comment when the STWVB chain closes.
+=== THE AUTOPILOT LOOP HAS NO FLOOR
+TASK-D6N77, P1. A manager that forgets a watcher stops, and nothing reports the
+omission — a watcher never armed looks exactly like a worker still working. The
+operator is the only detector, which is the product inverted. *Goal-level risk,
+not a papercut,* and it is the concrete reason the operator experienced this
+session as routine.
 
-REVIEW-BRIEFING LESSONS, all paid for:
-- DO NOT ask a reviewer to mutate source. The contract is read-only; a brief
-  asking for a negative probe returns an unrun gap, correctly.
-- A REJECT the manager then fixes personally is a normal, good outcome.
-- NAME THE SPECIFIC CLAIM YOU WANT ATTACKED, and TELL THE REVIEWER WHAT IS
-  ALREADY ESTABLISHED so it spends effort on what is not.
-- A GOOD REVIEWER WILL TELL YOU WHAT IT DID NOT CHECK. This block's reviewer
-  stated plainly that it ran zero =cargo test= invocations because the brief said
-  the gates were manager-verified, and named the residual risk that it therefore
-  could not catch a wrong gate run. Read that as quality, not as a gap.
-- A REVIEWER CAN BE WRONG AND CATCH ITSELF. This one's first probe appeared to
-  refute the settled staged-blocks-merge premise; it re-ran clean, found its own
-  =git commit= had swept the record into the side branch, and said so.
-- WHEN TWO RULINGS ARE RECORDED ON ONE TASK, CHECK THEY COMPOSE.
+=== NOTHING REPEATS A TEST OR SCORES A PASS RATE
+TASK-P4XKT. A defect at 40% ships green one round in two. TASK-2QK4P survived
+that way, and it is what made a one-run-per-commit bisect look conclusive enough
+to write into a task and two briefs as fact. The flake registry classifies KNOWN
+flakes; nothing DISCOVERS them. Related, now owned: TASK-GPY3H for the supervisor
+probe-child family that turns any warm-host run RED.
 
-STATE-HYGIENE SHAPES TO WATCH FOR:
+=== =--effort= NEVER REACHES CODEX
+TASK-C7NVH, P1. =tmux.rs:989-994= and =rmux.rs:1817-1828= push =--effort= only
+inside the =is_claude= branch; the codex/cursor-agent/hermes arm pushes =--model=
+and nothing else. *And codex has no =--effort= flag at all* — it is
+=-c model_reasoning_effort=, and =--harness-arg= is refused for non-custom
+harnesses, so there is no workaround from the CLI today. Every codex review this
+session ran at the machine default =xhigh= while its tx recorded otherwise. *Do
+not pass =--effort= to codex: recording a value that is not applied is the defect.*
+
+=== THE 10s DAEMON BUDGET TIMEOUTS RECUR ON A CALM HOST
+TASK-K9WWM, P2 — three =reviewer_close_*= CLI tests. Predicted, recurred calm,
+therefore a real finding rather than a registry excuse.
+
+=== CI IS NOT LIVE AND ONE OF ITS PREMISES IS FALSE
+=.github/workflows/ci.yml:200-206= deliberately fails the lane on exit 4,
+justified as "host state not attributable to this run" — a premise TASK-STWVB.1.1
+disproved. *Nothing is pushed: main is 918 commits ahead of =origin/main=*, so no
+CI run has ever happened; pushing would make it live.
+
+=== THE INTEGRATION SUITE IS OUTSIDE THE cfg(test) FENCE
+TASK-3TQ0R. Every such test engineers a host-independent credential refusal, so
+none spawns today, but the safety is per-test rather than structural. *NEVER run
+=legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6)* —
+it spawns real billed provider turns. Never set =ORGASMIC_ALLOW_BILLED_TESTS=.
+
+=== STATE-HYGIENE SHAPES TO WATCH FOR
 - A TASK IN =in_progress= WITH NO DISPATCH is claiming work nobody is doing.
 - A TASK IN =in_review= WITH NO REVIEWER DISPATCH is worse, because nothing
-  surfaces it — TASK-3HR8R. Four were cleared by hand this block.
+  surfaces it — TASK-3HR8R. *TWELVE were cleared by hand on 2026-08-09*, and the
+  operator noticed it from the UI before the manager did. The column had become a
+  lie: finished, shipped work parked there because nothing moves it.
+- *A DUPLICATE TASK IS CHEAP TO FILE AND EXPENSIVE TO NOTICE.* TASK-TH906 was
+  filed and cancelled the same night as an exact duplicate of TASK-C7NVH. At 112
+  open items, SEARCH BEFORE FILING.
 - A BLOCKER RECORDED ONLY IN PROSE is invisible; =depends_on= is what the board
   reads.
 - A LONG BODY WHOSE OPENING PARAGRAPH IS DISPROVED misleads every skim-reader.
   Use a =READ THIS FIRST — STATUS= block at the TOP plus a corrected TITLE.
 
-THE INTEGRATION SUITE IS OUTSIDE THE cfg(test) FENCE (TASK-3TQ0R). Every such
-test engineers a host-independent credential refusal, so none spawns today, but
-the safety is per-test rather than structural. NEVER run
-=legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= (TASK-099T6); it
-spawns real billed provider turns.
-
-NEW 2026-08-08 —
-
-*=worktree-prune= IS UN-GATED IN SOURCE AND DELETES DIRECTORIES GIT REFUSES TO
-REMOVE.* TASK-M47E5.3's gate was lifted by TASK-RMA18; the third review then
-reproduced two HIGH data-loss paths on the production path at =d10b0cf=, each
-printing =RECLAIMED= and recursively deleting a sentinel out of a kept directory.
-*THE ONLY THING KEEPING THIS OFF AN OPERATOR'S MACHINE IS THAT THE RUNTIME HAS
-NOT BEEN REINSTALLED.* DO NOT REINSTALL THE RUNTIME until TASK-RMA18.1.1 is done
-AND reviewed. Do not hand-remove a worktree meanwhile —
-=dispatch-close --worktree-remove --branch-delete= is the salvaging path.
-
-*THE AUTOPILOT LOOP HAS NO FLOOR* (TASK-D6N77, P1). A manager that forgets a
-watcher stops, and nothing reports the omission — a watcher never armed looks
-exactly like a worker still working. The operator is the only detector, which is
-the product inverted. This is a goal-level risk, not a papercut.
-
-*NOTHING REPEATS A TEST OR SCORES A PASS RATE.* A defect at 40% ships green one
-round in two. TASK-2QK4P survived that way, and it is what made a
-one-run-per-commit bisect look conclusive enough to write into a task and two
-briefs as fact. The flake registry classifies KNOWN flakes; nothing DISCOVERS
-them.
-
-*=--effort= IS SILENTLY DROPPED* for codex/cursor-agent/hermes on tmux
-(TASK-C7NVH, P1) — the tmux driver's model branch for those harnesses pushes
-=--model= and no effort at all, while the claude branch pushes =--effort=. Found
-by reading the live pane (=gpt-5.6-sol xhigh=) against a tx recording
-=:EFFORT: high=. A dispatch record that states an effort never sent is not
-evidence.
-
-*THE 10s DAEMON BUDGET TIMEOUTS RECURRED ON A CALM HOST* (TASK-K9WWM, P2) — three
-=reviewer_close_*= CLI tests. The 08-07 handoff predicted exactly this and said
-that if it recurred calm it would be a real finding rather than a registry
-excuse. It did. It is.
+=== REVIEW-BRIEFING LESSONS, all paid for
+- DO NOT ask a reviewer to mutate source. The contract is read-only; a brief
+  asking for a negative probe returns an unrun gap, correctly. *Do the red-proof
+  replay yourself* — the manager's own replay is what settled round six.
+- A REJECT the manager then fixes personally is a normal, good outcome.
+- NAME THE SPECIFIC CLAIM YOU WANT ATTACKED, and TELL THE REVIEWER WHAT IS
+  ALREADY ESTABLISHED so it spends effort on what is not.
+- A GOOD REVIEWER WILL TELL YOU WHAT IT DID NOT CHECK. Read that as quality.
+- A REVIEWER CAN BE WRONG AND CATCH ITSELF.
+- WHEN TWO RULINGS ARE RECORDED ON ONE TASK, CHECK THEY COMPOSE.
+- *VERIFY THE REPORT, NOT THE WORKER.* Every round this session had at least one
+  claim that did not survive an independent read. The sharpest: round five said
+  its regression exercised =boot_reattach_ownership= when that function had
+  exactly ONE caller in the tree and both mentions in the test file were comments.
