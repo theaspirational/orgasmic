@@ -38,7 +38,8 @@ use crate::catalog::TransportInteraction;
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
-    NativeRuntimeMeta, PreflightOutcome, RunKind, TransitionAck, TransitionRequest, WorkerDriver,
+    ManagerWakeRequest, NativeRuntimeMeta, PreflightOutcome, RunKind, TransitionAck,
+    TransitionRequest, UserInputAck, WorkerDriver,
 };
 
 const MODE: &str = "tmux";
@@ -588,6 +589,54 @@ impl DriverControl for TmuxTuiControl {
                 .await;
         }
         Ok(BabysitterAck {
+            accepted: true,
+            message: None,
+        })
+    }
+
+    async fn send_manager_wake(
+        &mut self,
+        req: ManagerWakeRequest,
+    ) -> Result<UserInputAck, DriverError> {
+        if self.inert {
+            return Err(DriverError::Unsupported("manager_wake"));
+        }
+        // Re-check both the foreground executable and the provider composer at
+        // the paste boundary. `❯` alone is deliberately not trusted: zsh uses
+        // the same glyph in a configured prompt.
+        if !tmux_provider_ready(&self.session_name, &req.provider).await? {
+            return Ok(UserInputAck {
+                accepted: false,
+                message: Some(
+                    "claimed provider is unavailable, busy, or not at its composer".into(),
+                ),
+            });
+        }
+        // The second observation is the paste boundary. Keep the capture and
+        // the paste adjacent; tmux exposes no atomic "paste if foreground"
+        // primitive, so failing closed on either observation is the strongest
+        // practical TTY proof it can provide.
+        if !tmux_provider_ready(&self.session_name, &req.provider).await? {
+            return Ok(UserInputAck {
+                accepted: false,
+                message: Some("claimed provider changed before wake delivery".into()),
+            });
+        }
+        paste_text_into_pane(
+            &self.session_name,
+            &req.input,
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        send_keys(
+            &self.session_name,
+            &[String::from("Enter")],
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        Ok(UserInputAck {
             accepted: true,
             message: None,
         })
@@ -2565,6 +2614,89 @@ async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Fail-closed foreground proof for an automated manager wake.
+///
+/// tmux gives us the pane's controlling PID; macOS `ps` gives the foreground
+/// process group for that tty.  We intentionally require the group leader's
+/// executable basename to be the provider the terminal claimed.  A shell,
+/// `node`, an unknown wrapper, or an unavailable `ps` result is refusal —
+/// unlike a rendered prompt, none of those proves it is safe to paste.
+async fn tmux_provider_ready(session: &str, provider: &str) -> Result<bool, DriverError> {
+    if !matches!(provider, "claude" | "codex") {
+        return Ok(false);
+    }
+    let pane_pid = tmux_async_command()
+        .args(["display-message", "-p", "-t", session, "#{pane_pid}"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("tmux pane pid: {e}")))?;
+    if !pane_pid.status.success() {
+        return Ok(false);
+    }
+    let pane_pid = String::from_utf8_lossy(&pane_pid.stdout).trim().to_string();
+    if pane_pid.parse::<u32>().is_err() {
+        return Ok(false);
+    }
+    let foreground = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "tpgid=", "-p", &pane_pid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps tpgid: {e}")))?;
+    if !foreground.status.success() {
+        return Ok(false);
+    }
+    let tpgid = String::from_utf8_lossy(&foreground.stdout)
+        .trim()
+        .to_string();
+    if tpgid.parse::<u32>().is_err() {
+        return Ok(false);
+    }
+    let executable = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "comm=", "-p", &tpgid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps foreground executable: {e}")))?;
+    if !executable.status.success() {
+        return Ok(false);
+    }
+    let executable = String::from_utf8_lossy(&executable.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    let provider_foreground = executable
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name == provider);
+    if !provider_foreground {
+        return Ok(false);
+    }
+    let pane = capture_pane_visible(session).await?;
+    Ok(provider_composer_ready(&pane, provider))
+}
+
+pub(crate) fn provider_composer_ready(pane: &str, provider: &str) -> bool {
+    // Keep this narrower than the existing generic human-input detector.  The
+    // provider identity comes from the foreground process; this only verifies
+    // that that provider is accepting a turn, and rejects trust/login menus.
+    match provider {
+        "claude" => pane.lines().any(|line| {
+            let line = strip_ansi_codes(line);
+            line_starts_with_prompt(&line, "❯") && !line_is_numbered_menu_item(&line)
+        }),
+        "codex" => pane.lines().any(|line| {
+            let line = strip_ansi_codes(line);
+            (line_starts_with_prompt(&line, "›") || line_starts_with_prompt(&line, "❯"))
+                && !line_is_numbered_menu_item(&line)
+        }),
+        _ => false,
+    }
+}
+
 /// True when cursor-agent argv delivery still needs a startup-only trust
 /// transition (prompt already on argv — never paste again).
 pub(crate) fn cursor_argv_needs_startup_trust(
@@ -3890,6 +4022,15 @@ mod tests {
         assert!(!pane_has_input_prompt("❯ 2) No"));
         // But the real composer prompt (no numbered item) is still detected.
         assert!(pane_has_input_prompt("❯ 1. Yes\n❯ "));
+    }
+
+    #[test]
+    fn automated_wake_composer_gate_is_provider_specific_and_rejects_menus() {
+        assert!(provider_composer_ready("❯ ", "claude"));
+        assert!(!provider_composer_ready("❯ 1. Yes, proceed", "claude"));
+        assert!(provider_composer_ready("› ", "codex"));
+        assert!(!provider_composer_ready("zsh prompt\n% ", "codex"));
+        assert!(!provider_composer_ready("❯ ", "unknown"));
     }
 
     #[test]
