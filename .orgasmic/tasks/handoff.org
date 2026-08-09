@@ -435,6 +435,24 @@ PRACTICES THAT PAID OFF, with this session as the evidence:
   manager.
 
 ** In flight
+=== STOP AFTER THE ROUND-SIX REVIEW — OPERATOR INSTRUCTION 2026-08-09
+*The standing authorization to dispatch without per-dispatch approval is
+SUSPENDED* once =tx-20260809-orgasmic-5539= returns a verdict. Record it, close
+the round, then *STOP AND PRESENT A PLAN.* Do NOT open round seven or any other
+dispatch. Recorded as =tx-20260809-orgasmic-5543=.
+
+The operator's reason: six rounds on one defect class consumed the session and
+the board reads as routine; they want to choose the next mode. What they were
+shown: 651 tasks, 513 done, 109 backlog (17 P1 / 52 P2 / 37 P3), 12 in_review —
+*of which the six RMA18 nodes are FINISHED WORK never moved to done* (TASK-3HR8R
+exactly). Manager recommendation already on the table: close the RMA18 nodes,
+then take =D6N77= (wake channel), =P4XKT= (test repetition), =4BBA6= (watchdog
+inside run-tests.sh) and =8Q92K= (17 of 90 verify artifacts cannot replay) —
+the four that make every future round cheaper — instead of another deep chain.
+
+Also: =TASK-TH906= was CANCELLED as a duplicate of =TASK-C7NVH=. The manager
+filed it without searching the backlog first. *Search before filing.*
+
 ONE DISPATCH LIVE: TASK-2QK4P.1.1.1.1.1, round SIX — and it is the NARROW one.
 
 - =tx-20260808-orgasmic-5531=, claude / claude-opus-5 / effort high, tmux,

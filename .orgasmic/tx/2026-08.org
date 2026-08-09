@@ -25777,3 +25777,16 @@
 :TARGET:       handoff-current
 :REASON:       OPERATOR INSTRUCTION 2026-08-09: the standing authorization to dispatch without per-dispatch approval is SUSPENDED after the round-six review closes. When tx-20260809-orgasmic-5539 returns a verdict, the manager records it, closes the round, and then STOPS and presents a plan — it does not open round seven or any other dispatch on its own. Reason the operator gave: six rounds on one defect class have consumed the session and the board looks like routine; they want to choose the next mode rather than have it chosen. Context they were shown: 651 tasks, 513 done, 109 backlog (17 P1, 52 P2, 37 P3), 12 in_review of which the six RMA18 nodes are FINISHED WORK that was never moved to done. The manager's own recommendation on the table: close the RMA18 nodes, then take D6N77 (wake channel), P4XKT (test repetition), 4BBA6 (watchdog inside run-tests.sh) and 8Q92K (17 of 90 verify artifacts cannot replay) — the four that make every future round cheaper — instead of opening another deep chain.
 :END:
+
+* TX 2026-08-09 Sun 07:27:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5544
+:TIME:         [2026-08-09 Sun 07:27:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
