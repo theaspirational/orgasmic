@@ -1,0 +1,38 @@
+# TASK-D6N77.1 blocked report
+
+## Changed
+
+- Removed both tmux and rmux automated manager-wake delivery paths. They now
+  return `DriverError::Unsupported` before observing a pane or sending bytes.
+- Removed the provider field from the driver wake request so a caller cannot
+  present a claimed provider as delivery authority.
+
+## Verification Gates
+
+- `cargo check -p orgasmic-drivers -p orgasmic-daemon` passed.
+- `git diff --check` passed.
+
+## Unmet Criteria
+
+The task cannot be completed as written without a new supervisor and daemon
+generation-state design. The current code has no atomic conditional pane-send
+primitive: tmux requires separate paste and Enter calls, and rmux foreground
+state is documented best-effort/stale. Therefore any implementation that also
+claims successful automated wake would violate the stated shell-before/after
+provider safety contract.
+
+The current claim map is still separate from the supervisor lease, does not
+bind a caller RuntimeIdentity, does not survive reattach, and `dispatch-wait`
+still polls the tx ledger and run inventory separately. Those require the
+explicitly requested shared supervisor-role/lease transition, durable reattach
+record, and daemon-owned generation endpoint; they were not implemented here.
+
+No real dispatch proof was created, and no live daemon or LaunchAgent was
+installed, restarted, or otherwise modified.
+
+## Residual Risk
+
+Manager wake is safely unavailable rather than falsely fail-closed. Plain
+`manager register`, claimed-manager lifecycle/state, typed exit codes, and
+generation wait still retain the rejected implementation and must not be
+accepted as satisfying TASK-D6N77.1.
