@@ -37,21 +37,54 @@ So this script computes the boundary from the source instead.
        signature (`-> bool`, `-> Option`, `Result<Option<_>>`, `Result<Vec<_>>`,
        raw `libc` loop, …).
 
+    SELF-CHECKS (orgasmic:TASK-2QK4P.1.1.1.1.1 P2b)
+    -----------------------------------------------
+    A derivation whose own parse is unchecked answers "nothing else is on the
+    path" when it means "my lexer stopped early" — the same collapse the script
+    exists to close, moved into the tool. Every run therefore asserts, and
+    `--self-check` prints the counts:
+
+    1. THE LEXER CONSUMED TO EOF. `strip_noise` is length-preserving by
+       construction, so a mismatch means it fell out of a literal early.
+    2. DECLARATION-VS-BODY OWNERSHIP. A signature that ends in `;` (trait
+       methods without defaults, `extern "C"` blocks) HAS NO BODY. The old
+       next-`{`-after-`fn` rule handed those an unrelated later body — it gave
+       `WorkEvidenceProbe::observe` and `setsid` bodies belonging to other
+       items, which both inflates the graph and misreports shapes.
+    3. EVERY INDEXED ITEM IS ACCOUNTED FOR. Each `fn` the scanner sees is
+       classified as exactly one of definition / declaration / unbalanced, and
+       the three counts must sum to the number seen. `unbalanced` must be zero.
+    4. `cfg(test)` IS EXCLUDED AT ANY VISIBILITY. `pub(crate) mod tests` — which
+       is how the api.rs test module is spelled — used to slip through a
+       `(?:pub\\s+)?` regex and put the entire test suite in the graph.
+
     RESIDUAL (stated, not hidden)
     -----------------------------
     - Name-keyed edges cannot resolve trait-object / `dyn` dispatch, function
       values stored in structs, or calls constructed inside macros. Those are
-      invisible to this pass; see `--report-dynamic` for the places the sources
-      use `dyn`/`Box<fn>` so a reader can check them by hand.
+      invisible to this pass; `--report-dynamic` now scans SIGNATURES as well as
+      bodies, so a `&dyn WorkerDriver` parameter is reported even when the body
+      only calls through it, and lists the `.method(` calls made on each such
+      binding so a reader can check them by hand.
     - Over-approximation means the reachable set is a superset. That is stated
       rather than trimmed: a boundary that is too big is reviewable, one that is
       too small is what produced rounds three, four and five.
-    - `#[cfg(...)]` is not evaluated, so non-unix bodies are included.
+    - `#[cfg(...)]` other than `cfg(test)` is not evaluated, so non-unix bodies
+      are included.
+    - THIS IS STILL A LEXER, NOT A RUST PARSER. A `syn`-backed pass (or a
+      type-aware graph from `rust-analyzer`) would remove the receiver-inference
+      residual outright, and it is the better answer. It was NOT taken in this
+      round: neither `tree_sitter`/`tree_sitter_rust` nor any Rust-parsing
+      Python module is available in this environment, and the alternative — a
+      new workspace crate depending on `syn` plus a build step — is a larger
+      change than the finding this round is closing. The self-checks above are
+      the bound on the lexer's honesty until then.
 
 Usage:
     python3 scripts/derive-observation-surface.py            # the leaf surface
     python3 scripts/derive-observation-surface.py --all      # every reachable fn
     python3 scripts/derive-observation-surface.py --json     # machine-readable
+    python3 scripts/derive-observation-surface.py --self-check
     python3 scripts/derive-observation-surface.py --report-dynamic
 """
 
@@ -111,15 +144,38 @@ IMPL_RE = re.compile(
 )
 
 
+RAW_STR_RE = re.compile(r"(?:b|c)?r(?P<hashes>#*)\"")
+
+
 def strip_noise(text: str) -> str:
     """Blank out string/char literals and line comments so token scans do not
-    match documentation prose or embedded snippets."""
+    match documentation prose or embedded snippets.
+
+    Length-preserving by construction: every branch emits exactly as many
+    characters as it consumed. `index_defs` asserts that, and asserts the result
+    has balanced braces — which is how the RAW-STRING hole below was found. A
+    `br#"{"version":1,"tombstoned":{}}"#` fixture has unbalanced braces and
+    backslash-escaped quotes that mean nothing inside a raw string, so treating
+    it as an ordinary literal both loses the closing quote and injects stray
+    `{`/`}` into the brace matcher.
+    """
     out = []
     i = 0
     n = len(text)
     while i < n:
         c = text[i]
-        if c == "/" and i + 1 < n and text[i + 1] == "/":
+        rm = (
+            RAW_STR_RE.match(text, i)
+            if c in "brc" and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))
+            else None
+        )
+        if rm:
+            terminator = '"' + rm.group("hashes")
+            j = text.find(terminator, rm.end())
+            j = n if j < 0 else j + len(terminator)
+            out.append(" " * (j - i))
+            i = j
+        elif c == "/" and i + 1 < n and text[i + 1] == "/":
             j = text.find("\n", i)
             j = n if j < 0 else j
             out.append(" " * (j - i))
@@ -175,7 +231,11 @@ def rust_files() -> list[str]:
 
 
 def body_of(clean: str, start: int) -> tuple[int, int]:
-    """Return (open_brace, close_brace) of the block that follows `start`."""
+    """Return (open_brace, close_brace) of the block that follows `start`.
+
+    `(-1, -1)` when there is no block at all; `(open, -1)` when the block never
+    closes, which is a LEXER FAILURE and is asserted on rather than absorbed.
+    """
     depth = 0
     i = clean.find("{", start)
     if i < 0:
@@ -189,31 +249,98 @@ def body_of(clean: str, start: int) -> tuple[int, int]:
             if depth == 0:
                 return (open_at, i)
         i += 1
-    return (open_at, len(clean) - 1)
+    return (open_at, -1)
 
 
-def index_defs() -> dict:
+def signature_end(clean: str, start: int) -> tuple[str, int]:
+    """Where one `fn` item's signature ends: `("body", index_of_open_brace)` or
+    `("decl", index_of_semicolon)`.
+
+    orgasmic:TASK-2QK4P.1.1.1.1.1 P2b self-check 2 — the old rule was "the next
+    `{` after `fn`", which cannot tell a definition from a DECLARATION. A trait
+    method without a default (`fn observe(&self, ..) -> bool;`) and an
+    `extern "C"` prototype (`fn setsid() -> pid_t;`) both end in `;`, and the
+    old rule handed each of them the body of whatever item happened to come
+    next. Scanning at bracket depth zero for whichever of `{` / `;` comes first
+    is the whole fix.
+    """
+    depth = 0
+    i = start
+    n = len(clean)
+    while i < n:
+        c = clean[i]
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif depth <= 0:
+            if c == "{":
+                return ("body", i)
+            if c == ";":
+                return ("decl", i)
+        i += 1
+    return ("none", -1)
+
+
+MOD_RE = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?\s+)?mod\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b", re.M)
+
+
+def index_defs(audit: dict | None = None) -> dict:
     defs = {}
     for path in rust_files():
         raw = open(path, encoding="utf-8", errors="replace").read()
         clean = strip_noise(raw)
+        # SELF-CHECK 1: `strip_noise` blanks in place and must be
+        # length-preserving. A shorter result means it fell out of a literal
+        # early, which silently truncates every offset computed below.
+        assert len(clean) == len(raw), (
+            f"lexer did not consume {path} to EOF: {len(clean)} != {len(raw)}"
+        )
+        # And the blanking really did remove every literal: a phantom string
+        # that swallowed code would leave the file's braces unbalanced, which is
+        # the exact failure mode `strip_noise`'s char-literal branch documents.
+        assert clean.count("{") == clean.count("}"), (
+            f"unbalanced braces after lexing {path}: the scan lost a literal"
+        )
         # Brace-matched impl block ranges, so a free function that merely
         # follows an impl block is not attributed to its type.
+        #
+        # SELF-CHECK 4: a test module is `mod test`/`mod tests` at ANY
+        # visibility, or any module carrying `#[cfg(test)]`. The old
+        # `(?:pub\s+)?` missed `pub(crate) mod tests`, which is how api.rs
+        # spells its (very large) test module.
         test_blocks = []
-        for tm in re.finditer(r"^[ \t]*(?:pub\s+)?mod\s+tests?\b", clean, re.M):
+        for tm in MOD_RE.finditer(clean):
+            head = clean[max(0, tm.start() - 200): tm.start()]
+            cfg_test = bool(re.search(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*$", head))
+            if tm.group("name") not in ("test", "tests") and not cfg_test:
+                continue
             o, c = body_of(clean, tm.end())
-            if o >= 0:
+            if o >= 0 and c >= 0:
                 test_blocks.append((o, c))
         impls = []
         for im in IMPL_RE.finditer(clean):
             o, c = body_of(clean, im.end())
-            if o >= 0:
+            if o >= 0 and c >= 0:
                 impls.append((o, c, im.group("ty")))
         for m in FN_RE.finditer(clean):
             name = m.group("name")
-            open_at, close_at = body_of(clean, m.end())
-            if open_at < 0:
+            if audit is not None:
+                audit["seen"] += 1
+            kind, at = signature_end(clean, m.end())
+            # SELF-CHECK 2: a semicolon-only declaration owns no body. Counted,
+            # not silently attributed to the next block in the file.
+            if kind != "body":
+                if audit is not None:
+                    audit["declarations" if kind == "decl" else "bodyless"] += 1
                 continue
+            open_at, close_at = body_of(clean, at)
+            assert open_at == at, f"{path}:{name}: signature/body disagree"
+            # SELF-CHECK 3 (part): an unbalanced body is a lexer failure, not a
+            # function that happens to run to end-of-file.
+            assert close_at >= 0, f"unbalanced body for {name} in {path}"
+            if audit is not None:
+                audit["definitions"] += 1
             sig = clean[m.start(): open_at]
             body = clean[open_at: close_at + 1]
             owner = None
@@ -303,11 +430,37 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--include-tests", action="store_true")
     ap.add_argument("--report-dynamic", action="store_true")
+    ap.add_argument(
+        "--self-check",
+        action="store_true",
+        help="print the parse audit (the assertions run on every invocation)",
+    )
     ap.add_argument("--paths", action="store_true", help="show one shortest call path per leaf")
     ap.add_argument("--entry", action="append", default=None)
     args = ap.parse_args()
 
-    defs = index_defs()
+    audit = {"seen": 0, "definitions": 0, "declarations": 0, "bodyless": 0}
+    defs = index_defs(audit)
+    # SELF-CHECK 3: every `fn` the scanner saw left exactly one accounting
+    # entry. A derivation that quietly drops items is an UNDER-approximation,
+    # and an under-approximation is the failure this whole task is about.
+    accounted = audit["definitions"] + audit["declarations"] + audit["bodyless"]
+    assert accounted == audit["seen"], (
+        f"unaccounted fn items: saw {audit['seen']}, classified {accounted}"
+    )
+    assert audit["bodyless"] == 0, (
+        f"{audit['bodyless']} fn items ended in neither `{{` nor `;`; the lexer is wrong"
+    )
+    indexed = sum(len(v) for v in defs.values())
+    assert indexed == audit["definitions"], (
+        f"index holds {indexed} definitions but {audit['definitions']} were parsed"
+    )
+    if args.self_check:
+        print("# parse self-check")
+        for key in ("seen", "definitions", "declarations", "bodyless"):
+            print(f"{key:>14}: {audit[key]}")
+        print(f"{'indexed names':>14}: {len(defs)}")
+        return 0
     by_name = defs
     by_key = {}
     for cands in defs.values():
@@ -322,7 +475,7 @@ def main() -> int:
 
     seen = set(entries)
     queue = list(entries)
-    parent = {e: None for e in entries}
+    parent: dict[str, str | None] = {e: None for e in entries}
     while queue:
         key = queue.pop()
         for d in by_key.get(key, []):
@@ -360,12 +513,41 @@ def main() -> int:
                 )
 
     if args.report_dynamic:
+        # orgasmic:TASK-2QK4P.1.1.1.1.1 P2b — SIGNATURES, not only bodies. A
+        # function that takes `&dyn WorkerDriver` and calls `driver.acquire(..)`
+        # has no `dyn` token in its body at all, so the body-only scan emitted
+        # one row and omitted exactly the dispatch a reader has to check by
+        # hand. Each row now says WHERE the dynamic value entered (signature or
+        # body) and, for a `dyn` parameter, which methods are called on it.
         dyn_rows = []
+        param_re = re.compile(
+            r"(?P<bind>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^,()]*?\bdyn\s+(?P<trait>[A-Za-z_][A-Za-z0-9_]*)"
+        )
         for name in sorted(seen):
             for d in by_key.get(name, []):
+                if d["test"] and not args.include_tests:
+                    continue
+                where = []
+                if re.search(r"\bdyn\b|Box<\s*fn|fn\s*\(", d["sig"]):
+                    where.append("signature")
                 if re.search(r"\bdyn\b|Box<\s*fn|fn\s*\(", d["body"]):
-                    dyn_rows.append(f"{d['file']}:{d['line']} {name}")
-        print("# residual: reachable bodies using dyn/function values (edges this pass cannot follow)")
+                    where.append("body")
+                if not where:
+                    continue
+                calls = set()
+                for pm in param_re.finditer(d["sig"]):
+                    bind = pm.group("bind")
+                    for cm in re.finditer(
+                        rf"\b{re.escape(bind)}\b(?:\.as_ref\(\))?\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+                        d["body"],
+                    ):
+                        calls.add(f"{pm.group('trait')}::{cm.group(1)}")
+                row = f"{d['file']}:{d['line']} {name} [{'+'.join(where)}]"
+                if calls:
+                    row += "  dynamic calls: " + ", ".join(sorted(calls))
+                dyn_rows.append(row)
+        print("# residual: reachable fns using dyn/function values (edges this pass cannot follow)")
+        print(f"# rows: {len(dyn_rows)}   (signatures and bodies both scanned)")
         for row in dyn_rows:
             print(row)
         return 0

@@ -446,6 +446,14 @@ export type RecoveryInventoryResponse = {
   live: RunSummary[];
   interrupted: RecoveredRun[];
   reattached: RecoveredRun[];
+  /** The bucket `GET /runs` has always serialized and this type used to omit.
+   *  orgasmic:TASK-2QK4P.1.1.1.1.1 P1a — it is the ONLY bucket the daemon
+   *  decorates with `recovery_unobserved*`, so omitting it here dropped the F3
+   *  operator diagnostic AND every permanently refused recovery out of the run
+   *  table. `tsc` cannot catch that: a field the backend sends and this type
+   *  omits is not a type error, so the pin is a rendering test, not a
+   *  typecheck. */
+  failed_recoverable: RecoveredRun[];
   terminal_noop: RecoveredRun[];
   ambiguous: RecoveredRun[];
   inventory?: InventoryStageMetrics;

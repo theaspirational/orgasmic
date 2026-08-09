@@ -218,8 +218,9 @@ mod stub {
     use async_trait::async_trait;
     use orgasmic_core::DriverEvent;
     use orgasmic_drivers::{
-        BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
-        DriverSession, TransitionAck, TransitionRequest, TransportInteraction, WorkerDriver,
+        AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext,
+        DriverControl, DriverError, DriverSession, TransitionAck, TransitionRequest,
+        TransportInteraction, WorkerDriver,
     };
     use serde_json::json;
     use tokio::sync::mpsc::Sender;
@@ -305,6 +306,35 @@ mod stub {
                 producer: None,
                 native_runtime: None,
             })
+        }
+
+        /// Reattachable only when the persisted `driver_config` says so.
+        ///
+        /// orgasmic:TASK-2QK4P.1.1.1.1.1 P1b — the boot-routing regression needs
+        /// a candidate whose reattach really COMPLETES, because the harm the F2
+        /// finding names is the `Reattach` lifecycle event appended into the
+        /// prefix pending recovery owns, and a driver that answers
+        /// `NotReattachable` never gets there. A fixture built on the default
+        /// would stay green under a boot that reattached on `Unobserved` —
+        /// which is the exact defect class being closed.
+        ///
+        /// The flag is what the FIXTURE persists in its own `Lifecycle::RunMeta`
+        /// and it stands for "this stub models a runtime that is still alive";
+        /// `arch_010`'s "prove the handle before answering `Attached`" is
+        /// unchanged for every real driver. Every other stub-addressed fixture
+        /// passes `json!({})` and keeps the `NotReattachable` default.
+        async fn attach(
+            &self,
+            ctx: DriverContext,
+            config: DriverConfig,
+        ) -> Result<AttachOutcome, DriverError> {
+            if config.0.get("stub_reattachable").and_then(|v| v.as_bool()) != Some(true) {
+                return Ok(AttachOutcome::NotReattachable);
+            }
+            let session = self.acquire(ctx, config).await?;
+            Ok(AttachOutcome::Attached(Attached {
+                session: Box::new(session),
+            }))
         }
     }
 

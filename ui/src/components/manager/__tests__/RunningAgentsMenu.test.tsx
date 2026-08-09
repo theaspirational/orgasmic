@@ -89,7 +89,14 @@ function workerRun(runId: string): RunSummary {
 }
 
 function runsResponse(live: RunSummary[]): RecoveryInventoryResponse {
-  return { live, interrupted: [], reattached: [], terminal_noop: [], ambiguous: [] };
+  return {
+    live,
+    interrupted: [],
+    reattached: [],
+    failed_recoverable: [],
+    terminal_noop: [],
+    ambiguous: [],
+  };
 }
 
 async function openMenu() {

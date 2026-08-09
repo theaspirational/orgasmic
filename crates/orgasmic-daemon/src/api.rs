@@ -22379,6 +22379,246 @@ pub(crate) mod tests {
         state.writer.shutdown().await;
     }
 
+    /// F2, ON THE PRODUCTION BOOT ROUTE — a failed `readdir` must not become a
+    /// reattach.
+    ///
+    /// orgasmic:TASK-2QK4P.1.1.1.1.1 P1b — round five extracted
+    /// `boot_reattach_ownership` "so the test exercises the real expression",
+    /// and then the regression called `pending_recovery_claim_owns_session`
+    /// directly and asserted the returned enum was not `Invalid`. That is a
+    /// RESTATEMENT of the routing rule, not the routing rule: change the loop
+    /// below to reattach on `ClaimEvidence::Unobserved` and it stays green.
+    /// This test arms the same `readdir` seam and drives
+    /// `reattach_live_runs_on_boot`, so the assertion is about what boot DID.
+    ///
+    /// The fixture is the exact shape the finding names: a pending recovery
+    /// claim owns a replacement session file, and that same file is a live boot
+    /// candidate. The harm is irreversible — `Supervisor::reattach` appends
+    /// `Reattach` into the immutable prefix pending recovery owns — so the
+    /// faulted phase asserts the file is BYTE-IDENTICAL, not merely that the run
+    /// is absent from the supervisor.
+    ///
+    /// Phase three removes the claim and lets the very same boot pass reattach
+    /// the very same candidate. Without it phases one and two would pass against
+    /// a fixture that cannot be reattached at all, which is precisely the hole
+    /// this round is closing.
+    ///
+    /// Injection to see it red: in `reattach_live_runs_on_boot`, change
+    /// `if !matches!(ownership, ClaimEvidence::Invalid)` to
+    /// `if matches!(ownership, ClaimEvidence::Valid)` — i.e. reattach on
+    /// `Unobserved`. Phase one then rehydrates the run and grows the JSONL.
+    // orgasmic:TASK-2QK4P.1.1.1.1
+    #[tokio::test]
+    async fn boot_reattach_refuses_a_candidate_whose_claim_store_could_not_be_listed() {
+        use crate::driver_resolution::{STUB_HARNESS, STUB_MODE};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let home = Home::at(root.join("home"));
+        home.ensure().unwrap();
+        let project_root = root.join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let origin_path = write_failed_recoverable_session(
+            &project_root,
+            "run-p1b-origin",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let replacement_path = project_sessions_dir(&project_root).join("recover-p1b.jsonl");
+        let spec = PendingRecoveryClaimSpec {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-p1b-origin".into(),
+            request_id: "req-p1b".into(),
+            origin_session_path: origin_path,
+            replacement_session_path: replacement_path.clone(),
+            boot_id: "boot-p1b".into(),
+            action: "start_recovery_run".into(),
+            target: "worker".into(),
+            draft_prompt: Some("p1b draft".into()),
+            force_inert: true,
+            task_id: "TASK-P1B".into(),
+            kind: "worker".into(),
+            worker_id: "implementer-claude-stream-json".into(),
+            role: "implementer".into(),
+            requires_worker_finalize: true,
+            transport: STUB_MODE.into(),
+            harness: Some(STUB_HARNESS.into()),
+            driver_config: json!({"stub_reattachable": true}),
+            worktree: Some(project_root.clone()),
+            last_path: None,
+            stdout_path: None,
+            planned_native_runtime: None,
+            run_options: RecoveryRunOptions {
+                stall_timeout_secs: None,
+                max_run_duration_secs: None,
+                idle_timeout_secs: None,
+                babysitter_target: None,
+                cleanup_on_failure: false,
+            },
+        };
+        let plan = plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
+        assert_eq!(plan.claim.replacement_session_path, replacement_path);
+
+        // The prefix the claim owns, and a live boot candidate at the same time.
+        // That coincidence is the whole hazard: the boot pass sees a reattachable
+        // run, and only the claim store says who owns it.
+        let identity = RuntimeIdentity {
+            run_id: "run-p1b-replacement".into(),
+            runtime_id: "rt-p1b-replacement".into(),
+            boot_id: "boot-before-restart".into(),
+        };
+        let mut writer =
+            orgasmic_core::SessionWriter::open(&replacement_path, identity.clone()).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-P1B".into(),
+                    kind: "worker".into(),
+                    worker_id: "implementer-claude-stream-json".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: STUB_MODE.into(),
+                    harness: Some(STUB_HARNESS.into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    // The stub answers `Attached` only for this flag, so the
+                    // reattach in phase three really COMPLETES and really writes.
+                    driver_config: json!({"stub_reattachable": true}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(
+            boot_reattach_candidate_from_scan(&boot_scan(&replacement_path), &replacement_path)
+                .is_some_and(|candidate| candidate.run_id == identity.run_id),
+            "the owned replacement session must be a boot-reattach candidate, or \
+             this test proves nothing about boot"
+        );
+        // PREMISE: with the claim store listable, the claim IS found. The test
+        // cannot pass by the predicate being blind to the fixture.
+        assert_eq!(
+            pending_recovery_claim_owns_session(
+                &home,
+                &project_root,
+                "orgasmic",
+                &replacement_path
+            ),
+            ClaimEvidence::Valid,
+            "the fixture must start out with the pending claim discoverable"
+        );
+        let before = std::fs::read(&replacement_path).unwrap();
+
+        let state = direct_stage_test_state(home.clone()).await;
+
+        // PHASE ONE — the claim store cannot be listed. Pre-fix this arrived as
+        // `Ok(an empty directory)`, the predicate answered `Invalid`, and boot
+        // reattached into the owned prefix.
+        crate::recovery_claim::arm_readdir_fault_until_disarmed(&home, 1, libc::EIO);
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        crate::recovery_claim::disarm_readdir_fault(&home);
+        let live_after_fault = state.supervisor.snapshot().await.runs;
+        assert!(
+            live_after_fault
+                .iter()
+                .all(|run| run.run_id != identity.run_id),
+            "boot must SKIP, not reattach, while the claim store is unobserved; \
+             live runs were {:?}",
+            live_after_fault
+                .iter()
+                .map(|run| run.run_id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            std::fs::read(&replacement_path).unwrap(),
+            before,
+            "no byte may be appended to the prefix pending recovery owns while \
+             ownership is unobserved — that write is not undoable"
+        );
+
+        // PHASE TWO — fault cleared, claim still there: a DECIDED owner, so boot
+        // still skips, and for the other reason.
+        assert_eq!(
+            pending_recovery_claim_owns_session(
+                &home,
+                &project_root,
+                "orgasmic",
+                &replacement_path
+            ),
+            ClaimEvidence::Valid,
+            "a transient listing failure must not change the answer once it clears"
+        );
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.run_id != identity.run_id),
+            "a pending claim owning the session is still a skip"
+        );
+        assert_eq!(
+            std::fs::read(&replacement_path).unwrap(),
+            before,
+            "and it is still byte-identical"
+        );
+
+        // PHASE THREE — no claim owns it, so the answer is a decided `Invalid`
+        // and normal routing runs: the SAME candidate through the SAME boot pass
+        // is rehydrated and the `Reattach` marker is appended.
+        std::fs::remove_dir_all(
+            crate::recovery_claim::recovery_claims_root(&home).join("orgasmic"),
+        )
+        .unwrap();
+        assert_eq!(
+            pending_recovery_claim_owns_session(
+                &home,
+                &project_root,
+                "orgasmic",
+                &replacement_path
+            ),
+            ClaimEvidence::Invalid,
+            "with the claim gone the answer is a decided absence"
+        );
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "the fixture must rehydrate once nothing owns it, or the two phases \
+             above prove only that this candidate is unreattachable"
+        );
+        state.writer.shutdown().await;
+        let after = std::fs::read_to_string(&replacement_path).unwrap();
+        assert!(
+            after.len() > before.len() && after.contains("\"phase\":\"reattach\""),
+            "normal routing appends the `Reattach` marker — this is the exact \
+             write the two phases above must not have made: {after}"
+        );
+    }
+
     #[test]
     fn same_second_external_end_then_app_launch_preserves_app_recovery_identity() {
         let tmp = tempfile::tempdir().unwrap();
