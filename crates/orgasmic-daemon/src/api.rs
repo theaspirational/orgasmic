@@ -3077,7 +3077,7 @@ async fn post_manager_register_http(
 ) -> Result<Json<ManagerRegisterResponse>, ApiError> {
     let capability = headers
         .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
-        .and_then(|value| value.to_str().ok());
+        .map(|value| value.to_str().unwrap_or(""));
     post_manager_register_inner(state, req, capability).await
 }
 
@@ -3528,7 +3528,12 @@ async fn post_manager_release_inner(
     req: ManagerReleaseRegistrationRequest,
     capability: Option<&str>,
 ) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
-    if let Some(capability) = capability.filter(|value| !value.trim().is_empty()) {
+    if let Some(capability) = capability {
+        if capability.trim().is_empty() {
+            return Err(ApiError::forbidden(
+                "manager terminal capability is required for terminal release",
+            ));
+        }
         match state
             .supervisor
             .unclaim_manager_terminal(&req.project_id, capability)
@@ -3540,7 +3545,14 @@ async fn post_manager_release_inner(
                     run_id: Some(run_id),
                 }));
             }
-            Ok(None) => {}
+            // A terminal capability is the authority for this request. Never
+            // reinterpret an invalid/rotated/corrupt token as permission to
+            // release an unrelated external or app manager by registry/run id.
+            Ok(None) => {
+                return Err(ApiError::forbidden(
+                    "manager terminal capability does not name a claimed terminal",
+                ));
+            }
             Err(error) => return Err(supervisor_control_error("manager release", error)),
         }
     }
@@ -9569,6 +9581,14 @@ async fn post_run_recover(
         .clone()
         .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
 
+    // A dispatch waiter must not declare this origin dead while any accepted
+    // recovery path is inventorying authority, reconciling a prior claim,
+    // planning a replacement, or publishing its durable lineage edge. This
+    // guard deliberately starts before those paths diverge (including the
+    // crash-reconciled fast returns) and is released only when this whole POST
+    // returns; durable tx lineage takes over after a restart.
+    let _generation_transition = state.recovery_generation_transitions.begin(id.clone());
+
     // Inventory never takes a per-origin lock. Recovery holds the global
     // status mutex only for the initial claim/index decision and, after
     // external work, the final RecoveryOrigin + claim commit.
@@ -10109,11 +10129,6 @@ async fn execute_run_recover_action(
     pending_plan: Option<&PendingRecoveryPlan>,
     origin_envelopes: &[SessionEnvelope],
 ) -> Result<RunRecoverResponse, ApiError> {
-    // The replacement is not yet represented in durable tx while recovery is
-    // acquiring/reattaching it. Keep its origin generation waiting until
-    // `record_recovery_replacement_association` below succeeds; after a daemon
-    // restart the durable association is the authority again.
-    let _generation_transition = state.recovery_generation_transitions.begin(id);
     let envelopes = origin_envelopes;
     let meta = session_acquire_meta(envelopes);
     let force_inert = pending_plan
@@ -18570,6 +18585,13 @@ impl ApiError {
             body: None,
         }
     }
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+            body: None,
+        }
+    }
     /// Conflict with a structured body. The body should carry enough data for
     /// the UI to render follow-up actions (e.g. active run id, choices).
     fn conflict_json(body: Value) -> Self {
@@ -20776,30 +20798,79 @@ pub(crate) mod tests {
         // The old public body identity/provider pair cannot promote a run;
         // only the opaque capability matched against the daemon's live record
         // can do that. A guessed capability is therefore an ordinary refusal.
-        let Json(spoofed) = post_manager_register_inner(
-            state.clone(),
-            ManagerRegisterRequest {
+        let mut spoofed_headers = HeaderMap::new();
+        spoofed_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_static("not-a-daemon-minted-capability"),
+        );
+        let Json(spoofed) = post_manager_register_http(
+            State(state.clone()),
+            spoofed_headers,
+            Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: None,
                 caller_identity: Some(acquire.identity.clone()),
                 provider: Some("codex".into()),
-            },
-            Some("not-a-daemon-minted-capability"),
+            }),
         )
         .await
         .unwrap();
         assert_eq!(spoofed.status, "refused");
-        let Json(claimed) = post_manager_register_inner(
-            state.clone(),
-            ManagerRegisterRequest {
+        let mut capability_headers = HeaderMap::new();
+        capability_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        state.supervisor.pause_acquisition().await;
+        let Json(paused) = post_manager_register_http(
+            State(state.clone()),
+            capability_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(paused.status, "refused");
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.role == "terminal"),
+            "a paused admission must not persist/promote the terminal"
+        );
+        let paused_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !paused_body.contains("\"claimed\":true"),
+            "a rejected preflight must not leave a durable claim event: {paused_body}"
+        );
+        state.supervisor.resume_acquisition().await;
+        let mut capability_headers = HeaderMap::new();
+        capability_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(claimed) = post_manager_register_http(
+            State(state.clone()),
+            capability_headers,
+            Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: None,
                 caller_identity: Some(acquire.identity.clone()),
                 provider: Some("codex".into()),
-            },
-            Some(&capability),
+            }),
         )
         .await
         .unwrap();
@@ -20819,21 +20890,103 @@ pub(crate) mod tests {
         // A plain entry-router `manager register` repeats on startup. Once the
         // same live terminal owns the manager lease it is idempotent rather
         // than trying to claim itself as a competing terminal.
-        let Json(repeated) = post_manager_register_inner(
-            state.clone(),
-            ManagerRegisterRequest {
+        let mut repeated_headers = HeaderMap::new();
+        repeated_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(repeated) = post_manager_register_http(
+            State(state.clone()),
+            repeated_headers,
+            Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: None,
                 caller_identity: None,
                 provider: None,
-            },
-            Some(&capability),
+            }),
         )
         .await
         .unwrap();
         assert_eq!(repeated.status, "claimed");
         assert_eq!(repeated.run_id.as_deref(), Some(acquire.run_id.as_str()));
+
+        // A competing terminal lease for the original task makes demotion
+        // impossible. Preflight must reject before appending `claimed:false`.
+        let blocker = state
+            .supervisor
+            .acquire(
+                &orgasmic_drivers::TmuxTuiDriver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj#terminal-test".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: project_sessions_dir(&project_root).join("claim-blocker.jsonl"),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .expect("the old terminal lease is vacant after claim");
+        let mut conflict_release_headers = HeaderMap::new();
+        conflict_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        assert!(
+            post_manager_release_http(
+                State(state.clone()),
+                conflict_release_headers,
+                Json(ManagerReleaseRegistrationRequest {
+                    project_id: "proj".into(),
+                    run_id: Some(acquire.run_id.clone()),
+                    caller_identity: None,
+                }),
+            )
+            .await
+            .is_err(),
+            "a conflicting terminal lease must reject demotion"
+        );
+        let conflicted_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !conflicted_body.contains("\"claimed\":false"),
+            "a failed demotion must not persist a false claim state: {conflicted_body}"
+        );
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "a failed demotion must leave the manager lease intact"
+        );
+        state
+            .supervisor
+            .release(
+                &blocker.run_id,
+                "release conflict fixture",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .expect("release conflict fixture");
 
         // An external registration uses the same stable lease and cannot race
         // in as a second manager after the terminal promotion.
@@ -20851,14 +21004,49 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(refused.status, "refused");
 
-        let Json(released) = post_manager_release_inner(
-            state.clone(),
-            ManagerReleaseRegistrationRequest {
+        // A capability header is authoritative. A forged value must not fall
+        // through to this run id and release/demote by a generic path.
+        let mut forged_release_headers = HeaderMap::new();
+        forged_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_static("not-a-daemon-minted-capability"),
+        );
+        let err = post_manager_release_http(
+            State(state.clone()),
+            forged_release_headers,
+            Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: Some(acquire.run_id.clone()),
                 caller_identity: Some(acquire.identity),
-            },
-            Some(&capability),
+            }),
+        )
+        .await
+        .expect_err("forged terminal capability must be refused");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "forged header must leave the claimed manager live"
+        );
+
+        let mut release_headers = HeaderMap::new();
+        release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(released) = post_manager_release_http(
+            State(state.clone()),
+            release_headers,
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: None,
+            }),
         )
         .await
         .unwrap();
@@ -20873,6 +21061,44 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(run.role, "terminal");
         assert!(!run.claimed_manager);
+
+        // A session append can still fail after admission preflight. The
+        // durable lifecycle write happens before the infallible swap, so an
+        // append failure leaves the original terminal role/lease intact.
+        let sessions_dir = project_sessions_dir(&project_root);
+        std::fs::remove_dir_all(&sessions_dir).unwrap();
+        // `append_session` normally recreates a missing directory. A regular
+        // file at that path is the deterministic filesystem failure shape.
+        std::fs::write(&sessions_dir, "not a directory").unwrap();
+        let mut append_failure_headers = HeaderMap::new();
+        append_failure_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(append_failed) = post_manager_register_http(
+            State(state.clone()),
+            append_failure_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(append_failed.status, "refused");
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.role == "terminal"),
+            "session append failure must not leave an in-memory manager promotion"
+        );
     }
 
     #[test]
@@ -20989,6 +21215,62 @@ pub(crate) mod tests {
         assert!(during.active_origin_run_ids.contains("run-a"));
         drop(transition);
         assert!(recoveries.snapshot().active_origin_run_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_wait_endpoint_keeps_a_recovery_planning_window_waiting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let tx_dir = project_root.join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        let mut started = generation_tx("started", "manager.dispatch_started", &[]);
+        started.project = Some("proj".into());
+        let mut root = generation_tx(
+            "root",
+            "run.created",
+            &[
+                ("ORIGIN", "cli_dispatch"),
+                ("DISPATCH_TX", "started"),
+                ("RUN_ID", "run-origin"),
+            ],
+        );
+        root.project = Some("proj".into());
+        std::fs::write(
+            tx_dir.join("2026-08.org"),
+            format!("{}{}", started.render(), root.render()),
+        )
+        .unwrap();
+        let state = direct_stage_test_state(home).await;
+
+        // This guard is held by POST /runs/:id/recover before its inventory,
+        // claim-reconciliation, and replacement-planning work. Exercise the
+        // real dispatch-wait handler while that window is open.
+        let planning = state.recovery_generation_transitions.begin("run-origin");
+        let Json(waiting) = post_manager_dispatch_wait(
+            State(state.clone()),
+            Json(ManagerDispatchWaitRequest {
+                project_id: "proj".into(),
+                started_tx: vec!["started".into()],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.generations[0].status, "waiting");
+        drop(planning);
+
+        let Json(died) = post_manager_dispatch_wait(
+            State(state),
+            Json(ManagerDispatchWaitRequest {
+                project_id: "proj".into(),
+                started_tx: vec!["started".into()],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(died.generations[0].status, "died");
     }
 
     #[tokio::test]

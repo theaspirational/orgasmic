@@ -447,10 +447,11 @@ pub struct Supervisor {
 /// found the *second* admission path (`reattach`) that had never learned about
 /// it, so the fix cannot be another per-call-site check — the next path added
 /// would forget it the same way. Making a run live means writing `leases`, and
-/// the only code that can write `leases` is [`Inner::admit_live_run`], which
-/// runs the whole admission check. A future fourth path does not get to
-/// forget: it cannot compile without going through this door, and its author
-/// must name which [`AdmissionPath`] it is.
+/// the only code that can write `leases` is [`Inner::admit_live_run`] (or its
+/// locked [`Inner::admit_preflighted_live_run`] completion), which runs the
+/// whole admission check. A future fourth path does not get to forget: it
+/// cannot compile without going through this door, and its author must name
+/// which [`AdmissionPath`] it is.
 mod admission {
     use super::*;
 
@@ -461,7 +462,8 @@ mod admission {
         ///
         /// PRIVATE ON PURPOSE — see the module docs. Read it through
         /// [`Inner::lease`], drop it through [`Inner::remove_lease`], and take
-        /// one only through [`Inner::admit_live_run`].
+        /// one only through [`Inner::admit_live_run`] or its same-lock,
+        /// preflighted completion.
         leases: HashMap<LeaseKey, AdmittedRun>,
         /// run_id → live run record. Holds the driver control handle so the
         /// supervisor can call `release` later.
@@ -617,18 +619,16 @@ mod admission {
             self.leases.values().any(|held| held.run_id == run_id)
         }
 
-        /// The single live-run admission decision.
+        /// Validate a live-run admission without mutating the lease map.
         ///
-        /// Order is deliberate and shared by both paths: pause, then lease,
-        /// then the destructive-cleanup fence. The fence is last because it is
-        /// the one that must be read under the *same* lock acquisition that
-        /// installs the lease — `reserve_dispatch_close` installs its
-        /// reservation under this lock, so from that instant no path here can
-        /// admit a run into the reserved worktree.
-        pub(super) fn admit_live_run(
+        /// A terminal-manager promotion writes a durable lifecycle event
+        /// between this preflight and the lease swap. Its caller holds the
+        /// same `Inner` lock throughout, so this is also the exact decision
+        /// the infallible post-persistence swap will install.
+        pub(super) fn preflight_live_run(
             &mut self,
-            req: LiveRunAdmission<'_>,
-        ) -> Result<AdmittedLease, SupervisorError> {
+            req: &LiveRunAdmission<'_>,
+        ) -> Result<(), SupervisorError> {
             if self.acquisition_paused {
                 return Err(SupervisorError::AcquisitionPaused);
             }
@@ -671,9 +671,18 @@ mod admission {
                     });
                 }
             }
-            // Record the worktree WITH the lease, so the window between here
-            // and the caller's `RunRecord` insert is addressable by worktree
-            // rather than only by task id (TASK-RMA18 finding 6).
+            Ok(())
+        }
+
+        /// Install an admission that was preflighted while this same `Inner`
+        /// lock remained held. This is intentionally infallible: the caller
+        /// has already completed every fallible check before persisting a
+        /// lifecycle transition, so a failed acquisition cannot leave durable
+        /// manager-claim state ahead of the live lease state.
+        pub(super) fn admit_preflighted_live_run(
+            &mut self,
+            req: LiveRunAdmission<'_>,
+        ) -> AdmittedLease {
             self.leases.insert(
                 req.lease_key.clone(),
                 AdmittedRun {
@@ -682,10 +691,26 @@ mod admission {
                     worktree_identity: req.worktree.and_then(worktree_identity),
                 },
             );
-            Ok(AdmittedLease {
+            AdmittedLease {
                 key: req.lease_key.clone(),
                 run_id: req.run_id.to_string(),
-            })
+            }
+        }
+
+        /// The single live-run admission decision.
+        ///
+        /// Order is deliberate and shared by both paths: pause, then lease,
+        /// then the destructive-cleanup fence. The fence is last because it is
+        /// the one that must be read under the *same* lock acquisition that
+        /// installs the lease — `reserve_dispatch_close` installs its
+        /// reservation under this lock, so from that instant no path here can
+        /// admit a run into the reserved worktree.
+        pub(super) fn admit_live_run(
+            &mut self,
+            req: LiveRunAdmission<'_>,
+        ) -> Result<AdmittedLease, SupervisorError> {
+            self.preflight_live_run(&req)?;
+            Ok(self.admit_preflighted_live_run(req))
         }
 
         /// Install a lease without an admission decision. Tests only, and named
@@ -3154,6 +3179,18 @@ impl Supervisor {
                 "capability terminal no longer owns its supervisor lease".into(),
             ));
         }
+        let manager_admission = LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &manager_key,
+            run_id: &run_id,
+            task_id: &manager_task_id,
+            kind,
+            worktree: None,
+        };
+        // All fallible admission checks occur before the durable lifecycle
+        // event. We keep this lock through the append, so the subsequently
+        // installed lease is the exact one that was preflighted.
+        g.preflight_live_run(&manager_admission)?;
         let (session_path, identity) = {
             let rec = g
                 .runs
@@ -3179,17 +3216,10 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
-        // `admit_live_run` is the sole lease writer. Admit the manager key
-        // before removing the terminal key; all conflict checks happen under
-        // this one lock, so launch/register cannot interleave a second manager.
-        let _admitted = g.admit_live_run(LiveRunAdmission {
-            path: AdmissionPath::Acquire,
-            lease_key: &manager_key,
-            run_id: &run_id,
-            task_id: &manager_task_id,
-            kind,
-            worktree: None,
-        })?;
+        // The admission was preflighted above under this still-held lock, so
+        // this swap is infallible. Admit before removing the terminal key;
+        // launch/register cannot interleave a second manager lease.
+        let _admitted = g.admit_preflighted_live_run(manager_admission);
         let removed = g.remove_lease(&old_key);
         debug_assert_eq!(removed.as_deref(), Some(run_id.as_str()));
         let rec = g
@@ -3239,6 +3269,17 @@ impl Supervisor {
                 "claimed terminal no longer owns the manager lease".into(),
             ));
         }
+        let terminal_admission = LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &terminal_key,
+            run_id: &run_id,
+            task_id: &original_task_id,
+            kind,
+            worktree: None,
+        };
+        // As with promotion, never append a demotion lifecycle event before
+        // proving the terminal lease can be restored.
+        g.preflight_live_run(&terminal_admission)?;
         let (session_path, identity) = {
             let rec = g
                 .runs
@@ -3261,14 +3302,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
-        let _admitted = g.admit_live_run(LiveRunAdmission {
-            path: AdmissionPath::Acquire,
-            lease_key: &terminal_key,
-            run_id: &run_id,
-            task_id: &original_task_id,
-            kind,
-            worktree: None,
-        })?;
+        let _admitted = g.admit_preflighted_live_run(terminal_admission);
         let removed = g.remove_lease(&manager_key);
         debug_assert_eq!(removed.as_deref(), Some(run_id.as_str()));
         let rec = g
