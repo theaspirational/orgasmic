@@ -2954,7 +2954,6 @@ impl Supervisor {
         &self,
         run_id: &str,
         input: String,
-        provider: String,
         caller_identity: &RuntimeIdentity,
     ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
         let ack = {
@@ -2968,7 +2967,6 @@ impl Supervisor {
                 .control
                 .send_manager_wake(ManagerWakeRequest {
                     input: input.clone(),
-                    provider,
                 })
                 .await?;
             if ack.accepted {

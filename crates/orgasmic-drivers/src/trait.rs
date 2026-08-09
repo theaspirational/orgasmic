@@ -726,13 +726,14 @@ pub struct UserInputRequest {
     pub input: String,
 }
 
-/// A provider-bound, daemon-originated manager wake.  The provider identity
-/// is claimed explicitly by the human inside the terminal and then checked by
-/// the pane transport at the paste boundary.
+/// A daemon-originated manager wake.
+///
+/// Neither bundled pane transport has a conditional "send only if this exact
+/// foreground composer revision is still live" primitive.  They must return
+/// `Unsupported` rather than turn this request into a check-then-paste race.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagerWakeRequest {
     pub input: String,
-    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

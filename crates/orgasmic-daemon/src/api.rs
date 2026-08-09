@@ -3068,7 +3068,7 @@ async fn post_manager_wake(
             "manager wake input must not be empty",
         ));
     }
-    let Some((run_id, provider)) = state
+    let Some((run_id, _provider)) = state
         .manager_registry
         .claimed_terminal(&state.supervisor, &req.project_id)
         .await
@@ -3094,7 +3094,7 @@ async fn post_manager_wake(
     };
     match state
         .supervisor
-        .send_manager_wake(&run_id, input, provider, &run.identity)
+        .send_manager_wake(&run_id, input, &run.identity)
         .await
     {
         Ok(ack) if ack.accepted => Ok(Json(ManagerWakeResponse {

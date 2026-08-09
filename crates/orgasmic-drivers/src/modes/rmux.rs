@@ -54,7 +54,7 @@ use crate::modes::tmux::{
     cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
     cursor_argv_needs_startup_trust, default_input_ready_timeout, deserialize_duration_secs,
     harness_launch_env, is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
-    provider_composer_ready, push_initial_prompt_argv, SendChildOwner,
+    push_initial_prompt_argv, SendChildOwner,
 };
 
 use crate::r#trait::{
@@ -3356,40 +3356,6 @@ impl RmuxControl {
     }
 }
 
-async fn rmux_provider_ready(
-    bin: &str,
-    session_target: &str,
-    session: &rmux_sdk::Session,
-    provider: &str,
-) -> Result<bool, DriverError> {
-    if !matches!(provider, "claude" | "codex") {
-        return Ok(false);
-    }
-    let Some(foreground) = session
-        .pane(0, 0)
-        .foreground_state()
-        .await
-        .map_err(|e| DriverError::Transport(format!("rmux foreground state: {e}")))?
-    else {
-        return Ok(false);
-    };
-    let command = foreground.command.unwrap_or_default().to_ascii_lowercase();
-    let executable = foreground.exe.unwrap_or_default().to_ascii_lowercase();
-    let matches_provider = [command.as_str(), executable.as_str()]
-        .into_iter()
-        .any(|value| {
-            value
-                .rsplit('/')
-                .next()
-                .is_some_and(|name| name == provider)
-        });
-    if !matches_provider {
-        return Ok(false);
-    }
-    let pane = rmux_capture_pane_bounded(bin, session_target, Duration::from_secs(2)).await?;
-    Ok(provider_composer_ready(&pane, provider))
-}
-
 /// Poll until the harness shows a composer input prompt. Followup delivery
 /// gates on this (not pane stability) so mid-stream paste cannot corrupt an
 /// in-flight turn — streaming output without a prompt is rejected.
@@ -3493,44 +3459,11 @@ impl DriverControl for RmuxControl {
 
     async fn send_manager_wake(
         &mut self,
-        req: ManagerWakeRequest,
+        _req: ManagerWakeRequest,
     ) -> Result<UserInputAck, DriverError> {
-        let (bin, session_target, session) = match (
-            self.rmux_bin.as_deref(),
-            self.session_target.as_deref(),
-            self.session.as_ref(),
-        ) {
-            (Some(bin), Some(target), Some(session)) => (bin, target, session),
-            _ => return Err(DriverError::Unsupported("manager_wake")),
-        };
-        if !rmux_provider_ready(bin, session_target, session, &req.provider).await? {
-            return Ok(UserInputAck {
-                accepted: false,
-                message: Some(
-                    "claimed provider is unavailable, busy, or not at its composer".into(),
-                ),
-            });
-        }
-        // SDK foreground evidence can lag. Query it again directly at the
-        // paste boundary and refuse rather than trusting the earlier frame.
-        if !rmux_provider_ready(bin, session_target, session, &req.provider).await? {
-            return Ok(UserInputAck {
-                accepted: false,
-                message: Some("claimed provider changed before wake delivery".into()),
-            });
-        }
-        paste_text_and_submit(
-            bin,
-            session_target,
-            &req.input,
-            Some(&self.send_child),
-            Some(&self.startup_cancel),
-        )
-        .await?;
-        Ok(UserInputAck {
-            accepted: true,
-            message: None,
-        })
+        // rmux documents foreground observations as best-effort and stale;
+        // repeating one is not a revision-bound conditional send.
+        Err(DriverError::Unsupported("manager_wake requires conditional foreground delivery"))
     }
 
     async fn release(&mut self, reason: &str) -> Result<(), DriverError> {

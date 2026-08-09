@@ -596,50 +596,9 @@ impl DriverControl for TmuxTuiControl {
 
     async fn send_manager_wake(
         &mut self,
-        req: ManagerWakeRequest,
+        _req: ManagerWakeRequest,
     ) -> Result<UserInputAck, DriverError> {
-        if self.inert {
-            return Err(DriverError::Unsupported("manager_wake"));
-        }
-        // Re-check both the foreground executable and the provider composer at
-        // the paste boundary. `❯` alone is deliberately not trusted: zsh uses
-        // the same glyph in a configured prompt.
-        if !tmux_provider_ready(&self.session_name, &req.provider).await? {
-            return Ok(UserInputAck {
-                accepted: false,
-                message: Some(
-                    "claimed provider is unavailable, busy, or not at its composer".into(),
-                ),
-            });
-        }
-        // The second observation is the paste boundary. Keep the capture and
-        // the paste adjacent; tmux exposes no atomic "paste if foreground"
-        // primitive, so failing closed on either observation is the strongest
-        // practical TTY proof it can provide.
-        if !tmux_provider_ready(&self.session_name, &req.provider).await? {
-            return Ok(UserInputAck {
-                accepted: false,
-                message: Some("claimed provider changed before wake delivery".into()),
-            });
-        }
-        paste_text_into_pane(
-            &self.session_name,
-            &req.input,
-            Some(&self.send_child),
-            Some(&self.startup_cancel),
-        )
-        .await?;
-        send_keys(
-            &self.session_name,
-            &[String::from("Enter")],
-            Some(&self.send_child),
-            Some(&self.startup_cancel),
-        )
-        .await?;
-        Ok(UserInputAck {
-            accepted: true,
-            message: None,
-        })
+        Err(DriverError::Unsupported("manager_wake requires conditional foreground delivery"))
     }
 
     async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -2614,71 +2573,7 @@ async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Fail-closed foreground proof for an automated manager wake.
-///
-/// tmux gives us the pane's controlling PID; macOS `ps` gives the foreground
-/// process group for that tty.  We intentionally require the group leader's
-/// executable basename to be the provider the terminal claimed.  A shell,
-/// `node`, an unknown wrapper, or an unavailable `ps` result is refusal —
-/// unlike a rendered prompt, none of those proves it is safe to paste.
-async fn tmux_provider_ready(session: &str, provider: &str) -> Result<bool, DriverError> {
-    if !matches!(provider, "claude" | "codex") {
-        return Ok(false);
-    }
-    let pane_pid = tmux_async_command()
-        .args(["display-message", "-p", "-t", session, "#{pane_pid}"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("tmux pane pid: {e}")))?;
-    if !pane_pid.status.success() {
-        return Ok(false);
-    }
-    let pane_pid = String::from_utf8_lossy(&pane_pid.stdout).trim().to_string();
-    if pane_pid.parse::<u32>().is_err() {
-        return Ok(false);
-    }
-    let foreground = tokio::process::Command::new("/bin/ps")
-        .args(["-o", "tpgid=", "-p", &pane_pid])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("ps tpgid: {e}")))?;
-    if !foreground.status.success() {
-        return Ok(false);
-    }
-    let tpgid = String::from_utf8_lossy(&foreground.stdout)
-        .trim()
-        .to_string();
-    if tpgid.parse::<u32>().is_err() {
-        return Ok(false);
-    }
-    let executable = tokio::process::Command::new("/bin/ps")
-        .args(["-o", "comm=", "-p", &tpgid])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("ps foreground executable: {e}")))?;
-    if !executable.status.success() {
-        return Ok(false);
-    }
-    let executable = String::from_utf8_lossy(&executable.stdout)
-        .trim()
-        .to_ascii_lowercase();
-    let provider_foreground = executable
-        .rsplit('/')
-        .next()
-        .is_some_and(|name| name == provider);
-    if !provider_foreground {
-        return Ok(false);
-    }
-    let pane = capture_pane_visible(session).await?;
-    Ok(provider_composer_ready(&pane, provider))
-}
-
+#[cfg(test)]
 pub(crate) fn provider_composer_ready(pane: &str, provider: &str) -> bool {
     // Keep this narrower than the existing generic human-input detector.  The
     // provider identity comes from the foreground process; this only verifies
