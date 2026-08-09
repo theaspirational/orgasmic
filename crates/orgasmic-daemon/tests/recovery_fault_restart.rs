@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::{
     project_sessions_dir, Home, Lifecycle, ReleaseOutcome, RuntimeIdentity, SessionEventKind,
-    SessionWriter,
+    SessionWriter, TxEntry,
 };
 use orgasmic_daemon::recovery_claim::{load_recovery_claim, RecoveryClaim, RecoveryClaimStatus};
 use orgasmic_daemon::{Daemon, DaemonOptions};
@@ -157,6 +157,53 @@ fn recovery_association_count(project_root: &Path, replacement_run_id: &str) -> 
                 && block.contains(replacement_run_id)
         })
         .count()
+}
+
+/// Give dispatch-wait a genuine root generation. Recovery itself never emits
+/// this edge: it must append the replacement edge only after acquiring it.
+fn seed_dispatch_generation(project_root: &Path) {
+    let mut started = TxEntry::new(
+        "dispatch-started",
+        "manager.dispatch_started",
+        "[2026-08-09 Sun 00:00:00]",
+        "test",
+        "recovery fault dispatch generation",
+    );
+    started.project = Some(PROJECT_ID.into());
+    let mut root = TxEntry::new(
+        "dispatch-root",
+        "run.created",
+        "[2026-08-09 Sun 00:00:00]",
+        "test",
+        "dispatch root",
+    );
+    root.project = Some(PROJECT_ID.into());
+    root.extra = vec![
+        ("ORIGIN".into(), "cli_dispatch".into()),
+        ("DISPATCH_TX".into(), "dispatch-started".into()),
+        ("RUN_ID".into(), ORIGIN_RUN_ID.into()),
+    ];
+    write(
+        project_root.join(".orgasmic/tx/2026-08.org"),
+        &format!("{}{}", started.render(), root.render()),
+    );
+}
+
+async fn dispatch_wait(client: &reqwest::Client, addr: SocketAddr, home: &Home) -> Value {
+    let response = client
+        .post(format!("http://{addr}/api/manager/dispatch-wait"))
+        .bearer_auth(token(home))
+        .json(&json!({
+            "project_id": PROJECT_ID,
+            "started_tx": ["dispatch-started"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert!(status.is_success(), "dispatch-wait status {status}: {body}");
+    serde_json::from_str(&body).unwrap()
 }
 
 fn daemon_options() -> DaemonOptions {
@@ -760,4 +807,79 @@ async fn recovery_faults_kill_real_daemon_and_preserve_original_pane() {
     ] {
         dead_pending_handle_fails_closed(point).await;
     }
+}
+
+// TASK-D6N77.1: an accepted recovery may have acquired its replacement's
+// pane before it can append the public origin->replacement tx edge. The
+// daemon's in-memory transition guard naturally dies with the daemon, so this
+// proves the signed pending claim is the restart authority used by the *real*
+// dispatch-wait HTTP path. It deliberately avoids manually beginning any
+// tracker or fabricating a claim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_survives_crash_between_recovery_acquire_and_association() {
+    if skip_test_if_missing(
+        "dispatch_wait_survives_crash_between_recovery_acquire_and_association",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("the live replacement must retain its signed pending claim");
+    let _pane_guard = TmuxGuard(planned.planned_tmux_session.clone().unwrap());
+    assert_eq!(planned.status, RecoveryClaimStatus::Pending);
+    assert!(planned.spawn_started);
+    assert!(
+        pane.is_some(),
+        "replacement pane must be live at crash boundary"
+    );
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        0,
+        "the test must stop before public lineage association"
+    );
+
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let client = reqwest::Client::new();
+    let waiting = dispatch_wait(&client, restarted.addr, &home).await;
+    assert_eq!(waiting["generations"][0]["status"], "waiting");
+    assert_eq!(
+        waiting["generations"][0]["run_id"], planned.replacement_run_id,
+        "restart must expose the planned replacement instead of false-death"
+    );
+
+    // Replay reattaches the exact pane, appends the durable edge, and commits
+    // the claim. The child fixture's replacement process is intentionally not
+    // a supervisor-live run after its owning daemon died, so wait now
+    // converges through the ordinary durable lineage rather than retaining a
+    // stale pending intent forever.
+    let replay = client
+        .post(recovery_url(restarted.addr))
+        .bearer_auth(token(&home))
+        .json(&recovery_body())
+        .send()
+        .await
+        .unwrap();
+    let status = replay.status();
+    let body = replay.text().await.unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "recovery replay status {status}: {body}"
+    );
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        1,
+        "replay must publish exactly one durable replacement edge"
+    );
+    let after_replay = dispatch_wait(&client, restarted.addr, &home).await;
+    assert_eq!(after_replay["generations"][0]["status"], "died");
+    assert_eq!(
+        after_replay["generations"][0]["run_id"],
+        planned.replacement_run_id
+    );
+
+    restarted.terminate();
 }

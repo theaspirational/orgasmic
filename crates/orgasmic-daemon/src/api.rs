@@ -71,7 +71,8 @@ use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, Governance
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     classify_observation, commit_recovery_claim, load_committed_recovery_claim,
-    load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
+    load_recovery_claim, mark_pending_recovery_spawn_started,
+    pending_recovery_claim_has_live_planned_handle, pending_recovery_claim_owns_session,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
     resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
     AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, ObservationClass,
@@ -3402,6 +3403,40 @@ fn dispatch_generation_ledgers(
     generations
 }
 
+/// Recover the one crash-durable wait authority that the tx ledger cannot yet
+/// see: a signed pending recovery claim whose replacement was already spawned
+/// but whose later `ORIGIN=recovery` association was not appended before the
+/// daemon died. The claim is written before spawn and binds the old lineage id
+/// to the planned replacement; only a currently live planned tmux handle makes
+/// it a waiting state. A missing pane is a stale intent, so it deliberately
+/// contributes nothing and cannot keep `dispatch-wait` hanging forever.
+fn dispatch_pending_recovery_intents(
+    state: &ApiState,
+    project_id: &str,
+    generations: &BTreeMap<String, DispatchGenerationLedger>,
+) -> Result<BTreeMap<String, String>, ApiError> {
+    let mut intents = BTreeMap::new();
+    for origin_run_id in generations
+        .values()
+        .flat_map(|generation| generation.run_ids.iter())
+    {
+        let claim = load_recovery_claim(&state.home, project_id, origin_run_id)
+            .map_err(|error| recovery_claim_load_error(origin_run_id, error))?;
+        let Some(claim) = claim else {
+            continue;
+        };
+        // `load_recovery_claim` verifies the claim's daemon MAC and complete
+        // plan. The claim may retain its original worktree path across a
+        // daemon restart, so do not compare it to a freshly-indexed root here:
+        // that would turn a valid durable intent into a false death. Liveness
+        // remains narrow: only its exact planned tmux handle can wait.
+        if pending_recovery_claim_has_live_planned_handle(&claim) {
+            intents.insert(origin_run_id.clone(), claim.replacement_run_id);
+        }
+    }
+    Ok(intents)
+}
+
 async fn post_manager_dispatch_wait(
     State(state): State<ApiState>,
     Json(req): Json<ManagerDispatchWaitRequest>,
@@ -3419,7 +3454,13 @@ async fn post_manager_dispatch_wait(
     // ledger/live scan and retry whenever a finalize/release/report transition
     // crossed the observation. This removes the old stale-ledger + fresh-live
     // false `died` verdict without holding a daemon mutex across filesystem IO.
-    let (generations, live_run_ids, releasing_run_ids, recovering_origin_run_ids) = loop {
+    let (
+        generations,
+        live_run_ids,
+        releasing_run_ids,
+        recovering_origin_run_ids,
+        pending_recovery_intents,
+    ) = loop {
         let release_before = state.release_tasks.snapshot();
         let recovery_before = state.recovery_generation_transitions.snapshot();
         let entries = project_tx_entries(&project.root)?;
@@ -3431,14 +3472,27 @@ async fn post_manager_dispatch_wait(
         {
             continue;
         }
+        let generations = dispatch_generation_ledgers(&entries, &req.project_id);
+        let pending_recovery_intents =
+            dispatch_pending_recovery_intents(&state, &req.project_id, &generations)?;
+        // Claim inspection touches disk, so the recovery epoch must enclose it
+        // too. Otherwise a recovery could be accepted between the first epoch
+        // read and its durable pending-claim write, leaving this response with
+        // neither the in-memory transition nor the crash authority and a
+        // false `died` verdict.
+        let recovery_final = state.recovery_generation_transitions.snapshot();
+        if recovery_after.revision != recovery_final.revision {
+            continue;
+        }
         break (
-            dispatch_generation_ledgers(&entries, &req.project_id),
+            generations,
             live.runs
                 .into_iter()
                 .map(|run| run.run_id)
                 .collect::<BTreeSet<_>>(),
             release_after.active_run_ids,
-            recovery_after.active_origin_run_ids,
+            recovery_final.active_origin_run_ids,
+            pending_recovery_intents,
         );
     };
     let states = req
@@ -3459,24 +3513,32 @@ async fn post_manager_dispatch_wait(
                 status: "reported".into(),
                 run_id: addressed_run_id.clone(),
             },
-            Some(generation)
+            Some(generation) => {
+                let pending_replacement = generation
+                    .run_ids
+                    .iter()
+                    .find_map(|run_id| pending_recovery_intents.get(run_id));
                 if generation.run_ids.iter().any(|run_id| {
                     live_run_ids.contains(run_id)
                         || releasing_run_ids.contains(run_id)
                         || recovering_origin_run_ids.contains(run_id)
-                }) =>
-            {
-                ManagerDispatchGenerationState {
-                    started_tx,
-                    status: "waiting".into(),
-                    run_id: generation.addressed_run_id.clone(),
+                }) || pending_replacement.is_some()
+                {
+                    ManagerDispatchGenerationState {
+                        started_tx,
+                        status: "waiting".into(),
+                        run_id: pending_replacement
+                            .cloned()
+                            .or_else(|| generation.addressed_run_id.clone()),
+                    }
+                } else {
+                    ManagerDispatchGenerationState {
+                        started_tx,
+                        status: "died".into(),
+                        run_id: generation.addressed_run_id.clone(),
+                    }
                 }
             }
-            Some(generation) => ManagerDispatchGenerationState {
-                started_tx,
-                status: "died".into(),
-                run_id: generation.addressed_run_id.clone(),
-            },
         })
         .collect();
     Ok(Json(ManagerDispatchWaitResponse {
@@ -3511,7 +3573,10 @@ async fn post_manager_release_http(
 ) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
     let capability = headers
         .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
-        .and_then(|value| value.to_str().ok());
+        // Header presence is authority selection. A malformed/non-UTF-8
+        // value is an invalid capability, not the absence of one: erasing it
+        // here would let a caller fall through to registry/run-id release.
+        .map(|value| value.to_str().unwrap_or(""));
     post_manager_release_inner(state, req, capability).await
 }
 
@@ -10578,6 +10643,14 @@ async fn execute_run_recover_action(
                     .await
                     .map_err(supervisor_recover_error)?;
             }
+
+            // The replacement now has a live pane/session, but that fresh run
+            // is not yet in the durable dispatch lineage. A crash exactly
+            // here is covered by the signed, spawn-started pending claim: on
+            // restart `dispatch-wait` verifies the live planned handle and
+            // returns waiting until this association is replayed. Keep an
+            // explicit crash boundary for the real restart regression test.
+            crate::recovery_claim::recovery_failpoint("association_pending");
 
             record_recovery_replacement_association(
                 state,
@@ -21004,6 +21077,37 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(refused.status, "refused");
 
+        // HTTP preserves a header even when it is not valid UTF-8. That is
+        // still a presented terminal-authority attempt, never permission to
+        // fall through to the supplied run id.
+        let mut malformed_release_headers = HeaderMap::new();
+        malformed_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_bytes(&[0xfa]).unwrap(),
+        );
+        let malformed = post_manager_release_http(
+            State(state.clone()),
+            malformed_release_headers,
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: None,
+            }),
+        )
+        .await
+        .expect_err("malformed terminal capability must be refused");
+        assert_eq!(malformed.status, StatusCode::FORBIDDEN);
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "a malformed capability header must leave the claimed pane live"
+        );
+
         // A capability header is authoritative. A forged value must not fall
         // through to this run id and release/demote by a generic path.
         let mut forged_release_headers = HeaderMap::new();
@@ -21062,14 +21166,11 @@ pub(crate) mod tests {
         assert_eq!(run.role, "terminal");
         assert!(!run.claimed_manager);
 
-        // A session append can still fail after admission preflight. The
-        // durable lifecycle write happens before the infallible swap, so an
-        // append failure leaves the original terminal role/lease intact.
-        let sessions_dir = project_sessions_dir(&project_root);
-        std::fs::remove_dir_all(&sessions_dir).unwrap();
-        // `append_session` normally recreates a missing directory. A regular
-        // file at that path is the deterministic filesystem failure shape.
-        std::fs::write(&sessions_dir, "not a directory").unwrap();
+        // A session append can still fail after admission preflight. Inject at
+        // the writer boundary itself: the supervisor has a retained append
+        // handle, so filesystem replacement cannot prove this path failed.
+        crate::writer::test_hooks::reset();
+        crate::writer::test_hooks::fail_next_session_append(1);
         let mut append_failure_headers = HeaderMap::new();
         append_failure_headers.insert(
             MANAGER_TERMINAL_CAPABILITY_HEADER,
@@ -21089,6 +21190,11 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(append_failed.status, "refused");
+        assert_eq!(
+            crate::writer::test_hooks::session_append_attempt_count(),
+            1,
+            "the injected lifecycle append boundary must have fired"
+        );
         assert!(
             state
                 .supervisor

@@ -476,7 +476,7 @@ pub fn recovery_claims_root(home: &Home) -> PathBuf {
 /// Env-triggered failpoints for crash/replay tests (`ORGASMIC_RECOVERY_FAILPOINT`).
 /// Comma-separated tokens name durable boundaries such as `pending`,
 /// `spawn_before_jsonl`, each `*_append`, `temp_fsync`, `rename`,
-/// `parent_fsync`, `commit`, `cleanup`, and `response`.
+/// `parent_fsync`, `association_pending`, `commit`, `cleanup`, and `response`.
 pub fn recovery_failpoint(point: &str) {
     let Ok(raw) = std::env::var("ORGASMIC_RECOVERY_FAILPOINT") else {
         return;
@@ -3671,11 +3671,7 @@ pub fn reconcile_pending_claim(
         claim.replacement_runtime_id.clone(),
         boot_id,
     );
-    let tmux_live = claim
-        .planned_tmux_session
-        .as_deref()
-        .is_some_and(tmux_session_exists)
-        || tmux_session_exists(&tmux_session_name(&planned_identity));
+    let tmux_live = pending_recovery_claim_has_live_planned_handle(claim);
     let session_dir = SessionDirectory::open(project_root)?;
     let (session_file, created_for_pending_append) =
         match session_dir.open_path(&claim.replacement_session_path, true) {
@@ -3756,6 +3752,31 @@ pub fn reconcile_pending_claim(
         reattach_existing: has_acquire || tmux_live,
         session_file: Some(session_file),
     }))
+}
+
+/// Whether a durable, already-spawned pending claim still owns its planned
+/// tmux handle. This is deliberately narrower than a recovery claim merely
+/// existing: a claim written before spawn is not liveness, and a spawned claim
+/// whose pane disappeared is a stale intent that dispatch wait must eventually
+/// classify as dead rather than wait forever.
+///
+/// The claim is authenticated by [`load_recovery_claim`] before callers use
+/// this answer. It binds the origin and replacement identities durably across
+/// a daemon crash between acquisition and the later `ORIGIN=recovery` tx.
+pub fn pending_recovery_claim_has_live_planned_handle(claim: &RecoveryClaim) -> bool {
+    if claim.status != RecoveryClaimStatus::Pending || !claim.spawn_started {
+        return false;
+    }
+    let planned_identity = RuntimeIdentity::planned(
+        claim.replacement_run_id.clone(),
+        claim.replacement_runtime_id.clone(),
+        claim_planned_boot_id(claim),
+    );
+    claim
+        .planned_tmux_session
+        .as_deref()
+        .is_some_and(tmux_session_exists)
+        || tmux_session_exists(&tmux_session_name(&planned_identity))
 }
 
 #[derive(Debug)]

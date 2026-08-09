@@ -43,12 +43,16 @@ pub mod test_hooks {
     static SYNC_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
     static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
+    static SESSION_APPEND_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
+    static FAIL_NEXT_SESSION_APPEND: AtomicUsize = AtomicUsize::new(0);
 
     pub fn reset() {
         SYNC_COUNT.store(0, Ordering::SeqCst);
         SYNC_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
         SCAN_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SYNC.store(0, Ordering::SeqCst);
+        SESSION_APPEND_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
+        FAIL_NEXT_SESSION_APPEND.store(0, Ordering::SeqCst);
     }
 
     pub fn sync_count() -> u64 {
@@ -67,9 +71,39 @@ pub mod test_hooks {
         FAIL_NEXT_SYNC.store(count, Ordering::SeqCst);
     }
 
+    /// Inject a failure exactly at the session-lifecycle append boundary.
+    /// Unlike a filesystem replacement, this is reached even when the writer
+    /// has a retained open append handle for the session.
+    pub fn fail_next_session_append(count: usize) {
+        FAIL_NEXT_SESSION_APPEND.store(count, Ordering::SeqCst);
+    }
+
+    pub fn session_append_attempt_count() -> u64 {
+        SESSION_APPEND_ATTEMPT_COUNT.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn before_session_append() -> Result<()> {
+        SESSION_APPEND_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst);
+        if FAIL_NEXT_SESSION_APPEND
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            bail!("injected session lifecycle append failure");
+        }
+        Ok(())
+    }
+
     pub(crate) fn before_sync() -> Result<()> {
         SYNC_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst);
-        if FAIL_NEXT_SYNC.fetch_sub(1, Ordering::SeqCst) == 1 {
+        if FAIL_NEXT_SYNC
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
             bail!("injected tx append fsync failure");
         }
         Ok(())
@@ -1621,6 +1655,8 @@ fn append_session_inner(
             handles.get_mut(run_id).expect("just inserted")
         }
     };
+    #[cfg(test)]
+    test_hooks::before_session_append()?;
     let seq = writer
         .append(kind, event)
         .with_context(|| format!("append session {}", session_path.display()))?;
