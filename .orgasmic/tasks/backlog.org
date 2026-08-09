@@ -5320,26 +5320,3 @@ fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
 The verb deletes directories on the operator's machine, it is installed, and the
 only argument for its safety is one nobody has run.
 
-* BACKLOG TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest    :daemon:cli:manager:hardening:
-:PROPERTIES:
-:ID: TASK-D6N77.1
-:PRIORITY: P1
-:FIX_SUBTASK: t
-:END:
-
-** Description
-Fix every BLOCK SHIP finding from Sol/high review generation =tx-20260809-orgasmic-5580=. The full durable report is =.orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt= and the actionable finding tx entries are =5582= through =5590=.
-
-The normal app-terminal flow must work through plain =orgasmic manager register= after Claude Code or Codex CLI starts. Claim authority must be bound to the calling run and atomically participate in the one-manager-per-project supervisor lease across launch, external register, release, restart, and reattach. A claimed terminal must be represented consistently in manager state/UI.
-
-Automated pane delivery must remain =unsupported= unless the transport can prove a fresh, revision-bound foreground provider and bounded composer and condition the send on that same state. Never advertise fail-closed behavior over stale rmux foreground state or a tmux check-then-paste gap. Typed wake outcomes and stable distinct CLI exit codes are required.
-
-Move =dispatch-wait= to one daemon-owned generation authority or otherwise make the release-before-terminal-tx boundary and already-closed generations race-free. Preserve reported, died, and timeout outcomes by =started_tx= and ignore tmux =[pid-gone]=.
-
-** Acceptance
-1. All eight review findings are closed with targeted tests.
-2. Isolated-daemon concurrency tests cover claim versus launch/register, caller identity, unclaim/release/restart, and wait finalization races.
-3. Non-billed pane tests prove shell-before/provider and shell-after/provider never receive bytes; unsupported is the honest result where atomic transport proof cannot be provided.
-4. A real dispatch proof shows =dispatch-wait= ignores =[pid-gone]= and returns reported without the release race.
-5. Shipped router/convention/help describe the normal automatic claim flow and exact outcome/exit contract.
-6. No live runtime or LaunchAgent is touched during implementation.

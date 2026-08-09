@@ -1,3 +1,30 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-D6N77.1 repair rejected manager wake: make claim authority, pane delivery, and generation waiting honest :daemon:cli:manager:hardening:
+:PROPERTIES:
+:ID: TASK-D6N77.1
+:PRIORITY: P1
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Fix every BLOCK SHIP finding from Sol/high review generation =tx-20260809-orgasmic-5580=. The full durable report is =.orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt= and the actionable finding tx entries are =5582= through =5590=.
+
+The normal app-terminal flow must work through plain =orgasmic manager register= after Claude Code or Codex CLI starts. Claim authority must be bound to the calling run and atomically participate in the one-manager-per-project supervisor lease across launch, external register, release, restart, and reattach. A claimed terminal must be represented consistently in manager state/UI.
+
+Automated pane delivery must remain =unsupported= unless the transport can prove a fresh, revision-bound foreground provider and bounded composer and condition the send on that same state. Never advertise fail-closed behavior over stale rmux foreground state or a tmux check-then-paste gap. Typed wake outcomes and stable distinct CLI exit codes are required.
+
+Move =dispatch-wait= to one daemon-owned generation authority or otherwise make the release-before-terminal-tx boundary and already-closed generations race-free. Preserve reported, died, and timeout outcomes by =started_tx= and ignore tmux =[pid-gone]=.
+
+*Manager plan correction after the blocked first fix pass.* A zero-byte guarantee is impossible for a manually started provider over tmux because process exit can race any check-then-paste. The honest shippable invariant is safe-by-construction delivery: remove arbitrary =--input= entirely; inject only the fixed marker =: 'ORGASMIC_MANAGER_WAKE_V1'=; teach the injected entry router to treat that marker exactly as =/orgasmic resume=. In Claude/Codex it is a resume request. If delivery races into zsh/bash, it is the =:= builtin with one inert literal argument and has no side effects. Foreground/composer proof remains a UX/targeting gate, not the safety authority. Prove the exact bytes and shell behavior in tests.
+
+** Acceptance
+1. All eight review findings are closed or explicitly superseded by the fixed-marker invariant, with targeted tests.
+2. Plain registration is caller-bound and singleton-safe across claim, launch, external register, release, restart, and state reporting.
+3. The only pane-injectable payload is exactly =: 'ORGASMIC_MANAGER_WAKE_V1'= plus submit; no user/project/task text reaches pane input. Real zsh and bash tests prove it is a side-effect-free no-op before provider start and after provider exit; Claude and Codex router tests prove it maps to resume.
+4. Foreground/composer mismatch and busy states remain typed refusals; unsupported is returned where the transport cannot deliver the fixed marker reliably.
+5. =dispatch-wait= uses daemon-owned generation authority and is race-free across release, report, and close while ignoring =[pid-gone]=.
+6. Typed wake and wait outcomes have stable distinct CLI exit codes and documented help.
+7. Isolated-daemon concurrency/lifecycle tests and a real non-billed dispatch-wait proof pass.
+8. No live runtime or LaunchAgent is touched during implementation.
