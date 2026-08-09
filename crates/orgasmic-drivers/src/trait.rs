@@ -726,14 +726,22 @@ pub struct UserInputRequest {
     pub input: String,
 }
 
+/// The only bytes an automated manager wake may put in a pane.
+///
+/// This is intentionally a shell no-op as well as an entry-router resume
+/// marker. A provider can consume it as a resume request; a provider exit in
+/// the final tmux gap can only leave the shell executing `:` with one literal
+/// argument. Never add user, task, or project content to this value.
+pub const MANAGER_WAKE_MARKER: &str = ": 'ORGASMIC_MANAGER_WAKE_V1'";
+
 /// A daemon-originated manager wake.
 ///
-/// Neither bundled pane transport has a conditional "send only if this exact
-/// foreground composer revision is still live" primitive.  They must return
-/// `Unsupported` rather than turn this request into a check-then-paste race.
+/// The provider is an attested claim property, not pane input. The payload is
+/// always [`MANAGER_WAKE_MARKER`] and is deliberately absent from this request
+/// so no caller can alter the injected bytes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagerWakeRequest {
-    pub input: String,
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -875,6 +883,10 @@ pub enum DriverError {
     NotReattachable,
     #[error("operation not supported by this driver: {0}")]
     Unsupported(&'static str),
+    #[error("manager wake provider does not match the claimed provider")]
+    ManagerWakeProviderMismatch,
+    #[error("manager wake pane is unavailable")]
+    ManagerWakeUnavailable,
     #[error("babysitter tool '{0}' is not in the allowed set")]
     BabysitterToolBlocked(String),
     #[error("worker tool '{0}' is not callable on this run kind")]
@@ -912,6 +924,29 @@ pub fn implementer_tool_is_allowed(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn manager_wake_marker_is_exact_and_a_real_bash_zsh_noop() {
+        assert_eq!(
+            MANAGER_WAKE_MARKER.as_bytes(),
+            b": 'ORGASMIC_MANAGER_WAKE_V1'"
+        );
+        for shell in ["/bin/bash", "/bin/zsh"] {
+            let output = Command::new(shell)
+                .args(["-c", "set -e; : 'ORGASMIC_MANAGER_WAKE_V1'; printf '%s' ok"])
+                .output()
+                .unwrap_or_else(|error| panic!("run {shell}: {error}"));
+            assert!(
+                output.status.success(),
+                "{shell} rejected fixed wake marker"
+            );
+            assert_eq!(
+                output.stdout, b"ok",
+                "{shell} marker changed shell behavior"
+            );
+        }
+    }
 
     #[test]
     fn babysitter_tool_set_is_closed() {

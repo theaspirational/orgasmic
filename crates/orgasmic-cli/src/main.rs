@@ -949,11 +949,10 @@ enum ManagerCmd {
     /// Clear an orphaned dispatch lease (no live run). Never needs a daemon
     /// restart; refuses when a live run still holds the lease.
     LeaseRelease(manager::LeaseReleaseArgs),
-    /// Register a manager session started outside the app so it appears in
-    /// Running Agents as a supervised run (dec_3Y2E1). A no-op when
-    /// `ORGASMIC_RUN_ID` is already set (a daemon-launched PTY).
+    /// Register a manager session started outside the app; in an app-created
+    /// terminal, plain registration atomically claims the calling provider.
     Register(manager::ManagerRegisterArgs),
-    /// Send a turn to the claimed app-terminal manager, refusing unsafe panes.
+    /// Send the fixed inert resume marker to the claimed manager terminal.
     Wake(manager::ManagerWakeArgs),
     /// Explicit deregistration for `register` (no-op if nothing is registered).
     Release(manager::ManagerReleaseArgs),

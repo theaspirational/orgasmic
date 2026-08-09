@@ -496,22 +496,21 @@ pub struct ManagerRegisterArgs {
     /// Project id; defaults to the project containing the cwd.
     #[arg(long)]
     pub project: Option<String>,
-    /// Claim this app-created custom terminal as the manager target after the
-    /// named provider was started manually inside it. Without this flag an
-    /// existing `ORGASMIC_RUN_ID` retains the worker/no-op behavior.
-    #[arg(long, value_parser = ["claude", "codex"])]
-    pub provider: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Wake outcomes use stable exits: accepted=0, busy=4, unavailable=5, mismatch=6, unsupported=7.")]
 pub struct ManagerWakeArgs {
-    /// Text for the next manager turn.
-    #[arg(long)]
-    pub input: String,
     /// Project id; defaults to the project containing the cwd.
     #[arg(long)]
     pub project: Option<String>,
 }
+
+const MANAGER_WAKE_BUSY_EXIT: i32 = 4;
+const MANAGER_WAKE_UNAVAILABLE_EXIT: i32 = 5;
+const MANAGER_WAKE_MISMATCH_EXIT: i32 = 6;
+const MANAGER_WAKE_UNSUPPORTED_EXIT: i32 = 7;
 
 #[derive(Args, Debug, Clone)]
 pub struct ManagerReleaseArgs {
@@ -1424,8 +1423,11 @@ struct ManagerRegisterHttpRequest {
     project_id: String,
     pid: Option<u32>,
     holder_token: Option<String>,
+    /// Set only by an app-created terminal. The daemon checks this complete
+    /// identity against the live caller before it can claim the manager lease.
     #[serde(skip_serializing_if = "Option::is_none")]
-    terminal_run_id: Option<String>,
+    caller_identity: Option<RuntimeIdentity>,
+    /// Derived from the invoking process ancestry, never a user flag.
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
 }
@@ -1517,6 +1519,60 @@ fn persist_manager_holder_token(path: Option<&Path>, token: &str) -> Result<bool
     Ok(true)
 }
 
+fn manager_runtime_identity_from_env() -> Option<RuntimeIdentity> {
+    let value = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    Some(RuntimeIdentity {
+        run_id: value("ORGASMIC_RUN_ID")?,
+        runtime_id: value("ORGASMIC_RUNTIME_ID")?,
+        boot_id: value("ORGASMIC_BOOT_ID")?,
+    })
+}
+
+fn provider_from_process_command(command: &str) -> Option<&'static str> {
+    let name = command.trim().rsplit('/').next()?.to_ascii_lowercase();
+    match name.as_str() {
+        "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        _ => None,
+    }
+}
+
+/// The app-created terminal contains a manually started provider. Walk the
+/// short parent chain from this CLI process to attest it without accepting a
+/// caller-selected `--provider` or target run id.
+fn attest_calling_provider() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let mut pid = unsafe { libc::getppid() };
+        for _ in 0..6 {
+            if pid <= 1 {
+                return None;
+            }
+            let output = Command::new("/bin/ps")
+                .args(["-o", "ppid=,comm=", "-p", &pid.to_string()])
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let line = String::from_utf8_lossy(&output.stdout);
+            let mut fields = line.split_whitespace();
+            let parent = fields.next()?.parse::<libc::pid_t>().ok()?;
+            let command = fields.next()?;
+            if let Some(provider) = provider_from_process_command(command) {
+                return Some(provider.to_string());
+            }
+            pid = parent;
+        }
+    }
+    None
+}
+
 /// External manager self-registration (dec_3Y2E1). The entry router runs
 /// this unconditionally on every manager startup; when `ORGASMIC_RUN_ID` is
 /// already set (a PTY the daemon launched, per drivers exporting it into
@@ -1527,39 +1583,43 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
-    if let Ok(run_id) = std::env::var("ORGASMIC_RUN_ID") {
-        let run_id = run_id.trim();
-        if !run_id.is_empty() {
-            if let Some(provider) = args.provider.as_deref() {
-                let client = DaemonClient::from_home_autostart(home)?;
-                let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-                let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
-                    "/manager/register",
-                    &ManagerRegisterHttpRequest {
-                        project_id: project_id.clone(),
-                        pid: None,
-                        holder_token: None,
-                        terminal_run_id: Some(run_id.to_string()),
-                        provider: Some(provider.into()),
-                    },
-                ))?;
-                match response.status.as_str() {
-                    "claimed" => println!(
-                        "claimed terminal manager for {project_id} as {run_id} ({provider})"
-                    ),
-                    "refused" => bail!(
-                        "{}",
-                        response
-                            .message
-                            .unwrap_or_else(|| "manager terminal claim refused".into())
-                    ),
-                    other => bail!("unexpected manager terminal claim status: {other}"),
-                }
-                return Ok(());
-            }
-            println!("already supervised as {run_id}; nothing to do");
-            return Ok(());
+    if std::env::var("ORGASMIC_RUN_ID").is_ok() {
+        let caller_identity = manager_runtime_identity_from_env().ok_or_else(|| {
+            anyhow::anyhow!(
+                "app terminal is missing ORGASMIC_RUNTIME_ID/ORGASMIC_BOOT_ID; cannot bind manager claim to this run"
+            )
+        })?;
+        let provider = attest_calling_provider().ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not attest a manually started Claude or Codex parent process; start the provider in this app terminal before registering"
+            )
+        })?;
+        let client = DaemonClient::from_home_autostart(home)?;
+        let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+        let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
+            "/manager/register",
+            &ManagerRegisterHttpRequest {
+                project_id: project_id.clone(),
+                pid: None,
+                holder_token: None,
+                caller_identity: Some(caller_identity.clone()),
+                provider: Some(provider.clone()),
+            },
+        ))?;
+        match response.status.as_str() {
+            "claimed" => println!(
+                "claimed terminal manager for {project_id} as {} ({provider})",
+                caller_identity.run_id
+            ),
+            "refused" => bail!(
+                "{}",
+                response
+                    .message
+                    .unwrap_or_else(|| "manager terminal claim refused".into())
+            ),
+            other => bail!("unexpected manager terminal claim status: {other}"),
         }
+        return Ok(());
     }
     let pid = terminal_session_leader_pid();
     let token_path = pid
@@ -1578,7 +1638,7 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
             project_id: project_id.clone(),
             pid,
             holder_token,
-            terminal_run_id: None,
+            caller_identity: None,
             provider: None,
         },
     ))?;
@@ -1621,7 +1681,6 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
 #[derive(Debug, Serialize)]
 struct ManagerWakeHttpRequest {
     project_id: String,
-    input: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1641,23 +1700,21 @@ pub fn cmd_manager_wake(home: &Home, args: ManagerWakeArgs) -> Result<()> {
     };
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-    let response: ManagerWakeHttpResponse = runtime.block_on(client.post_json(
-        "/manager/wake",
-        &ManagerWakeHttpRequest {
-            project_id,
-            input: args.input,
-        },
-    ))?;
+    let response: ManagerWakeHttpResponse = runtime
+        .block_on(client.post_json("/manager/wake", &ManagerWakeHttpRequest { project_id }))?;
     println!(
         "manager wake: {} run_id={} {}",
         response.status,
         response.run_id.as_deref().unwrap_or("-"),
         response.message.as_deref().unwrap_or("")
     );
-    if response.status == "accepted" {
-        Ok(())
-    } else {
-        bail!("manager wake {}", response.status)
+    match response.status.as_str() {
+        "accepted" => Ok(()),
+        "busy" => std::process::exit(MANAGER_WAKE_BUSY_EXIT),
+        "unavailable" => std::process::exit(MANAGER_WAKE_UNAVAILABLE_EXIT),
+        "mismatch" => std::process::exit(MANAGER_WAKE_MISMATCH_EXIT),
+        "unsupported" => std::process::exit(MANAGER_WAKE_UNSUPPORTED_EXIT),
+        other => bail!("unexpected manager wake status: {other}"),
     }
 }
 
@@ -1666,6 +1723,8 @@ struct ManagerReleaseHttpRequest {
     project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1681,10 +1740,10 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
-    let run_id = std::env::var("ORGASMIC_RUN_ID")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let caller_identity = manager_runtime_identity_from_env();
+    let run_id = caller_identity
+        .as_ref()
+        .map(|identity| identity.run_id.clone());
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let response: ManagerReleaseHttpResponse = runtime.block_on(client.post_json(
@@ -1692,6 +1751,7 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         &ManagerReleaseHttpRequest {
             project_id: project_id.clone(),
             run_id,
+            caller_identity,
         },
     ))?;
 
@@ -2900,54 +2960,62 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
 /// worker PID, and a missing PID is not evidence that the generation ended.
 pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-wait")?;
+    let project_id = read_project_id(&project_root)?;
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let requested = args.started_tx.into_iter().collect::<BTreeSet<_>>();
     let started = std::time::Instant::now();
     loop {
-        let open = scan_open_dispatches(&project_root)?;
-        let known = open
+        #[derive(Serialize)]
+        struct Request<'a> {
+            project_id: &'a str,
+            started_tx: Vec<&'a str>,
+        }
+        #[derive(Deserialize)]
+        struct Generation {
+            started_tx: String,
+            status: String,
+            run_id: Option<String>,
+        }
+        #[derive(Deserialize)]
+        struct Response {
+            generations: Vec<Generation>,
+        }
+        let response: Response = runtime.block_on(client.post_json(
+            "/manager/dispatch-wait",
+            &Request {
+                project_id: &project_id,
+                started_tx: requested.iter().map(String::as_str).collect(),
+            },
+        ))?;
+        let unknown = response
+            .generations
             .iter()
-            .map(|record| record.tx_id.clone())
-            .collect::<BTreeSet<_>>();
-        let unknown = requested.iter().find(|tx| !known.contains(*tx));
-        if let Some(tx) = unknown {
+            .find(|generation| generation.status == "unknown");
+        if let Some(generation) = unknown {
+            let tx = &generation.started_tx;
             bail!("dispatch-wait: no open dispatch generation {tx}");
         }
-        let live = runtime.block_on(fetch_live_runs(&client))?;
-        let mut all_reported = true;
-        for record in open
-            .iter()
-            .filter(|record| requested.contains(&record.tx_id))
-        {
-            if record.reported {
-                continue;
-            }
-            all_reported = false;
-            let run_live = record
-                .run_id
-                .as_deref()
-                .is_some_and(|run_id| live.iter().any(|run| run.run_id == run_id));
-            if !run_live {
+        for generation in &response.generations {
+            if generation.status == "died" {
                 println!(
                     "dispatch-wait: died TX_ID={} RUN_ID={}",
-                    record.tx_id,
-                    record.run_id.as_deref().unwrap_or("-")
+                    generation.started_tx,
+                    generation.run_id.as_deref().unwrap_or("-")
                 );
-                // Distinct non-zero status for a run that vanished without its
-                // worker report. Do not use PID state here.
                 std::process::exit(2);
             }
         }
-        if all_reported {
-            for record in open
-                .iter()
-                .filter(|record| requested.contains(&record.tx_id))
-            {
+        if response
+            .generations
+            .iter()
+            .all(|generation| generation.status == "reported")
+        {
+            for generation in &response.generations {
                 println!(
                     "dispatch-wait: reported TX_ID={} RUN_ID={}",
-                    record.tx_id,
-                    record.run_id.as_deref().unwrap_or("-")
+                    generation.started_tx,
+                    generation.run_id.as_deref().unwrap_or("-")
                 );
             }
             return Ok(());

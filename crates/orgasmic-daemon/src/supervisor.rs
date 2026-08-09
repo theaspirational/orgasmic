@@ -284,6 +284,8 @@ pub enum SupervisorError {
     },
     #[error("run not found: {0}")]
     RunNotFound(String),
+    #[error("manager terminal claim refused: {0}")]
+    ManagerClaimRefused(String),
     /// The record IS present and some other authority is already releasing it
     /// (`explicit_release_in_progress` / `early_exit_release_taken`).
     ///
@@ -1130,6 +1132,10 @@ struct RunRecord {
     kind: RunKind,
     worker_id: String,
     role: String,
+    /// Present while a custom app terminal occupies the project manager lease.
+    /// The original terminal task id is retained so `manager release` can
+    /// demote it without tearing down the pane.
+    manager_terminal_claim: Option<ManagerTerminalClaim>,
     transport: String,
     harness: Option<String>,
     project_id: Option<String>,
@@ -1259,6 +1265,12 @@ struct RunRecord {
     /// run: dropping the producer closes the channel and the receiver owns the
     /// sole normal terminal boundary.
     pid_exit_shutdown_in_progress: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ManagerTerminalClaim {
+    original_task_id: String,
+    provider: String,
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -1904,6 +1916,7 @@ impl Supervisor {
                 kind,
                 worker_id: req.worker_id.clone(),
                 role: req.role.clone(),
+                manager_terminal_claim: None,
                 transport: transport.clone(),
                 harness: harness.clone(),
                 project_id: req.project_id.clone(),
@@ -2638,6 +2651,7 @@ impl Supervisor {
             kind,
             worker_id: worker_id.clone(),
             role: role.clone(),
+            manager_terminal_claim: None,
             transport,
             harness,
             project_id,
@@ -2946,14 +2960,144 @@ impl Supervisor {
         Ok(ack)
     }
 
-    /// Provider-bound automation path for a manager that claimed a terminal.
-    /// The driver, not this API layer, owns the last-moment foreground-process
-    /// and composer checks because only the pane transport can make them near
-    /// the paste boundary.
+    /// Atomically promote the calling custom terminal into the project's one
+    /// manager lease. The caller identity is checked against the live record
+    /// under the same lock that moves its lease, so a local client cannot name
+    /// a different terminal and claim it.
+    pub async fn claim_manager_terminal(
+        &self,
+        project_id: &str,
+        caller_identity: &RuntimeIdentity,
+        provider: &str,
+    ) -> Result<String, SupervisorError> {
+        if !matches!(provider, "claude" | "codex") {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "provider could not be attested as claude or codex".into(),
+            ));
+        }
+        let mut g = self.inner.lock().await;
+        let (old_task_id, kind) = {
+            let rec = g
+                .runs
+                .get(&caller_identity.run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(caller_identity.run_id.clone()))?;
+            self.check_ownership(rec, caller_identity)?;
+            if rec.project_id.as_deref() != Some(project_id)
+                || rec.role != "terminal"
+                || !matches!(
+                    rec.transport.as_str(),
+                    "tmux" | "tmux-tui" | "rmux" | "rmux-tui"
+                )
+            {
+                return Err(SupervisorError::ManagerClaimRefused(
+                    format!(
+                        "only the calling live app-created tmux/rmux terminal may be claimed (project={:?} role={} transport={})",
+                        rec.project_id, rec.role, rec.transport
+                    ),
+                ));
+            }
+            (rec.task_id.clone(), rec.kind)
+        };
+        let old_key = lease_key(Some(project_id), &old_task_id, kind);
+        let manager_task_id = format!("manager.launch:{project_id}");
+        let manager_key = lease_key(Some(project_id), &manager_task_id, kind);
+        if let Some(existing) = g.lease(&manager_key) {
+            return Err(SupervisorError::LeaseHeld {
+                task_id: manager_task_id,
+                kind,
+                run_id: existing.clone(),
+            });
+        }
+        if g.lease(&old_key) != Some(&caller_identity.run_id) {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "calling terminal no longer owns its supervisor lease".into(),
+            ));
+        }
+        // `admit_live_run` is the sole lease writer. Admit the manager key
+        // before removing the terminal key; all conflict checks happen under
+        // this one lock, so launch/register cannot interleave a second manager.
+        let _admitted = g.admit_live_run(LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &manager_key,
+            run_id: &caller_identity.run_id,
+            task_id: &manager_task_id,
+            kind,
+            worktree: None,
+        })?;
+        let removed = g.remove_lease(&old_key);
+        debug_assert_eq!(removed.as_deref(), Some(caller_identity.run_id.as_str()));
+        let rec = g
+            .runs
+            .get_mut(&caller_identity.run_id)
+            .expect("claim holds the live terminal record lock");
+        rec.task_id = manager_task_id;
+        rec.role = "manager".into();
+        rec.manager_terminal_claim = Some(ManagerTerminalClaim {
+            original_task_id: old_task_id,
+            provider: provider.into(),
+        });
+        Ok(caller_identity.run_id.clone())
+    }
+
+    /// Demote a claimed custom terminal back to its original independent
+    /// terminal lease without closing its pane. Generic run release still
+    /// removes whichever lease the run currently holds.
+    pub async fn unclaim_manager_terminal(
+        &self,
+        project_id: &str,
+        caller_identity: &RuntimeIdentity,
+    ) -> Result<Option<String>, SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let (manager_task_id, original_task_id, kind) = {
+            let rec = match g.runs.get(&caller_identity.run_id) {
+                Some(rec) => rec,
+                None => return Ok(None),
+            };
+            self.check_ownership(rec, caller_identity)?;
+            if rec.project_id.as_deref() != Some(project_id) {
+                return Ok(None);
+            }
+            let Some(claim) = rec.manager_terminal_claim.as_ref() else {
+                return Ok(None);
+            };
+            (
+                rec.task_id.clone(),
+                claim.original_task_id.clone(),
+                rec.kind,
+            )
+        };
+        let manager_key = lease_key(Some(project_id), &manager_task_id, kind);
+        let terminal_key = lease_key(Some(project_id), &original_task_id, kind);
+        if g.lease(&manager_key) != Some(&caller_identity.run_id) {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "claimed terminal no longer owns the manager lease".into(),
+            ));
+        }
+        let _admitted = g.admit_live_run(LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &terminal_key,
+            run_id: &caller_identity.run_id,
+            task_id: &original_task_id,
+            kind,
+            worktree: None,
+        })?;
+        let removed = g.remove_lease(&manager_key);
+        debug_assert_eq!(removed.as_deref(), Some(caller_identity.run_id.as_str()));
+        let rec = g
+            .runs
+            .get_mut(&caller_identity.run_id)
+            .expect("unclaim holds the live terminal record lock");
+        rec.task_id = original_task_id;
+        rec.role = "terminal".into();
+        rec.manager_terminal_claim = None;
+        Ok(Some(caller_identity.run_id.clone()))
+    }
+
+    /// Provider-bound automation path for a claimed terminal. No caller input
+    /// reaches the driver: transports can send only the inert fixed marker.
     pub async fn send_manager_wake(
         &self,
         run_id: &str,
-        input: String,
         caller_identity: &RuntimeIdentity,
     ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
         let ack = {
@@ -2963,11 +3107,16 @@ impl Supervisor {
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
             self.check_ownership(rec, caller_identity)?;
+            let provider = rec
+                .manager_terminal_claim
+                .as_ref()
+                .map(|claim| claim.provider.clone())
+                .ok_or_else(|| {
+                    SupervisorError::ManagerClaimRefused("run is not a claimed terminal".into())
+                })?;
             let ack = rec
                 .control
-                .send_manager_wake(ManagerWakeRequest {
-                    input: input.clone(),
-                })
+                .send_manager_wake(ManagerWakeRequest { provider })
                 .await?;
             if ack.accepted {
                 rec.last_input_at = Instant::now();
@@ -2975,7 +3124,10 @@ impl Supervisor {
             ack
         };
         if ack.accepted {
-            if let Err(e) = self.record_composer_send(run_id, &input).await {
+            if let Err(e) = self
+                .record_composer_send(run_id, orgasmic_drivers::r#trait::MANAGER_WAKE_MARKER)
+                .await
+            {
                 warn!(error = %e, run_id, "manager wake recording failed");
             }
         }
@@ -3324,6 +3476,10 @@ impl Supervisor {
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
                 dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
+                claimed_manager_provider: rec
+                    .manager_terminal_claim
+                    .as_ref()
+                    .map(|claim| claim.provider.clone()),
             })
             .collect();
         SupervisorSnapshot {
@@ -4678,6 +4834,11 @@ pub struct RunSummary {
     pub stdout_path: Option<PathBuf>,
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
+    /// Present exactly when this live run is a custom terminal promoted into
+    /// the project's manager lease. This lets the state/UI distinguish it from
+    /// an app-launched manager without maintaining a second claim map.
+    #[serde(default)]
+    pub claimed_manager_provider: Option<String>,
 }
 
 fn make_run_id(kind: &RunKind) -> String {
@@ -15755,6 +15916,7 @@ mod tests {
             kind: RunKind::Worker,
             worker_id: "w".into(),
             role: "implementer".into(),
+            manager_terminal_claim: None,
             transport: "subprocess".into(),
             harness: None,
             project_id: None,

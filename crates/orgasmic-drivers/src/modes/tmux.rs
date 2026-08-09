@@ -596,9 +596,42 @@ impl DriverControl for TmuxTuiControl {
 
     async fn send_manager_wake(
         &mut self,
-        _req: ManagerWakeRequest,
+        req: ManagerWakeRequest,
     ) -> Result<UserInputAck, DriverError> {
-        Err(DriverError::Unsupported("manager_wake requires conditional foreground delivery"))
+        if self.inert {
+            return Err(DriverError::Unsupported("manager_wake"));
+        }
+        // This remains a targeting/UX proof: it refuses a busy, unknown, or
+        // mismatched provider. It is not the byte-safety authority — tmux has
+        // no conditional paste, so the fixed marker below is safe even when
+        // the provider exits after this check.
+        match tmux_provider_ready(&self.session_name, &req.provider).await? {
+            true => {}
+            false => {
+                return Ok(UserInputAck {
+                    accepted: false,
+                    message: Some("claimed provider is busy or not at its composer".into()),
+                });
+            }
+        }
+        paste_text_into_pane(
+            &self.session_name,
+            crate::r#trait::MANAGER_WAKE_MARKER,
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        send_keys(
+            &self.session_name,
+            &[String::from("Enter")],
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        Ok(UserInputAck {
+            accepted: true,
+            message: None,
+        })
     }
 
     async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -922,6 +955,8 @@ struct TmuxSpawnPlan {
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
     run_id: String,
+    runtime_id: String,
+    boot_id: String,
     /// Harness-specific environment exported into the spawned pane. Carried on
     /// the plan (not applied at the tmux call site) so the stamp a transcript
     /// finder depends on is provable without spawning tmux.
@@ -1080,6 +1115,8 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
+        runtime_id: ctx.identity.runtime_id.clone(),
+        boot_id: ctx.identity.boot_id.clone(),
         harness_env: harness_launch_env(harness),
         native_resume_mode: cfg.native_resume_mode,
         trusted_provider_identity: cfg.trusted_provider_identity.clone(),
@@ -1911,6 +1948,8 @@ async fn spawn_tmux_session(
     }
 
     let run_id_env = format!("ORGASMIC_RUN_ID={}", plan.run_id);
+    let runtime_id_env = format!("ORGASMIC_RUNTIME_ID={}", plan.runtime_id);
+    let boot_id_env = format!("ORGASMIC_BOOT_ID={}", plan.boot_id);
 
     // orgasmic:TASK-RKTH1
     // Everything below goes into one imsg. Count it before tmux does, and move
@@ -1937,6 +1976,10 @@ async fn spawn_tmux_session(
             TMUX_SESSION_ROWS,
             "-e",
             run_id_env.as_str(),
+            "-e",
+            runtime_id_env.as_str(),
+            "-e",
+            boot_id_env.as_str(),
         ];
         for pair in &harness_env {
             framing.push("-e");
@@ -1967,6 +2010,8 @@ async fn spawn_tmux_session(
         "-e",
     ])
     .arg(&run_id_env);
+    tmux.arg("-e").arg(&runtime_id_env);
+    tmux.arg("-e").arg(&boot_id_env);
     // orgasmic:TASK-GT91X
     for (key, value) in &plan.harness_env {
         tmux.arg("-e").arg(format!("{key}={value}"));
@@ -2573,7 +2618,6 @@ async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[cfg(test)]
 pub(crate) fn provider_composer_ready(pane: &str, provider: &str) -> bool {
     // Keep this narrower than the existing generic human-input detector.  The
     // provider identity comes from the foreground process; this only verifies
@@ -2590,6 +2634,69 @@ pub(crate) fn provider_composer_ready(pane: &str, provider: &str) -> bool {
         }),
         _ => false,
     }
+}
+
+/// Fresh tmux foreground probe used only to target the fixed inert marker.
+/// tmux cannot make the subsequent paste conditional, which is why this
+/// function must never be described as a shell-byte safety guarantee.
+async fn tmux_provider_ready(session: &str, provider: &str) -> Result<bool, DriverError> {
+    if !matches!(provider, "claude" | "codex") {
+        return Err(DriverError::ManagerWakeProviderMismatch);
+    }
+    let pane_pid = tmux_async_command()
+        .args(["display-message", "-p", "-t", session, "#{pane_pid}"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("tmux pane pid: {e}")))?;
+    if !pane_pid.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let pane_pid = String::from_utf8_lossy(&pane_pid.stdout).trim().to_string();
+    if pane_pid.parse::<u32>().is_err() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let foreground = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "tpgid=", "-p", &pane_pid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps tpgid: {e}")))?;
+    if !foreground.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let tpgid = String::from_utf8_lossy(&foreground.stdout)
+        .trim()
+        .to_string();
+    if tpgid.parse::<u32>().is_err() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let executable = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "comm=", "-p", &tpgid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps foreground executable: {e}")))?;
+    if !executable.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let executable = String::from_utf8_lossy(&executable.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    if !executable
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name == provider)
+    {
+        return Err(DriverError::ManagerWakeProviderMismatch);
+    }
+    Ok(provider_composer_ready(
+        &capture_pane_visible(session).await?,
+        provider,
+    ))
 }
 
 /// True when cursor-agent argv delivery still needs a startup-only trust
@@ -3692,6 +3799,8 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-fork-gap".into(),
+            runtime_id: "runtime-fork-gap".into(),
+            boot_id: "boot-test".into(),
             harness_env: Vec::new(),
             native_resume_mode: true,
             trusted_provider_identity: Some("claude".into()),
@@ -5104,6 +5213,8 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-input-ready".into(),
+            runtime_id: "runtime-input-ready".into(),
+            boot_id: "boot-test".into(),
             harness_env: Vec::new(),
             native_resume_mode: false,
             trusted_provider_identity: None,
@@ -5410,6 +5521,8 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-rkth1".into(),
+            runtime_id: "runtime-rkth1".into(),
+            boot_id: "boot-test".into(),
             harness_env: Vec::new(),
             native_resume_mode: false,
             trusted_provider_identity: None,

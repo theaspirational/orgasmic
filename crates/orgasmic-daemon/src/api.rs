@@ -30,11 +30,12 @@ use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
-    lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
-    scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
-    Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
-    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
-    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
+    lifecycle_stage_file_name, parse_tx_file, project_sessions_dir, read_session_file,
+    resolve_loader, scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading,
+    HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
+    ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
+    SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -426,6 +427,19 @@ impl ReleaseTaskTracker {
         self.inner.state.borrow().closed
     }
 
+    /// A release accepted by the daemon but not yet settled. Dispatch waiting
+    /// treats this as live: the terminal tx may be in the intentional
+    /// release-before-append gap, so absence from the supervisor alone is not
+    /// evidence of worker death.
+    pub fn is_in_flight(&self, run_id: &str) -> bool {
+        self.inner
+            .state
+            .borrow()
+            .in_flight
+            .values()
+            .any(|active| active == run_id)
+    }
+
     pub fn close(&self) {
         self.inner.state.send_modify(|state| state.closed = true);
     }
@@ -674,6 +688,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/manager/action", post(post_manager_action))
         .route("/manager/register", post(post_manager_register))
         .route("/manager/wake", post(post_manager_wake))
+        .route("/manager/dispatch-wait", post(post_manager_dispatch_wait))
         .route("/manager/release", post(post_manager_release))
         .route("/manager/state", get(get_manager_state))
         // orgasmic:TASK-3CM0Q
@@ -2914,10 +2929,12 @@ pub struct ManagerRegisterRequest {
     /// per terminal session and presents it on refresh.
     #[serde(default)]
     pub holder_token: Option<String>,
-    /// Present only when a manually-started provider in an app-created custom
-    /// terminal is claiming that terminal as the project's manager target.
+    /// Complete identity exported by the app-created terminal. The daemon
+    /// binds a claim to this caller; there is no caller-chosen target run id.
     #[serde(default)]
-    pub terminal_run_id: Option<String>,
+    pub caller_identity: Option<RuntimeIdentity>,
+    /// Attested by the CLI from its invoking provider process ancestry, never
+    /// accepted as a public manager-register flag.
     #[serde(default)]
     pub provider: Option<String>,
 }
@@ -2962,11 +2979,7 @@ async fn post_manager_register(
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
     drop(snap);
 
-    if let Some(run_id) = req
-        .terminal_run_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-    {
+    if let Some(caller_identity) = req.caller_identity.as_ref() {
         let provider = req
             .provider
             .as_deref()
@@ -2975,26 +2988,22 @@ async fn post_manager_register(
             .to_ascii_lowercase();
         return Ok(Json(
             match state
-                .manager_registry
-                .claim_terminal(&state.supervisor, &req.project_id, run_id.trim(), &provider)
+                .supervisor
+                .claim_manager_terminal(&req.project_id, caller_identity, &provider)
                 .await
             {
-                crate::manager_registration::ManagerClaimOutcome::Claimed { run_id, .. } => {
-                    ManagerRegisterResponse {
-                        status: "claimed".into(),
-                        run_id: Some(run_id),
-                        message: None,
-                        holder_token: None,
-                    }
-                }
-                crate::manager_registration::ManagerClaimOutcome::Refused { message } => {
-                    ManagerRegisterResponse {
-                        status: "refused".into(),
-                        run_id: None,
-                        message: Some(message),
-                        holder_token: None,
-                    }
-                }
+                Ok(run_id) => ManagerRegisterResponse {
+                    status: "claimed".into(),
+                    run_id: Some(run_id),
+                    message: None,
+                    holder_token: None,
+                },
+                Err(error) => ManagerRegisterResponse {
+                    status: "refused".into(),
+                    run_id: None,
+                    message: Some(error.to_string()),
+                    holder_token: None,
+                },
             },
         ));
     }
@@ -3047,12 +3056,11 @@ async fn post_manager_register(
 #[derive(Debug, Deserialize)]
 pub struct ManagerWakeRequest {
     pub project_id: String,
-    pub input: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ManagerWakeResponse {
-    /// accepted | busy | unavailable | unsupported
+    /// accepted | busy | unavailable | mismatch | unsupported
     pub status: String,
     pub run_id: Option<String>,
     pub message: Option<String>,
@@ -3062,16 +3070,15 @@ async fn post_manager_wake(
     State(state): State<ApiState>,
     Json(req): Json<ManagerWakeRequest>,
 ) -> Result<Json<ManagerWakeResponse>, ApiError> {
-    let input = req.input.trim().to_string();
-    if input.is_empty() {
-        return Err(ApiError::bad_request(
-            "manager wake input must not be empty",
-        ));
-    }
-    let Some((run_id, _provider)) = state
-        .manager_registry
-        .claimed_terminal(&state.supervisor, &req.project_id)
-        .await
+    let snapshot = state.supervisor.snapshot().await;
+    let Some(run) = snapshot
+        .runs
+        .iter()
+        .find(|run| {
+            run.project_id.as_deref() == Some(req.project_id.as_str())
+                && run.claimed_manager_provider.is_some()
+        })
+        .cloned()
     else {
         return Ok(Json(ManagerWakeResponse {
             status: "unavailable".into(),
@@ -3079,48 +3086,195 @@ async fn post_manager_wake(
             message: Some("no live claimed manager terminal".into()),
         }));
     };
-    let snapshot = state.supervisor.snapshot().await;
-    let Some(run) = snapshot
-        .runs
-        .iter()
-        .find(|run| run.run_id == run_id)
-        .cloned()
-    else {
-        return Ok(Json(ManagerWakeResponse {
-            status: "unavailable".into(),
-            run_id: Some(run_id),
-            message: Some("claimed terminal is no longer live".into()),
-        }));
-    };
     match state
         .supervisor
-        .send_manager_wake(&run_id, input, &run.identity)
+        .send_manager_wake(&run.run_id, &run.identity)
         .await
     {
         Ok(ack) if ack.accepted => Ok(Json(ManagerWakeResponse {
             status: "accepted".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: ack.message,
         })),
         Ok(ack) => Ok(Json(ManagerWakeResponse {
             status: "busy".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: ack.message,
         })),
         Err(crate::supervisor::SupervisorError::Driver(
             orgasmic_drivers::DriverError::Unsupported(_),
         )) => Ok(Json(ManagerWakeResponse {
             status: "unsupported".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: Some("claimed terminal transport cannot prove safe automated input".into()),
         })),
         Err(crate::supervisor::SupervisorError::RunNotFound(_)) => Ok(Json(ManagerWakeResponse {
             status: "unavailable".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: Some("claimed terminal is no longer live".into()),
+        })),
+        Err(crate::supervisor::SupervisorError::Driver(
+            orgasmic_drivers::DriverError::ManagerWakeUnavailable,
+        )) => Ok(Json(ManagerWakeResponse {
+            status: "unavailable".into(),
+            run_id: Some(run.run_id),
+            message: Some("claimed terminal pane is unavailable".into()),
+        })),
+        Err(crate::supervisor::SupervisorError::Driver(
+            orgasmic_drivers::DriverError::ManagerWakeProviderMismatch,
+        )) => Ok(Json(ManagerWakeResponse {
+            status: "mismatch".into(),
+            run_id: Some(run.run_id),
+            message: Some("claimed provider is not the foreground provider".into()),
         })),
         Err(error) => Err(supervisor_control_error("manager wake", error)),
     }
+}
+
+/// One daemon-owned answer for a dispatch generation. The CLI never combines
+/// an on-disk tx scan with a separately timed live-run scan: a release already
+/// admitted by this daemon remains `waiting` until its terminal tx settles.
+#[derive(Debug, Deserialize)]
+pub struct ManagerDispatchWaitRequest {
+    pub project_id: String,
+    pub started_tx: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerDispatchWaitResponse {
+    pub generations: Vec<ManagerDispatchGenerationState>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerDispatchGenerationState {
+    pub started_tx: String,
+    /// waiting | reported | died | unknown
+    pub status: String,
+    pub run_id: Option<String>,
+}
+
+fn tx_extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
+    entry
+        .extra
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_str())
+}
+
+fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
+    let tx_dir = project_root.join(".orgasmic/tx");
+    let entries = std::fs::read_dir(&tx_dir).map_err(|error| {
+        ApiError::internal(format!(
+            "read dispatch tx directory {}: {error}",
+            tx_dir.display()
+        ))
+    })?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| ApiError::internal(format!("read dispatch tx entry: {error}")))?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    let mut parsed = Vec::new();
+    for path in paths {
+        let source = std::fs::read_to_string(&path).map_err(|error| {
+            ApiError::internal(format!("read dispatch tx file {}: {error}", path.display()))
+        })?;
+        let mut file = parse_tx_file(&source, &path.display().to_string()).map_err(|error| {
+            ApiError::internal(format!(
+                "parse dispatch tx file {}: {error}",
+                path.display()
+            ))
+        })?;
+        parsed.append(&mut file);
+    }
+    Ok(parsed)
+}
+
+async fn post_manager_dispatch_wait(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerDispatchWaitRequest>,
+) -> Result<Json<ManagerDispatchWaitResponse>, ApiError> {
+    let project = state
+        .index
+        .snapshot()
+        .await
+        .projects
+        .get(&req.project_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
+    let entries = project_tx_entries(&project.root)?;
+    let live = state.supervisor.snapshot().await;
+    let mut generations: std::collections::BTreeMap<String, (Option<String>, bool)> =
+        std::collections::BTreeMap::new();
+    for entry in &entries {
+        match entry.ty.as_str() {
+            "manager.dispatch_started" => {
+                if entry.project.as_deref() == Some(req.project_id.as_str()) {
+                    generations
+                        .entry(entry.tx_id.clone())
+                        .or_insert((None, false));
+                }
+            }
+            "run.created" if tx_extra(entry, "ORIGIN") == Some("cli_dispatch") => {
+                if let (Some(started), Some(run_id)) =
+                    (tx_extra(entry, "DISPATCH_TX"), tx_extra(entry, "RUN_ID"))
+                {
+                    if let Some(state) = generations.get_mut(started) {
+                        state.0 = Some(run_id.to_string());
+                    }
+                }
+            }
+            ty if ty.ends_with(".reported") => {
+                if let Some(run_id) = tx_extra(entry, "RUN_ID") {
+                    for (known_run, reported) in generations.values_mut() {
+                        if known_run.as_deref() == Some(run_id) {
+                            *reported = true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let states = req
+        .started_tx
+        .into_iter()
+        .map(|started_tx| match generations.get(&started_tx) {
+            None => ManagerDispatchGenerationState {
+                started_tx,
+                status: "unknown".into(),
+                run_id: None,
+            },
+            Some((run_id, true)) => ManagerDispatchGenerationState {
+                started_tx,
+                status: "reported".into(),
+                run_id: run_id.clone(),
+            },
+            Some((Some(run_id), false))
+                if live.runs.iter().any(|run| run.run_id == *run_id)
+                    || state.release_tasks.is_in_flight(run_id) =>
+            {
+                ManagerDispatchGenerationState {
+                    started_tx,
+                    status: "waiting".into(),
+                    run_id: Some(run_id.clone()),
+                }
+            }
+            Some((run_id, false)) => ManagerDispatchGenerationState {
+                started_tx,
+                status: "died".into(),
+                run_id: run_id.clone(),
+            },
+        })
+        .collect();
+    Ok(Json(ManagerDispatchWaitResponse {
+        generations: states,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -3131,6 +3285,10 @@ pub struct ManagerReleaseRegistrationRequest {
     /// (TASK-TZJFF / TASK-S52X9).
     #[serde(default)]
     pub run_id: Option<String>,
+    /// Present for an app-created run. A claimed terminal release demotes it
+    /// back to a terminal instead of closing the provider pane.
+    #[serde(default)]
+    pub caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3144,6 +3302,22 @@ async fn post_manager_release(
     State(state): State<ApiState>,
     Json(req): Json<ManagerReleaseRegistrationRequest>,
 ) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    if let Some(caller_identity) = req.caller_identity.as_ref() {
+        match state
+            .supervisor
+            .unclaim_manager_terminal(&req.project_id, caller_identity)
+            .await
+        {
+            Ok(Some(run_id)) => {
+                return Ok(Json(ManagerReleaseRegistrationResponse {
+                    status: "released".to_string(),
+                    run_id: Some(run_id),
+                }));
+            }
+            Ok(None) => {}
+            Err(error) => return Err(supervisor_control_error("manager release", error)),
+        }
+    }
     let outcome = state
         .manager_registry
         .release(&state.supervisor, &req.project_id)
@@ -20303,6 +20477,116 @@ pub(crate) mod tests {
         assert!(body.contains("custom terminal closed"));
     }
 
+    #[tokio::test]
+    async fn claimed_terminal_moves_the_real_manager_lease_and_release_demotes_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let acquire = state
+            .supervisor
+            .acquire(
+                &orgasmic_drivers::TmuxTuiDriver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj#terminal-test".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: project_sessions_dir(&project_root)
+                        .join("claimed-terminal.jsonl"),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .unwrap();
+        let before_claim = state.supervisor.snapshot().await;
+        let terminal = before_claim
+            .runs
+            .iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(terminal.role, "terminal");
+        assert_eq!(terminal.driver, "tmux-tui");
+        assert_eq!(terminal.project_id.as_deref(), Some("proj"));
+        let Json(claimed) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: Some(acquire.identity.clone()),
+                provider: Some("codex".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(claimed.status, "claimed", "{:?}", claimed.message);
+        let run = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(run.task_id, "manager.launch:proj");
+        assert_eq!(run.role, "manager");
+        assert_eq!(run.claimed_manager_provider.as_deref(), Some("codex"));
+
+        // An external registration uses the same stable lease and cannot race
+        // in as a second manager after the terminal promotion.
+        let Json(refused) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(i64::from(std::process::id())),
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(refused.status, "refused");
+
+        let Json(released) = post_manager_release(
+            State(state.clone()),
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: Some(acquire.identity),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(released.status, "released");
+        let run = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(run.role, "terminal");
+        assert!(run.claimed_manager_provider.is_none());
+    }
+
     #[test]
     fn a_terminal_task_id_still_reads_as_operator_paced() {
         // The prefix gates the supervisor's stall/max-duration detectors; an
@@ -20334,7 +20618,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id())),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20359,7 +20643,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id())),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20375,7 +20659,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id()) + 1),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20392,6 +20676,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: None,
+                caller_identity: None,
             }),
         )
         .await
@@ -20411,6 +20696,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: None,
+                caller_identity: None,
             }),
         )
         .await
@@ -20464,6 +20750,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: Some(run_id.clone()),
+                caller_identity: None,
             }),
         )
         .await
@@ -20504,7 +20791,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(0),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20522,7 +20809,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(-1),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20536,7 +20823,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: Some(token.clone()),
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20562,7 +20849,7 @@ pub(crate) mod tests {
                     project_id: "proj".into(),
                     pid: Some(pid),
                     holder_token: None,
-                    terminal_run_id: None,
+                    caller_identity: None,
                     provider: None,
                 }),
             )
@@ -20592,6 +20879,7 @@ pub(crate) mod tests {
                 Json(ManagerReleaseRegistrationRequest {
                     project_id: "proj".into(),
                     run_id: None,
+                    caller_identity: None,
                 }),
             )
             .await
