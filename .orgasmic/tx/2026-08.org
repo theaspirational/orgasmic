@@ -26187,3 +26187,31 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-09 Sun 11:25:04 manager.tier TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5572
+:TIME:         [2026-08-09 Sun 11:25:04]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       P1 manager wake changes supervisor control and must fail closed before injecting input into a terminal pane
+:TIER:         risky
+:TRIGGERS:     priority, blast_radius
+:END:
+
+* TX 2026-08-09 Sun 11:25:29 task.edited TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5573
+:TIME:         [2026-08-09 Sun 11:25:29]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-D6N77
+:NODE_ID:      TASK-D6N77
+:END:
