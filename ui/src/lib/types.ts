@@ -399,6 +399,12 @@ export type RunSummary = {
   session_path: string;
   babysitter_target?: string | null;
   event_count: number;
+  /**
+   * Present for an app terminal that has atomically taken the project's
+   * manager lease. This is intentionally only a display-state bit: the
+   * provider and the run-scoped claim capability never leave the daemon.
+   */
+  claimed_manager?: boolean;
 };
 
 export type ManagerState = {

@@ -360,6 +360,8 @@ pub struct DispatchStatusArgs {
 }
 
 #[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Exit status: 0 all requested generations reported; 1 invalid/unknown generation, daemon/API, or transport error; 2 a generation died before reporting; 3 timeout while one remains waiting.")]
 pub struct DispatchWaitArgs {
     /// Dispatch generation (`manager.dispatch_started` TX_ID) printed by
     /// `manager dispatch`. Repeat to wait for a whole round.
@@ -1423,13 +1425,6 @@ struct ManagerRegisterHttpRequest {
     project_id: String,
     pid: Option<u32>,
     holder_token: Option<String>,
-    /// Set only by an app-created terminal. The daemon checks this complete
-    /// identity against the live caller before it can claim the manager lease.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    caller_identity: Option<RuntimeIdentity>,
-    /// Derived from the invoking process ancestry, never a user flag.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1442,6 +1437,8 @@ struct ManagerRegisterHttpResponse {
 }
 
 const MANAGER_HOLDER_TOKEN_ENV: &str = "ORGASMIC_MANAGER_HOLDER_TOKEN";
+const MANAGER_TERMINAL_CAPABILITY_ENV: &str = "ORGASMIC_MANAGER_TERMINAL_CAPABILITY";
+const MANAGER_TERMINAL_CAPABILITY_HEADER: &str = "x-orgasmic-manager-terminal-capability";
 
 fn safe_registration_component(value: &str) -> String {
     value
@@ -1533,84 +1530,39 @@ fn manager_runtime_identity_from_env() -> Option<RuntimeIdentity> {
     })
 }
 
-fn provider_from_process_command(command: &str) -> Option<&'static str> {
-    let name = command.trim().rsplit('/').next()?.to_ascii_lowercase();
-    match name.as_str() {
-        "claude" => Some("claude"),
-        "codex" => Some("codex"),
-        _ => None,
-    }
-}
-
-/// The app-created terminal contains a manually started provider. Walk the
-/// short parent chain from this CLI process to attest it without accepting a
-/// caller-selected `--provider` or target run id.
-fn attest_calling_provider() -> Option<String> {
-    #[cfg(unix)]
-    {
-        let mut pid = unsafe { libc::getppid() };
-        for _ in 0..6 {
-            if pid <= 1 {
-                return None;
-            }
-            let output = Command::new("/bin/ps")
-                .args(["-o", "ppid=,comm=", "-p", &pid.to_string()])
-                .output()
-                .ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let line = String::from_utf8_lossy(&output.stdout);
-            let mut fields = line.split_whitespace();
-            let parent = fields.next()?.parse::<libc::pid_t>().ok()?;
-            let command = fields.next()?;
-            if let Some(provider) = provider_from_process_command(command) {
-                return Some(provider.to_string());
-            }
-            pid = parent;
-        }
-    }
-    None
-}
-
 /// External manager self-registration (dec_3Y2E1). The entry router runs
-/// this unconditionally on every manager startup; when `ORGASMIC_RUN_ID` is
-/// already set (a PTY the daemon launched, per drivers exporting it into
-/// every session) this is a no-op — the command itself knows when it applies,
-/// so the router carries no conditional prose.
+/// this unconditionally on every manager startup. An app-launched manager has
+/// a run id but no terminal capability and succeeds as an idempotent no-op;
+/// only the bare custom terminal receives the capability that can claim a
+/// manager lease.
 pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()> {
     let project_id = match args.project.clone() {
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
     if std::env::var("ORGASMIC_RUN_ID").is_ok() {
-        let caller_identity = manager_runtime_identity_from_env().ok_or_else(|| {
-            anyhow::anyhow!(
-                "app terminal is missing ORGASMIC_RUNTIME_ID/ORGASMIC_BOOT_ID; cannot bind manager claim to this run"
-            )
-        })?;
-        let provider = attest_calling_provider().ok_or_else(|| {
-            anyhow::anyhow!(
-                "could not attest a manually started Claude or Codex parent process; start the provider in this app terminal before registering"
-            )
-        })?;
+        let Some(capability) = std::env::var(MANAGER_TERMINAL_CAPABILITY_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            println!("manager already supervised; registration is a no-op");
+            return Ok(());
+        };
         let client = DaemonClient::from_home_autostart(home)?;
         let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-        let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
-            "/manager/register",
-            &ManagerRegisterHttpRequest {
-                project_id: project_id.clone(),
-                pid: None,
-                holder_token: None,
-                caller_identity: Some(caller_identity.clone()),
-                provider: Some(provider.clone()),
-            },
-        ))?;
+        let response: ManagerRegisterHttpResponse =
+            runtime.block_on(client.post_json_with_header(
+                "/manager/register",
+                &ManagerRegisterHttpRequest {
+                    project_id: project_id.clone(),
+                    pid: None,
+                    holder_token: None,
+                },
+                MANAGER_TERMINAL_CAPABILITY_HEADER,
+                &capability,
+            ))?;
         match response.status.as_str() {
-            "claimed" => println!(
-                "claimed terminal manager for {project_id} as {} ({provider})",
-                caller_identity.run_id
-            ),
+            "claimed" => println!("claimed terminal manager for {project_id}"),
             "refused" => bail!(
                 "{}",
                 response
@@ -1638,8 +1590,6 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
             project_id: project_id.clone(),
             pid,
             holder_token,
-            caller_identity: None,
-            provider: None,
         },
     ))?;
 
@@ -1723,8 +1673,6 @@ struct ManagerReleaseHttpRequest {
     project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     run_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1740,20 +1688,25 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
-    let caller_identity = manager_runtime_identity_from_env();
-    let run_id = caller_identity
-        .as_ref()
-        .map(|identity| identity.run_id.clone());
+    let run_id = manager_runtime_identity_from_env().map(|identity| identity.run_id);
+    let capability = std::env::var(MANAGER_TERMINAL_CAPABILITY_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-    let response: ManagerReleaseHttpResponse = runtime.block_on(client.post_json(
-        "/manager/release",
-        &ManagerReleaseHttpRequest {
-            project_id: project_id.clone(),
-            run_id,
-            caller_identity,
-        },
-    ))?;
+    let request = ManagerReleaseHttpRequest {
+        project_id: project_id.clone(),
+        run_id,
+    };
+    let response: ManagerReleaseHttpResponse = match capability.as_deref() {
+        Some(capability) => runtime.block_on(client.post_json_with_header(
+            "/manager/release",
+            &request,
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            capability,
+        ))?,
+        None => runtime.block_on(client.post_json("/manager/release", &request))?,
+    };
 
     match response.status.as_str() {
         "released" => println!(
@@ -2958,6 +2911,50 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
 /// caller-supplied deadline.  This intentionally consults the daemon's live
 /// run inventory rather than `[pid-gone]`: pane transports may record no
 /// worker PID, and a missing PID is not evidence that the generation ended.
+#[derive(Debug, Deserialize)]
+struct ManagerDispatchWaitGeneration {
+    started_tx: String,
+    status: String,
+    run_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerDispatchWaitHttpResponse {
+    generations: Vec<ManagerDispatchWaitGeneration>,
+}
+
+enum DispatchWaitRound<'a> {
+    Unknown(&'a ManagerDispatchWaitGeneration),
+    Died(&'a ManagerDispatchWaitGeneration),
+    Reported,
+    Waiting,
+}
+
+fn classify_dispatch_wait_round(
+    generations: &[ManagerDispatchWaitGeneration],
+) -> DispatchWaitRound<'_> {
+    if let Some(generation) = generations
+        .iter()
+        .find(|generation| generation.status == "unknown")
+    {
+        return DispatchWaitRound::Unknown(generation);
+    }
+    if let Some(generation) = generations
+        .iter()
+        .find(|generation| generation.status == "died")
+    {
+        return DispatchWaitRound::Died(generation);
+    }
+    if generations
+        .iter()
+        .all(|generation| generation.status == "reported")
+    {
+        DispatchWaitRound::Reported
+    } else {
+        DispatchWaitRound::Waiting
+    }
+}
+
 pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-wait")?;
     let project_id = read_project_id(&project_root)?;
@@ -2971,33 +2968,21 @@ pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
             project_id: &'a str,
             started_tx: Vec<&'a str>,
         }
-        #[derive(Deserialize)]
-        struct Generation {
-            started_tx: String,
-            status: String,
-            run_id: Option<String>,
-        }
-        #[derive(Deserialize)]
-        struct Response {
-            generations: Vec<Generation>,
-        }
-        let response: Response = runtime.block_on(client.post_json(
+        let response: ManagerDispatchWaitHttpResponse = runtime.block_on(client.post_json(
             "/manager/dispatch-wait",
             &Request {
                 project_id: &project_id,
                 started_tx: requested.iter().map(String::as_str).collect(),
             },
         ))?;
-        let unknown = response
-            .generations
-            .iter()
-            .find(|generation| generation.status == "unknown");
-        if let Some(generation) = unknown {
-            let tx = &generation.started_tx;
-            bail!("dispatch-wait: no open dispatch generation {tx}");
-        }
-        for generation in &response.generations {
-            if generation.status == "died" {
+        match classify_dispatch_wait_round(&response.generations) {
+            DispatchWaitRound::Unknown(generation) => {
+                bail!(
+                    "dispatch-wait: no open dispatch generation {}",
+                    generation.started_tx
+                );
+            }
+            DispatchWaitRound::Died(generation) => {
                 println!(
                     "dispatch-wait: died TX_ID={} RUN_ID={}",
                     generation.started_tx,
@@ -3005,20 +2990,17 @@ pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
                 );
                 std::process::exit(2);
             }
-        }
-        if response
-            .generations
-            .iter()
-            .all(|generation| generation.status == "reported")
-        {
-            for generation in &response.generations {
-                println!(
-                    "dispatch-wait: reported TX_ID={} RUN_ID={}",
-                    generation.started_tx,
-                    generation.run_id.as_deref().unwrap_or("-")
-                );
+            DispatchWaitRound::Reported => {
+                for generation in &response.generations {
+                    println!(
+                        "dispatch-wait: reported TX_ID={} RUN_ID={}",
+                        generation.started_tx,
+                        generation.run_id.as_deref().unwrap_or("-")
+                    );
+                }
+                return Ok(());
             }
-            return Ok(());
+            DispatchWaitRound::Waiting => {}
         }
         if args
             .timeout
@@ -12978,5 +12960,30 @@ mod tests {
             None,
             "a repo-gone worktree must stay reclaimable on the strength of its own `.git`"
         );
+    }
+
+    #[test]
+    fn dispatch_wait_response_classifier_preserves_the_documented_exit_contract() {
+        let generation = |status: &str| ManagerDispatchWaitGeneration {
+            started_tx: "tx-1".into(),
+            status: status.into(),
+            run_id: Some("run-1".into()),
+        };
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("reported")]),
+            DispatchWaitRound::Reported
+        ));
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("died")]),
+            DispatchWaitRound::Died(_)
+        ));
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("unknown")]),
+            DispatchWaitRound::Unknown(_)
+        ));
+        assert!(matches!(
+            classify_dispatch_wait_round(&[generation("waiting")]),
+            DispatchWaitRound::Waiting
+        ));
     }
 }

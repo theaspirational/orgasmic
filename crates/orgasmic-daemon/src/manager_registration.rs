@@ -404,6 +404,7 @@ mod tests {
             writer,
             boot,
             crate::supervisor::CloseGuardStore::ephemeral(),
+            "test-manager-terminal-capability-key",
         );
         (sup, dir)
     }

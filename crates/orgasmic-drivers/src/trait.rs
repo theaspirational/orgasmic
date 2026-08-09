@@ -736,13 +736,12 @@ pub const MANAGER_WAKE_MARKER: &str = ": 'ORGASMIC_MANAGER_WAKE_V1'";
 
 /// A daemon-originated manager wake.
 ///
-/// The provider is an attested claim property, not pane input. The payload is
-/// always [`MANAGER_WAKE_MARKER`] and is deliberately absent from this request
-/// so no caller can alter the injected bytes.
+/// The payload is always [`MANAGER_WAKE_MARKER`] and is deliberately absent
+/// from this request so no caller can alter the injected bytes. The tmux driver
+/// discovers the actual foreground provider at delivery time; it is not a
+/// caller-selected claim property.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagerWakeRequest {
-    pub provider: String,
-}
+pub struct ManagerWakeRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInputAck {

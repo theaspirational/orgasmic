@@ -119,7 +119,12 @@ fn make_supervisor() -> (Supervisor, tempfile::TempDir) {
     let writer = spawn_writer(EventBus::new());
     let boot = Arc::new(BootIdentity::new());
     (
-        Supervisor::new(writer, boot, CloseGuardStore::ephemeral()),
+        Supervisor::new(
+            writer,
+            boot,
+            CloseGuardStore::ephemeral(),
+            "test-manager-terminal-capability-key",
+        ),
         dir,
     )
 }

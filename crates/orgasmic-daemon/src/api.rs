@@ -239,6 +239,11 @@ pub struct ApiState {
     /// Daemon-lifetime ownership of the detached release+terminal-tx tasks.
     /// See [`ReleaseTaskTracker`].
     pub release_tasks: ReleaseTaskTracker,
+    /// Runtime-only publication guard for a recovery replacement that has
+    /// acquired a new run but has not yet durably linked it to the dispatch
+    /// generation. Durable tx records rebuild the lineage after restart;
+    /// this guard closes only that in-process publication gap.
+    pub recovery_generation_transitions: RecoveryGenerationTransitionTracker,
 }
 
 /// How long a graceful restart/shutdown waits for in-flight release
@@ -312,6 +317,84 @@ struct ReleaseTrackerState {
     /// name the runs at risk instead of printing a number (TASK-WGXKD.2).
     in_flight: std::collections::BTreeMap<u64, String>,
     closed: bool,
+    /// Every admission and settlement advances this. A dispatch waiter reads
+    /// it on both sides of its ledger/live snapshots, so it cannot combine a
+    /// pre-finalize ledger with a post-finalize live view and call a worker
+    /// dead during the deliberate release-to-terminal-tx gap.
+    revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseTrackerSnapshot {
+    pub revision: u64,
+    pub active_run_ids: BTreeSet<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct RecoveryGenerationTransitionTracker {
+    inner: Arc<std::sync::Mutex<RecoveryGenerationTransitionState>>,
+}
+
+#[derive(Default)]
+struct RecoveryGenerationTransitionState {
+    active_origin_run_ids: BTreeMap<String, usize>,
+    revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryGenerationTransitionSnapshot {
+    pub revision: u64,
+    pub active_origin_run_ids: BTreeSet<String>,
+}
+
+pub struct RecoveryGenerationTransition {
+    tracker: RecoveryGenerationTransitionTracker,
+    origin_run_id: String,
+}
+
+impl RecoveryGenerationTransitionTracker {
+    /// Hold this from recovery admission through the durable
+    /// `ORIGIN=recovery` tx append. A dispatch waiter treats the origin
+    /// lineage as waiting while it is held.
+    pub fn begin(&self, origin_run_id: impl Into<String>) -> RecoveryGenerationTransition {
+        let origin_run_id = origin_run_id.into();
+        let mut state = self.inner.lock().expect("recovery transition tracker");
+        *state
+            .active_origin_run_ids
+            .entry(origin_run_id.clone())
+            .or_default() += 1;
+        state.revision = state.revision.wrapping_add(1);
+        drop(state);
+        RecoveryGenerationTransition {
+            tracker: self.clone(),
+            origin_run_id,
+        }
+    }
+
+    pub fn snapshot(&self) -> RecoveryGenerationTransitionSnapshot {
+        let state = self.inner.lock().expect("recovery transition tracker");
+        RecoveryGenerationTransitionSnapshot {
+            revision: state.revision,
+            active_origin_run_ids: state.active_origin_run_ids.keys().cloned().collect(),
+        }
+    }
+}
+
+impl Drop for RecoveryGenerationTransition {
+    fn drop(&mut self) {
+        let mut state = self
+            .tracker
+            .inner
+            .lock()
+            .expect("recovery transition tracker");
+        if let Some(count) = state.active_origin_run_ids.get_mut(&self.origin_run_id) {
+            *count -= 1;
+            if *count == 0 {
+                state.active_origin_run_ids.remove(&self.origin_run_id);
+            }
+            state.revision = state.revision.wrapping_add(1);
+        }
+    }
 }
 
 /// A release finalization that ended without its terminal tx (TASK-WGXKD.2
@@ -397,6 +480,7 @@ impl Drop for ReleaseAdmission {
         let id = self.id;
         self.inner.state.send_modify(|state| {
             state.in_flight.remove(&id);
+            state.revision = state.revision.wrapping_add(1);
         });
     }
 }
@@ -440,6 +524,18 @@ impl ReleaseTaskTracker {
             .any(|active| active == run_id)
     }
 
+    /// A consistent generation observation. Consumers that combine a durable
+    /// ledger with supervisor liveness must compare this epoch before and
+    /// after their scan rather than making an unsynchronized final
+    /// `is_in_flight` query.
+    pub fn snapshot(&self) -> ReleaseTrackerSnapshot {
+        let state = self.inner.state.borrow();
+        ReleaseTrackerSnapshot {
+            revision: state.revision,
+            active_run_ids: state.in_flight.values().cloned().collect(),
+        }
+    }
+
     pub fn close(&self) {
         self.inner.state.send_modify(|state| state.closed = true);
     }
@@ -468,6 +564,7 @@ impl ReleaseTaskTracker {
                 return false;
             }
             state.in_flight.insert(id, run_id.clone());
+            state.revision = state.revision.wrapping_add(1);
             admitted = true;
             true
         });
@@ -686,10 +783,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/skills/:id", get(get_skill))
         .route("/manager/launch", post(post_manager_launch))
         .route("/manager/action", post(post_manager_action))
-        .route("/manager/register", post(post_manager_register))
+        .route("/manager/register", post(post_manager_register_http))
         .route("/manager/wake", post(post_manager_wake))
         .route("/manager/dispatch-wait", post(post_manager_dispatch_wait))
-        .route("/manager/release", post(post_manager_release))
+        .route("/manager/release", post(post_manager_release_http))
         .route("/manager/state", get(get_manager_state))
         // orgasmic:TASK-3CM0Q
         .route(
@@ -2918,7 +3015,7 @@ async fn post_manager_launch(
 /// session started outside the app registers here so it appears in Running
 /// Agents as a supervised run, on the same `manager.launch:<project>` lease
 /// the app's own manager launch uses.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ManagerRegisterRequest {
     pub project_id: String,
     /// Terminal session-leader PID (`getsid(0)`), when the registrant could
@@ -2929,15 +3026,18 @@ pub struct ManagerRegisterRequest {
     /// per terminal session and presents it on refresh.
     #[serde(default)]
     pub holder_token: Option<String>,
-    /// Complete identity exported by the app-created terminal. The daemon
-    /// binds a claim to this caller; there is no caller-chosen target run id.
-    #[serde(default)]
+    // Compatibility-only test fields. They are absent from production builds
+    // and skipped even by direct-handler test serialization; capabilities are
+    // the sole production claim authority.
+    #[cfg(test)]
+    #[serde(skip)]
     pub caller_identity: Option<RuntimeIdentity>,
-    /// Attested by the CLI from its invoking provider process ancestry, never
-    /// accepted as a public manager-register flag.
-    #[serde(default)]
+    #[cfg(test)]
+    #[serde(skip)]
     pub provider: Option<String>,
 }
+
+const MANAGER_TERMINAL_CAPABILITY_HEADER: &str = "x-orgasmic-manager-terminal-capability";
 
 #[derive(Debug, Serialize)]
 pub struct ManagerRegisterResponse {
@@ -2967,9 +3067,35 @@ fn normalize_manager_registration_pid(pid: Option<i64>) -> Option<u32> {
     }
 }
 
+/// HTTP adapter for the public registration endpoint. The run-scoped
+/// capability deliberately lives in a header, not JSON: a client cannot name
+/// a run/identity/provider in a body and request that it be claimed.
+async fn post_manager_register_http(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(req): Json<ManagerRegisterRequest>,
+) -> Result<Json<ManagerRegisterResponse>, ApiError> {
+    let capability = headers
+        .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
+        .and_then(|value| value.to_str().ok());
+    post_manager_register_inner(state, req, capability).await
+}
+
+/// Test/direct-call adapter for the body-only external registration surface.
+/// It intentionally has no capability channel; claim tests use
+/// [`post_manager_register_inner`] with a daemon-minted value.
+#[cfg(test)]
 async fn post_manager_register(
     State(state): State<ApiState>,
     Json(req): Json<ManagerRegisterRequest>,
+) -> Result<Json<ManagerRegisterResponse>, ApiError> {
+    post_manager_register_inner(state, req, None).await
+}
+
+async fn post_manager_register_inner(
+    state: ApiState,
+    req: ManagerRegisterRequest,
+    capability: Option<&str>,
 ) -> Result<Json<ManagerRegisterResponse>, ApiError> {
     let snap = state.index.snapshot().await;
     let project = snap
@@ -2979,17 +3105,11 @@ async fn post_manager_register(
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
     drop(snap);
 
-    if let Some(caller_identity) = req.caller_identity.as_ref() {
-        let provider = req
-            .provider
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
+    if let Some(capability) = capability.filter(|value| !value.trim().is_empty()) {
         return Ok(Json(
             match state
                 .supervisor
-                .claim_manager_terminal(&req.project_id, caller_identity, &provider)
+                .claim_manager_terminal(&req.project_id, capability)
                 .await
             {
                 Ok(run_id) => ManagerRegisterResponse {
@@ -3075,8 +3195,7 @@ async fn post_manager_wake(
         .runs
         .iter()
         .find(|run| {
-            run.project_id.as_deref() == Some(req.project_id.as_str())
-                && run.claimed_manager_provider.is_some()
+            run.project_id.as_deref() == Some(req.project_id.as_str()) && run.claimed_manager
         })
         .cloned()
     else {
@@ -3195,6 +3314,94 @@ fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
     Ok(parsed)
 }
 
+/// The durable run lineage for one `manager.dispatch_started` generation.
+///
+/// A recovery is a replacement run, not a new dispatch. Keep every id because
+/// a report from either the original or any replacement settles the one
+/// generation, while `addressed_run_id` follows the newest replacement for
+/// diagnostics and live checks. This deliberately mirrors the CLI dispatch
+/// fold rather than trusting only the first `cli_dispatch` run.
+#[derive(Debug, Default)]
+struct DispatchGenerationLedger {
+    run_ids: BTreeSet<String>,
+    addressed_run_id: Option<String>,
+    reported: bool,
+}
+
+fn dispatch_generation_ledgers(
+    entries: &[TxEntry],
+    project_id: &str,
+) -> BTreeMap<String, DispatchGenerationLedger> {
+    let mut generations = BTreeMap::new();
+    for entry in entries {
+        if entry.ty == "manager.dispatch_started" && entry.project.as_deref() == Some(project_id) {
+            generations
+                .entry(entry.tx_id.clone())
+                .or_insert_with(|| DispatchGenerationLedger::default());
+        }
+    }
+
+    for entry in entries {
+        if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("cli_dispatch") {
+            continue;
+        }
+        let (Some(started_tx), Some(run_id)) =
+            (tx_extra(entry, "DISPATCH_TX"), tx_extra(entry, "RUN_ID"))
+        else {
+            continue;
+        };
+        if let Some(generation) = generations.get_mut(started_tx) {
+            generation.run_ids.insert(run_id.to_string());
+            generation.addressed_run_id = Some(run_id.to_string());
+        }
+    }
+
+    // Recovery edges can arrive in either lineage order in a globbed tx
+    // directory. Fixed-point folding handles A->B->C even if B->C sorts
+    // before A->B, and is robust across daemon restart/reattach records.
+    loop {
+        let mut changed = false;
+        for entry in entries {
+            if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("recovery") {
+                continue;
+            }
+            let (Some(origin_run_id), Some(replacement_run_id)) =
+                (tx_extra(entry, "ORIGIN_RUN_ID"), tx_extra(entry, "RUN_ID"))
+            else {
+                continue;
+            };
+            for generation in generations.values_mut() {
+                if generation.run_ids.contains(origin_run_id)
+                    && generation.run_ids.insert(replacement_run_id.to_string())
+                {
+                    generation.addressed_run_id = Some(replacement_run_id.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for entry in entries {
+        if !entry.ty.ends_with(".reported") {
+            continue;
+        }
+        // A present-but-unmatched RUN_ID is intentionally ignored. Falling
+        // back to task names here could report a later dispatch generation.
+        let Some(run_id) = tx_extra(entry, "RUN_ID") else {
+            continue;
+        };
+        for generation in generations.values_mut() {
+            if generation.run_ids.contains(run_id) {
+                generation.reported = true;
+            }
+        }
+    }
+    generations
+}
+
 async fn post_manager_dispatch_wait(
     State(state): State<ApiState>,
     Json(req): Json<ManagerDispatchWaitRequest>,
@@ -3207,40 +3414,33 @@ async fn post_manager_dispatch_wait(
         .get(&req.project_id)
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
-    let entries = project_tx_entries(&project.root)?;
-    let live = state.supervisor.snapshot().await;
-    let mut generations: std::collections::BTreeMap<String, (Option<String>, bool)> =
-        std::collections::BTreeMap::new();
-    for entry in &entries {
-        match entry.ty.as_str() {
-            "manager.dispatch_started" => {
-                if entry.project.as_deref() == Some(req.project_id.as_str()) {
-                    generations
-                        .entry(entry.tx_id.clone())
-                        .or_insert((None, false));
-                }
-            }
-            "run.created" if tx_extra(entry, "ORIGIN") == Some("cli_dispatch") => {
-                if let (Some(started), Some(run_id)) =
-                    (tx_extra(entry, "DISPATCH_TX"), tx_extra(entry, "RUN_ID"))
-                {
-                    if let Some(state) = generations.get_mut(started) {
-                        state.0 = Some(run_id.to_string());
-                    }
-                }
-            }
-            ty if ty.ends_with(".reported") => {
-                if let Some(run_id) = tx_extra(entry, "RUN_ID") {
-                    for (known_run, reported) in generations.values_mut() {
-                        if known_run.as_deref() == Some(run_id) {
-                            *reported = true;
-                        }
-                    }
-                }
-            }
-            _ => {}
+    // The release admission marker spans removal from `Supervisor::snapshot`
+    // through terminal-tx append. Read its epoch on both sides of the durable
+    // ledger/live scan and retry whenever a finalize/release/report transition
+    // crossed the observation. This removes the old stale-ledger + fresh-live
+    // false `died` verdict without holding a daemon mutex across filesystem IO.
+    let (generations, live_run_ids, releasing_run_ids, recovering_origin_run_ids) = loop {
+        let release_before = state.release_tasks.snapshot();
+        let recovery_before = state.recovery_generation_transitions.snapshot();
+        let entries = project_tx_entries(&project.root)?;
+        let live = state.supervisor.snapshot().await;
+        let release_after = state.release_tasks.snapshot();
+        let recovery_after = state.recovery_generation_transitions.snapshot();
+        if release_before.revision != release_after.revision
+            || recovery_before.revision != recovery_after.revision
+        {
+            continue;
         }
-    }
+        break (
+            dispatch_generation_ledgers(&entries, &req.project_id),
+            live.runs
+                .into_iter()
+                .map(|run| run.run_id)
+                .collect::<BTreeSet<_>>(),
+            release_after.active_run_ids,
+            recovery_after.active_origin_run_ids,
+        );
+    };
     let states = req
         .started_tx
         .into_iter()
@@ -3250,25 +3450,32 @@ async fn post_manager_dispatch_wait(
                 status: "unknown".into(),
                 run_id: None,
             },
-            Some((run_id, true)) => ManagerDispatchGenerationState {
+            Some(DispatchGenerationLedger {
+                reported: true,
+                addressed_run_id,
+                ..
+            }) => ManagerDispatchGenerationState {
                 started_tx,
                 status: "reported".into(),
-                run_id: run_id.clone(),
+                run_id: addressed_run_id.clone(),
             },
-            Some((Some(run_id), false))
-                if live.runs.iter().any(|run| run.run_id == *run_id)
-                    || state.release_tasks.is_in_flight(run_id) =>
+            Some(generation)
+                if generation.run_ids.iter().any(|run_id| {
+                    live_run_ids.contains(run_id)
+                        || releasing_run_ids.contains(run_id)
+                        || recovering_origin_run_ids.contains(run_id)
+                }) =>
             {
                 ManagerDispatchGenerationState {
                     started_tx,
                     status: "waiting".into(),
-                    run_id: Some(run_id.clone()),
+                    run_id: generation.addressed_run_id.clone(),
                 }
             }
-            Some((run_id, false)) => ManagerDispatchGenerationState {
+            Some(generation) => ManagerDispatchGenerationState {
                 started_tx,
                 status: "died".into(),
-                run_id: run_id.clone(),
+                run_id: generation.addressed_run_id.clone(),
             },
         })
         .collect();
@@ -3285,9 +3492,8 @@ pub struct ManagerReleaseRegistrationRequest {
     /// (TASK-TZJFF / TASK-S52X9).
     #[serde(default)]
     pub run_id: Option<String>,
-    /// Present for an app-created run. A claimed terminal release demotes it
-    /// back to a terminal instead of closing the provider pane.
-    #[serde(default)]
+    #[cfg(test)]
+    #[serde(skip)]
     pub caller_identity: Option<RuntimeIdentity>,
 }
 
@@ -3298,14 +3504,34 @@ pub struct ManagerReleaseRegistrationResponse {
     pub run_id: Option<String>,
 }
 
+async fn post_manager_release_http(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(req): Json<ManagerReleaseRegistrationRequest>,
+) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    let capability = headers
+        .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
+        .and_then(|value| value.to_str().ok());
+    post_manager_release_inner(state, req, capability).await
+}
+
+#[cfg(test)]
 async fn post_manager_release(
     State(state): State<ApiState>,
     Json(req): Json<ManagerReleaseRegistrationRequest>,
 ) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
-    if let Some(caller_identity) = req.caller_identity.as_ref() {
+    post_manager_release_inner(state, req, None).await
+}
+
+async fn post_manager_release_inner(
+    state: ApiState,
+    req: ManagerReleaseRegistrationRequest,
+    capability: Option<&str>,
+) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    if let Some(capability) = capability.filter(|value| !value.trim().is_empty()) {
         match state
             .supervisor
-            .unclaim_manager_terminal(&req.project_id, caller_identity)
+            .unclaim_manager_terminal(&req.project_id, capability)
             .await
         {
             Ok(Some(run_id)) => {
@@ -9883,6 +10109,11 @@ async fn execute_run_recover_action(
     pending_plan: Option<&PendingRecoveryPlan>,
     origin_envelopes: &[SessionEnvelope],
 ) -> Result<RunRecoverResponse, ApiError> {
+    // The replacement is not yet represented in durable tx while recovery is
+    // acquiring/reattaching it. Keep its origin generation waiting until
+    // `record_recovery_replacement_association` below succeeds; after a daemon
+    // restart the durable association is the authority again.
+    let _generation_transition = state.recovery_generation_transitions.begin(id);
     let envelopes = origin_envelopes;
     let meta = session_acquire_meta(envelopes);
     let force_inert = pending_plan
@@ -19581,6 +19812,7 @@ pub(crate) mod tests {
             writer.clone(),
             boot.clone(),
             crate::supervisor::CloseGuardStore::at(home.close_guards()),
+            "test-manager-terminal-capability-key",
         );
         ApiState {
             home: home.clone(),
@@ -19616,6 +19848,7 @@ pub(crate) mod tests {
             trusted_claude_binary: pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: None,
             release_tasks: ReleaseTaskTracker::new(),
+            recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
         }
     }
 
@@ -20523,15 +20756,50 @@ pub(crate) mod tests {
         assert_eq!(terminal.role, "terminal");
         assert_eq!(terminal.driver, "tmux-tui");
         assert_eq!(terminal.project_id.as_deref(), Some("proj"));
-        let Json(claimed) = post_manager_register(
-            State(state.clone()),
-            Json(ManagerRegisterRequest {
+        let session_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !session_body.contains("manager_terminal_capability"),
+            "the daemon-minted capability must never enter durable RunMeta"
+        );
+        assert!(
+            !serde_json::to_string(&before_claim)
+                .unwrap()
+                .contains("manager_terminal_capability"),
+            "manager state must never expose the capability"
+        );
+        let capability = state
+            .supervisor
+            .manager_terminal_capability_for_test("proj", &acquire.identity);
+        // The old public body identity/provider pair cannot promote a run;
+        // only the opaque capability matched against the daemon's live record
+        // can do that. A guessed capability is therefore an ordinary refusal.
+        let Json(spoofed) = post_manager_register_inner(
+            state.clone(),
+            ManagerRegisterRequest {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: None,
                 caller_identity: Some(acquire.identity.clone()),
                 provider: Some("codex".into()),
-            }),
+            },
+            Some("not-a-daemon-minted-capability"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(spoofed.status, "refused");
+        let Json(claimed) = post_manager_register_inner(
+            state.clone(),
+            ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: Some(acquire.identity.clone()),
+                provider: Some("codex".into()),
+            },
+            Some(&capability),
         )
         .await
         .unwrap();
@@ -20546,7 +20814,26 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(run.task_id, "manager.launch:proj");
         assert_eq!(run.role, "manager");
-        assert_eq!(run.claimed_manager_provider.as_deref(), Some("codex"));
+        assert!(run.claimed_manager);
+
+        // A plain entry-router `manager register` repeats on startup. Once the
+        // same live terminal owns the manager lease it is idempotent rather
+        // than trying to claim itself as a competing terminal.
+        let Json(repeated) = post_manager_register_inner(
+            state.clone(),
+            ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            },
+            Some(&capability),
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated.status, "claimed");
+        assert_eq!(repeated.run_id.as_deref(), Some(acquire.run_id.as_str()));
 
         // An external registration uses the same stable lease and cannot race
         // in as a second manager after the terminal promotion.
@@ -20564,13 +20851,14 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(refused.status, "refused");
 
-        let Json(released) = post_manager_release(
-            State(state.clone()),
-            Json(ManagerReleaseRegistrationRequest {
+        let Json(released) = post_manager_release_inner(
+            state.clone(),
+            ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: Some(acquire.run_id.clone()),
                 caller_identity: Some(acquire.identity),
-            }),
+            },
+            Some(&capability),
         )
         .await
         .unwrap();
@@ -20584,7 +20872,7 @@ pub(crate) mod tests {
             .find(|run| run.run_id == acquire.run_id)
             .unwrap();
         assert_eq!(run.role, "terminal");
-        assert!(run.claimed_manager_provider.is_none());
+        assert!(!run.claimed_manager);
     }
 
     #[test]
@@ -20601,6 +20889,106 @@ pub(crate) mod tests {
         assert!(manager_terminal_harness("custom"));
         assert!(manager_terminal_harness(" Custom "));
         assert!(!manager_terminal_harness("claude"));
+    }
+
+    #[test]
+    fn manager_registration_wire_has_no_identity_or_provider_authority() {
+        let request = ManagerRegisterRequest {
+            project_id: "proj".into(),
+            pid: None,
+            holder_token: None,
+            caller_identity: Some(RuntimeIdentity::planned(
+                "run-test",
+                "runtime-test",
+                "boot-test",
+            )),
+            provider: Some("claude".into()),
+        };
+        let wire = serde_json::to_value(request).unwrap();
+        assert!(wire.get("caller_identity").is_none());
+        assert!(wire.get("provider").is_none());
+    }
+
+    fn generation_tx(tx_id: &str, ty: &str, extra: &[(&str, &str)]) -> TxEntry {
+        let mut entry = TxEntry::new(tx_id, ty, "[2026-08-09 Sun 00:00:00]", "test", "test");
+        entry.project = Some("proj".into());
+        entry.extra = extra
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        entry
+    }
+
+    #[test]
+    fn dispatch_wait_folds_the_complete_recovery_lineage_before_reports() {
+        // Deliberately list C->D before B->C. The fold must reach a fixed
+        // point rather than depending on tx-file lexical order.
+        let entries = vec![
+            generation_tx("started", "manager.dispatch_started", &[]),
+            generation_tx(
+                "recovery-2",
+                "run.created",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-c"),
+                    ("RUN_ID", "run-d"),
+                ],
+            ),
+            generation_tx(
+                "root",
+                "run.created",
+                &[
+                    ("ORIGIN", "cli_dispatch"),
+                    ("DISPATCH_TX", "started"),
+                    ("RUN_ID", "run-b"),
+                ],
+            ),
+            generation_tx(
+                "recovery-1",
+                "run.created",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-b"),
+                    ("RUN_ID", "run-c"),
+                ],
+            ),
+            generation_tx("report", "implementer.reported", &[("RUN_ID", "run-d")]),
+        ];
+        let ledgers = dispatch_generation_ledgers(&entries, "proj");
+        let generation = ledgers.get("started").unwrap();
+        assert_eq!(
+            generation.run_ids,
+            BTreeSet::from([
+                "run-b".to_string(),
+                "run-c".to_string(),
+                "run-d".to_string()
+            ])
+        );
+        assert_eq!(generation.addressed_run_id.as_deref(), Some("run-d"));
+        assert!(generation.reported);
+    }
+
+    #[test]
+    fn release_and_recovery_epochs_make_generation_observations_retryable() {
+        let releases = ReleaseTaskTracker::new();
+        let before = releases.snapshot();
+        let admitted = releases.try_admit("run-a", None).unwrap();
+        let during = releases.snapshot();
+        assert!(during.revision > before.revision);
+        assert!(during.active_run_ids.contains("run-a"));
+        drop(admitted);
+        let after = releases.snapshot();
+        assert!(after.revision > during.revision);
+        assert!(!after.active_run_ids.contains("run-a"));
+
+        let recoveries = RecoveryGenerationTransitionTracker::default();
+        let before = recoveries.snapshot();
+        let transition = recoveries.begin("run-a");
+        let during = recoveries.snapshot();
+        assert!(during.revision > before.revision);
+        assert!(during.active_origin_run_ids.contains("run-a"));
+        drop(transition);
+        assert!(recoveries.snapshot().active_origin_run_ids.is_empty());
     }
 
     #[tokio::test]

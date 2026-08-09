@@ -285,6 +285,9 @@ check the rest of the invocation too.
    only after the worker has written its =*.reported= terminal declaration;
    it exits 2 when the daemon no longer has that generation's run without a
    report, and 3 when =--timeout 30m= (or another explicit duration) elapses.
+   Exit 1 means invalid/unknown generation or a daemon/API/transport failure;
+   it is never a liveness classification. The command help prints the same
+   stable 0/1/2/3 contract.
    It deliberately does *not* treat =[pid-gone]= as death: pane transports can
    have no worker PID, so that marker is not liveness evidence. Repeat
    =--started-tx= for one wait over a round. This command is the watcher
@@ -292,9 +295,10 @@ check the rest of the invocation too.
 
    When the manager itself lives in an app-created =custom= terminal, start
    Claude Code or Codex manually in that pane, then run plain =orgasmic manager
-   register=. It derives the provider from the calling process context and
-   binds the claim to that terminal's runtime identity; there is no provider
-   flag or target-run argument. =orgasmic manager wake= can inject only
+   register=. Its app-created terminal carries a daemon-minted, run-bound
+   capability; registration never accepts a caller-supplied provider or target
+   identity. =orgasmic manager wake= detects the foreground provider afresh
+   and can inject only
    =: 'ORGASMIC_MANAGER_WAKE_V1'= followed by submit. The entry router treats
    that exact marker as =/orgasmic resume=; if the provider exits in tmux's
    final delivery gap, zsh/bash execute only the side-effect-free =:= builtin

@@ -3650,6 +3650,7 @@ pub fn pending_session_prefix_matches_claim(
             // and a planned recovery replacement is never a stage launch, so a
             // session carrying one is not this claim's session.
             | Lifecycle::StageMeta { .. }
+            | Lifecycle::ManagerTerminalClaim { .. }
             | Lifecycle::ComposerSend { .. } => return false,
         }
     }

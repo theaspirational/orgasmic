@@ -90,6 +90,23 @@ impl DaemonClient {
         send_json(self.bearer(req), self.timeout).await
     }
 
+    /// Post an opaque daemon capability without putting it in JSON (and thus
+    /// without risking logs, tx payloads, or persisted request captures).
+    pub async fn post_json_with_header<B: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+        name: &str,
+        value: &str,
+    ) -> Result<R> {
+        let req = self
+            .client
+            .post(self.url(path))
+            .json(body)
+            .header(name, value);
+        send_json(self.bearer(req), self.timeout).await
+    }
+
     pub(crate) async fn post_dispatch(&self, plan: &DispatchPlan) -> Result<DispatchResponse> {
         let task = path_segment(&plan.dispatch_task());
         let project = path_segment(&plan.project_id);

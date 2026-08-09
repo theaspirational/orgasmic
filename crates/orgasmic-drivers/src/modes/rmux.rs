@@ -108,6 +108,10 @@ impl RmuxDriver {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct RmuxConfig {
+    /// Opaque daemon-minted capability for a bare app terminal. This is an
+    /// ephemeral child environment value, never a persisted driver setting.
+    #[serde(default)]
+    manager_terminal_capability: Option<String>,
     /// Command to run inside the detached session. Defaults to a bounded
     /// harness smoke command when unset.
     #[serde(default)]
@@ -1739,6 +1743,7 @@ struct RmuxSpawnPlan {
     run_id: String,
     runtime_id: String,
     boot_id: String,
+    manager_terminal_capability: Option<String>,
     /// Harness-specific environment exported into the spawned pane. Carried on
     /// the plan (not applied at the rmux call site) so the stamp a transcript
     /// finder depends on is provable without a live rmux daemon.
@@ -1891,6 +1896,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         run_id: ctx.identity.run_id.clone(),
         runtime_id: ctx.identity.runtime_id.clone(),
         boot_id: ctx.identity.boot_id.clone(),
+        manager_terminal_capability: cfg.manager_terminal_capability.clone(),
         harness_env: harness_launch_env(harness),
     }
 }
@@ -2377,6 +2383,9 @@ async fn run_live_session(
         .env("ORGASMIC_RUN_ID", &plan.run_id)
         .env("ORGASMIC_RUNTIME_ID", &plan.runtime_id)
         .env("ORGASMIC_BOOT_ID", &plan.boot_id);
+    if let Some(capability) = plan.manager_terminal_capability.as_deref() {
+        spawn = spawn.env("ORGASMIC_MANAGER_TERMINAL_CAPABILITY", capability);
+    }
     // orgasmic:TASK-GT91X
     for (key, value) in &plan.harness_env {
         spawn = spawn.env(key, value);

@@ -19,8 +19,14 @@ export function workerRunTabLabel(
 // A bare terminal session launched from the taskbar's Terminal shortcut: it
 // rides the manager.launch task namespace but carries the `custom`
 // pseudo-harness (no agent CLI), so it must never claim the Manager button.
-export function isTerminalRun(run: Pick<RunSummary, 'task_id' | 'harness'>): boolean {
-  return isManagerRun(run) && (run.harness ?? '').trim().toLowerCase() === 'custom';
+export function isTerminalRun(
+  run: Pick<RunSummary, 'task_id' | 'harness' | 'claimed_manager'>,
+): boolean {
+  return (
+    isManagerRun(run) &&
+    !run.claimed_manager &&
+    (run.harness ?? '').trim().toLowerCase() === 'custom'
+  );
 }
 
 export function terminalRunLabel(index: number, total: number): string {
@@ -48,7 +54,9 @@ export function taskbarRunGroups(runs: RunSummary[]): {
 // "Running Agents" answers "which agents is orgasmic supervising?". A bare
 // terminal is a PTY the operator drives, not an agent, so it lives on the
 // taskbar only and never counts toward the badge.
-export function agentRuns<T extends Pick<RunSummary, 'task_id' | 'harness'>>(runs: T[]): T[] {
+export function agentRuns<T extends Pick<RunSummary, 'task_id' | 'harness' | 'claimed_manager'>>(
+  runs: T[],
+): T[] {
   return runs.filter((run) => !isTerminalRun(run));
 }
 

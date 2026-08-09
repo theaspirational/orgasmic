@@ -1011,6 +1011,7 @@ impl Daemon {
             writer.clone(),
             boot.clone(),
             supervisor::CloseGuardStore::at(home.close_guards()),
+            auth_state.manager_terminal_capability_key(),
         );
         // orgasmic:TASK-HAREX — the drain's release bound and the shutdown
         // path's release-drain budget are the same number by construction, so
@@ -1085,6 +1086,7 @@ impl Daemon {
             trusted_claude_binary: api::pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
             release_tasks: api::ReleaseTaskTracker::new(),
+            recovery_generation_transitions: api::RecoveryGenerationTransitionTracker::default(),
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It
