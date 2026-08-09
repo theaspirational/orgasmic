@@ -38,21 +38,46 @@ use crate::events::{EventBus, EventPayload, Topic};
 #[doc(hidden)]
 pub mod test_hooks {
     use super::*;
+    #[cfg(test)]
+    use std::sync::OnceLock;
 
     static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
     static SYNC_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
     static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
-    static SESSION_APPEND_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
-    static FAIL_NEXT_SESSION_APPEND: AtomicUsize = AtomicUsize::new(0);
+    /// The session-append seam is keyed by its exact writer target rather than
+    /// a process-global "next append" counter. Daemon unit tests run in
+    /// parallel, and another run's lifecycle append must never consume this
+    /// failure before the test that armed it reaches the writer.
+    #[cfg(test)]
+    static SESSION_APPEND_FAILURES: OnceLock<
+        std::sync::Mutex<HashMap<(String, PathBuf), Arc<SessionAppendFailure>>>,
+    > = OnceLock::new();
+
+    #[cfg(test)]
+    #[derive(Debug)]
+    pub(crate) struct SessionAppendFailure {
+        attempts: AtomicU64,
+    }
+
+    #[cfg(test)]
+    impl SessionAppendFailure {
+        pub(crate) fn attempt_count(&self) -> u64 {
+            self.attempts.load(Ordering::SeqCst)
+        }
+    }
+
+    #[cfg(test)]
+    fn session_append_failures(
+    ) -> &'static std::sync::Mutex<HashMap<(String, PathBuf), Arc<SessionAppendFailure>>> {
+        SESSION_APPEND_FAILURES.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+    }
 
     pub fn reset() {
         SYNC_COUNT.store(0, Ordering::SeqCst);
         SYNC_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
         SCAN_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SYNC.store(0, Ordering::SeqCst);
-        SESSION_APPEND_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
-        FAIL_NEXT_SESSION_APPEND.store(0, Ordering::SeqCst);
     }
 
     pub fn sync_count() -> u64 {
@@ -71,29 +96,41 @@ pub mod test_hooks {
         FAIL_NEXT_SYNC.store(count, Ordering::SeqCst);
     }
 
-    /// Inject a failure exactly at the session-lifecycle append boundary.
-    /// Unlike a filesystem replacement, this is reached even when the writer
-    /// has a retained open append handle for the session.
-    pub fn fail_next_session_append(count: usize) {
-        FAIL_NEXT_SESSION_APPEND.store(count, Ordering::SeqCst);
-    }
-
-    pub fn session_append_attempt_count() -> u64 {
-        SESSION_APPEND_ATTEMPT_COUNT.load(Ordering::SeqCst)
+    /// Fail the next append for exactly `(run_id, session_path)` and return
+    /// that target's own observation counter. Unlike a filesystem trick, this
+    /// executes after the retained writer handle is selected.
+    #[cfg(test)]
+    pub(crate) fn fail_next_session_append(
+        run_id: &str,
+        session_path: &Path,
+    ) -> Arc<SessionAppendFailure> {
+        let key = (run_id.to_string(), session_path.to_path_buf());
+        let failure = Arc::new(SessionAppendFailure {
+            attempts: AtomicU64::new(0),
+        });
+        let previous = session_append_failures()
+            .lock()
+            .expect("session append failure hooks")
+            .insert(key, Arc::clone(&failure));
+        assert!(
+            previous.is_none(),
+            "a session append failure was already armed for this exact target"
+        );
+        failure
     }
 
     #[cfg(test)]
-    pub(crate) fn before_session_append() -> Result<()> {
-        SESSION_APPEND_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst);
-        if FAIL_NEXT_SESSION_APPEND
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok()
-        {
-            bail!("injected session lifecycle append failure");
-        }
-        Ok(())
+    pub(crate) fn before_session_append(run_id: &str, session_path: &Path) -> Result<()> {
+        let key = (run_id.to_string(), session_path.to_path_buf());
+        let failure = session_append_failures()
+            .lock()
+            .expect("session append failure hooks")
+            .remove(&key);
+        let Some(failure) = failure else {
+            return Ok(());
+        };
+        failure.attempts.fetch_add(1, Ordering::SeqCst);
+        bail!("injected session lifecycle append failure");
     }
 
     pub(crate) fn before_sync() -> Result<()> {
@@ -1656,7 +1693,7 @@ fn append_session_inner(
         }
     };
     #[cfg(test)]
-    test_hooks::before_session_append()?;
+    test_hooks::before_session_append(run_id, session_path)?;
     let seq = writer
         .append(kind, event)
         .with_context(|| format!("append session {}", session_path.display()))?;
@@ -2175,6 +2212,51 @@ mod tests {
         assert_eq!(res.seq, 0);
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("acquire"));
+    }
+
+    #[tokio::test]
+    async fn targeted_session_append_failure_cannot_be_consumed_by_another_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target_path = tmp.path().join("target.jsonl");
+        let unrelated_path = tmp.path().join("unrelated.jsonl");
+        let handle = spawn(EventBus::new());
+        let failure = test_hooks::fail_next_session_append("run-target", &target_path);
+
+        // This is deliberately queued through the same writer task first. A
+        // process-global fail-next hook would make this append steal the
+        // failure and leave the intended lifecycle mutation falsely green.
+        handle
+            .append_session(SessionAppend {
+                run_id: "run-unrelated".into(),
+                session_path: unrelated_path.clone(),
+                identity: RuntimeIdentity::new("run-unrelated", "boot-test"),
+                authority: None,
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::json!({"phase": "acquire"}),
+            })
+            .await
+            .expect("unrelated session append must not consume the target seam");
+
+        let err = handle
+            .append_session(SessionAppend {
+                run_id: "run-target".into(),
+                session_path: target_path.clone(),
+                identity: RuntimeIdentity::new("run-target", "boot-test"),
+                authority: None,
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::json!({"phase": "manager_terminal_claim"}),
+            })
+            .await
+            .expect_err("the exact target must consume its own injected failure");
+        assert!(err
+            .to_string()
+            .contains("injected session lifecycle append failure"));
+        assert_eq!(failure.attempt_count(), 1);
+        assert!(unrelated_path.exists());
+        assert!(
+            std::fs::read(&target_path).unwrap().is_empty(),
+            "the selected writer may open its retained handle, but must not append a lifecycle envelope"
+        );
     }
 
     #[tokio::test]

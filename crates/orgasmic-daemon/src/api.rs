@@ -71,14 +71,14 @@ use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, Governance
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     classify_observation, commit_recovery_claim, load_committed_recovery_claim,
-    load_recovery_claim, mark_pending_recovery_spawn_started,
-    pending_recovery_claim_has_live_planned_handle, pending_recovery_claim_owns_session,
-    plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
-    resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, ObservationClass,
-    PendingRecoveryClaimSpec, PendingRecoveryPlan, ProjectOriginAuthority, RecoveryClaim,
-    RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions,
-    ResolvedRecoveryClaim, SessionDirectory, SessionFile, UnobservedEvidence, UnobservedSession,
+    load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
+    pending_recovery_claim_planned_handle_observation, plan_pending_recovery_claim,
+    reconcile_pending_claim, recovery_origin_lock, resolve_authoritative_recovery_claim,
+    verify_committed_claim_against_session, AuthoritativeOriginLinks, ClaimEvidence,
+    CommitRecoveryDetails, ObservationClass, PendingRecoveryClaimSpec, PendingRecoveryPlan,
+    ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
+    RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim, SessionDirectory, SessionFile,
+    UnobservedEvidence, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -3430,7 +3430,12 @@ fn dispatch_pending_recovery_intents(
         // daemon restart, so do not compare it to a freshly-indexed root here:
         // that would turn a valid durable intent into a false death. Liveness
         // remains narrow: only its exact planned tmux handle can wait.
-        if pending_recovery_claim_has_live_planned_handle(&claim) {
+        // An unobserved tmux probe is a retryable wait, never false evidence
+        // that a crash-durable replacement died. The CLI's bounded wait still
+        // terminates with its timeout contract if this persists.
+        if pending_recovery_claim_planned_handle_observation(&claim)
+            != orgasmic_drivers::modes::tmux::TmuxSessionObservation::Absent
+        {
             intents.insert(origin_run_id.clone(), claim.replacement_run_id);
         }
     }
@@ -21169,8 +21174,10 @@ pub(crate) mod tests {
         // A session append can still fail after admission preflight. Inject at
         // the writer boundary itself: the supervisor has a retained append
         // handle, so filesystem replacement cannot prove this path failed.
-        crate::writer::test_hooks::reset();
-        crate::writer::test_hooks::fail_next_session_append(1);
+        let append_failure = crate::writer::test_hooks::fail_next_session_append(
+            &acquire.run_id,
+            &project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        );
         let mut append_failure_headers = HeaderMap::new();
         append_failure_headers.insert(
             MANAGER_TERMINAL_CAPABILITY_HEADER,
@@ -21191,9 +21198,9 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(append_failed.status, "refused");
         assert_eq!(
-            crate::writer::test_hooks::session_append_attempt_count(),
+            append_failure.attempt_count(),
             1,
-            "the injected lifecycle append boundary must have fired"
+            "the targeted lifecycle append boundary must have fired exactly once"
         );
         assert!(
             state

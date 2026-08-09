@@ -12,7 +12,9 @@ use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
 use orgasmic_core::{
     project_sessions_dir, RuntimeIdentity, SessionLifecycleScan, SessionScanBudget,
 };
-use orgasmic_drivers::modes::tmux::{tmux_session_exists, tmux_session_name};
+use orgasmic_drivers::modes::tmux::{
+    observe_tmux_session, tmux_session_name, TmuxSessionObservation,
+};
 use orgasmic_drivers::NativeRuntimeMeta;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -3671,13 +3673,14 @@ pub fn reconcile_pending_claim(
         claim.replacement_runtime_id.clone(),
         boot_id,
     );
-    let tmux_live = pending_recovery_claim_has_live_planned_handle(claim);
+    let tmux_observation = pending_recovery_claim_planned_handle_observation(claim);
+    let tmux_live = tmux_observation == TmuxSessionObservation::Present;
     let session_dir = SessionDirectory::open(project_root)?;
     let (session_file, created_for_pending_append) =
         match session_dir.open_path(&claim.replacement_session_path, true) {
             Ok(file) => (file, false),
             Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-                if claim.spawn_started && !tmux_live {
+                if claim.spawn_started && tmux_observation == TmuxSessionObservation::Absent {
                     return Err(RecoveryClaimError::DeadPlannedHandle);
                 }
                 (
@@ -3704,7 +3707,7 @@ pub fn reconcile_pending_claim(
     if !pending_session_prefix_matches_claim(claim, &envelopes) {
         return Err(RecoveryClaimError::CorruptClaim);
     }
-    if claim.spawn_started && !tmux_live {
+    if claim.spawn_started && tmux_observation == TmuxSessionObservation::Absent {
         return Err(RecoveryClaimError::DeadPlannedHandle);
     }
     if let Some((_, _, action)) = recovery_origin_in_session(
@@ -3763,20 +3766,35 @@ pub fn reconcile_pending_claim(
 /// The claim is authenticated by [`load_recovery_claim`] before callers use
 /// this answer. It binds the origin and replacement identities durably across
 /// a daemon crash between acquisition and the later `ORIGIN=recovery` tx.
-pub fn pending_recovery_claim_has_live_planned_handle(claim: &RecoveryClaim) -> bool {
+pub fn pending_recovery_claim_planned_handle_observation(
+    claim: &RecoveryClaim,
+) -> TmuxSessionObservation {
     if claim.status != RecoveryClaimStatus::Pending || !claim.spawn_started {
-        return false;
+        return TmuxSessionObservation::Absent;
     }
     let planned_identity = RuntimeIdentity::planned(
         claim.replacement_run_id.clone(),
         claim.replacement_runtime_id.clone(),
         claim_planned_boot_id(claim),
     );
-    claim
+    let planned_name = tmux_session_name(&planned_identity);
+    let configured = claim
         .planned_tmux_session
         .as_deref()
-        .is_some_and(tmux_session_exists)
-        || tmux_session_exists(&tmux_session_name(&planned_identity))
+        .map(observe_tmux_session);
+    let derived = observe_tmux_session(&planned_name);
+    // Positive liveness wins. Without it, an unobserved probe wins over an
+    // absence: only two explicit no-such-session answers may stale this claim.
+    match (configured, derived) {
+        (Some(TmuxSessionObservation::Present), _) | (_, TmuxSessionObservation::Present) => {
+            TmuxSessionObservation::Present
+        }
+        (Some(TmuxSessionObservation::Unobserved), _) | (_, TmuxSessionObservation::Unobserved) => {
+            TmuxSessionObservation::Unobserved
+        }
+        (Some(TmuxSessionObservation::Absent), TmuxSessionObservation::Absent)
+        | (None, TmuxSessionObservation::Absent) => TmuxSessionObservation::Absent,
+    }
 }
 
 #[derive(Debug)]

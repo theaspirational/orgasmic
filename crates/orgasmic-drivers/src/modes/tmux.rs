@@ -925,16 +925,63 @@ pub fn tmux_session_name(identity: &RuntimeIdentity) -> String {
     format!("orgasmic-{}-{}", identity.run_id, identity.runtime_id)
 }
 
+/// What a synchronous `tmux has-session` probe actually established.
+///
+/// A non-zero tmux client invocation is not automatically evidence that the
+/// session disappeared: a missing server, broken binary, or client error can
+/// all use a non-zero exit. Recovery must only destroy/stale a durable claim
+/// from the one explicit no-such-session answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TmuxSessionObservation {
+    Present,
+    Absent,
+    Unobserved,
+}
+
 /// Synchronous tmux session probe for crash-reconciliation paths that cannot
 /// await driver I/O.
-pub fn tmux_session_exists(session: &str) -> bool {
-    tmux_command()
+pub fn observe_tmux_session(session: &str) -> TmuxSessionObservation {
+    match tmux_command()
         .args(["has-session", "-t", session])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(output) => classify_tmux_session_observation(
+            output.status.success(),
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(_) => TmuxSessionObservation::Unobserved,
+    }
+}
+
+fn classify_tmux_session_observation(
+    success: bool,
+    code: Option<i32>,
+    stderr: &str,
+) -> TmuxSessionObservation {
+    if success {
+        return TmuxSessionObservation::Present;
+    }
+    // `has-session` emits this client error for the ordinary, decidable
+    // no-such-session case. A bare exit 1 is intentionally insufficient: the
+    // daemon must not turn an unobserved mux into a false-dead recovery.
+    if code == Some(1) && stderr.to_ascii_lowercase().contains("can't find session") {
+        TmuxSessionObservation::Absent
+    } else {
+        TmuxSessionObservation::Unobserved
+    }
+}
+
+/// Boolean compatibility helper for consumers that only need positive
+/// liveness. Recovery reconciliation uses [`observe_tmux_session`] directly
+/// because absence and probe failure have different safety meanings there.
+pub fn tmux_session_exists(session: &str) -> bool {
+    matches!(
+        observe_tmux_session(session),
+        TmuxSessionObservation::Present
+    )
 }
 
 async fn has_tmux_session(session: &str) -> Result<bool, DriverError> {
@@ -3361,6 +3408,29 @@ mod tests {
     impl Drop for SessionGuard {
         fn drop(&mut self) {
             kill_tmux_session_sync(&self.0);
+        }
+    }
+
+    #[test]
+    fn tmux_session_probe_distinguishes_absence_from_client_failure() {
+        assert_eq!(
+            classify_tmux_session_observation(true, Some(0), ""),
+            TmuxSessionObservation::Present
+        );
+        assert_eq!(
+            classify_tmux_session_observation(false, Some(1), "can't find session: gone"),
+            TmuxSessionObservation::Absent
+        );
+        for (code, stderr) in [
+            (Some(1), "no server running on /tmp/tmux-501/default"),
+            (Some(2), "tmux: bad option"),
+            (None, "signal"),
+        ] {
+            assert_eq!(
+                classify_tmux_session_observation(false, code, stderr),
+                TmuxSessionObservation::Unobserved,
+                "status={code:?}, stderr={stderr:?} must not read as a dead pane"
+            );
         }
     }
 

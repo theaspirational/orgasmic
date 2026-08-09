@@ -883,3 +883,72 @@ async fn dispatch_wait_survives_crash_between_recovery_acquire_and_association()
 
     restarted.terminate();
 }
+
+// TASK-D6N77.1: a live planned handle is only omittable when tmux explicitly
+// says that exact session is absent. This child resolves `tmux` to /bin/sh,
+// which rejects tmux argv with a client/probe error after restart; the HTTP
+// wait must retry rather than return the CLI's died/exit-2 answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_does_not_false_die_when_restarted_tmux_probe_is_unobserved() {
+    if skip_test_if_missing(
+        "dispatch_wait_does_not_false_die_when_restarted_tmux_probe_is_unobserved",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("pending claim at acquire-to-association crash boundary");
+    let _pane_guard = TmuxGuard(planned.planned_tmux_session.clone().unwrap());
+    assert!(
+        pane.is_some(),
+        "the planned pane must exist before probe failure"
+    );
+
+    // A symlink to the signed system shell avoids creating a fresh executable
+    // fixture on macOS. `/bin/sh -L ... has-session ...` exits with an
+    // invocation error, exercising the driver's unobserved branch.
+    std::os::unix::fs::symlink("/bin/sh", home.bin().join("tmux")).unwrap();
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let waiting = dispatch_wait(&reqwest::Client::new(), restarted.addr, &home).await;
+    assert_eq!(waiting["generations"][0]["status"], "waiting");
+    assert_eq!(
+        waiting["generations"][0]["run_id"], planned.replacement_run_id,
+        "unobserved tmux must retain the signed replacement lineage"
+    );
+    restarted.terminate();
+}
+
+// The converse is deliberate: an explicit no-such-session answer makes a
+// spawned pending claim stale, so the bounded wait converges instead of
+// retaining an abandoned replacement forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_marks_a_confirmed_absent_pending_handle_dead() {
+    if skip_test_if_missing(
+        "dispatch_wait_marks_a_confirmed_absent_pending_handle_dead",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("pending claim at acquire-to-association crash boundary");
+    assert!(
+        pane.is_some(),
+        "the planned pane must exist before deliberate removal"
+    );
+    kill_tmux(planned.planned_tmux_session.as_deref().unwrap());
+
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let died = dispatch_wait(&reqwest::Client::new(), restarted.addr, &home).await;
+    assert_eq!(died["generations"][0]["status"], "died");
+    assert_eq!(
+        died["generations"][0]["run_id"], ORIGIN_RUN_ID,
+        "without a durable recovery edge, a confirmed absent pending handle is omitted from the generation"
+    );
+    restarted.terminate();
+}
