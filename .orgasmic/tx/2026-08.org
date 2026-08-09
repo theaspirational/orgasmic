@@ -26215,3 +26215,438 @@
 :REASON:       edited task node TASK-D6N77
 :NODE_ID:      TASK-D6N77
 :END:
+
+* TX 2026-08-09 Sun 11:34:34 task.state_transitioned TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5574
+:TIME:         [2026-08-09 Sun 11:34:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-D6N77 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-09 Sun 11:34:34 manager.dispatch_started TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5575
+:TIME:         [2026-08-09 Sun 11:34:34]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77
+:BRANCH:       task-d6n77-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77/task-D6N77-brief.md
+:STARTED_AT:   [2026-08-09 Sun 11:34:34]
+:LIVENESS:     8fc6f542a642fbf77c1c971bc047669cbf311f1d
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-terra
+:EFFORT:       xhigh
+:REASON_INITIAL: Risky P1 manager-control path; operator selected Codex Terra xhigh and tmux dogfooding, with fail-closed pane injection constraints
+:END:
+
+* TX 2026-08-09 Sun 11:34:35 run.created TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5576
+:TIME:         [2026-08-09 Sun 11:34:35]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-D6N77-implementer-20260809T113434.jsonl
+:REASON:       Risky P1 manager-control path; operator selected Codex Terra xhigh and tmux dogfooding, with fail-closed pane injection constraints
+:RUN_ID:       run-20260809T113434-7859906359b84c8eb9dcc17f326c02c5
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77/task-D6N77-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-D6N77/task-D6N77-e9fd812640d44d5faf319d710c3bbbad-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-D6N77/task-D6N77-e9fd812640d44d5faf319d710c3bbbad-stdout.log
+:DISPATCH_ATTEMPT: e9fd812640d44d5faf319d710c3bbbad
+:DISPATCH_TX:  tx-20260809-orgasmic-5575
+:MODEL_OVERRIDE: gpt-5.6-terra
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-08-09 Sun 11:52:10 implementer.reported TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5577
+:TIME:         [2026-08-09 Sun 11:52:10]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:RUN_ID:       run-20260809T113434-7859906359b84c8eb9dcc17f326c02c5
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77
+:SHA:          585dfb60be210bba98d4a731f17afc63a5e3123c
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5575/last.txt
+:END:
+
+* TX 2026-08-09 Sun 11:55:35 task.edited TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5578
+:TIME:         [2026-08-09 Sun 11:55:35]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-D6N77
+:NODE_ID:      TASK-D6N77
+:END:
+
+* TX 2026-08-09 Sun 11:56:33 task.state_transitioned TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5579
+:TIME:         [2026-08-09 Sun 11:56:33]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-D6N77 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-09 Sun 11:56:34 manager.dispatch_started TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5580
+:TIME:         [2026-08-09 Sun 11:56:34]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77-review
+:BRANCH:       task-d6n77-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77-review/task-D6N77-review-brief.md
+:STARTED_AT:   [2026-08-09 Sun 11:56:34]
+:LIVENESS:     e98ed372cd496a5367a9fce0f1e0ddc9d87f5386
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260809-orgasmic-5575
+:REASON_INITIAL: Post-merge P1 safety review; operator explicitly selected Sol high despite same Codex harness family, so this is the documented same-family exception
+:END:
+
+* TX 2026-08-09 Sun 11:56:34 run.created TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5581
+:TIME:         [2026-08-09 Sun 11:56:34]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-D6N77-reviewer-20260809T115633.jsonl
+:REASON:       Post-merge P1 safety review; operator explicitly selected Sol high despite same Codex harness family, so this is the documented same-family exception
+:RUN_ID:       run-20260809T115633-99e7c020592c435186bbb2be3ad35b2c
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-D6N77-review/task-D6N77-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-D6N77-review/task-D6N77-review-16b90b4351444c39a78a0207fb916b61-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-D6N77-review/task-D6N77-review-16b90b4351444c39a78a0207fb916b61-stdout.log
+:DISPATCH_ATTEMPT: 16b90b4351444c39a78a0207fb916b61
+:DISPATCH_TX:  tx-20260809-orgasmic-5580
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-09 Sun 12:07:41 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5582
+:TIME:         [2026-08-09 Sun 12:07:41]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH bug: normal manager startup runs plain register, which remains a no-op inside the app custom terminal, so no wake claim exists without a hidden manual provider flag.
+:SEVERITY:     HIGH
+:KIND:         bug
+:FILE:         crates/orgasmic-cli/src/manager.rs
+:LINE:         1530
+:END:
+
+* TX 2026-08-09 Sun 12:07:41 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5583
+:TIME:         [2026-08-09 Sun 12:07:41]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH correctness: terminal claims live outside the supervisor manager lease and role, so an app launch or external registration can create a second manager after a claim and claim-vs-launch is non-atomic.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/manager_registration.rs
+:LINE:         202
+:END:
+
+* TX 2026-08-09 Sun 12:07:41 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5584
+:TIME:         [2026-08-09 Sun 12:07:41]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH security: claim and wake are not bound to the calling runtime identity; any bearer-authenticated local caller can name another live terminal run and the ownership check reuses the target identity itself.
+:SEVERITY:     HIGH
+:KIND:         security
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         2965
+:END:
+
+* TX 2026-08-09 Sun 12:07:42 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5585
+:TIME:         [2026-08-09 Sun 12:07:42]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH security: wake proof is not fail-closed; rmux foreground evidence may lag, composer readiness accepts any glyph-prefixed viewport line, and both transports send bytes after the final non-atomic check.
+:SEVERITY:     HIGH
+:KIND:         security
+:FILE:         crates/orgasmic-drivers/src/modes/rmux.rs
+:LINE:         3368
+:END:
+
+* TX 2026-08-09 Sun 12:07:42 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5586
+:TIME:         [2026-08-09 Sun 12:07:42]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       MEDIUM correctness: API and CLI collapse provider mismatch into busy and all non-accepted wake outcomes into exit 1, so automation cannot distinguish busy, unavailable, unsupported, mismatch, or unknown.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         3105
+:END:
+
+* TX 2026-08-09 Sun 12:07:42 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5587
+:TIME:         [2026-08-09 Sun 12:07:42]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       MEDIUM correctness: claimed-terminal lifecycle is inconsistent; release does not explicitly unclaim, in-pane release tears down the terminal, daemon restart forgets claims, and UI state still classifies the claimed manager as a terminal.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         3143
+:END:
+
+* TX 2026-08-09 Sun 12:07:42 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5588
+:TIME:         [2026-08-09 Sun 12:07:42]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH correctness: dispatch-wait can report died during the intentional release-before-terminal-tx gap and errors if another generation is closed while waiting, so its reported versus died contract is racy.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:FILE:         crates/orgasmic-cli/src/manager.rs
+:LINE:         2908
+:END:
+
+* TX 2026-08-09 Sun 12:07:43 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5589
+:TIME:         [2026-08-09 Sun 12:07:43]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH test: acceptance requires real-dispatch proof, but the change adds only a timeout-parser unit test and a narrow glyph test; no claim, singleton, live wake, report, or isolated-daemon terminal matrix is exercised.
+:SEVERITY:     HIGH
+:KIND:         test
+:FILE:         crates/orgasmic-cli/src/manager.rs
+:LINE:         12931
+:END:
+
+* TX 2026-08-09 Sun 12:07:58 reviewer.finding TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5590
+:TIME:         [2026-08-09 Sun 12:07:58]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       HIGH test: correction to tx-20260809-orgasmic-5589 line evidence; the only dispatch-wait test is the timeout parser at manager.rs:9719, with no real dispatch or report transition proof.
+:SEVERITY:     HIGH
+:KIND:         test
+:FILE:         crates/orgasmic-cli/src/manager.rs
+:LINE:         9719
+:CORRECTS:     tx-20260809-orgasmic-5589
+:END:
+
+* TX 2026-08-09 Sun 12:09:43 reviewer.reported TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5591
+:TIME:         [2026-08-09 Sun 12:09:43]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:RUN_ID:       run-20260809T115633-99e7c020592c435186bbb2be3ad35b2c
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-d6n77-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt
+:END:
+
+* TX 2026-08-09 Sun 12:10:19 reviewer.done TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5592
+:TIME:         [2026-08-09 Sun 12:10:19]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       Sol high review rejected with eight actionable findings; block ship until claim authority, singleton, safe transport, wait authority, outcomes, lifecycle, and tests are fixed
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 8fc6f542a642fbf77c1c971bc047669cbf311f1d..e98ed372cd496a5367a9fce0f1e0ddc9d87f5386
+:VERDICT:      reject
+:CLOSED_TX:    tx-20260809-orgasmic-5580
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5580/last.txt
+:END:
+
+* TX 2026-08-09 Sun 12:10:19 task.state_transitioned TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5593
+:TIME:         [2026-08-09 Sun 12:10:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-D6N77 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-09 Sun 12:10:28 implementer.done TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5594
+:TIME:         [2026-08-09 Sun 12:10:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:REASON:       Terra xhigh implementation merged and guarded compile/lint gates passed; Sol high review completed with reject verdict and fix round required
+:MODEL:        gpt-5.6-terra
+:EFFORT:       xhigh
+:WORKER_COMMIT: 585dfb60be210bba98d4a731f17afc63a5e3123c
+:MERGE_SHA:    e98ed372cd496a5367a9fce0f1e0ddc9d87f5386
+:BRANCH:       task-d6n77-impl
+:CLOSED_TX:    tx-20260809-orgasmic-5575
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260809-orgasmic-5575/last.txt
+:END:
+
+* TX 2026-08-09 Sun 12:10:29 task.state_transitioned TASK-D6N77
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5595
+:TIME:         [2026-08-09 Sun 12:10:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-D6N77 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-09 Sun 12:11:23 task.created TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5596
+:TIME:         [2026-08-09 Sun 12:11:23]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Fix round for eight BLOCK SHIP findings from Sol high review tx-20260809-orgasmic-5580
+:END:
+
+* TX 2026-08-09 Sun 12:11:23 task.property_updated TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5597
+:TIME:         [2026-08-09 Sun 12:11:23]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Mark as mandatory review fix round for TASK-D6N77
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-09 Sun 12:11:32 manager.tier TASK-D6N77.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5598
+:TIME:         [2026-08-09 Sun 12:11:32]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D6N77.1
+:REASON:       P1 fix subtask changes manager claim authority, singleton admission, pane control, and generation lifecycle safety
+:TIER:         risky
+:TRIGGERS:     priority, blast_radius, coupling
+:END:

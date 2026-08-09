@@ -1,3 +1,90 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-D6N77 orgasmic has no wake channel: a finished worker cannot reach its manager, so autopilot depends on the manager hand-rolling a watcher every dispatch :daemon:cli:manager:
+:PROPERTIES:
+:ID: TASK-D6N77
+:PRIORITY: P1
+:END:
+
+** Description
+*ORGASMIC HAS NO WAKE CHANNEL, SO AUTOPILOT IS A MANAGER HABIT RATHER THAN A
+PRODUCT PROPERTY.* Reported by the operator on 2026-08-08, from the symptom:
+a codex reviewer finished, the daemon recorded =[run-gone]= and
+=reviewer.reported=, and *the manager sat idle until the operator pinged it.*
+
+The daemon knows the instant a run reaches a terminal state. The manager is a
+harness session, and nothing the daemon does can inject a turn into it. Today
+the ONLY way a manager learns a worker finished is to POLL — by running
+=manager dispatch-status= itself, or by hand-rolling a background loop whose
+exit its harness reports back.
+
+That means the autopilot loop depends on the manager REMEMBERING to build a
+watcher, by hand, correctly, for every single dispatch. On 2026-08-08 the
+manager armed watchers for two dispatches and not for the third; the third is
+the one that stalled. There is no channel that reports the omission, because a
+watcher that was never armed is indistinguishable from a worker still working.
+
+*A protection that lives in a document is not a protection* — TASK-M47E5.3's
+own ruling, and the same argument that produced TASK-4BBA6. This is that
+argument applied to the goal itself.
+
+** Why this is worth more than one stalled session
+The project goal is that orgasmic lets a human autopilot development. Every
+other quality mechanism in this repo — the review gate, the verify artifacts,
+the flake classifier — assumes a manager that keeps moving. A manager that
+silently stops between rounds does not fail loudly; it looks exactly like a
+manager whose worker is still running. The operator is the only detector, which
+inverts the product.
+
+** Recommended shape
+*** 1. =orgasmic manager dispatch-wait= (the primitive, do this first)
+A blocking verb that exits when a dispatch GENERATION reaches a terminal state:
+
+: orgasmic manager dispatch-wait --started-tx <tx> [--timeout <dur>]
+
+- exits 0 and prints the terminal state when the generation reaches =reported=;
+- exits non-zero, distinguishably, when the run is gone WITHOUT a report (the
+  worker died) or the timeout elapses;
+- repeatable =--started-tx= so one wait covers a round;
+- *must not* key liveness on =[pid-gone]=, which tmux prints always because
+  =WORKER_PID=-= (a watcher keyed on it fires instantly and falsely — recorded
+  in gotchas.org).
+
+This turns the autopilot loop from "hand-roll a correct poll loop" into "run one
+command in the background", which every harness can already do.
+
+*** 2. Make the omission impossible rather than discouraged
+=manager dispatch= already prints a =watch:= line, and it currently names an
+INSPECT command (=orgasmic run show <run_id>=) — something you run when you have
+already decided to look. Print the BLOCKING wait command instead, so the obvious
+copy-paste is the one that keeps the loop alive. Consider a =--wait-command=
+that emits it in a form intended to be backgrounded.
+
+*** 3. Daemon-side terminal hook (the general version, later)
+A configured command invoked on run terminal transitions would also let the
+daemon push to a phone, a webhook, or a fifo without a manager session existing
+at all. Strictly more general than (1) and strictly more work; it does not
+replace (1), because the wake still has to land somewhere the manager can be
+resumed from.
+
+** Acceptance
+1. =dispatch-wait= exists, blocks, and distinguishes reported / died / timeout by
+   exit code, with each documented.
+2. It is proven against a real dispatch, not just a fixture: a test or a recorded
+   manual proof showing it returns promptly on report and does NOT return early
+   on =[pid-gone]=.
+3. =manager dispatch='s printed follow-up line names the blocking wait.
+4. The manager convention (=shipped/prompt-studio/conventions/manager-dispatch.org=)
+   is updated so arming the wait is part of the dispatch step, not an afterthought
+   — but the convention is the DOCUMENTATION of the mechanism, not the mechanism.
+
+** Open question for the implementer
+Is there a cheaper honest primitive than polling inside =dispatch-wait= — does
+the daemon expose, or could it cheaply expose, a long-poll or SSE endpoint on run
+state that the CLI could consume? Answer this before writing a poll loop; a
+30-second poll is acceptable but should be a decision, not a default.
+** Evidence
+*Manager live probe 2026-08-09.* In an app-created =rmux/custom= terminal, Claude Code 2.1.226 was launched manually. An authenticated =POST /api/runs/<terminal-run>/input= returned =accepted:true= and Claude replied exactly =TMUX_POKE_OK=, proving daemon-to-pane wake is technically viable without provider-specific remote control. After =/exit= returned the pane to zsh, the same endpoint accepted the harmless payload =:= and executed it at the shell prompt, proving the current generic =pane_has_input_prompt= check is unsafe for a bare terminal because both Claude and zsh render =❯=. Inside that terminal, =orgasmic manager register= printed =already supervised ... nothing to do=, proving a manually launched manager remains role =terminal= rather than claiming the project manager slot. rmux-sdk 0.9 exposes =Pane::foreground_state= with best-effort pid, command, cwd, executable, and source labels; use that plus composer readiness to fail closed before pane injection. Traditional tmux lacks =DriverControl::send_input= today and needs parity. The corrected design target is one manager-wake contract with an explicit claimed terminal run, provider identity, foreground-process proof, composer readiness, and unsupported/busy states; =dispatch-wait= remains a fallback rather than the wake mechanism.
+*Implementation candidate.* Worker =implementer-codex-tmux=, driver =tmux=, harness =codex=, model =gpt-5.6-terra=, effort =xhigh=, generation =tx-20260809-orgasmic-5575=. Worker commit =585dfb6= merged as =e98ed372=. Manager gate under the syspolicyd watchdog: =cargo fmt --check=, targeted three-crate =cargo check=, and targeted three-crate =cargo clippy --all-targets -- -D warnings= all green. Independent review is still required; manager audit specifically handed off automatic provider claim UX and singleton-race enforcement as claims to attack.
+
