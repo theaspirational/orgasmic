@@ -30,11 +30,12 @@ use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
-    lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
-    scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
-    Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
-    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
-    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
+    lifecycle_stage_file_name, parse_tx_file, project_sessions_dir, read_session_file,
+    resolve_loader, scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading,
+    HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
+    ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
+    SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -71,12 +72,13 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     classify_observation, commit_recovery_claim, load_committed_recovery_claim,
     load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
-    plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
-    resolve_authoritative_recovery_claim, verify_committed_claim_against_session,
-    AuthoritativeOriginLinks, ClaimEvidence, CommitRecoveryDetails, ObservationClass,
-    PendingRecoveryClaimSpec, PendingRecoveryPlan, ProjectOriginAuthority, RecoveryClaim,
-    RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus, RecoveryRunOptions,
-    ResolvedRecoveryClaim, SessionDirectory, SessionFile, UnobservedEvidence, UnobservedSession,
+    pending_recovery_claim_planned_handle_observation, plan_pending_recovery_claim,
+    reconcile_pending_claim, recovery_origin_lock, resolve_authoritative_recovery_claim,
+    verify_committed_claim_against_session, AuthoritativeOriginLinks, ClaimEvidence,
+    CommitRecoveryDetails, ObservationClass, PendingRecoveryClaimSpec, PendingRecoveryPlan,
+    ProjectOriginAuthority, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
+    RecoveryClaimStatus, RecoveryRunOptions, ResolvedRecoveryClaim, SessionDirectory, SessionFile,
+    UnobservedEvidence, UnobservedSession,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -238,6 +240,11 @@ pub struct ApiState {
     /// Daemon-lifetime ownership of the detached release+terminal-tx tasks.
     /// See [`ReleaseTaskTracker`].
     pub release_tasks: ReleaseTaskTracker,
+    /// Runtime-only publication guard for a recovery replacement that has
+    /// acquired a new run but has not yet durably linked it to the dispatch
+    /// generation. Durable tx records rebuild the lineage after restart;
+    /// this guard closes only that in-process publication gap.
+    pub recovery_generation_transitions: RecoveryGenerationTransitionTracker,
 }
 
 /// How long a graceful restart/shutdown waits for in-flight release
@@ -311,6 +318,84 @@ struct ReleaseTrackerState {
     /// name the runs at risk instead of printing a number (TASK-WGXKD.2).
     in_flight: std::collections::BTreeMap<u64, String>,
     closed: bool,
+    /// Every admission and settlement advances this. A dispatch waiter reads
+    /// it on both sides of its ledger/live snapshots, so it cannot combine a
+    /// pre-finalize ledger with a post-finalize live view and call a worker
+    /// dead during the deliberate release-to-terminal-tx gap.
+    revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseTrackerSnapshot {
+    pub revision: u64,
+    pub active_run_ids: BTreeSet<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct RecoveryGenerationTransitionTracker {
+    inner: Arc<std::sync::Mutex<RecoveryGenerationTransitionState>>,
+}
+
+#[derive(Default)]
+struct RecoveryGenerationTransitionState {
+    active_origin_run_ids: BTreeMap<String, usize>,
+    revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryGenerationTransitionSnapshot {
+    pub revision: u64,
+    pub active_origin_run_ids: BTreeSet<String>,
+}
+
+pub struct RecoveryGenerationTransition {
+    tracker: RecoveryGenerationTransitionTracker,
+    origin_run_id: String,
+}
+
+impl RecoveryGenerationTransitionTracker {
+    /// Hold this from recovery admission through the durable
+    /// `ORIGIN=recovery` tx append. A dispatch waiter treats the origin
+    /// lineage as waiting while it is held.
+    pub fn begin(&self, origin_run_id: impl Into<String>) -> RecoveryGenerationTransition {
+        let origin_run_id = origin_run_id.into();
+        let mut state = self.inner.lock().expect("recovery transition tracker");
+        *state
+            .active_origin_run_ids
+            .entry(origin_run_id.clone())
+            .or_default() += 1;
+        state.revision = state.revision.wrapping_add(1);
+        drop(state);
+        RecoveryGenerationTransition {
+            tracker: self.clone(),
+            origin_run_id,
+        }
+    }
+
+    pub fn snapshot(&self) -> RecoveryGenerationTransitionSnapshot {
+        let state = self.inner.lock().expect("recovery transition tracker");
+        RecoveryGenerationTransitionSnapshot {
+            revision: state.revision,
+            active_origin_run_ids: state.active_origin_run_ids.keys().cloned().collect(),
+        }
+    }
+}
+
+impl Drop for RecoveryGenerationTransition {
+    fn drop(&mut self) {
+        let mut state = self
+            .tracker
+            .inner
+            .lock()
+            .expect("recovery transition tracker");
+        if let Some(count) = state.active_origin_run_ids.get_mut(&self.origin_run_id) {
+            *count -= 1;
+            if *count == 0 {
+                state.active_origin_run_ids.remove(&self.origin_run_id);
+            }
+            state.revision = state.revision.wrapping_add(1);
+        }
+    }
 }
 
 /// A release finalization that ended without its terminal tx (TASK-WGXKD.2
@@ -396,6 +481,7 @@ impl Drop for ReleaseAdmission {
         let id = self.id;
         self.inner.state.send_modify(|state| {
             state.in_flight.remove(&id);
+            state.revision = state.revision.wrapping_add(1);
         });
     }
 }
@@ -426,6 +512,31 @@ impl ReleaseTaskTracker {
         self.inner.state.borrow().closed
     }
 
+    /// A release accepted by the daemon but not yet settled. Dispatch waiting
+    /// treats this as live: the terminal tx may be in the intentional
+    /// release-before-append gap, so absence from the supervisor alone is not
+    /// evidence of worker death.
+    pub fn is_in_flight(&self, run_id: &str) -> bool {
+        self.inner
+            .state
+            .borrow()
+            .in_flight
+            .values()
+            .any(|active| active == run_id)
+    }
+
+    /// A consistent generation observation. Consumers that combine a durable
+    /// ledger with supervisor liveness must compare this epoch before and
+    /// after their scan rather than making an unsynchronized final
+    /// `is_in_flight` query.
+    pub fn snapshot(&self) -> ReleaseTrackerSnapshot {
+        let state = self.inner.state.borrow();
+        ReleaseTrackerSnapshot {
+            revision: state.revision,
+            active_run_ids: state.in_flight.values().cloned().collect(),
+        }
+    }
+
     pub fn close(&self) {
         self.inner.state.send_modify(|state| state.closed = true);
     }
@@ -454,6 +565,7 @@ impl ReleaseTaskTracker {
                 return false;
             }
             state.in_flight.insert(id, run_id.clone());
+            state.revision = state.revision.wrapping_add(1);
             admitted = true;
             true
         });
@@ -672,9 +784,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/skills/:id", get(get_skill))
         .route("/manager/launch", post(post_manager_launch))
         .route("/manager/action", post(post_manager_action))
-        .route("/manager/register", post(post_manager_register))
+        .route("/manager/register", post(post_manager_register_http))
         .route("/manager/wake", post(post_manager_wake))
-        .route("/manager/release", post(post_manager_release))
+        .route("/manager/dispatch-wait", post(post_manager_dispatch_wait))
+        .route("/manager/release", post(post_manager_release_http))
         .route("/manager/state", get(get_manager_state))
         // orgasmic:TASK-3CM0Q
         .route(
@@ -2903,7 +3016,7 @@ async fn post_manager_launch(
 /// session started outside the app registers here so it appears in Running
 /// Agents as a supervised run, on the same `manager.launch:<project>` lease
 /// the app's own manager launch uses.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ManagerRegisterRequest {
     pub project_id: String,
     /// Terminal session-leader PID (`getsid(0)`), when the registrant could
@@ -2914,13 +3027,18 @@ pub struct ManagerRegisterRequest {
     /// per terminal session and presents it on refresh.
     #[serde(default)]
     pub holder_token: Option<String>,
-    /// Present only when a manually-started provider in an app-created custom
-    /// terminal is claiming that terminal as the project's manager target.
-    #[serde(default)]
-    pub terminal_run_id: Option<String>,
-    #[serde(default)]
+    // Compatibility-only test fields. They are absent from production builds
+    // and skipped even by direct-handler test serialization; capabilities are
+    // the sole production claim authority.
+    #[cfg(test)]
+    #[serde(skip)]
+    pub caller_identity: Option<RuntimeIdentity>,
+    #[cfg(test)]
+    #[serde(skip)]
     pub provider: Option<String>,
 }
+
+const MANAGER_TERMINAL_CAPABILITY_HEADER: &str = "x-orgasmic-manager-terminal-capability";
 
 #[derive(Debug, Serialize)]
 pub struct ManagerRegisterResponse {
@@ -2950,9 +3068,35 @@ fn normalize_manager_registration_pid(pid: Option<i64>) -> Option<u32> {
     }
 }
 
+/// HTTP adapter for the public registration endpoint. The run-scoped
+/// capability deliberately lives in a header, not JSON: a client cannot name
+/// a run/identity/provider in a body and request that it be claimed.
+async fn post_manager_register_http(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(req): Json<ManagerRegisterRequest>,
+) -> Result<Json<ManagerRegisterResponse>, ApiError> {
+    let capability = headers
+        .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
+        .map(|value| value.to_str().unwrap_or(""));
+    post_manager_register_inner(state, req, capability).await
+}
+
+/// Test/direct-call adapter for the body-only external registration surface.
+/// It intentionally has no capability channel; claim tests use
+/// [`post_manager_register_inner`] with a daemon-minted value.
+#[cfg(test)]
 async fn post_manager_register(
     State(state): State<ApiState>,
     Json(req): Json<ManagerRegisterRequest>,
+) -> Result<Json<ManagerRegisterResponse>, ApiError> {
+    post_manager_register_inner(state, req, None).await
+}
+
+async fn post_manager_register_inner(
+    state: ApiState,
+    req: ManagerRegisterRequest,
+    capability: Option<&str>,
 ) -> Result<Json<ManagerRegisterResponse>, ApiError> {
     let snap = state.index.snapshot().await;
     let project = snap
@@ -2962,39 +3106,25 @@ async fn post_manager_register(
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
     drop(snap);
 
-    if let Some(run_id) = req
-        .terminal_run_id
-        .as_deref()
-        .filter(|id| !id.trim().is_empty())
-    {
-        let provider = req
-            .provider
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
+    if let Some(capability) = capability.filter(|value| !value.trim().is_empty()) {
         return Ok(Json(
             match state
-                .manager_registry
-                .claim_terminal(&state.supervisor, &req.project_id, run_id.trim(), &provider)
+                .supervisor
+                .claim_manager_terminal(&req.project_id, capability)
                 .await
             {
-                crate::manager_registration::ManagerClaimOutcome::Claimed { run_id, .. } => {
-                    ManagerRegisterResponse {
-                        status: "claimed".into(),
-                        run_id: Some(run_id),
-                        message: None,
-                        holder_token: None,
-                    }
-                }
-                crate::manager_registration::ManagerClaimOutcome::Refused { message } => {
-                    ManagerRegisterResponse {
-                        status: "refused".into(),
-                        run_id: None,
-                        message: Some(message),
-                        holder_token: None,
-                    }
-                }
+                Ok(run_id) => ManagerRegisterResponse {
+                    status: "claimed".into(),
+                    run_id: Some(run_id),
+                    message: None,
+                    holder_token: None,
+                },
+                Err(error) => ManagerRegisterResponse {
+                    status: "refused".into(),
+                    run_id: None,
+                    message: Some(error.to_string()),
+                    holder_token: None,
+                },
             },
         ));
     }
@@ -3047,12 +3177,11 @@ async fn post_manager_register(
 #[derive(Debug, Deserialize)]
 pub struct ManagerWakeRequest {
     pub project_id: String,
-    pub input: String,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ManagerWakeResponse {
-    /// accepted | busy | unavailable | unsupported
+    /// accepted | busy | unavailable | mismatch | unsupported
     pub status: String,
     pub run_id: Option<String>,
     pub message: Option<String>,
@@ -3062,16 +3191,14 @@ async fn post_manager_wake(
     State(state): State<ApiState>,
     Json(req): Json<ManagerWakeRequest>,
 ) -> Result<Json<ManagerWakeResponse>, ApiError> {
-    let input = req.input.trim().to_string();
-    if input.is_empty() {
-        return Err(ApiError::bad_request(
-            "manager wake input must not be empty",
-        ));
-    }
-    let Some((run_id, _provider)) = state
-        .manager_registry
-        .claimed_terminal(&state.supervisor, &req.project_id)
-        .await
+    let snapshot = state.supervisor.snapshot().await;
+    let Some(run) = snapshot
+        .runs
+        .iter()
+        .find(|run| {
+            run.project_id.as_deref() == Some(req.project_id.as_str()) && run.claimed_manager
+        })
+        .cloned()
     else {
         return Ok(Json(ManagerWakeResponse {
             status: "unavailable".into(),
@@ -3079,48 +3206,349 @@ async fn post_manager_wake(
             message: Some("no live claimed manager terminal".into()),
         }));
     };
-    let snapshot = state.supervisor.snapshot().await;
-    let Some(run) = snapshot
-        .runs
-        .iter()
-        .find(|run| run.run_id == run_id)
-        .cloned()
-    else {
-        return Ok(Json(ManagerWakeResponse {
-            status: "unavailable".into(),
-            run_id: Some(run_id),
-            message: Some("claimed terminal is no longer live".into()),
-        }));
-    };
     match state
         .supervisor
-        .send_manager_wake(&run_id, input, &run.identity)
+        .send_manager_wake(&run.run_id, &run.identity)
         .await
     {
         Ok(ack) if ack.accepted => Ok(Json(ManagerWakeResponse {
             status: "accepted".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: ack.message,
         })),
         Ok(ack) => Ok(Json(ManagerWakeResponse {
             status: "busy".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: ack.message,
         })),
         Err(crate::supervisor::SupervisorError::Driver(
             orgasmic_drivers::DriverError::Unsupported(_),
         )) => Ok(Json(ManagerWakeResponse {
             status: "unsupported".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: Some("claimed terminal transport cannot prove safe automated input".into()),
         })),
         Err(crate::supervisor::SupervisorError::RunNotFound(_)) => Ok(Json(ManagerWakeResponse {
             status: "unavailable".into(),
-            run_id: Some(run_id),
+            run_id: Some(run.run_id),
             message: Some("claimed terminal is no longer live".into()),
+        })),
+        Err(crate::supervisor::SupervisorError::Driver(
+            orgasmic_drivers::DriverError::ManagerWakeUnavailable,
+        )) => Ok(Json(ManagerWakeResponse {
+            status: "unavailable".into(),
+            run_id: Some(run.run_id),
+            message: Some("claimed terminal pane is unavailable".into()),
+        })),
+        Err(crate::supervisor::SupervisorError::Driver(
+            orgasmic_drivers::DriverError::ManagerWakeProviderMismatch,
+        )) => Ok(Json(ManagerWakeResponse {
+            status: "mismatch".into(),
+            run_id: Some(run.run_id),
+            message: Some("claimed provider is not the foreground provider".into()),
         })),
         Err(error) => Err(supervisor_control_error("manager wake", error)),
     }
+}
+
+/// One daemon-owned answer for a dispatch generation. The CLI never combines
+/// an on-disk tx scan with a separately timed live-run scan: a release already
+/// admitted by this daemon remains `waiting` until its terminal tx settles.
+#[derive(Debug, Deserialize)]
+pub struct ManagerDispatchWaitRequest {
+    pub project_id: String,
+    pub started_tx: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerDispatchWaitResponse {
+    pub generations: Vec<ManagerDispatchGenerationState>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerDispatchGenerationState {
+    pub started_tx: String,
+    /// waiting | reported | died | unknown
+    pub status: String,
+    pub run_id: Option<String>,
+}
+
+fn tx_extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
+    entry
+        .extra
+        .iter()
+        .find(|(candidate, _)| candidate == key)
+        .map(|(_, value)| value.as_str())
+}
+
+fn project_tx_entries(project_root: &FsPath) -> Result<Vec<TxEntry>, ApiError> {
+    let tx_dir = project_root.join(".orgasmic/tx");
+    let entries = std::fs::read_dir(&tx_dir).map_err(|error| {
+        ApiError::internal(format!(
+            "read dispatch tx directory {}: {error}",
+            tx_dir.display()
+        ))
+    })?;
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|error| ApiError::internal(format!("read dispatch tx entry: {error}")))?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    let mut parsed = Vec::new();
+    for path in paths {
+        let source = std::fs::read_to_string(&path).map_err(|error| {
+            ApiError::internal(format!("read dispatch tx file {}: {error}", path.display()))
+        })?;
+        let mut file = parse_tx_file(&source, &path.display().to_string()).map_err(|error| {
+            ApiError::internal(format!(
+                "parse dispatch tx file {}: {error}",
+                path.display()
+            ))
+        })?;
+        parsed.append(&mut file);
+    }
+    Ok(parsed)
+}
+
+/// The durable run lineage for one `manager.dispatch_started` generation.
+///
+/// A recovery is a replacement run, not a new dispatch. Keep every id because
+/// a report from either the original or any replacement settles the one
+/// generation, while `addressed_run_id` follows the newest replacement for
+/// diagnostics and live checks. This deliberately mirrors the CLI dispatch
+/// fold rather than trusting only the first `cli_dispatch` run.
+#[derive(Debug, Default)]
+struct DispatchGenerationLedger {
+    run_ids: BTreeSet<String>,
+    addressed_run_id: Option<String>,
+    reported: bool,
+}
+
+fn dispatch_generation_ledgers(
+    entries: &[TxEntry],
+    project_id: &str,
+) -> BTreeMap<String, DispatchGenerationLedger> {
+    let mut generations = BTreeMap::new();
+    for entry in entries {
+        if entry.ty == "manager.dispatch_started" && entry.project.as_deref() == Some(project_id) {
+            generations
+                .entry(entry.tx_id.clone())
+                .or_insert_with(|| DispatchGenerationLedger::default());
+        }
+    }
+
+    for entry in entries {
+        if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("cli_dispatch") {
+            continue;
+        }
+        let (Some(started_tx), Some(run_id)) =
+            (tx_extra(entry, "DISPATCH_TX"), tx_extra(entry, "RUN_ID"))
+        else {
+            continue;
+        };
+        if let Some(generation) = generations.get_mut(started_tx) {
+            generation.run_ids.insert(run_id.to_string());
+            generation.addressed_run_id = Some(run_id.to_string());
+        }
+    }
+
+    // Recovery edges can arrive in either lineage order in a globbed tx
+    // directory. Fixed-point folding handles A->B->C even if B->C sorts
+    // before A->B, and is robust across daemon restart/reattach records.
+    loop {
+        let mut changed = false;
+        for entry in entries {
+            if entry.ty != "run.created" || tx_extra(entry, "ORIGIN") != Some("recovery") {
+                continue;
+            }
+            let (Some(origin_run_id), Some(replacement_run_id)) =
+                (tx_extra(entry, "ORIGIN_RUN_ID"), tx_extra(entry, "RUN_ID"))
+            else {
+                continue;
+            };
+            for generation in generations.values_mut() {
+                if generation.run_ids.contains(origin_run_id)
+                    && generation.run_ids.insert(replacement_run_id.to_string())
+                {
+                    generation.addressed_run_id = Some(replacement_run_id.to_string());
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for entry in entries {
+        if !entry.ty.ends_with(".reported") {
+            continue;
+        }
+        // A present-but-unmatched RUN_ID is intentionally ignored. Falling
+        // back to task names here could report a later dispatch generation.
+        let Some(run_id) = tx_extra(entry, "RUN_ID") else {
+            continue;
+        };
+        for generation in generations.values_mut() {
+            if generation.run_ids.contains(run_id) {
+                generation.reported = true;
+            }
+        }
+    }
+    generations
+}
+
+/// Recover the one crash-durable wait authority that the tx ledger cannot yet
+/// see: a signed pending recovery claim whose replacement was already spawned
+/// but whose later `ORIGIN=recovery` association was not appended before the
+/// daemon died. The claim is written before spawn and binds the old lineage id
+/// to the planned replacement; only a currently live planned tmux handle makes
+/// it a waiting state. A missing pane is a stale intent, so it deliberately
+/// contributes nothing and cannot keep `dispatch-wait` hanging forever.
+fn dispatch_pending_recovery_intents(
+    state: &ApiState,
+    project_id: &str,
+    generations: &BTreeMap<String, DispatchGenerationLedger>,
+) -> Result<BTreeMap<String, String>, ApiError> {
+    let mut intents = BTreeMap::new();
+    for origin_run_id in generations
+        .values()
+        .flat_map(|generation| generation.run_ids.iter())
+    {
+        let claim = load_recovery_claim(&state.home, project_id, origin_run_id)
+            .map_err(|error| recovery_claim_load_error(origin_run_id, error))?;
+        let Some(claim) = claim else {
+            continue;
+        };
+        // `load_recovery_claim` verifies the claim's daemon MAC and complete
+        // plan. The claim may retain its original worktree path across a
+        // daemon restart, so do not compare it to a freshly-indexed root here:
+        // that would turn a valid durable intent into a false death. Liveness
+        // remains narrow: only its exact planned tmux handle can wait.
+        // An unobserved tmux probe is a retryable wait, never false evidence
+        // that a crash-durable replacement died. The CLI's bounded wait still
+        // terminates with its timeout contract if this persists.
+        if pending_recovery_claim_planned_handle_observation(&claim)
+            != orgasmic_drivers::modes::tmux::TmuxSessionObservation::Absent
+        {
+            intents.insert(origin_run_id.clone(), claim.replacement_run_id);
+        }
+    }
+    Ok(intents)
+}
+
+async fn post_manager_dispatch_wait(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerDispatchWaitRequest>,
+) -> Result<Json<ManagerDispatchWaitResponse>, ApiError> {
+    let project = state
+        .index
+        .snapshot()
+        .await
+        .projects
+        .get(&req.project_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
+    // The release admission marker spans removal from `Supervisor::snapshot`
+    // through terminal-tx append. Read its epoch on both sides of the durable
+    // ledger/live scan and retry whenever a finalize/release/report transition
+    // crossed the observation. This removes the old stale-ledger + fresh-live
+    // false `died` verdict without holding a daemon mutex across filesystem IO.
+    let (
+        generations,
+        live_run_ids,
+        releasing_run_ids,
+        recovering_origin_run_ids,
+        pending_recovery_intents,
+    ) = loop {
+        let release_before = state.release_tasks.snapshot();
+        let recovery_before = state.recovery_generation_transitions.snapshot();
+        let entries = project_tx_entries(&project.root)?;
+        let live = state.supervisor.snapshot().await;
+        let release_after = state.release_tasks.snapshot();
+        let recovery_after = state.recovery_generation_transitions.snapshot();
+        if release_before.revision != release_after.revision
+            || recovery_before.revision != recovery_after.revision
+        {
+            continue;
+        }
+        let generations = dispatch_generation_ledgers(&entries, &req.project_id);
+        let pending_recovery_intents =
+            dispatch_pending_recovery_intents(&state, &req.project_id, &generations)?;
+        // Claim inspection touches disk, so the recovery epoch must enclose it
+        // too. Otherwise a recovery could be accepted between the first epoch
+        // read and its durable pending-claim write, leaving this response with
+        // neither the in-memory transition nor the crash authority and a
+        // false `died` verdict.
+        let recovery_final = state.recovery_generation_transitions.snapshot();
+        if recovery_after.revision != recovery_final.revision {
+            continue;
+        }
+        break (
+            generations,
+            live.runs
+                .into_iter()
+                .map(|run| run.run_id)
+                .collect::<BTreeSet<_>>(),
+            release_after.active_run_ids,
+            recovery_final.active_origin_run_ids,
+            pending_recovery_intents,
+        );
+    };
+    let states = req
+        .started_tx
+        .into_iter()
+        .map(|started_tx| match generations.get(&started_tx) {
+            None => ManagerDispatchGenerationState {
+                started_tx,
+                status: "unknown".into(),
+                run_id: None,
+            },
+            Some(DispatchGenerationLedger {
+                reported: true,
+                addressed_run_id,
+                ..
+            }) => ManagerDispatchGenerationState {
+                started_tx,
+                status: "reported".into(),
+                run_id: addressed_run_id.clone(),
+            },
+            Some(generation) => {
+                let pending_replacement = generation
+                    .run_ids
+                    .iter()
+                    .find_map(|run_id| pending_recovery_intents.get(run_id));
+                if generation.run_ids.iter().any(|run_id| {
+                    live_run_ids.contains(run_id)
+                        || releasing_run_ids.contains(run_id)
+                        || recovering_origin_run_ids.contains(run_id)
+                }) || pending_replacement.is_some()
+                {
+                    ManagerDispatchGenerationState {
+                        started_tx,
+                        status: "waiting".into(),
+                        run_id: pending_replacement
+                            .cloned()
+                            .or_else(|| generation.addressed_run_id.clone()),
+                    }
+                } else {
+                    ManagerDispatchGenerationState {
+                        started_tx,
+                        status: "died".into(),
+                        run_id: generation.addressed_run_id.clone(),
+                    }
+                }
+            }
+        })
+        .collect();
+    Ok(Json(ManagerDispatchWaitResponse {
+        generations: states,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -3131,6 +3559,9 @@ pub struct ManagerReleaseRegistrationRequest {
     /// (TASK-TZJFF / TASK-S52X9).
     #[serde(default)]
     pub run_id: Option<String>,
+    #[cfg(test)]
+    #[serde(skip)]
+    pub caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3140,10 +3571,61 @@ pub struct ManagerReleaseRegistrationResponse {
     pub run_id: Option<String>,
 }
 
+async fn post_manager_release_http(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(req): Json<ManagerReleaseRegistrationRequest>,
+) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    let capability = headers
+        .get(MANAGER_TERMINAL_CAPABILITY_HEADER)
+        // Header presence is authority selection. A malformed/non-UTF-8
+        // value is an invalid capability, not the absence of one: erasing it
+        // here would let a caller fall through to registry/run-id release.
+        .map(|value| value.to_str().unwrap_or(""));
+    post_manager_release_inner(state, req, capability).await
+}
+
+#[cfg(test)]
 async fn post_manager_release(
     State(state): State<ApiState>,
     Json(req): Json<ManagerReleaseRegistrationRequest>,
 ) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    post_manager_release_inner(state, req, None).await
+}
+
+async fn post_manager_release_inner(
+    state: ApiState,
+    req: ManagerReleaseRegistrationRequest,
+    capability: Option<&str>,
+) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    if let Some(capability) = capability {
+        if capability.trim().is_empty() {
+            return Err(ApiError::forbidden(
+                "manager terminal capability is required for terminal release",
+            ));
+        }
+        match state
+            .supervisor
+            .unclaim_manager_terminal(&req.project_id, capability)
+            .await
+        {
+            Ok(Some(run_id)) => {
+                return Ok(Json(ManagerReleaseRegistrationResponse {
+                    status: "released".to_string(),
+                    run_id: Some(run_id),
+                }));
+            }
+            // A terminal capability is the authority for this request. Never
+            // reinterpret an invalid/rotated/corrupt token as permission to
+            // release an unrelated external or app manager by registry/run id.
+            Ok(None) => {
+                return Err(ApiError::forbidden(
+                    "manager terminal capability does not name a claimed terminal",
+                ));
+            }
+            Err(error) => return Err(supervisor_control_error("manager release", error)),
+        }
+    }
     let outcome = state
         .manager_registry
         .release(&state.supervisor, &req.project_id)
@@ -9169,6 +9651,14 @@ async fn post_run_recover(
         .clone()
         .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
 
+    // A dispatch waiter must not declare this origin dead while any accepted
+    // recovery path is inventorying authority, reconciling a prior claim,
+    // planning a replacement, or publishing its durable lineage edge. This
+    // guard deliberately starts before those paths diverge (including the
+    // crash-reconciled fast returns) and is released only when this whole POST
+    // returns; durable tx lineage takes over after a restart.
+    let _generation_transition = state.recovery_generation_transitions.begin(id.clone());
+
     // Inventory never takes a per-origin lock. Recovery holds the global
     // status mutex only for the initial claim/index decision and, after
     // external work, the final RecoveryOrigin + claim commit.
@@ -9339,9 +9829,7 @@ async fn post_run_recover(
                         &origin_authority.project_root,
                         &claim,
                     )
-                    .map_err(|err| {
-                        ApiError::internal(format!("recovery claim reconcile failed: {err:?}"))
-                    })?;
+                    .map_err(|err| recovery_claim_reconcile_error(&id, err))?;
                     if let Some(plan) = plan {
                         if plan.claim.status == RecoveryClaimStatus::Committed {
                             match committed_claim_is_authoritative(
@@ -10158,6 +10646,14 @@ async fn execute_run_recover_action(
                     .await
                     .map_err(supervisor_recover_error)?;
             }
+
+            // The replacement now has a live pane/session, but that fresh run
+            // is not yet in the durable dispatch lineage. A crash exactly
+            // here is covered by the signed, spawn-started pending claim: on
+            // restart `dispatch-wait` verifies the live planned handle and
+            // returns waiting until this association is replayed. Keep an
+            // explicit crash boundary for the real restart regression test.
+            crate::recovery_claim::recovery_failpoint("association_pending");
 
             record_recovery_replacement_association(
                 state,
@@ -12068,6 +12564,24 @@ fn recovery_claim_load_error(origin_run_id: &str, err: RecoveryClaimError) -> Ap
             }
         },
         other => ApiError::internal(format!("recovery claim load failed: {other:?}")),
+    }
+}
+
+/// A pending recovery claim that cannot be reconciled because its exact tmux
+/// handle was unobservable must remain pending. In particular, do not turn a
+/// local tmux client failure into the generic 500/409 path that can lead a
+/// caller to treat the durable replacement authority as dead.
+fn recovery_claim_reconcile_error(origin_run_id: &str, err: RecoveryClaimError) -> ApiError {
+    match err {
+        RecoveryClaimError::Unobserved(evidence) => ApiError::service_unavailable(json!({
+            "error": "recovery claim reconciliation could not observe its planned handle; retry",
+            "origin_run_id": origin_run_id,
+            "reason": evidence.reason.tag(),
+            "subject": evidence.subject,
+            "remediation": evidence.remediation.class(),
+            "remediation_hint": evidence.remediation.hint(),
+        })),
+        other => ApiError::internal(format!("recovery claim reconcile failed: {other:?}")),
     }
 }
 
@@ -18165,6 +18679,13 @@ impl ApiError {
             body: None,
         }
     }
+    fn forbidden(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: message.into(),
+            body: None,
+        }
+    }
     /// Conflict with a structured body. The body should carry enough data for
     /// the UI to render follow-up actions (e.g. active run id, choices).
     fn conflict_json(body: Value) -> Self {
@@ -19407,6 +19928,7 @@ pub(crate) mod tests {
             writer.clone(),
             boot.clone(),
             crate::supervisor::CloseGuardStore::at(home.close_guards()),
+            "test-manager-terminal-capability-key",
         );
         ApiState {
             home: home.clone(),
@@ -19442,6 +19964,7 @@ pub(crate) mod tests {
             trusted_claude_binary: pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: None,
             release_tasks: ReleaseTaskTracker::new(),
+            recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
         }
     }
 
@@ -20303,6 +20826,410 @@ pub(crate) mod tests {
         assert!(body.contains("custom terminal closed"));
     }
 
+    #[tokio::test]
+    async fn claimed_terminal_moves_the_real_manager_lease_and_release_demotes_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let acquire = state
+            .supervisor
+            .acquire(
+                &orgasmic_drivers::TmuxTuiDriver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj#terminal-test".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: project_sessions_dir(&project_root)
+                        .join("claimed-terminal.jsonl"),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .unwrap();
+        let before_claim = state.supervisor.snapshot().await;
+        let terminal = before_claim
+            .runs
+            .iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(terminal.role, "terminal");
+        assert_eq!(terminal.driver, "tmux-tui");
+        assert_eq!(terminal.project_id.as_deref(), Some("proj"));
+        let session_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !session_body.contains("manager_terminal_capability"),
+            "the daemon-minted capability must never enter durable RunMeta"
+        );
+        assert!(
+            !serde_json::to_string(&before_claim)
+                .unwrap()
+                .contains("manager_terminal_capability"),
+            "manager state must never expose the capability"
+        );
+        let capability = state
+            .supervisor
+            .manager_terminal_capability_for_test("proj", &acquire.identity);
+        // The old public body identity/provider pair cannot promote a run;
+        // only the opaque capability matched against the daemon's live record
+        // can do that. A guessed capability is therefore an ordinary refusal.
+        let mut spoofed_headers = HeaderMap::new();
+        spoofed_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_static("not-a-daemon-minted-capability"),
+        );
+        let Json(spoofed) = post_manager_register_http(
+            State(state.clone()),
+            spoofed_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: Some(acquire.identity.clone()),
+                provider: Some("codex".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(spoofed.status, "refused");
+        let mut capability_headers = HeaderMap::new();
+        capability_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        state.supervisor.pause_acquisition().await;
+        let Json(paused) = post_manager_register_http(
+            State(state.clone()),
+            capability_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(paused.status, "refused");
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.role == "terminal"),
+            "a paused admission must not persist/promote the terminal"
+        );
+        let paused_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !paused_body.contains("\"claimed\":true"),
+            "a rejected preflight must not leave a durable claim event: {paused_body}"
+        );
+        state.supervisor.resume_acquisition().await;
+        let mut capability_headers = HeaderMap::new();
+        capability_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(claimed) = post_manager_register_http(
+            State(state.clone()),
+            capability_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: Some(acquire.identity.clone()),
+                provider: Some("codex".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(claimed.status, "claimed", "{:?}", claimed.message);
+        let run = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(run.task_id, "manager.launch:proj");
+        assert_eq!(run.role, "manager");
+        assert!(run.claimed_manager);
+
+        // A plain entry-router `manager register` repeats on startup. Once the
+        // same live terminal owns the manager lease it is idempotent rather
+        // than trying to claim itself as a competing terminal.
+        let mut repeated_headers = HeaderMap::new();
+        repeated_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(repeated) = post_manager_register_http(
+            State(state.clone()),
+            repeated_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated.status, "claimed");
+        assert_eq!(repeated.run_id.as_deref(), Some(acquire.run_id.as_str()));
+
+        // A competing terminal lease for the original task makes demotion
+        // impossible. Preflight must reject before appending `claimed:false`.
+        let blocker = state
+            .supervisor
+            .acquire(
+                &orgasmic_drivers::TmuxTuiDriver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj#terminal-test".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: project_sessions_dir(&project_root).join("claim-blocker.jsonl"),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .expect("the old terminal lease is vacant after claim");
+        let mut conflict_release_headers = HeaderMap::new();
+        conflict_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        assert!(
+            post_manager_release_http(
+                State(state.clone()),
+                conflict_release_headers,
+                Json(ManagerReleaseRegistrationRequest {
+                    project_id: "proj".into(),
+                    run_id: Some(acquire.run_id.clone()),
+                    caller_identity: None,
+                }),
+            )
+            .await
+            .is_err(),
+            "a conflicting terminal lease must reject demotion"
+        );
+        let conflicted_body = std::fs::read_to_string(
+            project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        )
+        .unwrap();
+        assert!(
+            !conflicted_body.contains("\"claimed\":false"),
+            "a failed demotion must not persist a false claim state: {conflicted_body}"
+        );
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "a failed demotion must leave the manager lease intact"
+        );
+        state
+            .supervisor
+            .release(
+                &blocker.run_id,
+                "release conflict fixture",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .expect("release conflict fixture");
+
+        // An external registration uses the same stable lease and cannot race
+        // in as a second manager after the terminal promotion.
+        let Json(refused) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(i64::from(std::process::id())),
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(refused.status, "refused");
+
+        // HTTP preserves a header even when it is not valid UTF-8. That is
+        // still a presented terminal-authority attempt, never permission to
+        // fall through to the supplied run id.
+        let mut malformed_release_headers = HeaderMap::new();
+        malformed_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_bytes(&[0xfa]).unwrap(),
+        );
+        let malformed = post_manager_release_http(
+            State(state.clone()),
+            malformed_release_headers,
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: None,
+            }),
+        )
+        .await
+        .expect_err("malformed terminal capability must be refused");
+        assert_eq!(malformed.status, StatusCode::FORBIDDEN);
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "a malformed capability header must leave the claimed pane live"
+        );
+
+        // A capability header is authoritative. A forged value must not fall
+        // through to this run id and release/demote by a generic path.
+        let mut forged_release_headers = HeaderMap::new();
+        forged_release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_static("not-a-daemon-minted-capability"),
+        );
+        let err = post_manager_release_http(
+            State(state.clone()),
+            forged_release_headers,
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: Some(acquire.identity),
+            }),
+        )
+        .await
+        .expect_err("forged terminal capability must be refused");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.claimed_manager),
+            "forged header must leave the claimed manager live"
+        );
+
+        let mut release_headers = HeaderMap::new();
+        release_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(released) = post_manager_release_http(
+            State(state.clone()),
+            release_headers,
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(acquire.run_id.clone()),
+                caller_identity: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(released.status, "released");
+        let run = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .into_iter()
+            .find(|run| run.run_id == acquire.run_id)
+            .unwrap();
+        assert_eq!(run.role, "terminal");
+        assert!(!run.claimed_manager);
+
+        // A session append can still fail after admission preflight. Inject at
+        // the writer boundary itself: the supervisor has a retained append
+        // handle, so filesystem replacement cannot prove this path failed.
+        let append_failure = state.writer.fail_next_session_append(
+            &acquire.run_id,
+            &project_sessions_dir(&project_root).join("claimed-terminal.jsonl"),
+        );
+        let mut append_failure_headers = HeaderMap::new();
+        append_failure_headers.insert(
+            MANAGER_TERMINAL_CAPABILITY_HEADER,
+            HeaderValue::from_str(&capability).unwrap(),
+        );
+        let Json(append_failed) = post_manager_register_http(
+            State(state.clone()),
+            append_failure_headers,
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: None,
+                caller_identity: None,
+                provider: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(append_failed.status, "refused");
+        assert_eq!(
+            append_failure.attempt_count(),
+            1,
+            "the targeted lifecycle append boundary must have fired exactly once"
+        );
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == acquire.run_id && run.role == "terminal"),
+            "session append failure must not leave an in-memory manager promotion"
+        );
+    }
+
     #[test]
     fn a_terminal_task_id_still_reads_as_operator_paced() {
         // The prefix gates the supervisor's stall/max-duration detectors; an
@@ -20317,6 +21244,162 @@ pub(crate) mod tests {
         assert!(manager_terminal_harness("custom"));
         assert!(manager_terminal_harness(" Custom "));
         assert!(!manager_terminal_harness("claude"));
+    }
+
+    #[test]
+    fn manager_registration_wire_has_no_identity_or_provider_authority() {
+        let request = ManagerRegisterRequest {
+            project_id: "proj".into(),
+            pid: None,
+            holder_token: None,
+            caller_identity: Some(RuntimeIdentity::planned(
+                "run-test",
+                "runtime-test",
+                "boot-test",
+            )),
+            provider: Some("claude".into()),
+        };
+        let wire = serde_json::to_value(request).unwrap();
+        assert!(wire.get("caller_identity").is_none());
+        assert!(wire.get("provider").is_none());
+    }
+
+    fn generation_tx(tx_id: &str, ty: &str, extra: &[(&str, &str)]) -> TxEntry {
+        let mut entry = TxEntry::new(tx_id, ty, "[2026-08-09 Sun 00:00:00]", "test", "test");
+        entry.project = Some("proj".into());
+        entry.extra = extra
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
+        entry
+    }
+
+    #[test]
+    fn dispatch_wait_folds_the_complete_recovery_lineage_before_reports() {
+        // Deliberately list C->D before B->C. The fold must reach a fixed
+        // point rather than depending on tx-file lexical order.
+        let entries = vec![
+            generation_tx("started", "manager.dispatch_started", &[]),
+            generation_tx(
+                "recovery-2",
+                "run.created",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-c"),
+                    ("RUN_ID", "run-d"),
+                ],
+            ),
+            generation_tx(
+                "root",
+                "run.created",
+                &[
+                    ("ORIGIN", "cli_dispatch"),
+                    ("DISPATCH_TX", "started"),
+                    ("RUN_ID", "run-b"),
+                ],
+            ),
+            generation_tx(
+                "recovery-1",
+                "run.created",
+                &[
+                    ("ORIGIN", "recovery"),
+                    ("ORIGIN_RUN_ID", "run-b"),
+                    ("RUN_ID", "run-c"),
+                ],
+            ),
+            generation_tx("report", "implementer.reported", &[("RUN_ID", "run-d")]),
+        ];
+        let ledgers = dispatch_generation_ledgers(&entries, "proj");
+        let generation = ledgers.get("started").unwrap();
+        assert_eq!(
+            generation.run_ids,
+            BTreeSet::from([
+                "run-b".to_string(),
+                "run-c".to_string(),
+                "run-d".to_string()
+            ])
+        );
+        assert_eq!(generation.addressed_run_id.as_deref(), Some("run-d"));
+        assert!(generation.reported);
+    }
+
+    #[test]
+    fn release_and_recovery_epochs_make_generation_observations_retryable() {
+        let releases = ReleaseTaskTracker::new();
+        let before = releases.snapshot();
+        let admitted = releases.try_admit("run-a", None).unwrap();
+        let during = releases.snapshot();
+        assert!(during.revision > before.revision);
+        assert!(during.active_run_ids.contains("run-a"));
+        drop(admitted);
+        let after = releases.snapshot();
+        assert!(after.revision > during.revision);
+        assert!(!after.active_run_ids.contains("run-a"));
+
+        let recoveries = RecoveryGenerationTransitionTracker::default();
+        let before = recoveries.snapshot();
+        let transition = recoveries.begin("run-a");
+        let during = recoveries.snapshot();
+        assert!(during.revision > before.revision);
+        assert!(during.active_origin_run_ids.contains("run-a"));
+        drop(transition);
+        assert!(recoveries.snapshot().active_origin_run_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn dispatch_wait_endpoint_keeps_a_recovery_planning_window_waiting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let tx_dir = project_root.join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        let mut started = generation_tx("started", "manager.dispatch_started", &[]);
+        started.project = Some("proj".into());
+        let mut root = generation_tx(
+            "root",
+            "run.created",
+            &[
+                ("ORIGIN", "cli_dispatch"),
+                ("DISPATCH_TX", "started"),
+                ("RUN_ID", "run-origin"),
+            ],
+        );
+        root.project = Some("proj".into());
+        std::fs::write(
+            tx_dir.join("2026-08.org"),
+            format!("{}{}", started.render(), root.render()),
+        )
+        .unwrap();
+        let state = direct_stage_test_state(home).await;
+
+        // This guard is held by POST /runs/:id/recover before its inventory,
+        // claim-reconciliation, and replacement-planning work. Exercise the
+        // real dispatch-wait handler while that window is open.
+        let planning = state.recovery_generation_transitions.begin("run-origin");
+        let Json(waiting) = post_manager_dispatch_wait(
+            State(state.clone()),
+            Json(ManagerDispatchWaitRequest {
+                project_id: "proj".into(),
+                started_tx: vec!["started".into()],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(waiting.generations[0].status, "waiting");
+        drop(planning);
+
+        let Json(died) = post_manager_dispatch_wait(
+            State(state),
+            Json(ManagerDispatchWaitRequest {
+                project_id: "proj".into(),
+                started_tx: vec!["started".into()],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(died.generations[0].status, "died");
     }
 
     #[tokio::test]
@@ -20334,7 +21417,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id())),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20359,7 +21442,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id())),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20375,7 +21458,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(i64::from(std::process::id()) + 1),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20392,6 +21475,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: None,
+                caller_identity: None,
             }),
         )
         .await
@@ -20411,6 +21495,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: None,
+                caller_identity: None,
             }),
         )
         .await
@@ -20464,6 +21549,7 @@ pub(crate) mod tests {
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
                 run_id: Some(run_id.clone()),
+                caller_identity: None,
             }),
         )
         .await
@@ -20504,7 +21590,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(0),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20522,7 +21608,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: Some(-1),
                 holder_token: None,
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20536,7 +21622,7 @@ pub(crate) mod tests {
                 project_id: "proj".into(),
                 pid: None,
                 holder_token: Some(token.clone()),
-                terminal_run_id: None,
+                caller_identity: None,
                 provider: None,
             }),
         )
@@ -20562,7 +21648,7 @@ pub(crate) mod tests {
                     project_id: "proj".into(),
                     pid: Some(pid),
                     holder_token: None,
-                    terminal_run_id: None,
+                    caller_identity: None,
                     provider: None,
                 }),
             )
@@ -20592,6 +21678,7 @@ pub(crate) mod tests {
                 Json(ManagerReleaseRegistrationRequest {
                     project_id: "proj".into(),
                     run_id: None,
+                    caller_identity: None,
                 }),
             )
             .await

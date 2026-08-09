@@ -56,6 +56,11 @@ impl TmuxDriver {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct TmuxTuiConfig {
+    /// Opaque daemon-minted capability for a bare app terminal. Never comes
+    /// from user configuration and is stripped before the daemon persists
+    /// RunMeta; it is exported only to the child pane.
+    #[serde(default)]
+    manager_terminal_capability: Option<String>,
     #[serde(default)]
     command: Option<String>,
     #[serde(default)]
@@ -598,7 +603,45 @@ impl DriverControl for TmuxTuiControl {
         &mut self,
         _req: ManagerWakeRequest,
     ) -> Result<UserInputAck, DriverError> {
-        Err(DriverError::Unsupported("manager_wake requires conditional foreground delivery"))
+        if self.inert {
+            return Err(DriverError::Unsupported("manager_wake"));
+        }
+        // This remains a targeting/UX proof: it refuses a busy, unknown, or
+        // mismatched provider. It is not the byte-safety authority — tmux has
+        // no conditional paste, so the fixed marker below is safe even when
+        // the provider exits after this check.
+        match tmux_provider_ready(&self.session_name).await? {
+            true => {}
+            false => {
+                return Ok(UserInputAck {
+                    accepted: false,
+                    message: Some("claimed provider is busy or not at its composer".into()),
+                });
+            }
+        }
+        if let Err(error) = paste_manager_wake_marker_into_pane(
+            &self.session_name,
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await
+        {
+            return Err(normalize_manager_wake_target_loss(&self.session_name, error).await);
+        }
+        if let Err(error) = send_keys(
+            &self.session_name,
+            &[String::from("Enter")],
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await
+        {
+            return Err(normalize_manager_wake_target_loss(&self.session_name, error).await);
+        }
+        Ok(UserInputAck {
+            accepted: true,
+            message: None,
+        })
     }
 
     async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -882,16 +925,63 @@ pub fn tmux_session_name(identity: &RuntimeIdentity) -> String {
     format!("orgasmic-{}-{}", identity.run_id, identity.runtime_id)
 }
 
+/// What a synchronous `tmux has-session` probe actually established.
+///
+/// A non-zero tmux client invocation is not automatically evidence that the
+/// session disappeared: a missing server, broken binary, or client error can
+/// all use a non-zero exit. Recovery must only destroy/stale a durable claim
+/// from the one explicit no-such-session answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TmuxSessionObservation {
+    Present,
+    Absent,
+    Unobserved,
+}
+
 /// Synchronous tmux session probe for crash-reconciliation paths that cannot
 /// await driver I/O.
-pub fn tmux_session_exists(session: &str) -> bool {
-    tmux_command()
+pub fn observe_tmux_session(session: &str) -> TmuxSessionObservation {
+    match tmux_command()
         .args(["has-session", "-t", session])
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stderr(std::process::Stdio::piped())
+        .output()
+    {
+        Ok(output) => classify_tmux_session_observation(
+            output.status.success(),
+            output.status.code(),
+            &String::from_utf8_lossy(&output.stderr),
+        ),
+        Err(_) => TmuxSessionObservation::Unobserved,
+    }
+}
+
+fn classify_tmux_session_observation(
+    success: bool,
+    code: Option<i32>,
+    stderr: &str,
+) -> TmuxSessionObservation {
+    if success {
+        return TmuxSessionObservation::Present;
+    }
+    // `has-session` emits this client error for the ordinary, decidable
+    // no-such-session case. A bare exit 1 is intentionally insufficient: the
+    // daemon must not turn an unobserved mux into a false-dead recovery.
+    if code == Some(1) && stderr.to_ascii_lowercase().contains("can't find session") {
+        TmuxSessionObservation::Absent
+    } else {
+        TmuxSessionObservation::Unobserved
+    }
+}
+
+/// Boolean compatibility helper for consumers that only need positive
+/// liveness. Recovery reconciliation uses [`observe_tmux_session`] directly
+/// because absence and probe failure have different safety meanings there.
+pub fn tmux_session_exists(session: &str) -> bool {
+    matches!(
+        observe_tmux_session(session),
+        TmuxSessionObservation::Present
+    )
 }
 
 async fn has_tmux_session(session: &str) -> Result<bool, DriverError> {
@@ -922,6 +1012,9 @@ struct TmuxSpawnPlan {
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
     run_id: String,
+    runtime_id: String,
+    boot_id: String,
+    manager_terminal_capability: Option<String>,
     /// Harness-specific environment exported into the spawned pane. Carried on
     /// the plan (not applied at the tmux call site) so the stamp a transcript
     /// finder depends on is provable without spawning tmux.
@@ -1080,6 +1173,9 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
+        runtime_id: ctx.identity.runtime_id.clone(),
+        boot_id: ctx.identity.boot_id.clone(),
+        manager_terminal_capability: cfg.manager_terminal_capability.clone(),
         harness_env: harness_launch_env(harness),
         native_resume_mode: cfg.native_resume_mode,
         trusted_provider_identity: cfg.trusted_provider_identity.clone(),
@@ -1911,6 +2007,12 @@ async fn spawn_tmux_session(
     }
 
     let run_id_env = format!("ORGASMIC_RUN_ID={}", plan.run_id);
+    let runtime_id_env = format!("ORGASMIC_RUNTIME_ID={}", plan.runtime_id);
+    let boot_id_env = format!("ORGASMIC_BOOT_ID={}", plan.boot_id);
+    let manager_terminal_capability_env = plan
+        .manager_terminal_capability
+        .as_ref()
+        .map(|capability| format!("ORGASMIC_MANAGER_TERMINAL_CAPABILITY={capability}"));
 
     // orgasmic:TASK-RKTH1
     // Everything below goes into one imsg. Count it before tmux does, and move
@@ -1937,7 +2039,15 @@ async fn spawn_tmux_session(
             TMUX_SESSION_ROWS,
             "-e",
             run_id_env.as_str(),
+            "-e",
+            runtime_id_env.as_str(),
+            "-e",
+            boot_id_env.as_str(),
         ];
+        if let Some(capability) = manager_terminal_capability_env.as_deref() {
+            framing.push("-e");
+            framing.push(capability);
+        }
         for pair in &harness_env {
             framing.push("-e");
             framing.push(pair.as_str());
@@ -1967,6 +2077,8 @@ async fn spawn_tmux_session(
         "-e",
     ])
     .arg(&run_id_env);
+    tmux.arg("-e").arg(&runtime_id_env);
+    tmux.arg("-e").arg(&boot_id_env);
     // orgasmic:TASK-GT91X
     for (key, value) in &plan.harness_env {
         tmux.arg("-e").arg(format!("{key}={value}"));
@@ -2079,6 +2191,54 @@ async fn paste_text_into_pane(
     if text.is_empty() {
         return Ok(());
     }
+    let buffer_name = load_tmux_buffer(session, text, send_child, cancel).await?;
+    run_tmux(
+        &["paste-buffer", "-p", "-b", &buffer_name, "-t", session],
+        send_child,
+        cancel,
+    )
+    .await?;
+    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], send_child, cancel).await;
+    Ok(())
+}
+
+/// Inject the sole externally-wakeable manager payload.
+///
+/// Do not add `-p` here. tmux's `paste-buffer -p` wraps data in bracketed-paste
+/// escape bytes, which makes the raw pane input differ from the fixed marker.
+/// The fixed marker is intentionally a shell-inert `:` command if the target
+/// races from a provider composer into zsh/bash; `Enter` is sent separately by
+/// [`TmuxTuiControl::send_manager_wake`]. Keeping this helper argument-free is
+/// an executable boundary: this path can never paste caller-controlled text.
+async fn paste_manager_wake_marker_into_pane(
+    session: &str,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    let buffer_name = load_tmux_buffer(
+        session,
+        crate::r#trait::MANAGER_WAKE_MARKER,
+        send_child,
+        cancel,
+    )
+    .await?;
+    // Deliberately no `-p`: raw pane bytes must be exactly the marker.
+    run_tmux(
+        &["paste-buffer", "-b", &buffer_name, "-t", session],
+        send_child,
+        cancel,
+    )
+    .await?;
+    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], send_child, cancel).await;
+    Ok(())
+}
+
+async fn load_tmux_buffer(
+    session: &str,
+    text: &str,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<String, DriverError> {
     let buffer_name = format!("orgasmic-{}", sanitize_tmux_name(session));
     if let Some(owner) = send_child {
         let mut input = tempfile::tempfile()
@@ -2114,14 +2274,7 @@ async fn paste_text_into_pane(
         }
         wait_for_send_child(child, cancel).await?;
     }
-    run_tmux(
-        &["paste-buffer", "-p", "-b", &buffer_name, "-t", session],
-        send_child,
-        cancel,
-    )
-    .await?;
-    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], send_child, cancel).await;
-    Ok(())
+    Ok(buffer_name)
 }
 
 async fn send_keys(
@@ -2573,22 +2726,124 @@ async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[cfg(test)]
 pub(crate) fn provider_composer_ready(pane: &str, provider: &str) -> bool {
-    // Keep this narrower than the existing generic human-input detector.  The
-    // provider identity comes from the foreground process; this only verifies
-    // that that provider is accepting a turn, and rejects trust/login menus.
+    // Inspect only the current bottom input component. A prompt glyph anywhere
+    // in scrollback is historical output, not authority to interrupt a busy
+    // provider. We also require an *empty* composer so a human's typed draft
+    // is never overwritten. The marker itself is safe by construction, but
+    // this remains a deliberately strict targeting/refusal gate.
+    // Claude and Codex both draw the empty input as a two-line bottom
+    // component: a visible separator/blank viewport row followed immediately
+    // by the prompt line. Restricting the search to the last two screen rows
+    // means a prompt glyph from an earlier output frame (including one followed
+    // by several empty rows) cannot be mistaken for the live composer.
+    let mut bottom = pane
+        .lines()
+        .rev()
+        .take(2)
+        .map(strip_ansi_codes)
+        .map(|line| line.trim().to_string());
+    let Some(line) = bottom.next() else {
+        return false;
+    };
+    let Some(component_top) = bottom.next() else {
+        return false;
+    };
+    if !component_top.is_empty() {
+        return false;
+    }
+    let empty_prompt = |glyph: &str| {
+        line.strip_prefix(glyph)
+            .is_some_and(|rest| rest.trim().is_empty())
+            && !line_is_numbered_menu_item(&line)
+    };
     match provider {
-        "claude" => pane.lines().any(|line| {
-            let line = strip_ansi_codes(line);
-            line_starts_with_prompt(&line, "❯") && !line_is_numbered_menu_item(&line)
-        }),
-        "codex" => pane.lines().any(|line| {
-            let line = strip_ansi_codes(line);
-            (line_starts_with_prompt(&line, "›") || line_starts_with_prompt(&line, "❯"))
-                && !line_is_numbered_menu_item(&line)
-        }),
+        "claude" => empty_prompt("❯"),
+        "codex" => empty_prompt("›"),
         _ => false,
+    }
+}
+
+/// Fresh tmux foreground probe used only to target the fixed inert marker.
+/// tmux cannot make the subsequent paste conditional, which is why this
+/// function must never be described as a shell-byte safety guarantee.
+async fn tmux_provider_ready(session: &str) -> Result<bool, DriverError> {
+    let pane_pid = tmux_async_command()
+        .args(["display-message", "-p", "-t", session, "#{pane_pid}"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("tmux pane pid: {e}")))?;
+    if !pane_pid.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let pane_pid = String::from_utf8_lossy(&pane_pid.stdout).trim().to_string();
+    if pane_pid.parse::<u32>().is_err() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let foreground = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "tpgid=", "-p", &pane_pid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps tpgid: {e}")))?;
+    if !foreground.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let tpgid = String::from_utf8_lossy(&foreground.stdout)
+        .trim()
+        .to_string();
+    if tpgid.parse::<u32>().is_err() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let executable = tokio::process::Command::new("/bin/ps")
+        .args(["-o", "comm=", "-p", &tpgid])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("ps foreground executable: {e}")))?;
+    if !executable.status.success() {
+        return Err(DriverError::ManagerWakeUnavailable);
+    }
+    let executable = String::from_utf8_lossy(&executable.stdout)
+        .trim()
+        .to_ascii_lowercase();
+    let provider = match executable.rsplit('/').next() {
+        Some("claude") => "claude",
+        Some("codex") => "codex",
+        _ => return Err(DriverError::ManagerWakeProviderMismatch),
+    };
+    let pane = match capture_pane_visible(session).await {
+        Ok(pane) => pane,
+        Err(error) => return Err(normalize_manager_wake_target_loss(session, error).await),
+    };
+    Ok(provider_composer_ready(&pane, provider))
+}
+
+/// Tmux has no typed error protocol for target disappearance: `capture-pane`,
+/// `paste-buffer`, and `send-keys` all reduce it to a failed client command.
+/// Re-probe the exact session only on the manager-wake path so the public wake
+/// contract returns unavailable (CLI exit 5), not a generic transport failure.
+async fn normalize_manager_wake_target_loss(session: &str, error: DriverError) -> DriverError {
+    normalize_manager_wake_target_loss_probe(has_tmux_session(session).await, error)
+}
+
+fn normalize_manager_wake_target_loss_probe(
+    session_exists: Result<bool, DriverError>,
+    error: DriverError,
+) -> DriverError {
+    if matches!(
+        error,
+        DriverError::ManagerWakeUnavailable | DriverError::ManagerWakeProviderMismatch
+    ) {
+        return error;
+    }
+    match session_exists {
+        Ok(false) | Err(_) => DriverError::ManagerWakeUnavailable,
+        Ok(true) => error,
     }
 }
 
@@ -3156,6 +3411,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tmux_session_probe_distinguishes_absence_from_client_failure() {
+        assert_eq!(
+            classify_tmux_session_observation(true, Some(0), ""),
+            TmuxSessionObservation::Present
+        );
+        assert_eq!(
+            classify_tmux_session_observation(false, Some(1), "can't find session: gone"),
+            TmuxSessionObservation::Absent
+        );
+        for (code, stderr) in [
+            (Some(1), "no server running on /tmp/tmux-501/default"),
+            (Some(2), "tmux: bad option"),
+            (None, "signal"),
+        ] {
+            assert_eq!(
+                classify_tmux_session_observation(false, code, stderr),
+                TmuxSessionObservation::Unobserved,
+                "status={code:?}, stderr={stderr:?} must not read as a dead pane"
+            );
+        }
+    }
+
     async fn tmux_spawn_usable() -> bool {
         if !tmux_available() {
             return false;
@@ -3692,6 +3970,9 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-fork-gap".into(),
+            runtime_id: "runtime-fork-gap".into(),
+            boot_id: "boot-test".into(),
+            manager_terminal_capability: None,
             harness_env: Vec::new(),
             native_resume_mode: true,
             trusted_provider_identity: Some("claude".into()),
@@ -3920,12 +4201,53 @@ mod tests {
     }
 
     #[test]
-    fn automated_wake_composer_gate_is_provider_specific_and_rejects_menus() {
-        assert!(provider_composer_ready("❯ ", "claude"));
-        assert!(!provider_composer_ready("❯ 1. Yes, proceed", "claude"));
-        assert!(provider_composer_ready("› ", "codex"));
-        assert!(!provider_composer_ready("zsh prompt\n% ", "codex"));
+    fn automated_wake_composer_gate_requires_current_provider_input_component() {
+        // Captured idle Claude and Codex panes: both end in an empty viewport
+        // row plus the current prompt line. A bare glyph is intentionally not
+        // enough evidence — it may be scrollback or a menu selection.
+        let claude_idle = "Claude Code 2.1\n\n❯ ";
+        let codex_idle = "OpenAI Codex\n\n› ";
+        let claude_busy = "Claude Code 2.1\n\n✻ Thinking…\n\n";
+        let codex_busy = "OpenAI Codex\n\nworking…\n\n";
+        assert!(provider_composer_ready(claude_idle, "claude"));
+        assert!(provider_composer_ready(codex_idle, "codex"));
+        assert!(!provider_composer_ready(claude_busy, "claude"));
+        assert!(!provider_composer_ready(codex_busy, "codex"));
+        assert!(!provider_composer_ready("❯ ", "claude"));
+        assert!(!provider_composer_ready("\n❯ 1. Yes, proceed", "claude"));
+        assert!(!provider_composer_ready("\n› 1. Run", "codex"));
+        assert!(!provider_composer_ready("zsh prompt\n\n% ", "codex"));
         assert!(!provider_composer_ready("❯ ", "unknown"));
+        assert!(
+            !provider_composer_ready("old output\n❯ \n\n", "claude"),
+            "a historical glyph cannot satisfy the bottom-input gate"
+        );
+        assert!(
+            !provider_composer_ready("old output\n\n❯ human draft", "claude"),
+            "never paste over a human draft"
+        );
+    }
+
+    #[test]
+    fn automated_wake_target_loss_is_typed_unavailable() {
+        let transport = DriverError::Transport("tmux paste-buffer failed: no such pane".into());
+        assert!(matches!(
+            normalize_manager_wake_target_loss_probe(Ok(false), transport),
+            DriverError::ManagerWakeUnavailable
+        ));
+        let transport = DriverError::Transport("tmux capture-pane failed".into());
+        assert!(matches!(
+            normalize_manager_wake_target_loss_probe(
+                Err(DriverError::Transport("gone".into())),
+                transport
+            ),
+            DriverError::ManagerWakeUnavailable
+        ));
+        let provider = DriverError::ManagerWakeProviderMismatch;
+        assert!(matches!(
+            normalize_manager_wake_target_loss_probe(Ok(false), provider),
+            DriverError::ManagerWakeProviderMismatch
+        ));
     }
 
     #[test]
@@ -4787,6 +5109,101 @@ mod tests {
         assert!(!listed.success(), "tmux session should be gone");
     }
 
+    /// End-to-end byte proof for externally waking an app terminal. The pane
+    /// reads raw tty bytes, so tmux's bracketed-paste wrapper would appear as
+    /// `ESC[200~` / `ESC[201~` here. The only accepted data is the fixed
+    /// shell-inert marker followed by the separately-sent Enter byte.
+    #[tokio::test]
+    async fn manager_wake_pastes_exact_marker_bytes_without_bracketed_paste() {
+        let _live_guard = live_session_guard();
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "manager_wake_pastes_exact_marker_bytes_without_bracketed_paste",
+            &[("tmux", tmux_available)],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let marker_path = tmp.path().join("marker.raw");
+        let submit_path = tmp.path().join("submit.raw");
+        let marker_len = crate::r#trait::MANAGER_WAKE_MARKER.len();
+        let reader = format!(
+            "stty raw -echo; dd bs=1 count={marker_len} of={} 2>/dev/null; dd bs=1 count=1 of={} 2>/dev/null",
+            sh_single_quote(&marker_path.display().to_string()),
+            sh_single_quote(&submit_path.display().to_string()),
+        );
+        let session = format!("orgasmic-wake-bytes-{}", uuid::Uuid::new_v4().simple());
+        let _session_guard = SessionGuard(session.clone());
+        let status = tmux_async_command()
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &session,
+                "--",
+                "/bin/sh",
+                "-c",
+                &reader,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .status()
+            .await
+            .expect("start raw wake reader pane");
+        assert!(status.success(), "raw wake reader must start");
+
+        // Let the shell install raw mode before tmux delivers the marker.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        paste_manager_wake_marker_into_pane(&session, None, None)
+            .await
+            .expect("paste fixed manager marker");
+        send_keys(&session, &[String::from("Enter")], None, None)
+            .await
+            .expect("submit manager marker");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while (!marker_path.exists() || !submit_path.exists())
+            && std::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let marker = std::fs::read(&marker_path).expect("raw marker bytes captured");
+        let submit = std::fs::read(&submit_path).expect("raw submit byte captured");
+        assert_eq!(marker, crate::r#trait::MANAGER_WAKE_MARKER.as_bytes());
+        assert_eq!(submit, [b'\r'], "Enter must be a separate submit action");
+    }
+
+    #[tokio::test]
+    async fn manager_wake_missing_tmux_target_is_typed_unavailable() {
+        let _live_guard = live_session_guard();
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "manager_wake_missing_tmux_target_is_typed_unavailable",
+            &[("tmux", tmux_available)],
+        ) {
+            return;
+        }
+        let mut control = TmuxTuiControl {
+            events: None,
+            session_name: format!("orgasmic-wake-gone-{}", uuid::Uuid::new_v4().simple()),
+            kind: RunKind::Worker,
+            inert: false,
+            lifecycle_abort: None,
+            pane_activity_abort: None,
+            startup_task: None,
+            startup_cancel: Arc::new(AtomicBool::new(false)),
+            send_child: SendChildOwner::new(),
+            terminal_emitted: Arc::new(AtomicBool::new(false)),
+            kill_on_drop: false,
+            released: false,
+        };
+        let err = control
+            .send_manager_wake(ManagerWakeRequest {})
+            .await
+            .expect_err("a disappeared target must not become generic transport failure");
+        assert!(matches!(err, DriverError::ManagerWakeUnavailable));
+    }
+
     // orgasmic:TASK-4CSMY
     /// A newline-emitting pane and a newline-FREE redrawing pane, the two
     /// fixtures TASK-RWCRN.1 established for rmux. The second is the ship
@@ -5104,6 +5521,9 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-input-ready".into(),
+            runtime_id: "runtime-input-ready".into(),
+            boot_id: "boot-test".into(),
+            manager_terminal_capability: None,
             harness_env: Vec::new(),
             native_resume_mode: false,
             trusted_provider_identity: None,
@@ -5410,6 +5830,9 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-rkth1".into(),
+            runtime_id: "runtime-rkth1".into(),
+            boot_id: "boot-test".into(),
+            manager_terminal_capability: None,
             harness_env: Vec::new(),
             native_resume_mode: false,
             trusted_provider_identity: None,

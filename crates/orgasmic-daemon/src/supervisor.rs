@@ -33,8 +33,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::{
-    read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,
-    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
+    read_session_file, scan_session_lifecycle_complete, BabysitterSummaryChunk, BabysitterTool,
+    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
+    TextStream,
 };
 use orgasmic_drivers::{
     AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
@@ -42,6 +43,7 @@ use orgasmic_drivers::{
     TransitionAck, TransitionRequest, UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -284,6 +286,8 @@ pub enum SupervisorError {
     },
     #[error("run not found: {0}")]
     RunNotFound(String),
+    #[error("manager terminal claim refused: {0}")]
+    ManagerClaimRefused(String),
     /// The record IS present and some other authority is already releasing it
     /// (`explicit_release_in_progress` / `early_exit_release_taken`).
     ///
@@ -403,6 +407,11 @@ pub struct Supervisor {
     inner: Arc<Mutex<Inner>>,
     writer: WriterHandle,
     boot: Arc<BootIdentity>,
+    /// Secret used to derive opaque, run-scoped manager-terminal capabilities.
+    /// It is the daemon auth secret, never a run-state or API field, so a
+    /// replacement daemon can validate a capability already exported into a
+    /// live terminal without persisting that secret in session JSONL.
+    manager_terminal_capability_key: Arc<str>,
     /// `false` while boot rehydration is still deciding which runtimes from the
     /// previous daemon are alive (TASK-AK6EM ask 2). A destructive close waits
     /// for this rather than reading a run map that is knowingly incomplete.
@@ -438,10 +447,11 @@ pub struct Supervisor {
 /// found the *second* admission path (`reattach`) that had never learned about
 /// it, so the fix cannot be another per-call-site check — the next path added
 /// would forget it the same way. Making a run live means writing `leases`, and
-/// the only code that can write `leases` is [`Inner::admit_live_run`], which
-/// runs the whole admission check. A future fourth path does not get to
-/// forget: it cannot compile without going through this door, and its author
-/// must name which [`AdmissionPath`] it is.
+/// the only code that can write `leases` is [`Inner::admit_live_run`] (or its
+/// locked [`Inner::admit_preflighted_live_run`] completion), which runs the
+/// whole admission check. A future fourth path does not get to forget: it
+/// cannot compile without going through this door, and its author must name
+/// which [`AdmissionPath`] it is.
 mod admission {
     use super::*;
 
@@ -452,7 +462,8 @@ mod admission {
         ///
         /// PRIVATE ON PURPOSE — see the module docs. Read it through
         /// [`Inner::lease`], drop it through [`Inner::remove_lease`], and take
-        /// one only through [`Inner::admit_live_run`].
+        /// one only through [`Inner::admit_live_run`] or its same-lock,
+        /// preflighted completion.
         leases: HashMap<LeaseKey, AdmittedRun>,
         /// run_id → live run record. Holds the driver control handle so the
         /// supervisor can call `release` later.
@@ -608,18 +619,16 @@ mod admission {
             self.leases.values().any(|held| held.run_id == run_id)
         }
 
-        /// The single live-run admission decision.
+        /// Validate a live-run admission without mutating the lease map.
         ///
-        /// Order is deliberate and shared by both paths: pause, then lease,
-        /// then the destructive-cleanup fence. The fence is last because it is
-        /// the one that must be read under the *same* lock acquisition that
-        /// installs the lease — `reserve_dispatch_close` installs its
-        /// reservation under this lock, so from that instant no path here can
-        /// admit a run into the reserved worktree.
-        pub(super) fn admit_live_run(
+        /// A terminal-manager promotion writes a durable lifecycle event
+        /// between this preflight and the lease swap. Its caller holds the
+        /// same `Inner` lock throughout, so this is also the exact decision
+        /// the infallible post-persistence swap will install.
+        pub(super) fn preflight_live_run(
             &mut self,
-            req: LiveRunAdmission<'_>,
-        ) -> Result<AdmittedLease, SupervisorError> {
+            req: &LiveRunAdmission<'_>,
+        ) -> Result<(), SupervisorError> {
             if self.acquisition_paused {
                 return Err(SupervisorError::AcquisitionPaused);
             }
@@ -662,9 +671,18 @@ mod admission {
                     });
                 }
             }
-            // Record the worktree WITH the lease, so the window between here
-            // and the caller's `RunRecord` insert is addressable by worktree
-            // rather than only by task id (TASK-RMA18 finding 6).
+            Ok(())
+        }
+
+        /// Install an admission that was preflighted while this same `Inner`
+        /// lock remained held. This is intentionally infallible: the caller
+        /// has already completed every fallible check before persisting a
+        /// lifecycle transition, so a failed acquisition cannot leave durable
+        /// manager-claim state ahead of the live lease state.
+        pub(super) fn admit_preflighted_live_run(
+            &mut self,
+            req: LiveRunAdmission<'_>,
+        ) -> AdmittedLease {
             self.leases.insert(
                 req.lease_key.clone(),
                 AdmittedRun {
@@ -673,10 +691,26 @@ mod admission {
                     worktree_identity: req.worktree.and_then(worktree_identity),
                 },
             );
-            Ok(AdmittedLease {
+            AdmittedLease {
                 key: req.lease_key.clone(),
                 run_id: req.run_id.to_string(),
-            })
+            }
+        }
+
+        /// The single live-run admission decision.
+        ///
+        /// Order is deliberate and shared by both paths: pause, then lease,
+        /// then the destructive-cleanup fence. The fence is last because it is
+        /// the one that must be read under the *same* lock acquisition that
+        /// installs the lease — `reserve_dispatch_close` installs its
+        /// reservation under this lock, so from that instant no path here can
+        /// admit a run into the reserved worktree.
+        pub(super) fn admit_live_run(
+            &mut self,
+            req: LiveRunAdmission<'_>,
+        ) -> Result<AdmittedLease, SupervisorError> {
+            self.preflight_live_run(&req)?;
+            Ok(self.admit_preflighted_live_run(req))
         }
 
         /// Install a lease without an admission decision. Tests only, and named
@@ -1130,6 +1164,10 @@ struct RunRecord {
     kind: RunKind,
     worker_id: String,
     role: String,
+    /// Present while a custom app terminal occupies the project manager lease.
+    /// The original terminal task id is retained so `manager release` can
+    /// demote it without tearing down the pane.
+    manager_terminal_claim: Option<ManagerTerminalClaim>,
     transport: String,
     harness: Option<String>,
     project_id: Option<String>,
@@ -1259,6 +1297,38 @@ struct RunRecord {
     /// run: dropping the producer closes the channel and the receiver owns the
     /// sole normal terminal boundary.
     pid_exit_shutdown_in_progress: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ManagerTerminalClaim {
+    original_task_id: String,
+}
+
+/// A claimed terminal can remain interactive long after the promotion event,
+/// so its terminal transcript can push that event out of a bounded prefix/tail
+/// scan. Reattach must replay the complete lifecycle stream (without parsing
+/// transcript payloads) rather than silently demoting a still-live manager
+/// after a daemon restart.
+fn restored_manager_terminal_claim(
+    session_path: &Path,
+) -> Result<Option<ManagerTerminalClaim>, SupervisorError> {
+    let scan = scan_session_lifecycle_complete(session_path)
+        .map_err(|error| SupervisorError::Session(anyhow::anyhow!(error)))?;
+    let mut restored = None;
+    for envelope in scan.envelopes {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        let Ok(Lifecycle::ManagerTerminalClaim {
+            original_task_id,
+            claimed,
+        }) = serde_json::from_value(envelope.event)
+        else {
+            continue;
+        };
+        restored = claimed.then_some(ManagerTerminalClaim { original_task_id });
+    }
+    Ok(restored)
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -1401,8 +1471,14 @@ impl Supervisor {
         writer: WriterHandle,
         boot: Arc<BootIdentity>,
         close_guards: CloseGuardStore,
+        manager_terminal_capability_key: impl Into<Arc<str>>,
     ) -> Self {
-        let supervisor = Self::unmonitored(writer, boot, close_guards);
+        let supervisor = Self::unmonitored(
+            writer,
+            boot,
+            close_guards,
+            manager_terminal_capability_key.into(),
+        );
         spawn_run_timeout_monitor(supervisor.clone());
         supervisor
     }
@@ -1418,11 +1494,13 @@ impl Supervisor {
         writer: WriterHandle,
         boot: Arc<BootIdentity>,
         close_guards: CloseGuardStore,
+        manager_terminal_capability_key: Arc<str>,
     ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner::new(close_guards))),
             writer,
             boot,
+            manager_terminal_capability_key,
             // Resolved by default: a supervisor nobody has told about boot
             // rehydration has none pending. `begin_boot_reattach` is what the
             // daemon calls, before it binds.
@@ -1437,6 +1515,62 @@ impl Supervisor {
                 ProcessSubtreeCpuProbe::default(),
             ))),
         }
+    }
+
+    /// Derive, rather than persist, the capability carried by an app-created
+    /// terminal. It remains valid over daemon replacement because the auth
+    /// secret and the terminal's immutable runtime identity both survive.
+    fn manager_terminal_capability(&self, project_id: &str, identity: &RuntimeIdentity) -> String {
+        let mut key = [0_u8; 64];
+        let secret = self.manager_terminal_capability_key.as_bytes();
+        if secret.len() > key.len() {
+            key[..32].copy_from_slice(&Sha256::digest(secret));
+        } else {
+            key[..secret.len()].copy_from_slice(secret);
+        }
+        let mut inner = Sha256::new();
+        inner.update(key.map(|byte| byte ^ 0x36));
+        inner.update(b"orgasmic-manager-terminal-capability-v1\0");
+        for value in [
+            project_id,
+            identity.run_id.as_str(),
+            identity.runtime_id.as_str(),
+            identity.boot_id.as_str(),
+        ] {
+            inner.update(value.as_bytes());
+            inner.update([0]);
+        }
+        let inner = inner.finalize();
+        let mut outer = Sha256::new();
+        outer.update(key.map(|byte| byte ^ 0x5c));
+        outer.update(inner);
+        format!("{:x}", outer.finalize())
+    }
+
+    fn manager_terminal_capability_matches(
+        &self,
+        project_id: &str,
+        identity: &RuntimeIdentity,
+        presented: &str,
+    ) -> bool {
+        let expected = self.manager_terminal_capability(project_id, identity);
+        if expected.len() != presented.len() {
+            return false;
+        }
+        let mut difference = 0_u8;
+        for (expected, presented) in expected.bytes().zip(presented.bytes()) {
+            difference |= expected ^ presented;
+        }
+        difference == 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn manager_terminal_capability_for_test(
+        &self,
+        project_id: &str,
+        identity: &RuntimeIdentity,
+    ) -> String {
+        self.manager_terminal_capability(project_id, identity)
     }
 
     /// Replace the work-evidence probe (TASK-JK66P).
@@ -1774,6 +1908,27 @@ impl Supervisor {
         };
         let mut lease = LeaseReservation::new(self.inner.clone(), admitted);
 
+        // The capability is injected only into a bare app terminal's launch
+        // environment. It is deliberately stripped before RunMeta is written:
+        // session JSONL is durable evidence, not secret storage.
+        let mut persisted_driver_config = req.driver_config.clone();
+        if let Some(object) = persisted_driver_config.0.as_object_mut() {
+            object.remove("manager_terminal_capability");
+        }
+        let mut launch_driver_config = persisted_driver_config.clone();
+        if req.role == "terminal" {
+            if let Some(project_id) = req.project_id.as_deref() {
+                if let Some(object) = launch_driver_config.0.as_object_mut() {
+                    object.insert(
+                        "manager_terminal_capability".into(),
+                        serde_json::Value::String(
+                            self.manager_terminal_capability(project_id, &identity),
+                        ),
+                    );
+                }
+            }
+        }
+
         // Build the driver context and spawn. If the driver fails, release
         // the lease before returning.
         let ctx = DriverContext {
@@ -1787,7 +1942,7 @@ impl Supervisor {
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
-        let session = match driver.acquire(ctx, req.driver_config.clone()).await {
+        let session = match driver.acquire(ctx, launch_driver_config).await {
             Ok(s) => s,
             Err(e) => return Err(SupervisorError::Driver(e)),
         };
@@ -1842,7 +1997,7 @@ impl Supervisor {
                 .native_runtime
                 .as_ref()
                 .and_then(|native| native.credential_mode.clone()),
-            req.driver_config.clone(),
+            persisted_driver_config.clone(),
         )
         .await?;
 
@@ -1877,7 +2032,7 @@ impl Supervisor {
                 plan.last_path.clone(),
                 plan.stdout_path.clone(),
                 None,
-                req.driver_config.clone(),
+                persisted_driver_config,
                 plan.native_runtime.clone(),
                 Some(&plan.prompt_draft),
                 true,
@@ -1904,6 +2059,7 @@ impl Supervisor {
                 kind,
                 worker_id: req.worker_id.clone(),
                 role: req.role.clone(),
+                manager_terminal_claim: None,
                 transport: transport.clone(),
                 harness: harness.clone(),
                 project_id: req.project_id.clone(),
@@ -2506,6 +2662,18 @@ impl Supervisor {
         recovery_plan: Option<RecoveryReattachPlan>,
     ) -> Result<AcquireResponse, SupervisorError> {
         let run_id = identity.run_id.clone();
+        let restored_manager_terminal_claim = restored_manager_terminal_claim(&session_path)?;
+        let mut task_id = task_id;
+        let mut role = role;
+        if restored_manager_terminal_claim.is_some() {
+            let project_id = project_id.as_deref().ok_or_else(|| {
+                SupervisorError::ManagerClaimRefused(
+                    "claimed terminal session is missing its project id".into(),
+                )
+            })?;
+            task_id = format!("manager.launch:{project_id}");
+            role = "manager".into();
+        }
         // Lease conflict guard: do not steal an occupied lease.
         let lease_key = lease_key(project_id.as_deref(), &task_id, kind);
         let admitted = {
@@ -2638,6 +2806,7 @@ impl Supervisor {
             kind,
             worker_id: worker_id.clone(),
             role: role.clone(),
+            manager_terminal_claim: restored_manager_terminal_claim,
             transport,
             harness,
             project_id,
@@ -2946,14 +3115,211 @@ impl Supervisor {
         Ok(ack)
     }
 
-    /// Provider-bound automation path for a manager that claimed a terminal.
-    /// The driver, not this API layer, owns the last-moment foreground-process
-    /// and composer checks because only the pane transport can make them near
-    /// the paste boundary.
+    /// Atomically promote the terminal named by a daemon-minted capability into
+    /// the project's one manager lease. The request never names a run or
+    /// runtime identity: only the exact app-created pane received this opaque
+    /// capability in its environment.
+    pub async fn claim_manager_terminal(
+        &self,
+        project_id: &str,
+        capability: &str,
+    ) -> Result<String, SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let Some((run_id, old_task_id, kind, already_claimed)) =
+            g.runs.iter().find_map(|(run_id, rec)| {
+                let matches_capability = rec.project_id.as_deref() == Some(project_id)
+                    && self.manager_terminal_capability_matches(
+                        project_id,
+                        &rec.identity,
+                        capability,
+                    );
+                matches_capability.then(|| {
+                    (
+                        run_id.clone(),
+                        rec.task_id.clone(),
+                        rec.kind,
+                        rec.manager_terminal_claim.is_some(),
+                    )
+                })
+            })
+        else {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "manager terminal capability does not name a live terminal".into(),
+            ));
+        };
+        if already_claimed {
+            return Ok(run_id);
+        }
+        let rec = g
+            .runs
+            .get(&run_id)
+            .expect("capability match came from this live record");
+        if rec.role != "terminal"
+            || !matches!(
+                rec.transport.as_str(),
+                "tmux" | "tmux-tui" | "rmux" | "rmux-tui"
+            )
+        {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "manager terminal capability is not attached to a claimable app terminal".into(),
+            ));
+        }
+        let old_key = lease_key(Some(project_id), &old_task_id, kind);
+        let manager_task_id = format!("manager.launch:{project_id}");
+        let manager_key = lease_key(Some(project_id), &manager_task_id, kind);
+        if let Some(existing) = g.lease(&manager_key) {
+            return Err(SupervisorError::LeaseHeld {
+                task_id: manager_task_id,
+                kind,
+                run_id: existing.clone(),
+            });
+        }
+        if g.lease(&old_key) != Some(&run_id) {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "capability terminal no longer owns its supervisor lease".into(),
+            ));
+        }
+        let manager_admission = LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &manager_key,
+            run_id: &run_id,
+            task_id: &manager_task_id,
+            kind,
+            worktree: None,
+        };
+        // All fallible admission checks occur before the durable lifecycle
+        // event. We keep this lock through the append, so the subsequently
+        // installed lease is the exact one that was preflighted.
+        g.preflight_live_run(&manager_admission)?;
+        let (session_path, identity) = {
+            let rec = g
+                .runs
+                .get(&run_id)
+                .expect("capability match came from this live record");
+            (rec.session_path.clone(), rec.identity.clone())
+        };
+        // Persist before making the in-memory lease visible. A daemon restart
+        // can therefore restore either the old terminal lease or the complete
+        // promoted manager lease, never an unrecorded middle state.
+        let claim_event = Lifecycle::ManagerTerminalClaim {
+            original_task_id: old_task_id.clone(),
+            claimed: true,
+        };
+        self.writer
+            .append_session(SessionAppend {
+                run_id: run_id.clone(),
+                session_path,
+                identity,
+                authority: None,
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::to_value(&claim_event).map_err(into_anyhow)?,
+            })
+            .await
+            .map_err(SupervisorError::Session)?;
+        // The admission was preflighted above under this still-held lock, so
+        // this swap is infallible. Admit before removing the terminal key;
+        // launch/register cannot interleave a second manager lease.
+        let _admitted = g.admit_preflighted_live_run(manager_admission);
+        let removed = g.remove_lease(&old_key);
+        debug_assert_eq!(removed.as_deref(), Some(run_id.as_str()));
+        let rec = g
+            .runs
+            .get_mut(&run_id)
+            .expect("claim holds the live terminal record lock");
+        rec.task_id = manager_task_id;
+        rec.role = "manager".into();
+        rec.manager_terminal_claim = Some(ManagerTerminalClaim {
+            original_task_id: old_task_id,
+        });
+        Ok(run_id)
+    }
+
+    /// Demote a claimed custom terminal back to its original independent
+    /// terminal lease without closing its pane. Generic run release still
+    /// removes whichever lease the run currently holds.
+    pub async fn unclaim_manager_terminal(
+        &self,
+        project_id: &str,
+        capability: &str,
+    ) -> Result<Option<String>, SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let Some((run_id, manager_task_id, original_task_id, kind)) =
+            g.runs.iter().find_map(|(run_id, rec)| {
+                let claim = rec.manager_terminal_claim.as_ref()?;
+                (rec.project_id.as_deref() == Some(project_id)
+                    && self.manager_terminal_capability_matches(
+                        project_id,
+                        &rec.identity,
+                        capability,
+                    ))
+                .then_some((
+                    run_id.clone(),
+                    rec.task_id.clone(),
+                    claim.original_task_id.clone(),
+                    rec.kind,
+                ))
+            })
+        else {
+            return Ok(None);
+        };
+        let manager_key = lease_key(Some(project_id), &manager_task_id, kind);
+        let terminal_key = lease_key(Some(project_id), &original_task_id, kind);
+        if g.lease(&manager_key) != Some(&run_id) {
+            return Err(SupervisorError::ManagerClaimRefused(
+                "claimed terminal no longer owns the manager lease".into(),
+            ));
+        }
+        let terminal_admission = LiveRunAdmission {
+            path: AdmissionPath::Acquire,
+            lease_key: &terminal_key,
+            run_id: &run_id,
+            task_id: &original_task_id,
+            kind,
+            worktree: None,
+        };
+        // As with promotion, never append a demotion lifecycle event before
+        // proving the terminal lease can be restored.
+        g.preflight_live_run(&terminal_admission)?;
+        let (session_path, identity) = {
+            let rec = g
+                .runs
+                .get(&run_id)
+                .expect("unclaim holds the live terminal record lock");
+            (rec.session_path.clone(), rec.identity.clone())
+        };
+        let claim_event = Lifecycle::ManagerTerminalClaim {
+            original_task_id: original_task_id.clone(),
+            claimed: false,
+        };
+        self.writer
+            .append_session(SessionAppend {
+                run_id: run_id.clone(),
+                session_path,
+                identity,
+                authority: None,
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::to_value(&claim_event).map_err(into_anyhow)?,
+            })
+            .await
+            .map_err(SupervisorError::Session)?;
+        let _admitted = g.admit_preflighted_live_run(terminal_admission);
+        let removed = g.remove_lease(&manager_key);
+        debug_assert_eq!(removed.as_deref(), Some(run_id.as_str()));
+        let rec = g
+            .runs
+            .get_mut(&run_id)
+            .expect("unclaim holds the live terminal record lock");
+        rec.task_id = original_task_id;
+        rec.role = "terminal".into();
+        rec.manager_terminal_claim = None;
+        Ok(Some(run_id))
+    }
+
+    /// Provider-bound automation path for a claimed terminal. No caller input
+    /// reaches the driver: transports can send only the inert fixed marker.
     pub async fn send_manager_wake(
         &self,
         run_id: &str,
-        input: String,
         caller_identity: &RuntimeIdentity,
     ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
         let ack = {
@@ -2963,19 +3329,20 @@ impl Supervisor {
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
             self.check_ownership(rec, caller_identity)?;
-            let ack = rec
-                .control
-                .send_manager_wake(ManagerWakeRequest {
-                    input: input.clone(),
-                })
-                .await?;
+            rec.manager_terminal_claim.as_ref().ok_or_else(|| {
+                SupervisorError::ManagerClaimRefused("run is not a claimed terminal".into())
+            })?;
+            let ack = rec.control.send_manager_wake(ManagerWakeRequest {}).await?;
             if ack.accepted {
                 rec.last_input_at = Instant::now();
             }
             ack
         };
         if ack.accepted {
-            if let Err(e) = self.record_composer_send(run_id, &input).await {
+            if let Err(e) = self
+                .record_composer_send(run_id, orgasmic_drivers::r#trait::MANAGER_WAKE_MARKER)
+                .await
+            {
                 warn!(error = %e, run_id, "manager wake recording failed");
             }
         }
@@ -3324,6 +3691,7 @@ impl Supervisor {
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
                 dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
+                claimed_manager: rec.manager_terminal_claim.is_some(),
             })
             .collect();
         SupervisorSnapshot {
@@ -4678,6 +5046,10 @@ pub struct RunSummary {
     pub stdout_path: Option<PathBuf>,
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
+    /// True exactly when this live run is a custom terminal promoted into the
+    /// project's manager lease. The capability and provider stay private.
+    #[serde(default)]
+    pub claimed_manager: bool,
 }
 
 fn make_run_id(kind: &RunKind) -> String {
@@ -6686,7 +7058,7 @@ mod tests {
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::session::TextStream;
-    use orgasmic_core::{read_session_file, SessionEnvelope};
+    use orgasmic_core::{read_session_file, SessionEnvelope, SessionWriter};
     use orgasmic_drivers::{
         modes::{
             rmux::{
@@ -8128,7 +8500,12 @@ mod tests {
         let events = EventBus::new();
         let writer = spawn_writer(events.clone());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::new(writer.clone(), boot, CloseGuardStore::ephemeral());
+        let sup = Supervisor::new(
+            writer.clone(),
+            boot,
+            CloseGuardStore::ephemeral(),
+            "test-manager-terminal-capability-key",
+        );
         sup.set_work_probe(Arc::new(UnobservableWorkProbe));
         (sup, dir, writer, events)
     }
@@ -8211,9 +8588,120 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::unmonitored(writer.clone(), boot, CloseGuardStore::ephemeral());
+        let sup = Supervisor::unmonitored(
+            writer.clone(),
+            boot,
+            CloseGuardStore::ephemeral(),
+            Arc::<str>::from("test-manager-terminal-capability-key"),
+        );
         sup.set_work_probe(Arc::new(UnobservableWorkProbe));
         (sup, dir, writer)
+    }
+
+    #[test]
+    fn claimed_manager_lifecycle_replays_latest_demotion_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let identity = RuntimeIdentity::planned(
+            "run-claimed-terminal",
+            "runtime-claimed-terminal",
+            "boot-claimed-terminal",
+        );
+        let path = dir.path().join("claimed-terminal.jsonl");
+        let mut session = SessionWriter::open(&path, identity).unwrap();
+        session
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::ManagerTerminalClaim {
+                    original_task_id: "manager.launch:proj#custom-terminal".into(),
+                    claimed: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        session
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::TextChunk {
+                    stream: TextStream::Stdout,
+                    chunk: "long-running terminal transcript after claim".into(),
+                    seq: 1,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            restored_manager_terminal_claim(&path)
+                .unwrap()
+                .as_ref()
+                .map(|claim| claim.original_task_id.as_str()),
+            Some("manager.launch:proj#custom-terminal")
+        );
+        session
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::ManagerTerminalClaim {
+                    original_task_id: "manager.launch:proj#custom-terminal".into(),
+                    claimed: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(restored_manager_terminal_claim(&path).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reattach_restores_claimed_terminal_as_the_single_manager_lease() {
+        let (sup, dir, _writer) = make_unmonitored_supervisor();
+        let identity = RuntimeIdentity::planned(
+            "run-claimed-reattach",
+            "runtime-claimed-reattach",
+            "boot-before-restart",
+        );
+        let session_path = dir.path().join("claimed-reattach.jsonl");
+        let mut session = SessionWriter::open(&session_path, identity.clone()).unwrap();
+        session
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::ManagerTerminalClaim {
+                    original_task_id: "manager.launch:proj#custom-terminal".into(),
+                    claimed: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+
+        sup.reattach(
+            &AlwaysAttachableDriver,
+            identity,
+            RunKind::Worker,
+            "manager.launch:proj#custom-terminal".into(),
+            "manager".into(),
+            "terminal".into(),
+            false,
+            Some("proj".into()),
+            Some(dir.path().to_path_buf()),
+            session_path,
+            tmux::inert_config(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let mut snapshot = sup.snapshot().await;
+        let run = snapshot.runs.pop().unwrap();
+        assert_eq!(run.task_id, "manager.launch:proj");
+        assert_eq!(run.role, "manager");
+        assert!(run.claimed_manager);
+        let g = sup.inner.lock().await;
+        let manager_run_id = "run-claimed-reattach".to_string();
+        assert_eq!(
+            g.lease(&lease_key(
+                Some("proj"),
+                "manager.launch:proj",
+                RunKind::Worker
+            )),
+            Some(&manager_run_id)
+        );
     }
 
     #[cfg(unix)]
@@ -8805,6 +9293,7 @@ mod tests {
             writer.clone(),
             Arc::new(BootIdentity::new()),
             CloseGuardStore::at(&store),
+            Arc::<str>::from("test-manager-terminal-capability-key"),
         );
         let guard_id = reserved_guard_id(
             predecessor
@@ -8822,6 +9311,7 @@ mod tests {
             writer.clone(),
             Arc::new(BootIdentity::new()),
             CloseGuardStore::at(&store),
+            Arc::<str>::from("test-manager-terminal-capability-key"),
         );
         let acquire_error = replacement
             .acquire(
@@ -9070,6 +9560,7 @@ mod tests {
             writer,
             Arc::new(BootIdentity::new()),
             CloseGuardStore::at(&store),
+            Arc::<str>::from("test-manager-terminal-capability-key"),
         );
         replacement
             .acquire(
@@ -15755,6 +16246,7 @@ mod tests {
             kind: RunKind::Worker,
             worker_id: "w".into(),
             role: "implementer".into(),
+            manager_terminal_claim: None,
             transport: "subprocess".into(),
             harness: None,
             project_id: None,

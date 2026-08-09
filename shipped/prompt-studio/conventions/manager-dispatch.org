@@ -285,20 +285,26 @@ check the rest of the invocation too.
    only after the worker has written its =*.reported= terminal declaration;
    it exits 2 when the daemon no longer has that generation's run without a
    report, and 3 when =--timeout 30m= (or another explicit duration) elapses.
+   Exit 1 means invalid/unknown generation or a daemon/API/transport failure;
+   it is never a liveness classification. The command help prints the same
+   stable 0/1/2/3 contract.
    It deliberately does *not* treat =[pid-gone]= as death: pane transports can
    have no worker PID, so that marker is not liveness evidence. Repeat
    =--started-tx= for one wait over a round. This command is the watcher
    mechanism; do not hand-roll a polling loop.
 
    When the manager itself lives in an app-created =custom= terminal, start
-   Claude Code or Codex manually in that pane and claim it once with
-   =orgasmic manager register --provider claude= (or =codex=). A later
-   =orgasmic manager wake --input "continue with the reported worker"= reaches
-   only that claimed pane. Automated wake fails closed unless the transport can
-   prove the claimed provider remains the foreground process and its composer
-   is ready; a shell, trust/login menu, unknown process, provider mismatch, or
-   busy turn receives no bytes. The provider claim is deliberately explicit:
-   a provider-looking prompt alone is not a safe identity proof.
+   Claude Code or Codex manually in that pane, then run plain =orgasmic manager
+   register=. Its app-created terminal carries a daemon-minted, run-bound
+   capability; registration never accepts a caller-supplied provider or target
+   identity. =orgasmic manager wake= detects the foreground provider afresh
+   and can inject only
+   =: 'ORGASMIC_MANAGER_WAKE_V1'= followed by submit. The entry router treats
+   that exact marker as =/orgasmic resume=; if the provider exits in tmux's
+   final delivery gap, zsh/bash execute only the side-effect-free =:= builtin
+   with one literal argument. Tmux still refuses a busy, shell, trust/login,
+   unknown, or provider-mismatched foreground as a targeting gate; rmux stays
+   unsupported until it can prove a fresh conditional delivery.
 
    On =attention required=, inspect the preserved log/status artifacts and the
    concrete owned process/session once. Apply the shared

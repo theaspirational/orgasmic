@@ -12,7 +12,9 @@ use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
 use orgasmic_core::{
     project_sessions_dir, RuntimeIdentity, SessionLifecycleScan, SessionScanBudget,
 };
-use orgasmic_drivers::modes::tmux::{tmux_session_exists, tmux_session_name};
+use orgasmic_drivers::modes::tmux::{
+    observe_tmux_session, tmux_session_name, TmuxSessionObservation,
+};
 use orgasmic_drivers::NativeRuntimeMeta;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -476,7 +478,7 @@ pub fn recovery_claims_root(home: &Home) -> PathBuf {
 /// Env-triggered failpoints for crash/replay tests (`ORGASMIC_RECOVERY_FAILPOINT`).
 /// Comma-separated tokens name durable boundaries such as `pending`,
 /// `spawn_before_jsonl`, each `*_append`, `temp_fsync`, `rename`,
-/// `parent_fsync`, `commit`, `cleanup`, and `response`.
+/// `parent_fsync`, `association_pending`, `commit`, `cleanup`, and `response`.
 pub fn recovery_failpoint(point: &str) {
     let Ok(raw) = std::env::var("ORGASMIC_RECOVERY_FAILPOINT") else {
         return;
@@ -1852,6 +1854,10 @@ pub enum UnobservedSession {
     ClaimStoreUnreadable,
     /// A claim file inside the store could not be opened, stat'd or read.
     ClaimFileUnreadable,
+    /// The daemon could not determine whether the exact tmux session reserved
+    /// by a spawned recovery claim still exists. A tmux client/probe failure
+    /// is not evidence that the replacement died.
+    TmuxHandleUnobserved,
 }
 
 /// What an operator would have to DO about an unobserved answer.
@@ -1879,6 +1885,9 @@ pub enum Remediation {
     /// The daemon-owned claim store under `<home>/state/recovery-claims/` could
     /// not be opened, listed or read.
     RepairClaimStore,
+    /// The daemon could not query tmux for a spawned recovery claim's exact
+    /// planned session.
+    RepairTmux,
 }
 
 impl Remediation {
@@ -1889,6 +1898,7 @@ impl Remediation {
             Self::RepairSessionStore => "repair_session_store",
             Self::RepairAuthKey => "repair_auth_key",
             Self::RepairClaimStore => "repair_claim_store",
+            Self::RepairTmux => "repair_tmux",
         }
     }
 
@@ -1915,6 +1925,11 @@ impl Remediation {
                  could not be opened, listed or read. Restore read and execute \
                  access to it and retry."
             }
+            Self::RepairTmux => {
+                "The daemon could not query tmux for the planned recovery session. \
+                 Restore the local tmux client/server and retry; the pending claim \
+                 remains unchanged until the session can be observed."
+            }
         }
     }
 }
@@ -1932,6 +1947,7 @@ impl UnobservedSession {
             }
             Self::AuthorityKeyUnreadable => Remediation::RepairAuthKey,
             Self::ClaimStoreUnreadable | Self::ClaimFileUnreadable => Remediation::RepairClaimStore,
+            Self::TmuxHandleUnobserved => Remediation::RepairTmux,
         }
     }
 
@@ -1945,6 +1961,7 @@ impl UnobservedSession {
             Self::SessionPathUnresolvable => "session_path_unresolvable",
             Self::ClaimStoreUnreadable => "claim_store_unreadable",
             Self::ClaimFileUnreadable => "claim_file_unreadable",
+            Self::TmuxHandleUnobserved => "tmux_handle_unobserved",
         }
     }
 }
@@ -3650,6 +3667,7 @@ pub fn pending_session_prefix_matches_claim(
             // and a planned recovery replacement is never a stage launch, so a
             // session carrying one is not this claim's session.
             | Lifecycle::StageMeta { .. }
+            | Lifecycle::ManagerTerminalClaim { .. }
             | Lifecycle::ComposerSend { .. } => return false,
         }
     }
@@ -3670,17 +3688,25 @@ pub fn reconcile_pending_claim(
         claim.replacement_runtime_id.clone(),
         boot_id,
     );
-    let tmux_live = claim
-        .planned_tmux_session
-        .as_deref()
-        .is_some_and(tmux_session_exists)
-        || tmux_session_exists(&tmux_session_name(&planned_identity));
+    let tmux_observation = pending_recovery_claim_planned_handle_observation(claim);
+    // A spawned claim has already acquired its recovery authority. Do not
+    // touch its replacement JSONL (including merely opening or creating it)
+    // unless tmux can prove the planned handle is present or absent. An I/O or
+    // client failure is a retryable observation failure, never proof that it
+    // is safe to relaunch or reconcile this durable intent.
+    if claim.spawn_started && tmux_observation == TmuxSessionObservation::Unobserved {
+        return Err(RecoveryClaimError::Unobserved(UnobservedEvidence::about(
+            UnobservedSession::TmuxHandleUnobserved,
+            format!("tmux/{}", claim.replacement_run_id),
+        )));
+    }
+    let tmux_live = tmux_observation == TmuxSessionObservation::Present;
     let session_dir = SessionDirectory::open(project_root)?;
     let (session_file, created_for_pending_append) =
         match session_dir.open_path(&claim.replacement_session_path, true) {
             Ok(file) => (file, false),
             Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
-                if claim.spawn_started && !tmux_live {
+                if claim.spawn_started && tmux_observation == TmuxSessionObservation::Absent {
                     return Err(RecoveryClaimError::DeadPlannedHandle);
                 }
                 (
@@ -3707,7 +3733,7 @@ pub fn reconcile_pending_claim(
     if !pending_session_prefix_matches_claim(claim, &envelopes) {
         return Err(RecoveryClaimError::CorruptClaim);
     }
-    if claim.spawn_started && !tmux_live {
+    if claim.spawn_started && tmux_observation == TmuxSessionObservation::Absent {
         return Err(RecoveryClaimError::DeadPlannedHandle);
     }
     if let Some((_, _, action)) = recovery_origin_in_session(
@@ -3755,6 +3781,46 @@ pub fn reconcile_pending_claim(
         reattach_existing: has_acquire || tmux_live,
         session_file: Some(session_file),
     }))
+}
+
+/// Whether a durable, already-spawned pending claim still owns its planned
+/// tmux handle. This is deliberately narrower than a recovery claim merely
+/// existing: a claim written before spawn is not liveness, and a spawned claim
+/// whose pane disappeared is a stale intent that dispatch wait must eventually
+/// classify as dead rather than wait forever.
+///
+/// The claim is authenticated by [`load_recovery_claim`] before callers use
+/// this answer. It binds the origin and replacement identities durably across
+/// a daemon crash between acquisition and the later `ORIGIN=recovery` tx.
+pub fn pending_recovery_claim_planned_handle_observation(
+    claim: &RecoveryClaim,
+) -> TmuxSessionObservation {
+    if claim.status != RecoveryClaimStatus::Pending || !claim.spawn_started {
+        return TmuxSessionObservation::Absent;
+    }
+    let planned_identity = RuntimeIdentity::planned(
+        claim.replacement_run_id.clone(),
+        claim.replacement_runtime_id.clone(),
+        claim_planned_boot_id(claim),
+    );
+    let planned_name = tmux_session_name(&planned_identity);
+    let configured = claim
+        .planned_tmux_session
+        .as_deref()
+        .map(observe_tmux_session);
+    let derived = observe_tmux_session(&planned_name);
+    // Positive liveness wins. Without it, an unobserved probe wins over an
+    // absence: only two explicit no-such-session answers may stale this claim.
+    match (configured, derived) {
+        (Some(TmuxSessionObservation::Present), _) | (_, TmuxSessionObservation::Present) => {
+            TmuxSessionObservation::Present
+        }
+        (Some(TmuxSessionObservation::Unobserved), _) | (_, TmuxSessionObservation::Unobserved) => {
+            TmuxSessionObservation::Unobserved
+        }
+        (Some(TmuxSessionObservation::Absent), TmuxSessionObservation::Absent)
+        | (None, TmuxSessionObservation::Absent) => TmuxSessionObservation::Absent,
+    }
 }
 
 #[derive(Debug)]

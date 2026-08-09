@@ -4,6 +4,11 @@
 * Entry
 
 ** Agent router
+The exact injected marker =: 'ORGASMIC_MANAGER_WAKE_V1'= is a machine wake,
+not shell input or user prose. Treat it exactly as =/orgasmic resume=: read the
+same brief and immediately continue the next clear action. It carries no task,
+project, or instruction text and must not be interpreted as a new command.
+
 Worker route when the prompt is a strict orgasmic worker dispatch with all of:
 - worker role: implementer, planner, reviewer, or griller
 - task ID or task heading

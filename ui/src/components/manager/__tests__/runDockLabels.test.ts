@@ -95,6 +95,18 @@ describe('isTerminalRun — taskbar Manager pin vs Terminal buttons', () => {
     ).toBe(false);
   });
 
+  it('moves a claimed custom terminal onto the Manager pin', () => {
+    expect(
+      isTerminalRun(
+        run({
+          task_id: 'manager.launch:orgasmic',
+          harness: 'custom',
+          claimed_manager: true,
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it('treats a legacy manager run without a harness as an agent manager', () => {
     expect(
       isTerminalRun(run({ task_id: 'manager.launch:orgasmic', harness: null })),

@@ -22,6 +22,17 @@ runtime write rules
 ** Default workflow
 ";
 
+#[test]
+fn shipped_router_maps_only_the_exact_manager_wake_marker_to_resume() {
+    let router = include_str!("../../../shipped/entry/router.org");
+    assert!(
+        router.contains("The exact injected marker =: 'ORGASMIC_MANAGER_WAKE_V1'=")
+            && router.contains("Treat it exactly as =/orgasmic resume=:")
+            && router.contains("It carries no task,\nproject, or instruction text"),
+        "the shipped entry router must recognize exactly the fixed, content-free wake marker"
+    );
+}
+
 fn seed_router(home: &Home) {
     write(
         &home.source().join("shipped/entry/router.org"),

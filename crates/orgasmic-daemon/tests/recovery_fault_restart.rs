@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::{
     project_sessions_dir, Home, Lifecycle, ReleaseOutcome, RuntimeIdentity, SessionEventKind,
-    SessionWriter,
+    SessionWriter, TxEntry,
 };
 use orgasmic_daemon::recovery_claim::{load_recovery_claim, RecoveryClaim, RecoveryClaimStatus};
 use orgasmic_daemon::{Daemon, DaemonOptions};
@@ -157,6 +157,53 @@ fn recovery_association_count(project_root: &Path, replacement_run_id: &str) -> 
                 && block.contains(replacement_run_id)
         })
         .count()
+}
+
+/// Give dispatch-wait a genuine root generation. Recovery itself never emits
+/// this edge: it must append the replacement edge only after acquiring it.
+fn seed_dispatch_generation(project_root: &Path) {
+    let mut started = TxEntry::new(
+        "dispatch-started",
+        "manager.dispatch_started",
+        "[2026-08-09 Sun 00:00:00]",
+        "test",
+        "recovery fault dispatch generation",
+    );
+    started.project = Some(PROJECT_ID.into());
+    let mut root = TxEntry::new(
+        "dispatch-root",
+        "run.created",
+        "[2026-08-09 Sun 00:00:00]",
+        "test",
+        "dispatch root",
+    );
+    root.project = Some(PROJECT_ID.into());
+    root.extra = vec![
+        ("ORIGIN".into(), "cli_dispatch".into()),
+        ("DISPATCH_TX".into(), "dispatch-started".into()),
+        ("RUN_ID".into(), ORIGIN_RUN_ID.into()),
+    ];
+    write(
+        project_root.join(".orgasmic/tx/2026-08.org"),
+        &format!("{}{}", started.render(), root.render()),
+    );
+}
+
+async fn dispatch_wait(client: &reqwest::Client, addr: SocketAddr, home: &Home) -> Value {
+    let response = client
+        .post(format!("http://{addr}/api/manager/dispatch-wait"))
+        .bearer_auth(token(home))
+        .json(&json!({
+            "project_id": PROJECT_ID,
+            "started_tx": ["dispatch-started"],
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert!(status.is_success(), "dispatch-wait status {status}: {body}");
+    serde_json::from_str(&body).unwrap()
 }
 
 fn daemon_options() -> DaemonOptions {
@@ -760,4 +807,220 @@ async fn recovery_faults_kill_real_daemon_and_preserve_original_pane() {
     ] {
         dead_pending_handle_fails_closed(point).await;
     }
+}
+
+// TASK-D6N77.1: an accepted recovery may have acquired its replacement's
+// pane before it can append the public origin->replacement tx edge. The
+// daemon's in-memory transition guard naturally dies with the daemon, so this
+// proves the signed pending claim is the restart authority used by the *real*
+// dispatch-wait HTTP path. It deliberately avoids manually beginning any
+// tracker or fabricating a claim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_survives_crash_between_recovery_acquire_and_association() {
+    if skip_test_if_missing(
+        "dispatch_wait_survives_crash_between_recovery_acquire_and_association",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("the live replacement must retain its signed pending claim");
+    let _pane_guard = TmuxGuard(planned.planned_tmux_session.clone().unwrap());
+    assert_eq!(planned.status, RecoveryClaimStatus::Pending);
+    assert!(planned.spawn_started);
+    assert!(
+        pane.is_some(),
+        "replacement pane must be live at crash boundary"
+    );
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        0,
+        "the test must stop before public lineage association"
+    );
+
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let client = reqwest::Client::new();
+    let waiting = dispatch_wait(&client, restarted.addr, &home).await;
+    assert_eq!(waiting["generations"][0]["status"], "waiting");
+    assert_eq!(
+        waiting["generations"][0]["run_id"], planned.replacement_run_id,
+        "restart must expose the planned replacement instead of false-death"
+    );
+
+    // Replay reattaches the exact pane, appends the durable edge, and commits
+    // the claim. The child fixture's replacement process is intentionally not
+    // a supervisor-live run after its owning daemon died, so wait now
+    // converges through the ordinary durable lineage rather than retaining a
+    // stale pending intent forever.
+    let replay = client
+        .post(recovery_url(restarted.addr))
+        .bearer_auth(token(&home))
+        .json(&recovery_body())
+        .send()
+        .await
+        .unwrap();
+    let status = replay.status();
+    let body = replay.text().await.unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "recovery replay status {status}: {body}"
+    );
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        1,
+        "replay must publish exactly one durable replacement edge"
+    );
+    let after_replay = dispatch_wait(&client, restarted.addr, &home).await;
+    assert_eq!(after_replay["generations"][0]["status"], "died");
+    assert_eq!(
+        after_replay["generations"][0]["run_id"],
+        planned.replacement_run_id
+    );
+
+    restarted.terminate();
+}
+
+// TASK-D6N77.1: a live planned handle is only omittable when tmux explicitly
+// says that exact session is absent. This child resolves `tmux` to /bin/sh,
+// which rejects tmux argv with a client/probe error after restart; the HTTP
+// wait must retry rather than return the CLI's died/exit-2 answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_does_not_false_die_when_restarted_tmux_probe_is_unobserved() {
+    if skip_test_if_missing(
+        "dispatch_wait_does_not_false_die_when_restarted_tmux_probe_is_unobserved",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("pending claim at acquire-to-association crash boundary");
+    let _pane_guard = TmuxGuard(planned.planned_tmux_session.clone().unwrap());
+    assert!(
+        pane.is_some(),
+        "the planned pane must exist before probe failure"
+    );
+
+    // A symlink to the signed system shell avoids creating a fresh executable
+    // fixture on macOS. `/bin/sh -L ... has-session ...` exits with an
+    // invocation error, exercising the driver's unobserved branch.
+    std::os::unix::fs::symlink("/bin/sh", home.bin().join("tmux")).unwrap();
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let waiting = dispatch_wait(&reqwest::Client::new(), restarted.addr, &home).await;
+    assert_eq!(waiting["generations"][0]["status"], "waiting");
+    assert_eq!(
+        waiting["generations"][0]["run_id"], planned.replacement_run_id,
+        "unobserved tmux must retain the signed replacement lineage"
+    );
+    restarted.terminate();
+}
+
+// A failing tmux client is not permission to reconcile a spawned pending claim.
+// This uses the real recovery HTTP replay path after the acquire-to-association
+// crash window, then proves the retryable refusal left every durable authority
+// and the existing replacement pane exactly as it found them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovery_replay_refuses_unobserved_tmux_without_reconcile_mutation() {
+    if skip_test_if_missing(
+        "recovery_replay_refuses_unobserved_tmux_without_reconcile_mutation",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("pending claim at acquire-to-association crash boundary");
+    let tmux_session = planned.planned_tmux_session.clone().unwrap();
+    let _pane_guard = TmuxGuard(tmux_session.clone());
+    let pane = pane.expect("the planned pane must exist before probe failure");
+    let session_before = std::fs::read(&planned.replacement_session_path)
+        .expect("spawned pending claim must retain its replacement session");
+    let claim_path = home
+        .state()
+        .join("recovery-claims")
+        .join(PROJECT_ID)
+        .join(format!("{ORIGIN_RUN_ID}.json"));
+    let claim_before = std::fs::read(&claim_path).unwrap();
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        0,
+        "the crash boundary must precede the public replacement association"
+    );
+
+    // The fake command is a signed system shell, not a fresh executable
+    // fixture. It fails `has-session` as a client/probe error rather than the
+    // precise "can't find session" absence signal.
+    std::os::unix::fs::symlink("/bin/sh", home.bin().join("tmux")).unwrap();
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let response = reqwest::Client::new()
+        .post(recovery_url(restarted.addr))
+        .bearer_auth(token(&home))
+        .json(&recovery_body())
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, reqwest::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["reason"], "tmux_handle_unobserved");
+    assert_eq!(body["remediation"], "repair_tmux");
+
+    assert_eq!(
+        std::fs::read(&planned.replacement_session_path).unwrap(),
+        session_before
+    );
+    assert_eq!(std::fs::read(&claim_path).unwrap(), claim_before);
+    assert_eq!(
+        load_recovery_claim(&home, PROJECT_ID, ORIGIN_RUN_ID)
+            .unwrap()
+            .unwrap(),
+        planned,
+        "the signed pending claim must remain untouched for a later retry"
+    );
+    assert_eq!(tmux_pane_identity(&tmux_session), pane);
+    assert_eq!(
+        recovery_association_count(&project_root, &planned.replacement_run_id),
+        0,
+        "an unobserved replay must not relaunch or associate a replacement"
+    );
+    restarted.terminate();
+}
+
+// The converse is deliberate: an explicit no-such-session answer makes a
+// spawned pending claim stale, so the bounded wait converges instead of
+// retaining an abandoned replacement forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_wait_marks_a_confirmed_absent_pending_handle_dead() {
+    if skip_test_if_missing(
+        "dispatch_wait_marks_a_confirmed_absent_pending_handle_dead",
+        &[("tmux", tmux_available())],
+    ) {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (home, project_root) = seed_home_and_project(tmp.path());
+    seed_dispatch_generation(&project_root);
+    let (planned, pane) = kill_child_at_boundary(tmp.path(), &home, "association_pending").await;
+    let planned = planned.expect("pending claim at acquire-to-association crash boundary");
+    assert!(
+        pane.is_some(),
+        "the planned pane must exist before deliberate removal"
+    );
+    kill_tmux(planned.planned_tmux_session.as_deref().unwrap());
+
+    let mut restarted = spawn_daemon_child(tmp.path(), &home, None, None);
+    let died = dispatch_wait(&reqwest::Client::new(), restarted.addr, &home).await;
+    assert_eq!(died["generations"][0]["status"], "died");
+    assert_eq!(
+        died["generations"][0]["run_id"], ORIGIN_RUN_ID,
+        "without a durable recovery edge, a confirmed absent pending handle is omitted from the generation"
+    );
+    restarted.terminate();
 }

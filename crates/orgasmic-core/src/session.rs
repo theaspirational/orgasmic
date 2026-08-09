@@ -960,6 +960,14 @@ pub enum Lifecycle {
         reattached_boot: String,
         transport: String,
     },
+    /// Durable promotion/demotion of a bare app terminal into the project
+    /// manager lease. Deliberately contains neither provider nor capability:
+    /// both are transient authority/targeting data, while this event carries
+    /// only the lease shape a replacement daemon must restore.
+    ManagerTerminalClaim {
+        original_task_id: String,
+        claimed: bool,
+    },
     /// Harness-aware native runtime identity, captured at launch (or resume)
     /// time. For Claude, `session_id`/`session_path` are deterministic and
     /// `resume_argv` is the exact `claude --resume <id> --fork-session`

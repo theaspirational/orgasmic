@@ -119,6 +119,13 @@ impl AuthState {
         }
     }
 
+    /// Key material for deriving opaque, local run capabilities. Callers must
+    /// use it only as a cryptographic key; it is never an API response,
+    /// session event, or diagnostic value.
+    pub(crate) fn manager_terminal_capability_key(&self) -> String {
+        self.token.clone()
+    }
+
     fn check_token(&self, presented: &str) -> bool {
         let a = self.token.as_bytes();
         let b = presented.trim().as_bytes();
