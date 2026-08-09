@@ -25929,3 +25929,209 @@
 :TARGET:       handoff-current
 :REASON:       RUNTIME REINSTALLED on operator instruction 2026-08-09: ed0ebbc -> 2cf6ea7, in a genuine zero-worker window (tmux gone, manager state runs:[], 0 cargo, syspolicyd 0.1%). Swap proven by INODE on both the file and the running process: 544827231 -> 547698415, daemon PID 68592 -> 7958. Probe pre-tested against the OLD binary and discriminating: repair_session_file / claim_store_unreadable / RepairAuthKey / recovery_unobserved all 0 before and 1..2 after, control worktree-prune unchanged at 4. Codesign intact: Identifier=com.theaspirational.orgasmic, cert root a70531007cd128ff. TCC intact: tasks list --ids over the Documents-hosted project returns 652 lines, zero permission errors in daemon.err.log. FUNCTIONAL end-to-end on the installed binary: orgasmic recovery serves failed_recoverable_runs with 4 records and inventory.failed_recoverable=4 — the bucket round six's UI fix consumes. Rollback dir ~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260809 holds ed0ebbc. Two refinements to the recorded traps: tar -xzO into a pipe printed BLANK for every probe INCLUDING the control even with the correct ./bin/orgasmic member, so extract to a temp dir and probe the file; and launchctl bootstrap returned rc=0 this time where 2026-08-08 it returned rc=5, so the exit code is noise either way and only the inode decides.
 :END:
+
+* TX 2026-08-09 Sun 08:02:47 task.created TASK-TRAEM
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5554
+:TIME:         [2026-08-09 Sun 08:02:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TRAEM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Carries the two open findings from the round-six review (tx-20260809-orgasmic-5548) out of TASK-2QK4P.1.1.1.1.1 so that node can close. The reject was confined to these; they ship in no binary.
+:END:
+
+* TX 2026-08-09 Sun 08:03:09 task.created TASK-GRCWC
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5555
+:TIME:         [2026-08-09 Sun 08:03:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GRCWC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Carries the RMA18 chain's stated residual out of the closing nodes. Recorded on the round-seven close tx-20260808-orgasmic-5480 and accepted knowingly at the time; it must not vanish with the node.
+:END:
+
+* TX 2026-08-09 Sun 08:03:22 task.state_transitioned TASK-RMA18.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5556
+:TIME:         [2026-08-09 Sun 08:03:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Round seven: deleted the help's last unbounded universal, grew the cli_parity quantifier ban to five literals, authored verify/TASK-RMA18.1.1.1.1, and hedged both submodule refusals to what nonempty_dir_under actually observes. Closed with a RECORDED --no-review-required waiver (tx-20260808-orgasmic-5480) naming every gate the manager re-measured on main. shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:23 task.state_transitioned TASK-RMA18.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5557
+:TIME:         [2026-08-09 Sun 08:03:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Fix round for the repo-gone help; reviewed and merged. shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:24 task.state_transitioned TASK-RMA18.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5558
+:TIME:         [2026-08-09 Sun 08:03:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Repo-gone worktree holding an index-only submodule now refused, and the help no longer promises the opposite; verify/TASK-RMA18.1.1.1.1 replayed PASS red-then-green. shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:24 task.state_transitioned TASK-RMA18.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5559
+:TIME:         [2026-08-09 Sun 08:03:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       The submodule refusal is no longer fail-open against git's index and is no longer skipped on the RepoGone branch. shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:25 task.state_transitioned TASK-RMA18.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5560
+:TIME:         [2026-08-09 Sun 08:03:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Submodule refusal gap closed before the verb reached any runtime, plus the six review findings. shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:25 task.state_transitioned TASK-RMA18
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5561
+:TIME:         [2026-08-09 Sun 08:03:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RMA18
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Worktree reclamation redesigned fd-anchored end to end with the daemon owning worktree identity. Seven rounds, two independent reviewer approvals, shipped on the operator binary. Chain reviewed and merged; the residual it never closed is now TASK-GRCWC (neither walk_worktree fail-open has a fixture), so nothing is lost by closing this node.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:45 task.state_transitioned TASK-2QK4P.1.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5562
+:TIME:         [2026-08-09 Sun 08:03:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Round six closed P1a, P1b and P2a. Reviewed REJECT (tx-20260809-orgasmic-5548) but CONFINED TO scripts/derive-observation-surface.py, which ships in no binary, and the same reviewer answered the shipping question 'YES — I would reinstall the operator runtime from this tree: the F3 operator path and recovery behavior are sound.' The two script findings are carried out to TASK-TRAEM, so closing this node loses nothing. Manager evidence: acceptance 5 GREEN on a rested host (tx-20260808-orgasmic-5536, rate 0.1070), and P1a's red proof REPLAYED independently (tx-20260808-orgasmic-5537) — deleting one flattenRuns line reds the two new tests while tsc --noEmit exits 0 in the same broken state, which is why a typecheck was never the pin. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:45 task.state_transitioned TASK-2QK4P.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5563
+:TIME:         [2026-08-09 Sun 08:03:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Derived the observation boundary mechanically instead of asserting it: scripts/derive-observation-surface.py, 929 reachable names / 96 syscall-touching leaves, which finds the three ClaimDirectory leaves round four's hand-written path definition missed. Reviewed REJECT with ZERO behaviour block-ships and every design ruling in the round's favour; both blockers were proof gaps and are closed by round six. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:46 task.state_transitioned TASK-2QK4P.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5564
+:TIME:         [2026-08-09 Sun 08:03:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Enumerated every predicate on the recovery-authority path returning bool/Option and typed the fallible ones through ClaimEvidence::{Valid,Invalid,Unobserved}. Two finds beyond the review's: authority_key's Path::exists() swallowed a stat error and could drive auth::load_or_generate to MINT a new host token, and an identity comparison .ok() != .ok() that failed open and closed at once. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:46 task.state_transitioned TASK-2QK4P.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5565
+:TIME:         [2026-08-09 Sun 08:03:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Made unobserved unrepresentable as observed-nothing: IndexedRecoveryOrigins and AuthoritativeOriginLinks became enums with no Default and no partial links, and complete_session_scan escalates to a streaming full enumeration when the bounded windows truncated or errored. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:47 task.state_transitioned TASK-2QK4P.1
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5566
+:TIME:         [2026-08-09 Sun 08:03:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Recovery-claim resolution no longer treats a silent catalog as proof of non-contradiction, so a hidden duplicate authenticated replacement cannot be admitted. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-09 Sun 08:03:48 task.state_transitioned TASK-2QK4P
+:PROPERTIES:
+:TX_ID:        tx-20260809-orgasmic-5567
+:TIME:         [2026-08-09 Sun 08:03:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2QK4P
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       The originating defect: crash-recovery replay 409s when the run catalog is briefly blind to a live replacement. Six rounds on one generating shape — a value meaning both 'I verified and it is false' and 'I could not check'. Closed with the operator surface naming the offending file and its repair. Shipped on the operator binary in the 2026-08-09 reinstall (ed0ebbc -> 2cf6ea7), verified by inode 544827231 -> 547698415 on both the file and the running process, with orgasmic recovery serving failed_recoverable_runs end to end.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

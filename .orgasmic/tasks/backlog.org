@@ -5262,3 +5262,144 @@ registry entry.
 4. Related: =TASK-4BBA6= wants the syspolicyd watchdog inside =run-tests.sh=, and
    =TASK-P4XKT= wants passing tests repeated. Both interact with this; say which
    should land first.
+
+* BACKLOG TASK-TRAEM derive-observation-surface.py can green its own self-check after silently dropping valid Rust, and its cfg(test) exclusion is module-only
+:PROPERTIES:
+:ID: TASK-TRAEM
+:PRIORITY: P2
+:END:
+
+** Description
+Opened so =TASK-2QK4P.1.1.1.1.1= could close. Round six was reviewed *REJECT*
+(=tx-20260809-orgasmic-5548=) with the reject *confined to this script*, which
+ships in no binary — the reviewer answered the shipping question =YES, I would
+reinstall the operator runtime from this tree=, and the runtime WAS reinstalled
+on 2026-08-09 (=2cf6ea7=).
+
+*Both findings were reproduced by the reviewer against the branch helper.*
+
+*** F1 — the lexer self-check greens after silently losing valid production functions
+=scripts/derive-observation-surface.py:150-219=, especially =:183-187=.
+
+=strip_noise= closes every block comment at the FIRST =*/=. *Rust block comments
+NEST.* Against this valid input:
+
+: fn kept() {}
+: /* outer /* inner */ " */
+: fn missed() {}
+
+the helper removes =fn missed=, *and all five advertised self-checks still pass*:
+output length preserved, braces balanced, =seen == definitions + declarations +
+bodyless=, =bodyless == 0=, indexed definitions equal parsed definitions.
+
+*This is the exact under-approximation the self-check exists to prevent.* A
+future nested comment can hide every later authority leaf while =--self-check=
+and the derived surface stay green.
+
+*** F2 — cfg(test) exclusion covers modules, not items or blocks
+=scripts/derive-observation-surface.py:308-320=, =:326-369=.
+
+Only test-MODULE ranges are built; a definition is test-only by file path or by
+membership in one of those. Individual =#[cfg(test)]= functions and
+=#[cfg(test)]= blocks inside production functions are NOT excluded.
+
+*Proven live by the exact before/after seen-set diff*, not hypothetically:
+baseline =b8cd3d2= reports 935 reachable names, the implementation reports 929,
+and *that net −6 is EIGHT removals plus TWO ADDITIONS*:
+
+- =recovery_claim.rs:359 readdir_entry_name=, an individual =#[cfg(test)]= fn;
+- =collect=, a ghost free-function edge invented when the call scanner reads a
+  local closure call in =ClaimDirectory::names='s body.
+
+The eight removals are safe noise (API/stub/test-tooling reached through the
+previously-included test modules, plus bodyless =kill=/=setsid= externs) and the
+96 leaf rows / 93 unique leaf keys are UNCHANGED. But the production graph stays
+test/macro-inflated in exactly the way it was supposed to stop being, and
+over-approximation is what masks under-approximation.
+
+** What this is NOT
+*Not a re-derivation of the boundary.* The round-five reviewer looked for an
+authority-decision leaf missing from the superset and *did not find one*, and the
+round-six reviewer explicitly declined to make this a second derivation
+block-ship. The 93-key leaf set has been stable across both rounds.
+
+** Acceptance
+1. Fix both together. *A Rust parser (=syn=) or type-aware call graph is the
+   stated better answer* and was not taken in round six only because no
+   Rust-parsing module is installed and a new workspace crate was larger than the
+   finding. If it is reachable now, take it.
+2. If the lexer is retained: nested block-comment DEPTH, =cfg(test)= ownership on
+   functions/impls/blocks, and local-callable bindings distinguished from free
+   functions.
+3. *Pin both counterexamples executably.* The nested-comment input above must
+   retain BOTH functions; neither =readdir_entry_name= nor a ghost =collect= key
+   may appear in the production graph.
+4. A length-preserving blank-to-EOF path is NOT an EOF-consumption assertion —
+   say what the assertion actually proves.
+
+** Related
+=--report-dynamic= is a list, not a verdict, and *at least two of its 48 rows
+reach authority decisions*: =Supervisor::reattach -> WorkerDriver::attach= and
+=spawn_driver_attach_probe -> WorkerDriver::attach=. Resolving those edges is the
+same =syn=-shaped fix.
+
+* BACKLOG TASK-GRCWC neither walk_worktree fail-open has a fixture, and worktree-prune is a destructive verb on the operator binary
+:PROPERTIES:
+:ID: TASK-GRCWC
+:PRIORITY: P1
+:END:
+
+** Description
+Opened so the =TASK-RMA18= chain could close. *This residual was recorded on the
+round-seven close =tx-20260808-orgasmic-5480= and accepted knowingly by the
+operator* — it is not new, and it is not a review finding. It is the one thing
+that chain never closed.
+
+=orgasmic manager worktree-prune= is *DESTRUCTIVE* and has been on the operator
+binary since =ed0ebbc= (2026-08-08); it is still there in =2cf6ea7=.
+
+*** The two fail-opens
+=crates/orgasmic-cli/src/manager.rs=, =walk_worktree=:
+
+: :3833  if depth > anchored_dir::MAX_DEPTH { return; }
+: :3836  let Ok(names) = anchored_dir::entry_names(dir) else { return; };
+: :3855  Err(_) => continue,
+
+All three *fail OPEN* — the walk gives up quietly and the tree looks smaller and
+safer than it is. What makes that acceptable is that =remove_contents=
+(=:3179-3195=) propagates the SAME limits instead of swallowing them:
+
+: :3180  if depth > MAX_DEPTH { bail!(..) }
+: :3183  for name in entry_names(dir)?
+: :3184  match open_child_dir(dir, &name)?
+
+*** The problem
+*That symmetry has now been derived from source THREE times and executed ZERO
+times.* Round five's reviewer, round six's reviewer, and the manager on
+2026-08-08 — who checked the likeliest crack, the depth bases, and confirmed they
+match, because the =child= passed to =remove_contents(&child, 1, ..)= at =:3243=
+is the worktree root itself, so both enter it at depth 1.
+
+Three readings of the same code are not a test. *No fixture exercises either
+fail-open.*
+
+*** Second, unchanged and NOT data loss
+=RemovalFailure= carries =touched= and =remove_contents= is readdir-ordered, so a
+fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
+*The help does not say so.*
+
+** Acceptance
+1. *The cheap fixture first: =chmod 000=.* A directory the walk cannot list,
+   inside a worktree the verb is asked to prune. Prove the refusal, and prove
+   =remove_contents= would have refused too rather than partially removing.
+2. Then the depth one: a tree deeper than =MAX_DEPTH=. It is the expensive
+   fixture and it is why it has never been written; write it anyway or state the
+   bound it is being traded for.
+3. *Decide and state what a partial removal means to the operator*, and make the
+   help true about it. Today it is silent.
+4. *This should land before any further destructive change to this verb.* That
+   sentence has been in the handoff for two days; make it an acceptance instead.
+
+** Why P1
+The verb deletes directories on the operator's machine, it is installed, and the
+only argument for its safety is one nobody has run.
