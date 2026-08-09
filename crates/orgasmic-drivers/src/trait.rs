@@ -665,6 +665,19 @@ pub trait DriverControl: Send + Sync {
         Err(DriverError::Unsupported("send_input"))
     }
 
+    /// Deliver an automated manager wake into a *claimed* provider pane.
+    ///
+    /// This is intentionally distinct from [`Self::send_input`]: the latter is
+    /// the existing human-composer path, while this operation must prove the
+    /// claimed provider is still the foreground process immediately before it
+    /// pastes.  A bare terminal prompt is never sufficient proof.
+    async fn send_manager_wake(
+        &mut self,
+        _req: ManagerWakeRequest,
+    ) -> Result<UserInputAck, DriverError> {
+        Err(DriverError::Unsupported("manager_wake"))
+    }
+
     /// Change harness runtime options for subsequent prompts or turns.
     async fn switch_runtime_options(
         &mut self,
@@ -711,6 +724,15 @@ pub struct BabysitterAck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInputRequest {
     pub input: String,
+}
+
+/// A provider-bound, daemon-originated manager wake.  The provider identity
+/// is claimed explicitly by the human inside the terminal and then checked by
+/// the pane transport at the paste boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagerWakeRequest {
+    pub input: String,
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

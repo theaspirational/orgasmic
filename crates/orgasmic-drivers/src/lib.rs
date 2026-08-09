@@ -32,9 +32,9 @@ pub use modes::{RmuxDriver, StdioDriver, SubprocessStreamJsonDriver, TmuxDriver,
 pub use r#trait::{
     build_babysitter_request, implementer_tool_is_allowed, AttachOutcome, Attached, BabysitterAck,
     BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError, DriverSession,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight,
-    PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
-    UserInputRequest, WireMessage, WorkerDriver, WsProtocol,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, ManagerWakeRequest,
+    NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind, StdioSpawn, TransitionAck,
+    TransitionRequest, UserInputAck, UserInputRequest, WireMessage, WorkerDriver, WsProtocol,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,

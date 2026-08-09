@@ -120,6 +120,12 @@ struct Registration {
     expires_at: Option<Instant>,
 }
 
+#[derive(Clone)]
+struct ClaimedTerminal {
+    run_id: String,
+    provider: String,
+}
+
 /// Outcome of a register call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisterOutcome {
@@ -144,6 +150,12 @@ pub enum ManagerReleaseOutcome {
     NotRegistered,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManagerClaimOutcome {
+    Claimed { run_id: String, provider: String },
+    Refused { message: String },
+}
+
 /// In-memory registry of live external manager registrations, keyed by
 /// project id. Entries are auxiliary bookkeeping (PID / TTL) on top of the
 /// supervisor's own lease — every read reconciles against
@@ -153,6 +165,9 @@ pub enum ManagerReleaseOutcome {
 #[derive(Clone)]
 pub struct ManagerRegistry {
     inner: Arc<Mutex<HashMap<String, Registration>>>,
+    /// Claimed app-created `custom` terminal runs.  Kept separately from the
+    /// external-presence record because it owns no synthetic supervisor run.
+    claims: Arc<Mutex<HashMap<String, ClaimedTerminal>>>,
 }
 
 impl Default for ManagerRegistry {
@@ -165,7 +180,92 @@ impl ManagerRegistry {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            claims: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Claim an app-created bare terminal as this project's manager target.
+    /// The target remains the terminal's existing supervisor run; no second
+    /// lease or proxy driver is created, so wake reaches the real pane.
+    pub async fn claim_terminal(
+        &self,
+        supervisor: &Supervisor,
+        project_id: &str,
+        run_id: &str,
+        provider: &str,
+    ) -> ManagerClaimOutcome {
+        if !matches!(provider, "claude" | "codex") {
+            return ManagerClaimOutcome::Refused {
+                message: "provider must be claude or codex".into(),
+            };
+        }
+        let snapshot = supervisor.snapshot().await;
+        let Some(run) = snapshot.runs.iter().find(|run| run.run_id == run_id) else {
+            return ManagerClaimOutcome::Refused {
+                message: format!("claimed terminal {run_id} is unavailable"),
+            };
+        };
+        if run.project_id.as_deref() != Some(project_id)
+            || run.role != "terminal"
+            || !matches!(run.driver.as_str(), "tmux" | "rmux")
+        {
+            return ManagerClaimOutcome::Refused {
+                message: "only a live app-created tmux/rmux terminal may be claimed".into(),
+            };
+        }
+        // An externally registered or app-launched manager already holds the
+        // shared manager lease.  The check is daemon-local and is repeated by
+        // wake, so stale claims are recoverable rather than permanent.
+        if snapshot.runs.iter().any(|other| {
+            other.project_id.as_deref() == Some(project_id)
+                && other.role == "manager"
+                && other.run_id != run_id
+        }) {
+            return ManagerClaimOutcome::Refused {
+                message: format!("a manager for {project_id} is already live"),
+            };
+        }
+        let mut claims = self.claims.lock().await;
+        match claims.get(project_id) {
+            Some(existing) if existing.run_id != run_id => ManagerClaimOutcome::Refused {
+                message: format!("a terminal manager for {project_id} is already claimed"),
+            },
+            _ => {
+                claims.insert(
+                    project_id.into(),
+                    ClaimedTerminal {
+                        run_id: run_id.into(),
+                        provider: provider.into(),
+                    },
+                );
+                ManagerClaimOutcome::Claimed {
+                    run_id: run_id.into(),
+                    provider: provider.into(),
+                }
+            }
+        }
+    }
+
+    /// Resolve the one claimed terminal for a wake. A dead/released claim is
+    /// discarded here; callers get an unavailable result, never a stale paste.
+    pub async fn claimed_terminal(
+        &self,
+        supervisor: &Supervisor,
+        project_id: &str,
+    ) -> Option<(String, String)> {
+        let mut claims = self.claims.lock().await;
+        let claim = claims.get(project_id)?.clone();
+        let snapshot = supervisor.snapshot().await;
+        let live = snapshot.runs.iter().any(|run| {
+            run.run_id == claim.run_id
+                && run.project_id.as_deref() == Some(project_id)
+                && run.role == "terminal"
+        });
+        if !live {
+            claims.remove(project_id);
+            return None;
+        }
+        Some((claim.run_id, claim.provider))
     }
 
     /// Drop `project_id`'s entry from `map` if the run it names is no longer

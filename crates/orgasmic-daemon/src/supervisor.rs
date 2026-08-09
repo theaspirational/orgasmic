@@ -38,8 +38,8 @@ use orgasmic_core::{
 };
 use orgasmic_drivers::{
     AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
-    DriverError, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionAck,
-    TransitionRequest, UserInputRequest, WorkerDriver,
+    DriverError, ManagerWakeRequest, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest,
+    TransitionAck, TransitionRequest, UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -2941,6 +2941,44 @@ impl Supervisor {
         if ack.accepted {
             if let Err(e) = self.record_composer_send(run_id, &input).await {
                 warn!(error = %e, run_id, "composer_send recording failed");
+            }
+        }
+        Ok(ack)
+    }
+
+    /// Provider-bound automation path for a manager that claimed a terminal.
+    /// The driver, not this API layer, owns the last-moment foreground-process
+    /// and composer checks because only the pane transport can make them near
+    /// the paste boundary.
+    pub async fn send_manager_wake(
+        &self,
+        run_id: &str,
+        input: String,
+        provider: String,
+        caller_identity: &RuntimeIdentity,
+    ) -> Result<orgasmic_drivers::UserInputAck, SupervisorError> {
+        let ack = {
+            let mut g = self.inner.lock().await;
+            let rec = g
+                .runs
+                .get_mut(run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            self.check_ownership(rec, caller_identity)?;
+            let ack = rec
+                .control
+                .send_manager_wake(ManagerWakeRequest {
+                    input: input.clone(),
+                    provider,
+                })
+                .await?;
+            if ack.accepted {
+                rec.last_input_at = Instant::now();
+            }
+            ack
+        };
+        if ack.accepted {
+            if let Err(e) = self.record_composer_send(run_id, &input).await {
+                warn!(error = %e, run_id, "manager wake recording failed");
             }
         }
         Ok(ack)

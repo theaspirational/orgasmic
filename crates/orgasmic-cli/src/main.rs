@@ -937,6 +937,8 @@ enum ManagerCmd {
     /// List open dispatches and run health, ending with the managed-worktree
     /// report: what `worktree-prune` could reclaim, and what it will not touch.
     DispatchStatus(DispatchStatusArgs),
+    /// Block until dispatch generation(s) report, die, or time out.
+    DispatchWait(manager::DispatchWaitArgs),
     // orgasmic:TASK-RMA18,TASK-RMA18.1
     /// Reclaim managed worktrees under `~/.orgasmic/worktrees/<project>/`.
     /// Salvages a dirty tree first UNLESS its repo is gone, in which case there
@@ -951,6 +953,8 @@ enum ManagerCmd {
     /// Running Agents as a supervised run (dec_3Y2E1). A no-op when
     /// `ORGASMIC_RUN_ID` is already set (a daemon-launched PTY).
     Register(manager::ManagerRegisterArgs),
+    /// Send a turn to the claimed app-terminal manager, refusing unsafe panes.
+    Wake(manager::ManagerWakeArgs),
     /// Explicit deregistration for `register` (no-op if nothing is registered).
     Release(manager::ManagerReleaseArgs),
     // orgasmic:TASK-3CM0Q
@@ -3464,9 +3468,11 @@ fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
         ManagerCmd::Dispatch(args) => manager::cmd_dispatch(home, args),
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
         ManagerCmd::DispatchStatus(args) => manager::cmd_dispatch_status(home, args),
+        ManagerCmd::DispatchWait(args) => manager::cmd_dispatch_wait(home, args),
         ManagerCmd::WorktreePrune(args) => manager::cmd_worktree_prune(home, args),
         ManagerCmd::LeaseRelease(args) => manager::cmd_lease_release(home, args),
         ManagerCmd::Register(args) => manager::cmd_manager_register(home, args),
+        ManagerCmd::Wake(args) => manager::cmd_manager_wake(home, args),
         ManagerCmd::Release(args) => manager::cmd_manager_release(home, args),
         ManagerCmd::Tier(args) => manager::cmd_manager_tier(home, args),
         ManagerCmd::State => {

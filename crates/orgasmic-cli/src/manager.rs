@@ -359,6 +359,39 @@ pub struct DispatchStatusArgs {
     pub partial_closed: bool,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct DispatchWaitArgs {
+    /// Dispatch generation (`manager.dispatch_started` TX_ID) printed by
+    /// `manager dispatch`. Repeat to wait for a whole round.
+    #[arg(long = "started-tx", required = true, action = ArgAction::Append)]
+    pub started_tx: Vec<String>,
+    /// Maximum wait in `30s`, `5m`, or `1h` form. Omit to wait indefinitely.
+    #[arg(long, value_parser = parse_wait_duration)]
+    pub timeout: Option<Duration>,
+}
+
+fn parse_wait_duration(raw: &str) -> Result<Duration, String> {
+    let raw = raw.trim();
+    let (number, unit) = raw
+        .chars()
+        .last()
+        .filter(|ch| matches!(ch, 's' | 'm' | 'h'))
+        .map(|unit| (&raw[..raw.len() - unit.len_utf8()], unit))
+        .ok_or_else(|| "timeout must end in s, m, or h".to_string())?;
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "timeout must be a positive integer".to_string())?;
+    if number == 0 {
+        return Err("timeout must be greater than zero".into());
+    }
+    Ok(match unit {
+        's' => Duration::from_secs(number),
+        'm' => Duration::from_secs(number.saturating_mul(60)),
+        'h' => Duration::from_secs(number.saturating_mul(3600)),
+        _ => unreachable!(),
+    })
+}
+
 /// Explicit reclamation of managed worktrees under
 /// `<home>/worktrees/<project-id>/`. The ONLY surface that removes one outside
 /// `dispatch-close`; detection of what it could reclaim runs automatically in
@@ -460,6 +493,21 @@ pub struct ManagerTierArgs {
 /// Agents as a supervised run.
 #[derive(Args, Debug, Clone)]
 pub struct ManagerRegisterArgs {
+    /// Project id; defaults to the project containing the cwd.
+    #[arg(long)]
+    pub project: Option<String>,
+    /// Claim this app-created custom terminal as the manager target after the
+    /// named provider was started manually inside it. Without this flag an
+    /// existing `ORGASMIC_RUN_ID` retains the worker/no-op behavior.
+    #[arg(long, value_parser = ["claude", "codex"])]
+    pub provider: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ManagerWakeArgs {
+    /// Text for the next manager turn.
+    #[arg(long)]
+    pub input: String,
     /// Project id; defaults to the project containing the cwd.
     #[arg(long)]
     pub project: Option<String>,
@@ -952,15 +1000,10 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         response.harness,
         plan.brief_path.display()
     );
-    if response.pid > 0 {
-        println!(
-            "watch: until [ -s {} ] || ! ps -p {} > /dev/null; do sleep 8; done",
-            shell_quote(&plan.last_path),
-            response.pid
-        );
-    } else {
-        println!("watch: orgasmic run show {}", response.run_id);
-    }
+    println!(
+        "watch: orgasmic manager dispatch-wait --started-tx {} &",
+        response.dispatch_tx_id
+    );
     Ok(())
 }
 
@@ -1381,6 +1424,10 @@ struct ManagerRegisterHttpRequest {
     project_id: String,
     pid: Option<u32>,
     holder_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1476,18 +1523,44 @@ fn persist_manager_holder_token(path: Option<&Path>, token: &str) -> Result<bool
 /// every session) this is a no-op — the command itself knows when it applies,
 /// so the router carries no conditional prose.
 pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()> {
-    if let Ok(run_id) = std::env::var("ORGASMIC_RUN_ID") {
-        let run_id = run_id.trim();
-        if !run_id.is_empty() {
-            println!("already supervised as {run_id}; nothing to do");
-            return Ok(());
-        }
-    }
-
     let project_id = match args.project.clone() {
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
+    if let Ok(run_id) = std::env::var("ORGASMIC_RUN_ID") {
+        let run_id = run_id.trim();
+        if !run_id.is_empty() {
+            if let Some(provider) = args.provider.as_deref() {
+                let client = DaemonClient::from_home_autostart(home)?;
+                let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+                let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
+                    "/manager/register",
+                    &ManagerRegisterHttpRequest {
+                        project_id: project_id.clone(),
+                        pid: None,
+                        holder_token: None,
+                        terminal_run_id: Some(run_id.to_string()),
+                        provider: Some(provider.into()),
+                    },
+                ))?;
+                match response.status.as_str() {
+                    "claimed" => println!(
+                        "claimed terminal manager for {project_id} as {run_id} ({provider})"
+                    ),
+                    "refused" => bail!(
+                        "{}",
+                        response
+                            .message
+                            .unwrap_or_else(|| "manager terminal claim refused".into())
+                    ),
+                    other => bail!("unexpected manager terminal claim status: {other}"),
+                }
+                return Ok(());
+            }
+            println!("already supervised as {run_id}; nothing to do");
+            return Ok(());
+        }
+    }
     let pid = terminal_session_leader_pid();
     let token_path = pid
         .is_none()
@@ -1505,6 +1578,8 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
             project_id: project_id.clone(),
             pid,
             holder_token,
+            terminal_run_id: None,
+            provider: None,
         },
     ))?;
 
@@ -1540,6 +1615,49 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
                 .unwrap_or_else(|| "manager registration refused".to_string())
         ),
         other => bail!("unexpected manager register status: {other}"),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ManagerWakeHttpRequest {
+    project_id: String,
+    input: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerWakeHttpResponse {
+    status: String,
+    run_id: Option<String>,
+    message: Option<String>,
+}
+
+/// Send a turn to the claimed manager terminal. The daemon transport owns the
+/// final foreground-provider/composer proof; this CLI only reports its typed
+/// outcome so callers can distinguish a busy provider from a dead claim.
+pub fn cmd_manager_wake(home: &Home, args: ManagerWakeArgs) -> Result<()> {
+    let project_id = match args.project {
+        Some(project) => project,
+        None => read_project_id(&find_project_root()?)?,
+    };
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    let response: ManagerWakeHttpResponse = runtime.block_on(client.post_json(
+        "/manager/wake",
+        &ManagerWakeHttpRequest {
+            project_id,
+            input: args.input,
+        },
+    ))?;
+    println!(
+        "manager wake: {} run_id={} {}",
+        response.status,
+        response.run_id.as_deref().unwrap_or("-"),
+        response.message.as_deref().unwrap_or("")
+    );
+    if response.status == "accepted" {
+        Ok(())
+    } else {
+        bail!("manager wake {}", response.status)
     }
 }
 
@@ -2774,6 +2892,75 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
         report_managed_worktrees(home, &project_root, project_id, &live_runs);
     }
     Ok(())
+}
+
+/// Block until every named dispatch generation reports, dies, or reaches its
+/// caller-supplied deadline.  This intentionally consults the daemon's live
+/// run inventory rather than `[pid-gone]`: pane transports may record no
+/// worker PID, and a missing PID is not evidence that the generation ended.
+pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
+    let project_root = find_live_project_root(home, "manager dispatch-wait")?;
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    let requested = args.started_tx.into_iter().collect::<BTreeSet<_>>();
+    let started = std::time::Instant::now();
+    loop {
+        let open = scan_open_dispatches(&project_root)?;
+        let known = open
+            .iter()
+            .map(|record| record.tx_id.clone())
+            .collect::<BTreeSet<_>>();
+        let unknown = requested.iter().find(|tx| !known.contains(*tx));
+        if let Some(tx) = unknown {
+            bail!("dispatch-wait: no open dispatch generation {tx}");
+        }
+        let live = runtime.block_on(fetch_live_runs(&client))?;
+        let mut all_reported = true;
+        for record in open
+            .iter()
+            .filter(|record| requested.contains(&record.tx_id))
+        {
+            if record.reported {
+                continue;
+            }
+            all_reported = false;
+            let run_live = record
+                .run_id
+                .as_deref()
+                .is_some_and(|run_id| live.iter().any(|run| run.run_id == run_id));
+            if !run_live {
+                println!(
+                    "dispatch-wait: died TX_ID={} RUN_ID={}",
+                    record.tx_id,
+                    record.run_id.as_deref().unwrap_or("-")
+                );
+                // Distinct non-zero status for a run that vanished without its
+                // worker report. Do not use PID state here.
+                std::process::exit(2);
+            }
+        }
+        if all_reported {
+            for record in open
+                .iter()
+                .filter(|record| requested.contains(&record.tx_id))
+            {
+                println!(
+                    "dispatch-wait: reported TX_ID={} RUN_ID={}",
+                    record.tx_id,
+                    record.run_id.as_deref().unwrap_or("-")
+                );
+            }
+            return Ok(());
+        }
+        if args
+            .timeout
+            .is_some_and(|timeout| started.elapsed() >= timeout)
+        {
+            eprintln!("dispatch-wait: timeout");
+            std::process::exit(3);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 // ===== TASK-M47E5: managed worktree reclamation ==========================
@@ -9512,12 +9699,6 @@ fn sanitize_tx_value(value: &str) -> String {
         .to_string()
 }
 
-fn shell_quote(path: &Path) -> String {
-    let value = path.display().to_string();
-    let escaped = value.replace('\'', "'\"'\"'");
-    format!("'{escaped}'")
-}
-
 fn path_segment(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
@@ -9533,6 +9714,14 @@ fn path_segment(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dispatch_wait_timeout_parser_is_explicit_and_nonzero() {
+        assert_eq!(parse_wait_duration("30s").unwrap(), Duration::from_secs(30));
+        assert_eq!(parse_wait_duration("2m").unwrap(), Duration::from_secs(120));
+        assert!(parse_wait_duration("0s").is_err());
+        assert!(parse_wait_duration("30").is_err());
+    }
 
     fn architector_record() -> DispatchRecord {
         DispatchRecord {
