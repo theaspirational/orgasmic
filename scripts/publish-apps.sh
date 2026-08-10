@@ -384,11 +384,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-# Stable artifacts must come from the exact public commit CI certified. Keep this
+# Stable artifacts must come from the exact public commit certified locally. Keep this
 # immediately before the first release mutation; dry-runs exit above and nightly
 # remains available for its intentionally fast, prerelease path.
 if [[ "$CHANNEL" == "stable" ]]; then
-    bash scripts/assert-ci-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
+    bash scripts/assert-release-certified.sh --repo "$REPO" --sha "$HEAD_SHA"
 fi
 # Refresh release metadata on EVERY publish through the shared policy helper so
 # local and CI publishers keep title/notes/latest/prerelease in sync.

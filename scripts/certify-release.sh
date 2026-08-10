@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The release certification gate. Keep this in lockstep with CI's
-# `release-certified` aggregate: a release is ready only when this script and
-# the exact-head GitHub check agree on the same source tree.
+# The complete local release gate. `certify-pr.sh` ties a green run to an exact
+# tree receipt and publishes the exact-commit status used for merge and release.
 
 set -euo pipefail
 
@@ -61,7 +60,7 @@ step "Strict Clippy"
 "${CERT_CARGO[@]}" clippy --workspace --all-targets --keep-going -- -D warnings
 
 step "Exact-head certification guard self-test"
-bash scripts/assert-ci-certified-selftest.sh
+bash scripts/assert-release-certified-selftest.sh
 
 step "Test classifier self-test"
 bash scripts/run-tests-selftest.sh
