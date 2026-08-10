@@ -2564,3 +2564,18 @@ Accepted residual for now. Durability of the promoted record after TASK-QGWK7.1.
 - Close-then-merge and `git clean -fdx` no longer lose the record: the side ref holds it.
 - An intervening `orgasmic update` can still hide the working-tree copy; managers who update mid-integration should restore from the side ref or re-copy before committing.
 - A future task may exclude `.orgasmic/dispatch-records/` from the update stash, or restage from the side ref after stash pop; that is out of scope for TASK-QGWK7.1.1.
+
+* dec_M251B How should merge and release certification run without hosted compute?
+:PROPERTIES:
+:ID: dec_M251B
+:RELATES_TO: TASK-JMDKM TASK-S2KM0
+:END:
+
+** Context
+TASK-S2KM0 made a GitHub Actions aggregate authoritative because local green claims were not tied to an exact tree. In this primarily single-maintainer repository that matrix duplicates the complete local release gate, delays PR readiness, and GitHub cannot run the proprietary harness coverage available locally.
+
+** Decision
+The authoritative gate is one complete local release certification run on a clean final tree current with origin/main. A reusable receipt is keyed by tree SHA, base SHA, certifier blob SHA, certification and MSRV toolchains. The maintainer publishes local/release-certified as a GitHub commit status only from that receipt. Strict main protection requires this status. Hosted pull-request and main-push CI is retired with no automatic fallback. Stable Runtime and Apps publishing require the same exact-commit status.
+
+** Consequences
+Targeted worker gates remain fast feedback but never imply certification. Any source, base, certifier, or toolchain change invalidates reuse. GitHub trusts a status posted by a repository writer rather than independently executing tests. Missing or failed status blocks merge and stable publication.

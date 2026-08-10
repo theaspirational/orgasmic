@@ -1,3 +1,7 @@
+# RETIRED by dec_M251B / TASK-JMDKM. GitHub only discovers workflows directly
+# under .github/workflows, so this file is inert audit history. Exact-tree local
+# certification now owns merge and stable-release readiness.
+#
 # orgasmic:TASK-S2KM0
 #
 # The per-PR gate. Before this file, `.github/workflows/` held six workflows and
