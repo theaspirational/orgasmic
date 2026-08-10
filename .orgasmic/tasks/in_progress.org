@@ -1,3 +1,29 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-J920C Share rolling release publication refresh across channels
+:PROPERTIES:
+:ID: TASK-J920C
+:READ_SCOPE: scripts/sync-release-metadata.sh
+:TEST_CMD: bash -n scripts/refresh-release-publication.sh scripts/publish-runtime.sh scripts/publish-apps.sh
+:WRITE_SCOPE: scripts/release-channel-policy.sh scripts/refresh-release-publication.sh scripts/sync-release-metadata.sh scripts/publish-runtime.sh scripts/publish-apps.sh .github/workflows/runtime-bundles.yml .github/workflows/nightly-macos.yml .github/workflows/nightly-android.yml .github/workflows/release-macos.yml .github/workflows/release-android.yml
+:END:
+
+** Description
+Extract the rolling-release draft-to-publish transition into one policy-aware helper and call it after successful uploads for runtime stable/nightly and apps stable/nightly across local and GitHub Actions publishers.
+
+** Acceptance criteria
+1. One helper owns retry and postcondition verification.
+2. Runtime stable remains the only Latest release.
+3. Nightly channels remain prereleases and Apps Stable remains non-Latest.
+4. Every release upload path invokes the helper after upload success.
+5. Shell syntax, workflow YAML, and all four policy combinations are verified without mutating GitHub.
+** Evidence
+- Release policy is centralized in scripts/release-channel-policy.sh and consumed by metadata sync plus publication refresh.
+- All seven gh release upload paths call scripts/refresh-release-publication.sh after successful upload.
+- Runtime Stable is latest/non-prerelease; Runtime Nightly and Apps Nightly are non-latest/prerelease; Apps Stable is non-latest/non-prerelease.
+- App macOS/Android workflows share per-channel concurrency groups so draft/publish transitions cannot interleave.
+- Verification green: bash -n, ShellCheck for changed shared scripts, workflow YAML parse, Actionlint (ignoring pre-existing SC2046), git diff --check, four policy dry-runs, four mocked republish cases, retry recovery, and negative Latest-policy guard.
+- Repository gates: cargo build green; cargo clippy --workspace --all-targets green; scripts/run-tests.sh RED on two unrelated recovery_fault_restart.rs address-file parse races at line 450, both green in isolation. No Rust files are changed by this task.
+** Notes
+Implementation is complete but the task remains in_progress because project.org requires the full classified suite to be green before a change is called done. The test red is outside the ten-file release scope; repairing it would cross the breadth trigger and must be handled as ordinary delegated work.

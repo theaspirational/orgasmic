@@ -7,8 +7,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: nightly-macos-app
-  cancel-in-progress: true
+  # macOS and Android mutate the same rolling release; serialize the whole
+  # publish workflows so their draft/publish transitions cannot interleave.
+  group: apps-nightly-publish
+  cancel-in-progress: false
 
 jobs:
   publish-nightly-macos:
@@ -154,3 +156,8 @@ jobs:
           # Version-less asset names (dec_B4147): --clobber overwrites in place,
           # so nothing orphans and there is no delete/prune step.
           gh release upload "${NIGHTLY_TAG}" dist/nightly/* --clobber
+          bash scripts/refresh-release-publication.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$NIGHTLY_TAG" \
+            --line apps \
+            --channel nightly

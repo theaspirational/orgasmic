@@ -27307,3 +27307,172 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-10 Mon 18:40:53 task.created TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5638
+:TIME:         [2026-08-10 Mon 18:40:53]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J4MPB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User requested a single latest release with a current GitHub published_at timestamp
+:END:
+
+* TX 2026-08-10 Mon 18:40:58 manager.tier TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5639
+:TIME:         [2026-08-10 Mon 18:40:58]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J4MPB
+:REASON:       tier trivial; no trigger fired
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-10 Mon 18:41:18 task.state_transitioned TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5640
+:TIME:         [2026-08-10 Mon 18:41:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J4MPB
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Manager-direct trivial implementation started
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-10 Mon 18:46:21 task.edited TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5641
+:TIME:         [2026-08-10 Mon 18:46:21]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J4MPB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-J4MPB
+:NODE_ID:      TASK-J4MPB
+:END:
+
+* TX 2026-08-10 Mon 18:46:21 task.state_transitioned TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5642
+:TIME:         [2026-08-10 Mon 18:46:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J4MPB
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Repository guard implemented and live stable release republished with fresh timestamp; public asset verification passed
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-10 Mon 19:08:02 task.created TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5643
+:TIME:         [2026-08-10 Mon 19:08:02]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User approved extracting the publication refresh for all rolling release channels
+:END:
+
+* TX 2026-08-10 Mon 19:08:07 manager.tier TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5644
+:TIME:         [2026-08-10 Mon 19:08:07]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:REASON:       tier trivial; no trigger fired
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-10 Mon 19:08:08 task.state_transitioned TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5645
+:TIME:         [2026-08-10 Mon 19:08:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Manager-direct trivial extraction started
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-10 Mon 19:08:23 task.property_updated TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5646
+:TIME:         [2026-08-10 Mon 19:08:23]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Correct repeated WRITE_SCOPE flags to the complete space-separated scope
+:WRITE_SCOPE:  scripts/refresh-release-publication.sh scripts/publish-runtime.sh scripts/publish-apps.sh .github/workflows/runtime-bundles.yml .github/workflows/nightly-macos.yml .github/workflows/nightly-android.yml .github/workflows/release-macos.yml .github/workflows/release-android.yml
+:END:
+
+* TX 2026-08-10 Mon 19:09:24 task.property_updated TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5647
+:TIME:         [2026-08-10 Mon 19:09:24]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Centralize release channel policy so metadata and republishing share one authority
+:WRITE_SCOPE:  scripts/release-channel-policy.sh scripts/refresh-release-publication.sh scripts/sync-release-metadata.sh scripts/publish-runtime.sh scripts/publish-apps.sh .github/workflows/runtime-bundles.yml .github/workflows/nightly-macos.yml .github/workflows/nightly-android.yml .github/workflows/release-macos.yml .github/workflows/release-android.yml
+:END:
+
+* TX 2026-08-10 Mon 19:25:40 task.edited TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5648
+:TIME:         [2026-08-10 Mon 19:25:40]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-J920C
+:NODE_ID:      TASK-J920C
+:END:
+
+* TX 2026-08-10 Mon 19:25:41 task.edited TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5649
+:TIME:         [2026-08-10 Mon 19:25:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-J920C
+:NODE_ID:      TASK-J920C
+:END:

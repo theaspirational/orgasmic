@@ -318,3 +318,10 @@ jobs:
             dist/orgasmic-runtime_*.tar.gz \
             dist/orgasmic-runtime_*.tar.gz.sha256 \
             --clobber
+          channel=nightly
+          if [ "$TAG" = "stable" ]; then channel=stable; fi
+          bash scripts/refresh-release-publication.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --line runtime \
+            --channel "$channel"

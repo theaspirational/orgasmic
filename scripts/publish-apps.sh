@@ -404,6 +404,11 @@ bash scripts/sync-release-metadata.sh \
 # assets in place; a target not built this run (e.g. android when --target mac)
 # keeps its existing assets. Nothing ever orphans, so there is no delete/prune step.
 gh release upload "$TAG" -R "$REPO" "$OUT_DIR"/* --clobber
+bash scripts/refresh-release-publication.sh \
+    --repo "$REPO" \
+    --tag "$TAG" \
+    --line apps \
+    --channel "$CHANNEL"
 
 echo ""
 echo "✓ published apps to $TAG ($VERSION):"

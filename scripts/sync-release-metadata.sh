@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/release-channel-policy.sh
+source "$SCRIPT_DIR/release-channel-policy.sh"
+
 REPO="${ORGASMIC_RELEASE_REPO:-}"
 TAG=""
 LINE=""
@@ -257,33 +261,11 @@ if [[ -n "$NOTES_FILE" && ! -f "$NOTES_FILE" ]]; then
     exit 1
 fi
 
-case "$LINE:$CHANNEL" in
-    runtime:stable)
-        TITLE="Orgasmic Runtime $VERSION"
-        NOTES="Runtime bundles $VERSION from $COMMIT."
-        LATEST="true"
-        PRERELEASE="false"
-        ;;
-    runtime:nightly)
-        TITLE="Orgasmic Runtime Nightly"
-        NOTES="Runtime bundles $VERSION from $COMMIT."
-        LATEST="false"
-        PRERELEASE="true"
-        ;;
-    apps:stable)
-        TITLE="Orgasmic Apps $VERSION"
-        NOTES="App builds $VERSION from $COMMIT."
-        LATEST="false"
-        PRERELEASE="false"
-        ;;
-    apps:nightly)
-        TITLE="Orgasmic Apps Nightly"
-        NOTES="App builds $VERSION from $COMMIT."
-        LATEST="false"
-        PRERELEASE="true"
-        ;;
-    *) echo "error: unsupported release metadata tuple: $LINE/$CHANNEL" >&2; exit 1 ;;
-esac
+release_channel_metadata_policy "$LINE" "$CHANNEL" "$VERSION" "$COMMIT"
+TITLE="$RELEASE_POLICY_TITLE"
+NOTES="$RELEASE_POLICY_NOTES"
+LATEST="$RELEASE_POLICY_LATEST"
+PRERELEASE="$RELEASE_POLICY_PRERELEASE"
 
 if [[ "$DRY_RUN" == "1" ]]; then
     echo "DRY RUN: would sync release metadata"

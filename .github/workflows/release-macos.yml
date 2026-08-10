@@ -15,8 +15,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: apps-macos
-  cancel-in-progress: true
+  # macOS and Android mutate the same rolling release; serialize the whole
+  # publish workflows so their draft/publish transitions cannot interleave.
+  group: apps-stable-publish
+  cancel-in-progress: false
 
 jobs:
   publish-apps-macos:
@@ -167,3 +169,8 @@ jobs:
           # Version-less asset names (dec_B4147): --clobber overwrites in place,
           # so nothing orphans and there is no delete/prune step.
           gh release upload "${APPS_TAG}" dist/apps/* --clobber
+          bash scripts/refresh-release-publication.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$APPS_TAG" \
+            --line apps \
+            --channel stable
