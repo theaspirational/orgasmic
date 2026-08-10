@@ -2564,10 +2564,12 @@ async fn preflight_cursor_keychain(
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn keychain_recovery_action() -> &'static str {
     "the rmux daemon is stale or not owned by the orgasmic.rmux user LaunchAgent; preserve any needed sessions, run `rmux kill-server`, then restart the orgasmic daemon service"
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn classify_macos_keychain_preflight(
     output: &[u8],
     exit: Option<&rmux_sdk::PaneExitState>,

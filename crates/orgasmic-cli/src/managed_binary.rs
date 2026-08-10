@@ -40,7 +40,9 @@ const ALLOW_IDENTITY_CHANGE_ENV: &str = "ORGASMIC_ALLOW_IDENTITY_CHANGE";
 /// match the incumbent; signing with the pinned identity is what lets a locally
 /// built runtime keep the operator's grants.
 const CODESIGN_IDENTITY_ENV: &str = "ORGASMIC_CODESIGN_IDENTITY";
+#[cfg(target_os = "macos")]
 const CODESIGN_BUNDLE_ID_ENV: &str = "ORGASMIC_CODESIGN_BUNDLE_ID";
+#[cfg(target_os = "macos")]
 const DEFAULT_BUNDLE_ID: &str = "com.theaspirational.orgasmic";
 /// Invoked by absolute path deliberately. This decides whether an incoming
 /// binary keeps the operator's permission grants, so resolving it through `PATH`
@@ -60,6 +62,7 @@ pub enum CodeIdentity {
     /// Nothing is there to read an identity from.
     Absent,
     /// The path exists but carries no code signature.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Unsigned,
     /// The designated requirement, verbatim from `codesign -d -r-`.
     Requirement(String),

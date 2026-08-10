@@ -13,6 +13,13 @@ cd "$REPO"
 
 CERTIFICATION_RUST="1.97.1"
 MSRV_RUST="1.87.0"
+# `rustup run cargo` selects the requested Cargo binary, but Cargo resolves its
+# child `rustc` through PATH. On this maintainer Mac Homebrew precedes the rustup
+# proxies, so without this prefix Cargo can silently compile with a different
+# Rust than the one being certified.
+RUSTUP_PROXY_DIR=$(dirname "$(command -v rustup)")
+PATH="$RUSTUP_PROXY_DIR:$PATH"
+export PATH
 CERT_CARGO=(rustup run "$CERTIFICATION_RUST" cargo)
 CERT_RUSTC=(rustup run "$CERTIFICATION_RUST" rustc)
 MSRV_TARGET=$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-msrv.XXXXXX") || {
@@ -52,6 +59,9 @@ step "Rust formatting"
 
 step "Strict Clippy"
 "${CERT_CARGO[@]}" clippy --workspace --all-targets --keep-going -- -D warnings
+
+step "Release runtime warnings"
+RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cli --locked
 
 step "Exact-head certification guard self-test"
 bash scripts/assert-ci-certified-selftest.sh

@@ -129,6 +129,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
 
+      # `debug_assertions` and target-specific helpers can be live under Clippy
+      # but dead in the optimized runtime. Check the profile we actually ship so
+      # release-only warnings cannot hide behind a green debug lint pass.
+      - name: Release runtime warnings
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --release --package orgasmic-cli --locked
+
   # The classifier decides whether a suite red is actionable, registered, or
   # inconclusive. Test that decision engine independently so a suite failure
   # cannot also hide a broken verdict parser.

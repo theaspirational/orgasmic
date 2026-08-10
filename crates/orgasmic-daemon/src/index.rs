@@ -1409,6 +1409,7 @@ async fn git_remote_origin_url_with_program(
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn macos_files_access_hint(path: &Path, user_home: &Path) -> Option<String> {
     let protected = [
         ("Documents", user_home.join("Documents")),

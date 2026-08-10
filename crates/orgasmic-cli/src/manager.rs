@@ -6217,6 +6217,7 @@ fn dispatch_close_pause_after_guard() {
 #[cfg(not(debug_assertions))]
 fn dispatch_close_pause_after_guard() {}
 
+#[cfg(debug_assertions)]
 fn pause_until_file_is_removed(env_var: &str) {
     let Ok(raw) = std::env::var(env_var) else {
         return;

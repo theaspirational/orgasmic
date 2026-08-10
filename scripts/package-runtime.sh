@@ -110,6 +110,14 @@ create_runtime_tarball() {
 # pinned glibc floor; everything else uses the native cargo target compiler. The
 # UI is reused (not rebuilt) per target when ORGASMIC_UI_PREBUILT=1 (handled in
 # crates/orgasmic-daemon/build.rs), so a four-target publish runs npm only once.
+# Treat warnings from the actual optimized, target-specific build as release
+# failures. Host Clippy cannot see every cross-target `cfg`, so this is the last
+# fail-closed boundary before a bundle is assembled or uploaded.
+if [[ -n "${RUSTFLAGS:-}" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS} -D warnings"
+else
+    export RUSTFLAGS="-D warnings"
+fi
 case "$TARGET_TRIPLE" in
     *-unknown-linux-gnu)
         if ! command -v cargo-zigbuild >/dev/null 2>&1; then
