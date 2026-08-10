@@ -2512,7 +2512,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-core"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-desktop"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "jni 0.22.4",
  "orgasmic-core",
