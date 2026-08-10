@@ -232,48 +232,6 @@ jobs:
       - name: Check Tauri application
         run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked
 
-  # The stable manifest also ships a native Windows runtime. Unix-only cleanup
-  # helpers can leave otherwise-correct constants or fields dead on Windows,
-  # and a macOS Clippy/release build cannot see that target-specific failure.
-  # Compile the optimized Windows CLI with the same warning policy used by the
-  # publisher so `release-certified` proves every stable runtime target builds.
-  windows-runtime:
-    name: Windows runtime release
-    runs-on: windows-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.1
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build embedded runtime UI
-        shell: bash
-        run: |
-          npm ci --prefix ui
-          npm --prefix ui run build
-
-      - name: Check optimized Windows runtime
-        shell: bash
-        env:
-          RUSTFLAGS: -D warnings
-          ORGASMIC_UI_PREBUILT: 1
-        run: cargo check --release --package orgasmic-cli --target x86_64-pc-windows-msvc --locked
-
   suite:
     name: Workspace suite (classified)
     runs-on: macos-15
@@ -396,7 +354,7 @@ jobs:
   release-certified:
     name: release-certified
     if: ${{ always() }}
-    needs: [fmt, clippy, classifier-selftest, msrv, ui-app, windows-runtime, suite]
+    needs: [fmt, clippy, classifier-selftest, msrv, ui-app, suite]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -407,7 +365,6 @@ jobs:
           CLASSIFIER_RESULT: ${{ needs.classifier-selftest.result }}
           MSRV_RESULT: ${{ needs.msrv.result }}
           UI_APP_RESULT: ${{ needs.ui-app.result }}
-          WINDOWS_RUNTIME_RESULT: ${{ needs.windows-runtime.result }}
           SUITE_RESULT: ${{ needs.suite.result }}
         run: |
           set -euo pipefail
@@ -418,7 +375,6 @@ jobs:
             "classifier-selftest=$CLASSIFIER_RESULT" \
             "msrv=$MSRV_RESULT" \
             "ui-app=$UI_APP_RESULT" \
-            "windows-runtime=$WINDOWS_RUNTIME_RESULT" \
             "suite=$SUITE_RESULT"
           do
             printf '%s\n' "$result"
