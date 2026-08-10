@@ -60,9 +60,6 @@ step "Rust formatting"
 step "Strict Clippy"
 "${CERT_CARGO[@]}" clippy --workspace --all-targets --keep-going -- -D warnings
 
-step "Release runtime warnings"
-RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cli --locked
-
 step "Exact-head certification guard self-test"
 bash scripts/assert-ci-certified-selftest.sh
 
@@ -88,6 +85,9 @@ npm --prefix ui test
 
 step "Embedded runtime UI build"
 npm --prefix ui run build
+
+step "Release runtime warnings"
+RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cli --locked
 
 step "Tauri bootstrap UI build"
 npm --prefix ui run build:bootstrap

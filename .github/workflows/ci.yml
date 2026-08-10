@@ -129,14 +129,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
 
-      # `debug_assertions` and target-specific helpers can be live under Clippy
-      # but dead in the optimized runtime. Check the profile we actually ship so
-      # release-only warnings cannot hide behind a green debug lint pass.
-      - name: Release runtime warnings
-        env:
-          RUSTFLAGS: -D warnings
-        run: cargo check --release --package orgasmic-cli --locked
-
   # The classifier decides whether a suite red is actionable, registered, or
   # inconclusive. Test that decision engine independently so a suite failure
   # cannot also hide a broken verdict parser.
@@ -205,7 +197,9 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ./src-tauri -> target
+          workspaces: |
+            . -> target
+            ./src-tauri -> target
 
       - name: Install locked UI dependencies
         run: npm ci --prefix ui
@@ -218,6 +212,14 @@ jobs:
 
       - name: Build embedded runtime UI
         run: npm --prefix ui run build
+
+      # `debug_assertions` and target-specific helpers can be live under Clippy
+      # but dead in the optimized runtime. Run after the embedded UI exists,
+      # because the release daemon intentionally refuses an incomplete bundle.
+      - name: Release runtime warnings
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --release --package orgasmic-cli --locked
 
       - name: Build Tauri bootstrap UI
         run: npm --prefix ui run build:bootstrap
