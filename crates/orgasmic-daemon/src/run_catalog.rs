@@ -4748,7 +4748,7 @@ mod tests {
             // A raw newline inside a string.
             [
                 &br#"{"kind":"driver_event","event":{"type":"text_chunk","chunk":""#[..],
-                &[b'\n'][..],
+                b"\n",
                 &br#""}}"#[..],
             ]
             .concat(),
@@ -4916,7 +4916,7 @@ mod tests {
                 "trailing 0x{byte:02x} must refuse: this is the second scanner site"
             );
         }
-        for byte in [b' ', b'\t', b'\r'] {
+        for byte in *b" \t\r" {
             let line = [&template[..], &[byte][..]].concat();
             assert!(serde_json::from_slice::<Value>(&line).is_ok());
             assert_eq!(

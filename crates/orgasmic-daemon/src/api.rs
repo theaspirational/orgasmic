@@ -16909,7 +16909,7 @@ fn resolve_artifact_project<'a>(
     project: Option<&str>,
 ) -> Result<&'a BoardEntry, ApiError> {
     let id = project
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing required query param: project"))?;
     snap.board
         .iter()
@@ -17385,7 +17385,7 @@ async fn post_artifact_add_comment(
         None => body
             .author
             .as_deref()
-            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .filter(|s| !s.is_empty())
             .unwrap_or(&state.actor)
             .to_string(),
     };
