@@ -431,6 +431,11 @@ for t in "${BUILT_TARBALLS[@]}"; do
     upload+=("$OUT_DIR/$t" "$OUT_DIR/$t.sha256")
 done
 gh release upload "$TAG" -R "$REPO" "${upload[@]}" --clobber
+bash scripts/refresh-release-publication.sh \
+    --repo "$REPO" \
+    --tag "$TAG" \
+    --line runtime \
+    --channel "$CHANNEL"
 
 echo ""
 echo "✓ published ${#BUILT_TARBALLS[@]} runtime targets to $TAG ($VERSION)"
