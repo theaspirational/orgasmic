@@ -224,6 +224,11 @@ jobs:
       - name: Build Tauri bootstrap UI
         run: npm --prefix ui run build:bootstrap
 
+      - name: Release Tauri warnings
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --release --manifest-path src-tauri/Cargo.toml --locked
+
       - name: Check Tauri application
         run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked
 

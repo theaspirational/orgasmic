@@ -92,6 +92,15 @@ if [[ -x "$HOME/.cargo/bin/cargo" ]]; then
     PATH="$HOME/.cargo/bin:$PATH"
 fi
 
+# Stable and nightly app bundles are optimized, target-specific artifacts.
+# Promote Rust warnings to hard failures here so mobile-only `cfg` drift cannot
+# hide behind the host Tauri check and reach a signed APK or updater bundle.
+if [[ -n "${RUSTFLAGS:-}" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS} -D warnings"
+else
+    export RUSTFLAGS="-D warnings"
+fi
+
 for cmd in git gh node npm cargo rustc shasum; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "error: required command not found: $cmd" >&2; exit 1; }
 done

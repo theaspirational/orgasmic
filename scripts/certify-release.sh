@@ -92,6 +92,10 @@ RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check --release --package orgasmic-cl
 step "Tauri bootstrap UI build"
 npm --prefix ui run build:bootstrap
 
+step "Release Tauri warnings"
+RUSTFLAGS="-D warnings" "${CERT_CARGO[@]}" check \
+    --release --manifest-path src-tauri/Cargo.toml --locked
+
 step "Tauri application check"
 "${CERT_CARGO[@]}" check --manifest-path src-tauri/Cargo.toml --all-targets --locked
 

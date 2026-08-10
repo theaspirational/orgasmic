@@ -89,6 +89,7 @@ struct AppUpdateMetadata {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 struct LocalRecoveryStatus {
     live_runs: Vec<serde_json::Value>,
 }
