@@ -27,3 +27,34 @@ Extract the rolling-release draft-to-publish transition into one policy-aware he
 - Repository gates: cargo build green; cargo clippy --workspace --all-targets green; scripts/run-tests.sh RED on two unrelated recovery_fault_restart.rs address-file parse races at line 450, both green in isolation. No Rust files are changed by this task.
 ** Notes
 Implementation is complete but the task remains in_progress because project.org requires the full classified suite to be green before a change is called done. The test red is outside the ten-file release scope; repairing it would cross the breadth trigger and must be handled as ordinary delegated work.
+* IN_PROGRESS TASK-JMDKM Replace hosted CI with exact-tree local certification :ci:process:cost:
+:PROPERTIES:
+:ID: TASK-JMDKM
+:PRIORITY: P2
+:READ_SCOPE: verify/flake-registry.toml crates/orgasmic-daemon/tests/recovery_fault_restart.rs .orgasmic/gotchas.org
+:TEST_CMD: bash scripts/certify-release.sh
+:WRITE_SCOPE: .github/workflows/ci.yml .github/retired-workflows/hosted-ci.yml scripts/assert-ci-certified.sh scripts/assert-ci-certified-selftest.sh scripts/certify-pr.sh scripts/certify-release.sh scripts/publish-runtime.sh scripts/publish-apps.sh crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+:END:
+
+** Description
+Retire hosted pull-request and main-push CI. Keep targeted implementation gates, then require one complete local certification on the clean final tree before PR readiness. Cache reusable receipts by tree, base, certifier, and toolchain fingerprints; publish an exact-commit local/release-certified GitHub status; fail closed when the status is missing or stale.
+
+** Acceptance
+- No active workflow launches hosted CI for pull requests or pushes to main.
+- A clean exact tree can be certified locally and posts local/release-certified only after the full release gate passes.
+- An exact reusable receipt avoids rerunning the gate; any tree, base, certifier, or toolchain change invalidates reuse.
+- Main protection requires local/release-certified and remains strict.
+- Runtime and Apps stable publishing require the same exact-commit local status.
+- The current recovery-suite failures are resolved or honestly classified before success is posted.
+
+** Non-goals
+- No weakening of the full release certification command.
+- No implicit success based only on task prose or a worker report.
+- No hosted fallback.
+** Evidence
+- Measured GitHub run 31425426912 and the prior local gate failed both recovery_fault_restart tests at the shared socket-address readiness parse; both passed alone.
+- Hardened the shared readiness helper to wait through a partial address-file write. Both formerly failing tests pass after the change, including concurrent invocation.
+- The first complete local certification then cleared the recovery failures and found a separate real compatibility regression: cursor-agent 2026.08.04 reports successful login as Logged in (unable to fetch user details), while the adapter accepted only Logged in as. No receipt or success status was created from that red run.
+- The cursor readiness classifier now accepts the stable Logged in prefix while preserving the more-specific Not logged in rejection. Unit coverage for current, legacy, and logged-out replies is green; the real installed-harness probe is green for Claude, Cursor, and Codex.
+- bash -n, ShellCheck, the exact-status failure-matrix self-test, dirty-tree refusal, cargo fmt, focused daemon/driver tests, active-workflow actionlint/YAML parse, and stale active-CI reference scan are green.
+- The final produced diff changes nine source files and 11 net source lines; no default-workflow trigger fires, so the recorded trivial tier remains accurate.

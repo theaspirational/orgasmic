@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# Fail closed unless the exact commit being published has a successful push run
-# of ci.yml and that run contains the successful release-certified aggregate job.
+# Legacy filename, local authority: fail closed unless the exact current commit
+# carries the successful status required by branch protection (dec_M251B).
 
 set -euo pipefail
 
 REPO=""
 HEAD_SHA=""
-WORKFLOW="ci.yml"
-CERTIFICATION_JOB="release-certified"
+CONTEXT="local/release-certified"
 
 usage() {
     cat <<'EOF'
 Usage: bash scripts/assert-ci-certified.sh [--repo <owner/name>] [--sha <commit>]
 
-Requires a completed, successful push run of .github/workflows/ci.yml for the
-exact commit, including a completed, successful release-certified job. Defaults
-to the current repository and HEAD. This gate has no publication bypass.
+Requires a successful local/release-certified status on the exact current
+commit. Defaults to the current repository and HEAD. There is no publication
+bypass.
 EOF
 }
 
@@ -35,111 +34,54 @@ for cmd in git gh node; do
     }
 done
 
-CURRENT_HEAD="$(git rev-parse HEAD)"
-if [[ -z "$HEAD_SHA" ]]; then
-    HEAD_SHA="$CURRENT_HEAD"
-fi
+CURRENT_HEAD="$(git rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+HEAD_SHA="${HEAD_SHA:-$CURRENT_HEAD}"
 if [[ ! "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
     echo "error: expected a full 40-character commit SHA, got: '$HEAD_SHA'" >&2
     exit 1
 fi
 HEAD_SHA="$(printf '%s' "$HEAD_SHA" | tr '[:upper:]' '[:lower:]')"
-CURRENT_HEAD="$(printf '%s' "$CURRENT_HEAD" | tr '[:upper:]' '[:lower:]')"
 if [[ "$HEAD_SHA" != "$CURRENT_HEAD" ]]; then
     echo "error: stable publish blocked: requested SHA $HEAD_SHA is not current HEAD $CURRENT_HEAD" >&2
     exit 1
 fi
 
-if [[ -z "$REPO" ]]; then
-    REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-fi
-if [[ -z "$REPO" ]]; then
-    echo "error: could not resolve GitHub repository" >&2
+REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+[[ -n "$REPO" ]] || { echo "error: could not resolve GitHub repository" >&2; exit 1; }
+
+echo "→ checking exact-commit local certification for $HEAD_SHA"
+if ! STATUS_JSON="$(gh api "repos/$REPO/commits/$HEAD_SHA/status" 2>&1)"; then
+    echo "error: stable publish blocked: could not query commit statuses" >&2
+    echo "$STATUS_JSON" >&2
     exit 1
 fi
 
-echo "→ checking exact-commit CI certification for $HEAD_SHA"
-
-if ! RUNS_JSON="$(gh run list \
-    --repo "$REPO" \
-    --workflow "$WORKFLOW" \
-    --commit "$HEAD_SHA" \
-    --event push \
-    --limit 100 \
-    --json databaseId,headSha,status,conclusion,url 2>&1)"; then
-    echo "error: stable publish blocked: could not query $WORKFLOW push runs" >&2
-    echo "$RUNS_JSON" >&2
-    exit 1
-fi
-
-# `--commit` is a server-side filter, but still compare the returned head SHA so
-# an API/CLI regression cannot certify a neighboring commit.
-RUN_ROWS="$(RUNS_JSON="$RUNS_JSON" HEAD_SHA="$HEAD_SHA" node 2>/dev/null <<'NODE'
-const runs = JSON.parse(process.env.RUNS_JSON);
-const wanted = process.env.HEAD_SHA.toLowerCase();
-for (const run of runs) {
-  if (String(run.headSha || '').toLowerCase() !== wanted) continue;
-  const values = [run.databaseId, run.status, run.conclusion || '-', run.url || '-'];
-  process.stdout.write(`${values.join('\t')}\n`);
-}
+ROW="$(STATUS_JSON="$STATUS_JSON" HEAD_SHA="$HEAD_SHA" CONTEXT="$CONTEXT" node <<'NODE'
+const payload = JSON.parse(process.env.STATUS_JSON);
+if (String(payload.sha || '').toLowerCase() !== process.env.HEAD_SHA) process.exit(3);
+const wanted = process.env.CONTEXT.toLowerCase();
+const status = (payload.statuses || []).find(
+  candidate => String(candidate.context || '').toLowerCase() === wanted,
+);
+if (!status) process.stdout.write('missing\t-\t-\t-');
+else process.stdout.write([
+  status.state || '-',
+  status.creator?.login || '-',
+  status.description || '-',
+  status.target_url || '-',
+].join('\t'));
 NODE
 )" || {
-    echo "error: stable publish blocked: GitHub returned invalid run metadata" >&2
+    echo "error: stable publish blocked: GitHub returned invalid status metadata" >&2
     exit 1
 }
 
-if [[ -z "$RUN_ROWS" ]]; then
-    echo "error: stable publish blocked: no $WORKFLOW push run exists for exact HEAD $HEAD_SHA" >&2
-    echo "       push this commit and wait for CI before publishing" >&2
+IFS=$'\t' read -r STATE ACTOR DESCRIPTION TARGET_URL <<<"$ROW"
+if [[ "$STATE" != "success" ]]; then
+    echo "error: stable publish blocked: $CONTEXT is $STATE for exact HEAD $HEAD_SHA" >&2
+    echo "       actor=$ACTOR description=$DESCRIPTION target=$TARGET_URL" >&2
+    echo "       run: bash scripts/certify-pr.sh" >&2
     exit 1
 fi
 
-CERTIFIED_URL=""
-DIAGNOSTICS=""
-while IFS=$'\t' read -r RUN_ID RUN_STATUS RUN_CONCLUSION RUN_URL; do
-    [[ -n "$RUN_ID" ]] || continue
-
-    if JOBS_JSON="$(gh run view "$RUN_ID" --repo "$REPO" --json jobs 2>&1)"; then
-        if JOB_STATE="$(JOBS_JSON="$JOBS_JSON" CERTIFICATION_JOB="$CERTIFICATION_JOB" node 2>/dev/null <<'NODE'
-const payload = JSON.parse(process.env.JOBS_JSON);
-const wanted = process.env.CERTIFICATION_JOB;
-const job = (payload.jobs || []).find((candidate) => candidate.name === wanted);
-if (!job) {
-  process.stdout.write('missing');
-} else {
-  process.stdout.write(`${job.status || '-'}\t${job.conclusion || '-'}`);
-}
-NODE
-)"; then
-            if [[ "$JOB_STATE" == "missing" ]]; then
-                JOB_STATUS="missing"
-                JOB_CONCLUSION="missing"
-            else
-                IFS=$'\t' read -r JOB_STATUS JOB_CONCLUSION <<<"$JOB_STATE"
-            fi
-        else
-            JOB_STATUS="invalid"
-            JOB_CONCLUSION="invalid"
-        fi
-    else
-        JOB_STATUS="inspection-failed"
-        JOB_CONCLUSION="inspection-failed"
-    fi
-
-    if [[ "$RUN_STATUS" == "completed" && "$RUN_CONCLUSION" == "success" && \
-          "$JOB_STATUS" == "completed" && "$JOB_CONCLUSION" == "success" ]]; then
-        CERTIFIED_URL="$RUN_URL"
-        break
-    fi
-
-    DIAGNOSTICS+="  run $RUN_ID: run=${RUN_STATUS}/${RUN_CONCLUSION}, ${CERTIFICATION_JOB}=${JOB_STATUS}/${JOB_CONCLUSION}, ${RUN_URL}"$'\n'
-done <<<"$RUN_ROWS"
-
-if [[ -z "$CERTIFIED_URL" ]]; then
-    echo "error: stable publish blocked: exact HEAD $HEAD_SHA is not release-certified" >&2
-    printf '%s' "$DIAGNOSTICS" >&2
-    echo "       wait for a completed successful push run whose $CERTIFICATION_JOB job succeeds" >&2
-    exit 1
-fi
-
-echo "✓ exact HEAD is release-certified: $CERTIFIED_URL"
+echo "✓ exact HEAD is locally certified by $ACTOR: $DESCRIPTION"

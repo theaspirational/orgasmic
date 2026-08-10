@@ -27308,9 +27308,148 @@
 :TO_STATE:     done
 :END:
 
-* TX 2026-08-10 Mon 18:40:53 task.created TASK-J4MPB
+
+* TX 2026-08-10 Mon 21:05:38 task.created TASK-JMDKM
 :PROPERTIES:
 :TX_ID:        tx-20260810-orgasmic-5638
+:TIME:         [2026-08-10 Mon 21:05:38]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator approved zero-hosted-compute exact-tree local certification cutover
+:END:
+
+* TX 2026-08-10 Mon 21:05:46 manager.tier TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5639
+:TIME:         [2026-08-10 Mon 21:05:46]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:REASON:       zero trigger floor: P2, no coupling or daemon safety path; eight source paths and workflow retirement is a rename, projected under 300 net lines
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-10 Mon 21:06:07 task.state_transitioned TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5640
+:TIME:         [2026-08-10 Mon 21:06:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       begin manager-direct implementation after approved cutover plan
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-10 Mon 21:06:07 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5641
+:TIME:         [2026-08-10 Mon 21:06:07]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_M251B
+:NODE_ID:      dec_M251B
+:END:
+
+* TX 2026-08-10 Mon 21:07:57 task.property_updated TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5642
+:TIME:         [2026-08-10 Mon 21:07:57]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       resolved implementation shape and included the measured partial-address readiness race that currently blocks truthful certification
+:WRITE_SCOPE:  .github/workflows/ci.yml .github/retired-workflows/hosted-ci.yml scripts/certify-pr.sh scripts/certify-release.sh scripts/assert-release-certified.sh scripts/assert-release-certified-selftest.sh scripts/publish-runtime.sh scripts/publish-apps.sh crates/orgasmic-daemon/tests/recovery_fault_restart.rs
+:END:
+
+* TX 2026-08-10 Mon 21:13:02 task.edited TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5643
+:TIME:         [2026-08-10 Mon 21:13:02]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-JMDKM
+:NODE_ID:      TASK-JMDKM
+:END:
+
+* TX 2026-08-10 Mon 21:13:52 task.property_updated TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5644
+:TIME:         [2026-08-10 Mon 21:13:52]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       include retired assertion paths in the explicit cutover scope
+:WRITE_SCOPE:  .github/workflows/ci.yml .github/retired-workflows/hosted-ci.yml scripts/assert-ci-certified.sh scripts/assert-ci-certified-selftest.sh scripts/certify-pr.sh scripts/certify-release.sh scripts/assert-release-certified.sh scripts/assert-release-certified-selftest.sh scripts/publish-runtime.sh scripts/publish-apps.sh crates/orgasmic-daemon/tests/recovery_fault_restart.rs
+:END:
+
+* TX 2026-08-10 Mon 21:13:52 task.edited TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5645
+:TIME:         [2026-08-10 Mon 21:13:52]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-JMDKM
+:NODE_ID:      TASK-JMDKM
+:END:
+
+* TX 2026-08-10 Mon 21:25:03 task.property_updated TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5646
+:TIME:         [2026-08-10 Mon 21:25:03]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       keep existing assertion paths and include the real cursor-agent readiness compatibility defect found by local certification
+:WRITE_SCOPE:  .github/workflows/ci.yml .github/retired-workflows/hosted-ci.yml scripts/assert-ci-certified.sh scripts/assert-ci-certified-selftest.sh scripts/certify-pr.sh scripts/certify-release.sh scripts/publish-runtime.sh scripts/publish-apps.sh crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+:END:
+
+* TX 2026-08-10 Mon 21:26:19 task.edited TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5647
+:TIME:         [2026-08-10 Mon 21:26:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-JMDKM
+:NODE_ID:      TASK-JMDKM
+:END:
+* TX 2026-08-10 Mon 18:40:53 task.created TASK-J4MPB
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5648
 :TIME:         [2026-08-10 Mon 18:40:53]
 :TYPE:         task.created
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27323,7 +27462,7 @@
 
 * TX 2026-08-10 Mon 18:40:58 manager.tier TASK-J4MPB
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5639
+:TX_ID:        tx-20260810-orgasmic-5649
 :TIME:         [2026-08-10 Mon 18:40:58]
 :TYPE:         manager.tier
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27337,7 +27476,7 @@
 
 * TX 2026-08-10 Mon 18:41:18 task.state_transitioned TASK-J4MPB
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5640
+:TX_ID:        tx-20260810-orgasmic-5650
 :TIME:         [2026-08-10 Mon 18:41:18]
 :TYPE:         task.state_transitioned
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27352,7 +27491,7 @@
 
 * TX 2026-08-10 Mon 18:46:21 task.edited TASK-J4MPB
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5641
+:TX_ID:        tx-20260810-orgasmic-5651
 :TIME:         [2026-08-10 Mon 18:46:21]
 :TYPE:         task.edited
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27366,7 +27505,7 @@
 
 * TX 2026-08-10 Mon 18:46:21 task.state_transitioned TASK-J4MPB
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5642
+:TX_ID:        tx-20260810-orgasmic-5652
 :TIME:         [2026-08-10 Mon 18:46:21]
 :TYPE:         task.state_transitioned
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27381,7 +27520,7 @@
 
 * TX 2026-08-10 Mon 19:08:02 task.created TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5643
+:TX_ID:        tx-20260810-orgasmic-5653
 :TIME:         [2026-08-10 Mon 19:08:02]
 :TYPE:         task.created
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27394,7 +27533,7 @@
 
 * TX 2026-08-10 Mon 19:08:07 manager.tier TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5644
+:TX_ID:        tx-20260810-orgasmic-5654
 :TIME:         [2026-08-10 Mon 19:08:07]
 :TYPE:         manager.tier
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27408,7 +27547,7 @@
 
 * TX 2026-08-10 Mon 19:08:08 task.state_transitioned TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5645
+:TX_ID:        tx-20260810-orgasmic-5655
 :TIME:         [2026-08-10 Mon 19:08:08]
 :TYPE:         task.state_transitioned
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27423,7 +27562,7 @@
 
 * TX 2026-08-10 Mon 19:08:23 task.property_updated TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5646
+:TX_ID:        tx-20260810-orgasmic-5656
 :TIME:         [2026-08-10 Mon 19:08:23]
 :TYPE:         task.property_updated
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27437,7 +27576,7 @@
 
 * TX 2026-08-10 Mon 19:09:24 task.property_updated TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5647
+:TX_ID:        tx-20260810-orgasmic-5657
 :TIME:         [2026-08-10 Mon 19:09:24]
 :TYPE:         task.property_updated
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27451,7 +27590,7 @@
 
 * TX 2026-08-10 Mon 19:25:40 task.edited TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5648
+:TX_ID:        tx-20260810-orgasmic-5658
 :TIME:         [2026-08-10 Mon 19:25:40]
 :TYPE:         task.edited
 :ACTOR:        theaspirational@users.noreply.github.com
@@ -27465,7 +27604,7 @@
 
 * TX 2026-08-10 Mon 19:25:41 task.edited TASK-J920C
 :PROPERTIES:
-:TX_ID:        tx-20260810-orgasmic-5649
+:TX_ID:        tx-20260810-orgasmic-5659
 :TIME:         [2026-08-10 Mon 19:25:41]
 :TYPE:         task.edited
 :ACTOR:        theaspirational@users.noreply.github.com
