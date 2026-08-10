@@ -135,11 +135,13 @@ pub const STDOUT_PROMOTE_MAX_BYTES: u64 = 64 * 1024;
 /// that matters most — a harness that dies early and then emits retry noise
 /// puts its evidence at the head. Year-one arithmetic is unchanged: the cap is
 /// the same, only its split moved.
+#[cfg(unix)]
 const STDOUT_PROMOTE_HEAD_BYTES: u64 = STDOUT_PROMOTE_MAX_BYTES / 2;
 
 /// First line of a truncated promoted `stdout.log`, so truncation is visible
 /// IN the file rather than only by comparing it against `stdout.log.bytes`
 /// (TASK-QGWK7.1.1 M-3).
+#[cfg(unix)]
 const STDOUT_TRUNCATION_BANNER: &str = "[orgasmic] stdout.log truncated by dispatch-close";
 
 /// Outcome of promoting a validated attempt's artifacts (TASK-QGWK7.1).
@@ -165,8 +167,11 @@ pub struct DispatchAttemptArtifacts {
     /// Present when the worktree was validated. Promote-only paths (worktree
     /// already reclaimed) leave this `None` — identity checks require `Some`.
     worktree_handle: Option<std::fs::File>,
+    #[cfg(unix)]
     stem_dir_handle: std::fs::File,
+    #[cfg(unix)]
     last_name: String,
+    #[cfg(unix)]
     stdout_name: String,
     #[cfg(unix)]
     last_file: std::fs::File,
@@ -526,7 +531,10 @@ fn validate_dispatch_artifact_pair(
     stdout_path: &Path,
     worktree_handle: Option<std::fs::File>,
 ) -> Result<DispatchAttemptArtifacts, String> {
+    #[cfg(unix)]
     let stem_dir_handle = open_dispatch_dir(stem_dir)?;
+    #[cfg(not(unix))]
+    open_dispatch_dir(stem_dir)?;
     let last_name = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
     let stdout_name = validate_dispatch_artifact_file(stem_dir, stem, stdout_path)?;
     let (last_attempt, last_kind) = parse_dispatch_artifact_name(stem, &last_name)?;
@@ -550,8 +558,11 @@ fn validate_dispatch_artifact_pair(
         stem: stem.to_string(),
         attempt_id: last_attempt,
         worktree_handle,
+        #[cfg(unix)]
         stem_dir_handle,
+        #[cfg(unix)]
         last_name,
+        #[cfg(unix)]
         stdout_name,
         #[cfg(unix)]
         last_file,
