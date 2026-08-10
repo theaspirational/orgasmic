@@ -27277,3 +27277,18 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-10 Mon 15:07:13 task.state_transitioned TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5636
+:TIME:         [2026-08-10 Mon 15:07:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Reopened after final-main CI reproduced rmux release BrokenPipe/no-such-session race twice; hardening idempotent reap postcondition before branch protection
+:FROM_STATE:   done
+:TO_STATE:     in_progress
+:END:

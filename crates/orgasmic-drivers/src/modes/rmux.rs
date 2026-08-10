@@ -2768,6 +2768,51 @@ fn rmux_session_reap_args(
     Ok(args)
 }
 
+fn rmux_session_exists_args(
+    endpoint: &rmux_sdk::RmuxEndpoint,
+    name: &rmux_sdk::SessionName,
+) -> Result<Vec<OsString>, DriverError> {
+    let mut args = rmux_endpoint_args(endpoint)?;
+    args.reserve(3);
+    args.extend([
+        OsString::from("has-session"),
+        OsString::from("-t"),
+        OsString::from(name.as_str()),
+    ]);
+    Ok(args)
+}
+
+async fn rmux_session_exists_via_cli(
+    rmux_bin: &str,
+    args: &[OsString],
+) -> Result<bool, DriverError> {
+    let mut command = tokio::process::Command::new(rmux_bin);
+    command
+        .kill_on_drop(true)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+        .status()
+        .await
+        .map(|status| status.success())
+        .map_err(|error| DriverError::Transport(format!("rmux has-session: {error}")))
+}
+
+async fn accept_absent_rmux_session<ExistsFuture>(
+    reap_error: DriverError,
+    exists: ExistsFuture,
+    timeout: Duration,
+) -> Result<(), DriverError>
+where
+    ExistsFuture: std::future::Future<Output = Result<bool, DriverError>>,
+{
+    match tokio::time::timeout(timeout, exists).await {
+        Ok(Ok(false)) => Ok(()),
+        _ => Err(reap_error),
+    }
+}
+
 async fn reap_rmux_session_with<SdkFuture, CliFallback, CliFuture>(
     sdk_kill: SdkFuture,
     cli_fallback: Option<CliFallback>,
@@ -2810,6 +2855,8 @@ async fn reap_rmux_session(
     // and sanitized protocol-owned name before the primary request so fallback
     // cannot drift to a different daemon or pre-sanitization target.
     let cli_args = rmux_session_reap_args(session.endpoint(), session.name());
+    let exists_args = rmux_session_exists_args(session.endpoint(), session.name());
+    let verify_bin = rmux_bin.clone();
     let cli_fallback = rmux_bin.map(|rmux_bin| {
         move || async move {
             let cli_args = cli_args.map_err(|error| error.to_string())?;
@@ -2818,7 +2865,7 @@ async fn reap_rmux_session(
                 .map_err(|error| error.to_string())
         }
     });
-    reap_rmux_session_with(
+    let reap_result = reap_rmux_session_with(
         async {
             session
                 .kill()
@@ -2828,6 +2875,28 @@ async fn reap_rmux_session(
         },
         cli_fallback,
         RMUX_SESSION_SDK_REAP_TIMEOUT,
+        RMUX_SESSION_CLI_REAP_TIMEOUT,
+    )
+    .await;
+    let Err(reap_error) = reap_result else {
+        return Ok(());
+    };
+
+    // A kill request may be applied before its response transport breaks. In
+    // that case the SDK reports BrokenPipe and the CLI fallback correctly
+    // reports a non-zero "no such session" status. Verify the postcondition on
+    // the exact SDK-derived endpoint/name before surfacing both transport
+    // errors; release is idempotently complete when the session is already
+    // absent.
+    let Some(verify_bin) = verify_bin else {
+        return Err(reap_error);
+    };
+    let Ok(exists_args) = exists_args else {
+        return Err(reap_error);
+    };
+    accept_absent_rmux_session(
+        reap_error,
+        rmux_session_exists_via_cli(&verify_bin, &exists_args),
         RMUX_SESSION_CLI_REAP_TIMEOUT,
     )
     .await
@@ -4124,6 +4193,50 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("sdk refused"), "{message}");
         assert!(message.contains("cli refused"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_accepts_an_already_absent_session_after_transport_errors() {
+        accept_absent_rmux_session(
+            DriverError::Transport("both kill transports failed".into()),
+            async { Ok(false) },
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("an absent exact session means the idempotent reap completed");
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_preserves_the_transport_error_while_the_session_exists() {
+        let error = accept_absent_rmux_session(
+            DriverError::Transport("both kill transports failed".into()),
+            async { Ok(true) },
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("a still-live exact session must keep release red");
+        assert!(error.to_string().contains("both kill transports failed"));
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_preserves_the_transport_error_when_absence_is_unverified() {
+        let error = accept_absent_rmux_session(
+            DriverError::Transport("both kill transports failed".into()),
+            async { Err(DriverError::Transport("has-session unavailable".into())) },
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("a failed postcondition probe must keep release red");
+        assert!(error.to_string().contains("both kill transports failed"));
+
+        let error = accept_absent_rmux_session(
+            DriverError::Transport("both kill transports failed".into()),
+            std::future::pending::<Result<bool, DriverError>>(),
+            Duration::from_millis(1),
+        )
+        .await
+        .expect_err("a timed-out postcondition probe must keep release red");
+        assert!(error.to_string().contains("both kill transports failed"));
     }
 
     /// TASK-RWCRN. A pane that keeps writing must publish activity often enough
