@@ -27615,3 +27615,34 @@
 :REASON:       edited task node TASK-J920C
 :NODE_ID:      TASK-J920C
 :END:
+
+
+* TX 2026-08-10 Mon 21:42:33 task.state_transitioned TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5660
+:TIME:         [2026-08-10 Mon 21:42:33]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged PR #4; exact local certification and receipt reuse green; strict local/release-certified protection live with zero hosted runs
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-10 Mon 21:42:34 task.state_transitioned TASK-J920C
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5661
+:TIME:         [2026-08-10 Mon 21:42:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J920C
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Rolling publication refresh is implemented across all four channels; final exact-tree certification gates this merge
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
