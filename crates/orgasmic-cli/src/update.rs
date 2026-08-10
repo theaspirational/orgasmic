@@ -394,7 +394,7 @@ fn prune_old_runtimes(
     }
 
     // Newest install first; keep the first `retention`, remove the remainder.
-    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.2));
     let mut removed = Vec::new();
     for (path, name, _) in candidates.into_iter().skip(retention) {
         match std::fs::remove_dir_all(&path) {
