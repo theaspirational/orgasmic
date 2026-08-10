@@ -27262,3 +27262,18 @@
 :FROM_STATE:   backlog
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-08-10 Mon 14:48:40 task.state_transitioned TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5635
+:TIME:         [2026-08-10 Mon 14:48:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Published CI-certified stable Runtime 0.0.16 and Apps 0.0.10 from 61efd29a80c4459954a2b2f48ed8a53169e3dcd4; exact-head CI run 31397885254 green; Windows release deferred at 0.0.7 by user direction
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
