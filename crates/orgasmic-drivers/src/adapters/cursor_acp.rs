@@ -33,13 +33,13 @@ const HARNESS: &str = "cursor-agent";
 
 /// How `cursor-agent status` reports each login state.
 ///
-/// Both observed on 2026-07-25 (cursor-agent as installed on this machine), the
-/// logged-out state by pointing `HOME` at an empty directory rather than by
-/// logging the operator out. It exits 0 either way, so the sentence is the only
-/// signal there is — see [`classify_prose_login`] for why that is safe here.
+/// The logged-out phrase was observed on 2026-07-25 by pointing `HOME` at an
+/// empty directory. Logged-in releases have answered both `Logged in as …` and
+/// `Logged in (unable to fetch user details)`, so the common prefix is the
+/// stable signal. It exits 0 either way; see [`classify_prose_login`].
 const CURSOR_LOGIN_PHRASES: ProseLogin = ProseLogin {
     logged_out: "Not logged in",
-    logged_in: "Logged in as",
+    logged_in: "Logged in",
 };
 // orgasmic:TASK-SZEWA, dec_WDR5K — no orgasmic-owned model default.
 
@@ -1634,6 +1634,32 @@ mod tests {
         assert!(
             verdict.rejects_dispatch().is_some(),
             "an empty configured key cannot start a worker: {verdict:?}"
+        );
+    }
+
+    #[test]
+    fn readiness_phrases_accept_current_and_legacy_logged_in_status() {
+        let reason = "not logged in";
+        assert!(matches!(
+            classify_prose_login(
+                "✓ Login successful!\nLogged in (unable to fetch user details)\n",
+                &CURSOR_LOGIN_PHRASES,
+                reason,
+            ),
+            Preflight::Ready
+        ));
+        assert!(matches!(
+            classify_prose_login(
+                "Logged in as maintainer@example.invalid\n",
+                &CURSOR_LOGIN_PHRASES,
+                reason,
+            ),
+            Preflight::Ready
+        ));
+        assert!(
+            classify_prose_login("Not logged in\n", &CURSOR_LOGIN_PHRASES, reason,)
+                .rejects_dispatch()
+                .is_some()
         );
     }
 

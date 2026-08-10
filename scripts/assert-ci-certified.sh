@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fail closed unless the exact current commit carries the successful local
-# certification status required by branch protection (dec_M251B).
+# Legacy filename, local authority: fail closed unless the exact current commit
+# carries the successful status required by branch protection (dec_M251B).
 
 set -euo pipefail
 
@@ -10,7 +10,7 @@ CONTEXT="local/release-certified"
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/assert-release-certified.sh [--repo <owner/name>] [--sha <commit>]
+Usage: bash scripts/assert-ci-certified.sh [--repo <owner/name>] [--sha <commit>]
 
 Requires a successful local/release-certified status on the exact current
 commit. Defaults to the current repository and HEAD. There is no publication

@@ -27419,3 +27419,31 @@
 :REASON:       edited task node TASK-JMDKM
 :NODE_ID:      TASK-JMDKM
 :END:
+
+* TX 2026-08-10 Mon 21:25:03 task.property_updated TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5646
+:TIME:         [2026-08-10 Mon 21:25:03]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       keep existing assertion paths and include the real cursor-agent readiness compatibility defect found by local certification
+:WRITE_SCOPE:  .github/workflows/ci.yml .github/retired-workflows/hosted-ci.yml scripts/assert-ci-certified.sh scripts/assert-ci-certified-selftest.sh scripts/certify-pr.sh scripts/certify-release.sh scripts/publish-runtime.sh scripts/publish-apps.sh crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/adapters/cursor_acp.rs
+:END:
+
+* TX 2026-08-10 Mon 21:26:19 task.edited TASK-JMDKM
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5647
+:TIME:         [2026-08-10 Mon 21:26:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JMDKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-JMDKM
+:NODE_ID:      TASK-JMDKM
+:END:

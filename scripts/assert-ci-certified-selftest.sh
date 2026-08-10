@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASSERT_SCRIPT="$ROOT/scripts/assert-release-certified.sh"
+ASSERT_SCRIPT="$ROOT/scripts/assert-ci-certified.sh"
 TEST_SHA="0123456789abcdef0123456789abcdef01234567"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -68,4 +68,4 @@ set -e
 [[ "$status" -eq 1 ]] || { echo "FAIL mismatched HEAD: got $status" >&2; exit 1; }
 echo "ok: mismatched HEAD"
 
-echo "assert-release-certified self-test: GREEN"
+echo "assert-ci-certified local-status self-test: GREEN"
