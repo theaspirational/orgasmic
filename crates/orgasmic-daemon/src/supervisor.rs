@@ -9091,6 +9091,14 @@ mod tests {
         worktree: &Path,
         session_path: &Path,
     ) -> Result<AcquireResponse, SupervisorError> {
+        if let Some(parent) = session_path.parent() {
+            std::fs::create_dir_all(parent).expect("create reattach session directory");
+        }
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(session_path)
+            .expect("seed an empty persisted session for reattach");
         sup.reattach(
             &AlwaysAttachableDriver,
             RuntimeIdentity::new(run_id, "boot-previous"),

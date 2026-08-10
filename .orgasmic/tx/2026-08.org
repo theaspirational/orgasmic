@@ -27220,3 +27220,45 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-10 Mon 12:02:27 task.created TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5632
+:TIME:         [2026-08-10 Mon 12:02:27]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User requested implementing the full CI-certification audit and publishing corrected stable releases
+:END:
+
+* TX 2026-08-10 Mon 12:02:39 manager.tier TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5633
+:TIME:         [2026-08-10 Mon 12:02:39]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:REASON:       P1 certification/release task spans CI, publisher scripts, multiple Rust crates, tests, and release metadata
+:TIER:         risky
+:TRIGGERS:     priority, breadth
+:END:
+
+* TX 2026-08-10 Mon 12:02:40 task.state_transitioned TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5634
+:TIME:         [2026-08-10 Mon 12:02:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-0ZZVJ to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:

@@ -68,6 +68,8 @@ env:
   CARGO_TERM_COLOR: never
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
+  CERTIFICATION_RUST: 1.97.1
+  MSRV_RUST: 1.87.0
 
 jobs:
   # Cheapest signal, and platform-independent — rustfmt's output does not vary
@@ -83,6 +85,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.1
           components: rustfmt
 
       - name: Check formatting
@@ -117,13 +120,102 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.1
           components: clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --keep-going -- -D warnings
+
+  # The classifier decides whether a suite red is actionable, registered, or
+  # inconclusive. Test that decision engine independently so a suite failure
+  # cannot also hide a broken verdict parser.
+  classifier-selftest:
+    name: Test classifier self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Self-test the classified test runner
+        run: bash scripts/run-tests-selftest.sh
+
+      - name: Self-test the exact-head certification guard
+        run: bash scripts/assert-ci-certified-selftest.sh
+
+  # Cargo.toml advertises 1.87 as the workspace floor. The main jobs prove the
+  # exact certification compiler; this lane separately proves the floor has not
+  # drifted while compiling every workspace target.
+  msrv:
+    name: Workspace MSRV (Rust 1.87.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSRV Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv-1.87.0
+
+      - name: Check every workspace target at MSRV
+        run: cargo +1.87.0 check --workspace --all-targets --locked
+
+  # The daemon's release build embeds ui/dist while the Tauri shell consumes
+  # ui/bootstrap-dist. Build both artifacts, run the UI tests, then compile the
+  # actual macOS application manifest so an app-only break cannot ship behind a
+  # green workspace check.
+  ui-app:
+    name: UI and Tauri application
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install locked UI dependencies
+        run: npm ci --prefix ui
+
+      - name: Typecheck UI
+        run: npm --prefix ui run typecheck
+
+      - name: Test UI
+        run: npm --prefix ui test
+
+      - name: Build embedded runtime UI
+        run: npm --prefix ui run build
+
+      - name: Build Tauri bootstrap UI
+        run: npm --prefix ui run build:bootstrap
+
+      - name: Check Tauri application
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets --locked
 
   suite:
     name: Workspace suite (classified)
@@ -145,6 +237,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -237,3 +331,44 @@ jobs:
             ${{ runner.temp }}/run-tests
           if-no-files-found: warn
           retention-days: 14
+
+  # This is the only check branch protection and stable publication need to
+  # require. `always()` makes the check materialize even when an upstream job
+  # fails or is cancelled, and the explicit result assertions prevent skipped
+  # jobs from being mistaken for certification.
+  release-certified:
+    name: release-certified
+    if: ${{ always() }}
+    needs: [fmt, clippy, classifier-selftest, msrv, ui-app, suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every certification lane
+        env:
+          FMT_RESULT: ${{ needs.fmt.result }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+          CLASSIFIER_RESULT: ${{ needs.classifier-selftest.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          UI_APP_RESULT: ${{ needs.ui-app.result }}
+          SUITE_RESULT: ${{ needs.suite.result }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for result in \
+            "fmt=$FMT_RESULT" \
+            "clippy=$CLIPPY_RESULT" \
+            "classifier-selftest=$CLASSIFIER_RESULT" \
+            "msrv=$MSRV_RESULT" \
+            "ui-app=$UI_APP_RESULT" \
+            "suite=$SUITE_RESULT"
+          do
+            printf '%s\n' "$result"
+            case "$result" in
+              *=success) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Release certification requires every lane to succeed."
+            exit 1
+          fi

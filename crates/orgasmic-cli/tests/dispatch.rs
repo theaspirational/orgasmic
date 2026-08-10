@@ -821,8 +821,8 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
     assert!(
-        dispatch_stdout.contains("watch: orgasmic run show "),
-        "non-subprocess dispatch modes must suggest `orgasmic run show` for watching: {dispatch_stdout}"
+        dispatch_stdout.contains("watch: orgasmic manager dispatch-wait --started-tx "),
+        "dispatch must print the generation-aware blocking watcher: {dispatch_stdout}"
     );
     assert!(worktree.is_dir(), "worktree should exist");
     assert_task_stage(&project_root, "TASK-DISPATCH", "IN_PROGRESS", "in_progress");

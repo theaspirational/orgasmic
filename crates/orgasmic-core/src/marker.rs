@@ -135,10 +135,8 @@ fn comment_region_from_slash_slash(line: &str) -> Option<&str> {
             '\\' if in_double || in_single => escape = true,
             '\'' if !in_double => in_single = !in_single,
             '"' if !in_single => in_double = !in_double,
-            '/' if !in_single && !in_double => {
-                if line[idx..].starts_with("//") {
-                    last_comment_start = Some(idx);
-                }
+            '/' if !in_single && !in_double && line[idx..].starts_with("//") => {
+                last_comment_start = Some(idx);
             }
             _ => {}
         }

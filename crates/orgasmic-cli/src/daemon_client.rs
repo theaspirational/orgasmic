@@ -23,6 +23,12 @@ use crate::manager::DispatchPlan;
 /// (now non-blocking) acquire so a slow mux/daemon startup never trips the
 /// client's default timeout and fabricates a zombie lease.
 const DEFAULT_DISPATCH_REQUEST_TIMEOUT_SECS: u64 = 30;
+/// A run release can legitimately consume the daemon's 20-second finalization
+/// budget before the response is available. The generic 10-second client
+/// timeout therefore reports an ambiguous failure while the release is still
+/// progressing. Keep a full ten seconds of response/scheduling margin beyond
+/// the daemon-owned budget.
+const DEFAULT_RUN_RELEASE_REQUEST_TIMEOUT_SECS: u64 = 30;
 const API_PREFIX: &str = "/api";
 const DAEMON_URL_ENV: &str = "ORGASMIC_DAEMON_URL";
 const DAEMON_TOKEN_ENV: &str = "ORGASMIC_DAEMON_TOKEN";
@@ -88,6 +94,16 @@ impl DaemonClient {
     ) -> Result<R> {
         let req = self.client.post(self.url(path)).json(body);
         send_json(self.bearer(req), self.timeout).await
+    }
+
+    pub(crate) async fn post_run_release<B: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R> {
+        let timeout = std::time::Duration::from_secs(DEFAULT_RUN_RELEASE_REQUEST_TIMEOUT_SECS);
+        let req = self.client.post(self.url(path)).timeout(timeout).json(body);
+        send_json(self.bearer(req), timeout).await
     }
 
     /// Post an opaque daemon capability without putting it in JSON (and thus
@@ -639,6 +655,15 @@ mod tests {
             "{message}"
         );
         assert!(!message.contains("is the daemon reachable?"), "{message}");
+    }
+
+    #[test]
+    fn run_release_timeout_outlasts_the_daemon_finalization_budget() {
+        assert!(
+            std::time::Duration::from_secs(DEFAULT_RUN_RELEASE_REQUEST_TIMEOUT_SECS)
+                > orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT,
+            "the client must not time out while a valid release can still be finalizing"
+        );
     }
 
     #[test]

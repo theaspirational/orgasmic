@@ -3333,12 +3333,10 @@ fn dispatch_generation_ledgers(
     entries: &[TxEntry],
     project_id: &str,
 ) -> BTreeMap<String, DispatchGenerationLedger> {
-    let mut generations = BTreeMap::new();
+    let mut generations: BTreeMap<String, DispatchGenerationLedger> = BTreeMap::new();
     for entry in entries {
         if entry.ty == "manager.dispatch_started" && entry.project.as_deref() == Some(project_id) {
-            generations
-                .entry(entry.tx_id.clone())
-                .or_insert_with(|| DispatchGenerationLedger::default());
+            generations.entry(entry.tx_id.clone()).or_default();
         }
     }
 

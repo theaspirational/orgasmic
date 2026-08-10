@@ -284,11 +284,9 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
     }
     let mut child = command.spawn().expect("spawn serve");
     // orgasmic:TASK-Q07Y5 — wait for the daemon to reach its signal wait, not
-    // merely for the port to answer. `serve` registers the SIGTERM handler
-    // *after* `Daemon::run` returns, so a SIGTERM sent on the strength of a
-    // successful connect can still land on the default disposition and fail
-    // this test for a reason it is not about. On an idle machine the window is
-    // invisible; under a loaded test binary it is not.
+    // merely for the port to answer. `serve` installs the SIGTERM handler
+    // before printing this marker, so the marker closes the former
+    // default-disposition race instead of merely making it smaller.
     wait_until_serve_awaits_signals(&mut child);
 
     unsafe {
@@ -301,15 +299,19 @@ fn sigterm_exits_through_graceful_shutdown_rather_than_default_disposition() {
     }
 
     // Poll rather than block forever: a daemon that ignored SIGTERM entirely
-    // must fail this test, not hang the suite.
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // must fail this test, not hang the suite. Derive the deadline from the
+    // production shutdown phases; the former 30-second literal was shorter
+    // than their 40-second worst-case budget and failed healthy loaded runs.
+    let shutdown_deadline =
+        orgasmic_daemon::ShutdownBudgets::default().total() + Duration::from_secs(10);
+    let deadline = Instant::now() + shutdown_deadline;
     let status = loop {
         match child.try_wait().expect("wait on serve") {
             Some(status) => break status,
             None => {
                 assert!(
                     Instant::now() < deadline,
-                    "serve did not exit within 30s of SIGTERM"
+                    "serve did not exit within {shutdown_deadline:?} of SIGTERM"
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }

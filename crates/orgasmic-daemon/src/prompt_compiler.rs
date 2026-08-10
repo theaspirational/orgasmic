@@ -1435,10 +1435,15 @@ mod tests {
         std::os::unix::fs::symlink(&root, home.source()).unwrap();
 
         let convention = load_named_payload(&home, "conventions", "manager-dispatch").unwrap();
-        assert!(convention.contains("declare a finite\n   observation deadline"));
-        assert!(convention.contains("A live PID alone is not\n   proof of progress"));
-        assert!(convention.contains("do not run periodic status checks"));
-        assert!(convention.contains("at\n   most one non-restarting detached retry"));
+        assert!(convention.contains("orgasmic manager dispatch-wait --started-tx"));
+        assert!(convention.contains("do not hand-roll a polling loop"));
+        assert!(
+            convention.contains("it exits 2 when the daemon no longer has that generation's run")
+        );
+        let normalized = convention.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains(
+            "permit at most one non-restarting detached retry after a vanished subprocess"
+        ));
         assert!(
             !convention.contains("sleep 30"),
             "manager dispatch must not prescribe an unbounded 30-second watcher"

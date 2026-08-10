@@ -1720,6 +1720,7 @@ fn project_tx_sequence(tx_id: &str, slug: &str) -> Option<u32> {
     seq.parse().ok()
 }
 
+#[cfg_attr(test, allow(clippy::too_many_arguments))]
 fn append_session_inner(
     handles: &mut HashMap<String, SessionWriter>,
     run_id: &str,

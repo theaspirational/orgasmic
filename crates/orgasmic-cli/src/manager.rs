@@ -1516,20 +1516,6 @@ fn persist_manager_holder_token(path: Option<&Path>, token: &str) -> Result<bool
     Ok(true)
 }
 
-fn manager_runtime_identity_from_env() -> Option<RuntimeIdentity> {
-    let value = |name: &str| {
-        std::env::var(name)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    Some(RuntimeIdentity {
-        run_id: value("ORGASMIC_RUN_ID")?,
-        runtime_id: value("ORGASMIC_RUNTIME_ID")?,
-        boot_id: value("ORGASMIC_BOOT_ID")?,
-    })
-}
-
 /// External manager self-registration (dec_3Y2E1). The entry router runs
 /// this unconditionally on every manager startup. An app-launched manager has
 /// a run id but no terminal capability and succeeds as an idempotent no-op;
@@ -1688,7 +1674,13 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
-    let run_id = manager_runtime_identity_from_env().map(|identity| identity.run_id);
+    // App-created manager panes deliberately need only their exported run id
+    // to release themselves. The runtime/boot ids are part of the stronger
+    // terminal-claim identity, not the app-manager release contract.
+    let run_id = std::env::var("ORGASMIC_RUN_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let capability = std::env::var(MANAGER_TERMINAL_CAPABILITY_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty());
@@ -6282,7 +6274,7 @@ async fn release_dispatch_run_with_reason(
         terminal_tx,
     };
     client
-        .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
+        .post_run_release(&format!("/runs/{}/release", path_segment(run_id)), &request)
         .await
         .map_err(|error| {
             // orgasmic:TASK-RB1ZN — the daemon answers 409 for a run that is

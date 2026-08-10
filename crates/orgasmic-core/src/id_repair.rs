@@ -111,7 +111,7 @@ fn rewrite_text(text: &str, mappings: &[(String, String)]) -> (String, usize) {
         return (text.to_string(), 0);
     }
     let mut order = mappings.to_vec();
-    order.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    order.sort_by_key(|mapping| std::cmp::Reverse(mapping.0.len()));
     let mut out = text.to_string();
     let mut total = 0;
     for (old, new) in order {

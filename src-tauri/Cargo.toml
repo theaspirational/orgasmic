@@ -3,7 +3,7 @@ name = "orgasmic-desktop"
 version = "0.0.9"
 description = "orgasmic desktop workbench"
 edition = "2021"
-rust-version = "1.78"
+rust-version = "1.87"
 license = "MIT"
 repository = "https://github.com/theaspirational/orgasmic"
 

@@ -122,9 +122,9 @@ fn orgasmic_run_id_env_set_is_noop_exit_0() {
         output.status.success(),
         "expected exit 0 when ORGASMIC_RUN_ID is set\nstdout={stdout}\nstderr={stderr}"
     );
-    assert!(
-        stdout.contains("already supervised as run-already-supervised-test"),
-        "stdout={stdout}"
+    assert_eq!(
+        stdout.trim(),
+        "manager already supervised; registration is a no-op"
     );
 }
 

@@ -2262,6 +2262,12 @@ fn cmd_serve(
                 return Err(error);
             }
         };
+        // Register SIGTERM before announcing readiness. The announcement is a
+        // synchronization point for service managers and tests; printing it
+        // first left a small default-disposition window where a prompt stop
+        // killed the daemon without running its drains.
+        #[cfg(unix)]
+        let terminate = install_sigterm_handler();
         // Best-effort stdout: `println!` panics on EPIPE and would half-kill the
         // daemon after `serve | head` closes the pipe (TASK-FZF2D).
         let _ = writeln!(
@@ -2276,6 +2282,9 @@ fn cmd_serve(
             home.auth_token().display()
         );
         let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
+        #[cfg(unix)]
+        wait_for_shutdown_signal(terminate).await;
+        #[cfg(not(unix))]
         wait_for_shutdown_signal().await;
         let _ = running.shutdown.send(());
         let _ = running.join.await;
@@ -2292,32 +2301,42 @@ fn cmd_serve(
 /// neither the release-finalization drain nor the writer shutdown. The graceful
 /// shutdown TASK-WGXKD.1 built was unreachable on the only shutdown path this
 /// machine actually uses. Both signals now route through the same handle.
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        match signal(SignalKind::terminate()) {
-            Ok(mut terminate) => {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {}
-                    _ = terminate.recv() => {}
-                }
-            }
-            Err(error) => {
-                // Registration can only fail on a broken runtime; losing the
-                // graceful drain silently is worse than saying so.
-                eprintln!(
-                    "[warn] SIGTERM handler unavailable ({error}); \
-                           a service stop will not run the shutdown drain"
-                );
-                tokio::signal::ctrl_c().await.ok();
-            }
+#[cfg(unix)]
+fn install_sigterm_handler() -> Option<tokio::signal::unix::Signal> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    match signal(SignalKind::terminate()) {
+        Ok(terminate) => Some(terminate),
+        Err(error) => {
+            // Registration can only fail on a broken runtime; losing the
+            // graceful drain silently is worse than saying so.
+            eprintln!(
+                "[warn] SIGTERM handler unavailable ({error}); \
+                 a service stop will not run the shutdown drain"
+            );
+            None
         }
     }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await.ok();
+}
+
+#[cfg(unix)]
+async fn wait_for_shutdown_signal(mut terminate: Option<tokio::signal::unix::Signal>) {
+    match terminate.as_mut() {
+        Some(terminate) => {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+        }
+        None => {
+            tokio::signal::ctrl_c().await.ok();
+        }
     }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() {
+    tokio::signal::ctrl_c().await.ok();
 }
 
 fn cmd_status(home: &Home) -> Result<()> {

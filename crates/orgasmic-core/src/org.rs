@@ -1496,7 +1496,7 @@ impl OrgRewriter {
 }
 
 fn apply_edits(source: &str, mut edits: Vec<(Range<usize>, String)>) -> String {
-    edits.sort_by(|a, b| b.0.start.cmp(&a.0.start));
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.0.start));
     let mut out = source.to_string();
     for (range, replacement) in edits {
         out.replace_range(range, &replacement);
