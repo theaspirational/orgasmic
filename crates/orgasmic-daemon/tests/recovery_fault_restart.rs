@@ -447,8 +447,10 @@ fn spawn_daemon_child(
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if let Ok(raw) = std::fs::read_to_string(&addr_path) {
-            daemon.addr = raw.trim().parse().unwrap();
-            return daemon;
+            if let Ok(addr) = raw.trim().parse() {
+                daemon.addr = addr;
+                return daemon;
+            }
         }
         if let Some(status) = daemon.child.try_wait().unwrap() {
             panic!(
