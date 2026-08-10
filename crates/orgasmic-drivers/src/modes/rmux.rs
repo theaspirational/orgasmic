@@ -306,6 +306,7 @@ fn binary_on_path(binary: &str) -> bool {
 pub mod test_tooling {
     use std::collections::BTreeSet;
     use std::ffi::OsString;
+    #[cfg(unix)]
     use std::io::Write as _;
     use std::process::{Command, Stdio};
     use std::sync::Mutex;
@@ -563,6 +564,7 @@ pub mod test_tooling {
         /// owns. Only [`LiveSessionGuard::owns_runs_on`] can build one, and it
         /// takes an [`OwnedRmuxServer`] — see there for why a prefix reap is
         /// safe at that endpoint and nowhere else.
+        #[cfg(unix)]
         OwnedServerRuns { endpoint: rmux_sdk::RmuxEndpoint },
     }
 
@@ -674,6 +676,7 @@ pub mod test_tooling {
         /// `reap_owned_sessions_blocking` — a real dispatch's session can be
         /// live on the same endpoint — is about the DEFAULT endpoint, which
         /// this method has no way to name.
+        #[cfg(unix)]
         pub fn owns_runs_on(&self, server: &OwnedRmuxServer) -> &Self {
             self.push(OwnedSession::OwnedServerRuns {
                 endpoint: server.endpoint(),
@@ -912,6 +915,7 @@ pub mod test_tooling {
     /// Prefix every session the rmux driver creates carries
     /// (`rmux_session_name`). The keepalive of an [`OwnedRmuxServer`] must not
     /// match it.
+    #[cfg(unix)]
     const OWNED_RUN_SESSION_PREFIX: &str = "orgasmic-rmux-";
 
     /// Names of every session live on the default rmux endpoint, or an empty
@@ -1279,6 +1283,7 @@ pub mod test_tooling {
                 // `orgasmic-rmux-*` session on it is this run's. The keepalive
                 // (`orgasmic-test-keepalive`) deliberately does not match the
                 // prefix, so the server survives its own reap.
+                #[cfg(unix)]
                 OwnedSession::OwnedServerRuns { endpoint } => {
                     match list_sessions_blocking(rmux_bin, endpoint) {
                         Ok(names) => (
