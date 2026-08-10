@@ -27292,3 +27292,18 @@
 :FROM_STATE:   done
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-08-10 Mon 15:30:19 task.state_transitioned TASK-0ZZVJ
+:PROPERTIES:
+:TX_ID:        tx-20260810-orgasmic-5637
+:TIME:         [2026-08-10 Mon 15:30:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0ZZVJ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Published exact-head CI-certified Runtime 0.0.17 from 8e99694656bd08f8409200ae00ac6ea4a5acf312 after hardening idempotent rmux release; Apps 0.0.10 remains certified at 61efd29a80c4459954a2b2f48ed8a53169e3dcd4; Windows deferred at 0.0.7 by user direction
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

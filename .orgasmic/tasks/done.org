@@ -31447,3 +31447,24 @@ state that the CLI could consume? Answer this before writing a poll loop; a
 *Implementation candidate.* Worker =implementer-codex-tmux=, driver =tmux=, harness =codex=, model =gpt-5.6-terra=, effort =xhigh=, generation =tx-20260809-orgasmic-5575=. Worker commit =585dfb6= merged as =e98ed372=. Manager gate under the syspolicyd watchdog: =cargo fmt --check=, targeted three-crate =cargo check=, and targeted three-crate =cargo clippy --all-targets -- -D warnings= all green. Independent review is still required; manager audit specifically handed off automatic provider claim UX and singleton-race enforcement as claims to attack.
 *Final completion.* Hardening subtask =TASK-D6N77.1= closed every rejected-review finding and is =done=. The final candidate =fcf0825..2f1bc78= received independent native Sol/high PASS with no actionable findings and was merged to main as =0423ae5=. The implementation provides documented =dispatch-wait= outcomes, daemon-owned generation/recovery authority, caller-bound manager claims, tmux fixed-marker wake with exact raw-byte proof, typed busy/mismatch/unavailable results, and the shipped manager convention/router updates. Guarded tests cover reported/died/timeout classification, restart recovery, exact marker delivery, shell no-op behavior, target loss, composer gating, claim lifecycle, and fail-closed authentication. No live daemon or LaunchAgent was touched.
 
+* DONE TASK-0ZZVJ Make stable releases exact-SHA CI-certified
+:PROPERTIES:
+:ID: TASK-0ZZVJ
+:PRIORITY: P1
+:READ_SCOPE: Cargo.toml Cargo.lock .github/workflows/** scripts/** crates/** shipped/** ui/** src-tauri/** verify/**
+:TEST_CMD: bash scripts/certify-release.sh
+:WRITE_SCOPE: Cargo.toml Cargo.lock rust-toolchain.toml .github/workflows/ci.yml scripts/** crates/** shipped/** ui/** src-tauri/**
+:END:
+
+** Description
+Fix the current Clippy and classified-suite failures, make the CI contract deterministic and release-complete, and fail stable publication closed unless the exact HEAD is certified.
+
+** Acceptance Criteria
+- Current Clippy and seven classified-suite failures are fixed without weakening the classifier.
+- CI pins a certification toolchain, checks MSRV, UI, classifier self-tests, and exposes one aggregate release-certified job.
+- Stable publishers verify a successful exact-HEAD certification run before GitHub mutation.
+- Runtime and app stable versions are bumped and republished only after the release commit is certified.
+- Main protection requires the aggregate certification check after the release lands.
+
+** Verification
+Run rustfmt, pinned Clippy, classified workspace suite, classifier self-tests, Rust 1.87 check, UI typecheck/tests/build, GitHub CI on the exact SHA, and stable runtime/app dry-runs.
