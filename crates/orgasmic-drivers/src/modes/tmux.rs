@@ -2053,7 +2053,7 @@ async fn spawn_tmux_session(
             framing.push(pair.as_str());
         }
         framing.extend(["-c", cwd.as_ref(), "--"]);
-        let packed = packed_argv_len(framing.into_iter())
+        let packed = packed_argv_len(framing)
             + packed_argv_len(std::iter::once(execution_command.as_str()))
             + packed_argv_len(execution_args.iter().map(String::as_str));
         if packed > TMUX_PACKED_ARGV_BUDGET {

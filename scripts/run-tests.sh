@@ -1319,9 +1319,9 @@ HOST_SAMPLE="${HOST_JUDGMENT:-load=? syspolicyd_cpu=? wall_s=?}"
 HOST_RATE=$(host_syspolicyd_rate "$HOST_SAMPLE")
 HOST_LOAD=$(host_field_or_unknown "$HOST_SAMPLE" load)
 LOAD_CLAUSE="load corroborating only"
-if awk -v load="$HOST_LOAD" -v lim="$LOAD_DEGRADED_THRESHOLD" '
+if awk -v load_value="$HOST_LOAD" -v lim="$LOAD_DEGRADED_THRESHOLD" '
     function num(x) { return (x != "" && x != "?" && x + 0 == x) }
-    BEGIN { if (num(load) && load + 0 >= lim + 0) exit 0; exit 1 }
+    BEGIN { if (num(load_value) && load_value + 0 >= lim + 0) exit 0; exit 1 }
 '; then
     LOAD_CLAUSE="load=${HOST_LOAD} elevated (>=${LOAD_DEGRADED_THRESHOLD}), corroborating only"
 fi
