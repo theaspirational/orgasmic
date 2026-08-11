@@ -1,3 +1,30 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-AJP4A Load registered project indexes lazily on first access
+:PROPERTIES:
+:ID: TASK-AJP4A
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx
+:TEST_CMD:   scripts/run-tests.sh
+:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/tests ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/StatusView.tsx
+:IMPLEMENTS:  dec_YYMSK
+:END:
+
+Replace eager whole-board project materialization at daemon boot with dynamic per-project loading. Boot must know the registered project catalog and remain able to watch and address every project, but it must not build every ProjectIndex before binding. Any project-scoped UI, API, CLI, writer, recovery, or watcher path must pass through one single-flight project-load boundary.
+
+Keep the lightweight .orgasmic projection separate from recursive repository source-marker discovery. Opening the Tasks tab should load the task/graph/tx state required for project operation without traversing unrelated source trees. Global routes must never silently present unloaded projects as missing.
+
+Measured recurrence on 2026-08-11: the restart boot scan omitted orgasmic, ddd, and vscode-orsl after the five-second per-project limit; the eventual explicit vscode-orsl scan took 12.785 seconds and converged successfully.
+** Acceptance Criteria
+- [ ] Daemon boot loads the registered-project catalog and home-owned safety state, attaches project watches, and binds without eagerly materializing every registered ProjectIndex.
+- [ ] Every project-scoped API, CLI, writer, recovery, and watcher path uses one single-flight ensure-loaded boundary; concurrent first access performs one project scan and all callers observe the same published generation.
+- [ ] Opening a project UI tab naturally triggers the project load through its existing project request; no UI-only loading mechanism owns correctness.
+- [ ] Registered projects remain discoverable before loading. Catalog/list/status responses expose explicit unloaded, loading, ready, and failed state instead of omitting projects or returning a misleading unregistered 404.
+- [ ] Core project materialization reads required .orgasmic task, graph, tx, and integrity state. Recursive source-marker discovery and artifact-only work are separate lazy projections and do not delay the Tasks surface.
+- [ ] Global endpoints either state partial/loading coverage or deliberately ensure the required projects; they never return silently incomplete cross-project results.
+- [ ] Watcher events for unloaded or stale projects converge through the same coordinator, and successful writes remain read-after-write consistent.
+- [ ] Recovery preloads only projects it must reconcile; an unrelated slow or unreadable registered repository cannot delay daemon readiness.
+- [ ] Deterministic tests cover blocked-project boot, first-access loading, concurrent coalescing, failed-load diagnostics and retry, watcher convergence, project catalog visibility, and existing last-good/read-after-write behavior.
+- [ ] cargo build, cargo clippy --workspace --all-targets, and scripts/run-tests.sh are green with required tooling evidence.
+

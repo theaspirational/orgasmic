@@ -1290,14 +1290,6 @@ From TASK-FJCE9 (2026-07-29), same class as FJCE9/JGHNC, one line above JGHNC's 
 
 From TASK-FJCE9 (2026-07-29): the 0RCRY owned-server mechanism leaves the socket INODE behind after tmux tears the server down (24 present, none with a live server, oldest 01:39). Harmless but unbounded, and it makes 'did this run create a server?' harder to read from a listing. Options: the keepalive's exit path unlinks its own socket after the server dies (careful: only its own, by exact name, never a sweep of the directory — a sweep could race a live run); or a claim-time cleanup of sockets whose server is provably dead AND whose pid-embedded owner is gone. State the chosen rule and why it cannot remove a live run's socket. Small; verify artifact optional if covered by a direct test.
 
-* BACKLOG TASK-AJP4A Index rebuild drops a project whose scan exceeds the 5s bound and never retries — decide the convergence policy
-:PROPERTIES:
-:ID: TASK-AJP4A
-:PRIORITY: P2
-:END:
-
-From TASK-MRJRK (2026-07-29): rebuild_with_timeout (index.rs:495-514 at MRJRK's HEAD) is the one path that removes a key from snap.projects — on scan timeout or join error it warns and moves on, the project is omitted from the published snapshot, and nothing reschedules it. MRJRK made the condition VISIBLE (unindexed_projects in status, warn at publish, the 404 names the index) and deliberately shipped NO convergence, because the 2026-07-25 incident's cause is still open (scan give-up vs short board read — the new status field discriminates them on recurrence) and a silent heal would erase the evidence. This task decides the policy once evidence exists: carry the prior snapshot's ProjectIndex forward past a failed scan (the last-good pattern load_project already uses), or a bounded retry — either WITH a staleness signal so the fix does not re-hide what MRJRK surfaced. Blocked on nothing technically; prefer waiting for one captured recurrence. Also note the accidental convergence: watcher.rs:365-397 reloads missing projects on any board-file event (touch board.org fixes the state) — make that deliberate or remove it as part of the same decision. Injection per TCTTD standard.
-
 * BACKLOG TASK-1TY4M RuntimeOptionsRequest still carries alias=effort — the 4YC8E landmine one client change away
 :PROPERTIES:
 :ID: TASK-1TY4M

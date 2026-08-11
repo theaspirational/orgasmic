@@ -285,6 +285,9 @@ Configuration, auth, and runtime modules can be split against a stable, local-fi
 :END:
 
 
+
+[2026-08-11 Tue] Refine startup materialization from whole-board eager scanning to lazy project discovery. The daemon eagerly loads only the registered-project catalog and home-owned state needed to address projects and start safely. A project projection is materialized single-flight on its first project-scoped UI, API, CLI, writer, watcher, or recovery access; opening a UI tab is one trigger, not the authority. Registered projects remain visible with explicit load state before materialization. Recursive repository source-marker discovery is a separate lazy projection so ordinary Tasks reads do not walk the source tree. Cross-project routes must declare or await their coverage rather than silently omitting unloaded projects.
+
 ** Context
 The daemon needs a first implementation path for watching files and serving read models. =notify-debouncer-full= is more turnkey but adds dependency surface before the behavior is proven; a SQLite-backed read index gives stronger persisted queries but is premature until org parsing dominates watcher CPU.
 ** Decision

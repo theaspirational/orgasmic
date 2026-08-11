@@ -29112,3 +29112,118 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-11 Tue 15:02:41 task.edited TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5745
+:TIME:         [2026-08-11 Tue 15:02:41]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AJP4A
+:NODE_ID:      TASK-AJP4A
+:END:
+
+* TX 2026-08-11 Tue 15:02:42 task.edited TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5746
+:TIME:         [2026-08-11 Tue 15:02:42]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AJP4A
+:NODE_ID:      TASK-AJP4A
+:END:
+
+* TX 2026-08-11 Tue 15:02:42 task.property_updated TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5747
+:TIME:         [2026-08-11 Tue 15:02:42]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Scope the lazy materialization implementation and verification surface
+:READ_SCOPE:   crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx
+:TEST_CMD:     scripts/run-tests.sh
+:WRITE_SCOPE:  crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/tests ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/StatusView.tsx
+:END:
+
+* TX 2026-08-11 Tue 15:02:42 task.state_transitioned TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5748
+:TIME:         [2026-08-11 Tue 15:02:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Operator selected lazy dynamic project discovery; ready for staged implementation
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-08-11 Tue 15:02:42 manager.tier TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5749
+:TIME:         [2026-08-11 Tue 15:02:42]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:REASON:       Changes daemon boot/index availability semantics and is expected to cross the 300-line breadth threshold across daemon API/index tests and UI catalog state
+:TIER:         risky
+:TRIGGERS:     blast_radius, breadth
+:END:
+
+* TX 2026-08-11 Tue 15:03:00 task.edited TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5750
+:TIME:         [2026-08-11 Tue 15:03:00]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-AJP4A
+:NODE_ID:      TASK-AJP4A
+:END:
+
+* TX 2026-08-11 Tue 15:03:00 task.property_updated TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5751
+:TIME:         [2026-08-11 Tue 15:03:00]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       This task revises the materialized index loading policy
+:IMPLEMENTS:   dec_YYMSK
+:END:
+
+* TX 2026-08-11 Tue 15:03:00 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5752
+:TIME:         [2026-08-11 Tue 15:03:00]
+:TYPE:         graph.decision.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_YYMSK
+:NODE_ID:      dec_YYMSK
+:END:
