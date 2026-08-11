@@ -30211,3 +30211,41 @@
 :SHA:          245f202aaaa353c9f8b891c5649de12d78cac9f5
 :REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5802/last.txt
 :END:
+
+* TX 2026-08-11 Tue 21:27:24 implementer.done TASK-AJP4A.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5805
+:TIME:         [2026-08-11 Tue 21:27:24]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1
+:REASON:       Merged final service, lock-ordering, cooldown, delayed-state, and notification fixes; changed-area gates green, aggregate red only for two out-of-scope supervisor races and one registered tmux flake
+:WORKER_SESSION: 019ff283-06dc-7ea1-8f83-d0ad9f3e47e1
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:WORKER_COMMIT: 245f202aaaa353c9f8b891c5649de12d78cac9f5
+:MERGE_SHA:    ca88658dbf369b7f16dc7c3a099af4d8884027df
+:BRANCH:       codex/task-ajp4a-1-1-1-fix
+:CLOSED_TX:    tx-20260811-orgasmic-5802
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5802/last.txt
+:END:
+
+* TX 2026-08-11 Tue 21:27:25 task.state_transitioned TASK-AJP4A.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5806
+:TIME:         [2026-08-11 Tue 21:27:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-AJP4A.1.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
