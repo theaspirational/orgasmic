@@ -30249,3 +30249,54 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-08-11 Tue 21:28:12 manager.dispatch_started TASK-AJP4A.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5807
+:TIME:         [2026-08-11 Tue 21:28:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a-final-followup-review
+:BRANCH:       codex/task-ajp4a-1-1-1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review.org
+:STARTED_AT:   [2026-08-11 Tue 21:28:12]
+:LIVENESS:     2499532a96d6dd0becec13636d3fc2c2895bd19e
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        opus
+:EFFORT:       medium
+:REASON_INITIAL: Final Opus medium review of corrected lazy-index follow-up diff
+:END:
+
+* TX 2026-08-11 Tue 21:28:12 run.created TASK-AJP4A.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5808
+:TIME:         [2026-08-11 Tue 21:28:12]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-AJP4A.1.1.1-reviewer-20260811T212811.jsonl
+:REASON:       Final Opus medium review of corrected lazy-index follow-up diff
+:RUN_ID:       run-20260811T212811-f41b4cf005304a13a4ca399f7ef07aae
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a-final-followup-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review.org
+:LAST_PATH:    .orgasmic/tmp/dispatch/review/review-c080e0ff1b7943cebb8c51e1bc795673-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/review/review-c080e0ff1b7943cebb8c51e1bc795673-stdout.log
+:DISPATCH_ATTEMPT: c080e0ff1b7943cebb8c51e1bc795673
+:DISPATCH_TX:  tx-20260811-orgasmic-5807
+:MODEL_OVERRIDE: opus
+:EFFORT_OVERRIDE: medium
+:END:
