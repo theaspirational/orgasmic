@@ -284,12 +284,13 @@ Configuration, auth, and runtime modules can be split against a stable, local-fi
 :SOURCE:        archive/21_05_26_init/spec.org::*Materialized index (Q13c)
 :END:
 
-Mutation-driven projection refreshes are single-flight per project or home-tx target and coalesced across a short trailing window, with a global bound on project scans. Build each projection from the previous snapshot off the index write lock, then atomically publish project, tx, and parse-error state under the lock. A successful mutation response remains synchronous with that publication: immediate reads observe the committed mutation; if the file and tx commit but publication fails, return a committed refresh-failed response that requires exact-state reconciliation before retry. Filesystem watcher events use the same coordinator for external edits. Repository metadata probes run asynchronously outside normal refresh acknowledgement.
 
 ** Context
 The daemon needs a first implementation path for watching files and serving read models. =notify-debouncer-full= is more turnkey but adds dependency surface before the behavior is proven; a SQLite-backed read index gives stronger persisted queries but is premature until org parsing dominates watcher CPU.
 ** Decision
 Use =notify= plus explicit daemon debounce and an in-memory index. HTTP reads serve from a rebuilt, watched in-memory projection. Keep the v0.0.1 materialized index in memory and revisit SQLite only after measurements justify it.
+
+Mutation-driven projection refreshes are single-flight per project or home-tx target and coalesced across a short trailing window, with a global bound on project scans. Build each projection from the previous snapshot off the index write lock, then atomically publish project, tx, and parse-error state under the lock. A successful mutation response remains synchronous with that publication: immediate reads observe the committed mutation; if the file and tx commit but publication fails, return a committed refresh-failed response that requires exact-state reconciliation before retry. Filesystem watcher events use the same coordinator for external edits. Repository metadata probes run asynchronously outside normal refresh acknowledgement.
 ** Consequences
 The current dependency set is enough for v0.0.1; the index stays in memory until profiling argues otherwise.
 
