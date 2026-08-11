@@ -418,11 +418,13 @@ struct RefreshTestHooks {
     fail_next: std::sync::atomic::AtomicUsize,
     next_gates: std::sync::Mutex<VecDeque<Arc<TestRefreshGate>>>,
     next_target_gates: std::sync::Mutex<HashMap<String, VecDeque<Arc<TestRefreshGate>>>>,
+    next_delay_record_gate: std::sync::Mutex<Option<Arc<TestRefreshGate>>>,
     next_blocking_target_delays: std::sync::Mutex<HashMap<String, VecDeque<Duration>>>,
     next_git_gate: std::sync::Mutex<Option<Arc<TestRefreshGate>>>,
     active_scans_by_target: std::sync::Mutex<HashMap<String, usize>>,
     max_same_target_scans: std::sync::atomic::AtomicUsize,
     refresh_timeout_ms: AtomicU64,
+    coordinator_timeout_ms: AtomicU64,
 }
 
 #[cfg(test)]
@@ -548,13 +550,13 @@ fn coordinator_queue_timeout_message(
 }
 
 #[derive(Debug)]
-enum ProjectLoadRequestError {
+pub(crate) enum ProjectLoadRequestError {
     Refresh(String),
     CoordinatorTimeout(String),
 }
 
 impl ProjectLoadRequestError {
-    fn into_message(self) -> String {
+    pub(crate) fn into_message(self) -> String {
         match self {
             Self::Refresh(message) | Self::CoordinatorTimeout(message) => message,
         }
@@ -1069,16 +1071,18 @@ impl Index {
     /// always retries a failed first load; routine whole-board polling uses
     /// [`Self::ensure_project_loaded_with_cooldown`] instead.
     pub async fn ensure_project_loaded(&self, project_id: &str) -> Result<u64, String> {
-        self.ensure_project_loaded_inner(project_id, false).await
+        self.ensure_project_loaded_inner(project_id, false)
+            .await
+            .map_err(ProjectLoadRequestError::into_message)
     }
 
     /// Routine whole-board polling path. A recently failed project returns its
     /// cached failure until the bounded cooldown expires, so notifications can
     /// report partial coverage without rescanning every bad path on each event.
-    pub async fn ensure_project_loaded_with_cooldown(
+    pub(crate) async fn ensure_project_loaded_with_cooldown(
         &self,
         project_id: &str,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, ProjectLoadRequestError> {
         self.ensure_project_loaded_inner(project_id, true).await
     }
 
@@ -1086,7 +1090,7 @@ impl Index {
         &self,
         project_id: &str,
         honor_failure_cooldown: bool,
-    ) -> Result<u64, String> {
+    ) -> Result<u64, ProjectLoadRequestError> {
         let expected_entry = {
             let mut snap = self.inner.write().await;
             let expected_entry = snap
@@ -1094,7 +1098,9 @@ impl Index {
                 .iter()
                 .find(|entry| entry.id == project_id)
                 .cloned()
-                .ok_or_else(|| format!("unknown project {project_id}"))?;
+                .ok_or_else(|| {
+                    ProjectLoadRequestError::Refresh(format!("unknown project {project_id}"))
+                })?;
             let ready = snap
                 .project_loads
                 .get(project_id)
@@ -1121,10 +1127,10 @@ impl Index {
                             .as_ref()
                             .expect("checked project failure cooldown");
                         let prior = load.error.as_deref().unwrap_or("project load failed");
-                        return Err(format!(
+                        return Err(ProjectLoadRequestError::Refresh(format!(
                             "project {project_id} load retry is cooling down until {}; previous failure: {prior}",
                             until.to_rfc3339()
-                        ));
+                        )));
                     }
                 }
             }
@@ -1149,21 +1155,22 @@ impl Index {
                         .await;
                 }
                 ProjectLoadRequestError::CoordinatorTimeout(error) => {
+                    #[cfg(test)]
+                    self.wait_for_project_load_delay_record_gate().await;
                     self.record_project_load_delay(project_id, error, Some(&expected_entry))
                         .await;
                 }
             }
         }
-        result.map_err(ProjectLoadRequestError::into_message)?;
+        result?;
         let snap = self.inner.read().await;
-        let load = snap
-            .project_loads
-            .get(project_id)
-            .ok_or_else(|| format!("project {project_id} load state disappeared"))?;
+        let load = snap.project_loads.get(project_id).ok_or_else(|| {
+            ProjectLoadRequestError::Refresh(format!("project {project_id} load state disappeared"))
+        })?;
         if load.state != ProjectLoadState::Ready || !snap.projects.contains_key(project_id) {
-            return Err(format!(
+            return Err(ProjectLoadRequestError::Refresh(format!(
                 "project {project_id} load completed without a ready projection"
-            ));
+            )));
         }
         Ok(load.generation)
     }
@@ -1257,6 +1264,18 @@ impl Index {
             lane_depth,
             target.scan_lane_permits(),
         );
+        #[cfg(test)]
+        let coordinator_timeout = {
+            let timeout_ms = self
+                .refresh_test_hooks
+                .coordinator_timeout_ms
+                .load(Ordering::SeqCst);
+            if timeout_ms > 0 {
+                Duration::from_millis(timeout_ms)
+            } else {
+                coordinator_timeout
+            }
+        };
         drop(coordinator);
         match tokio::time::timeout(coordinator_timeout, rx).await {
             Ok(result) => result
@@ -2321,6 +2340,34 @@ impl Index {
     }
 
     #[cfg(test)]
+    pub(crate) fn gate_next_project_load_delay_record(&self) -> Arc<TestRefreshGate> {
+        let gate = Arc::new(TestRefreshGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        *self
+            .refresh_test_hooks
+            .next_delay_record_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(gate.clone());
+        gate
+    }
+
+    #[cfg(test)]
+    async fn wait_for_project_load_delay_record_gate(&self) {
+        let gate = self
+            .refresh_test_hooks
+            .next_delay_record_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(gate) = gate {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
+    }
+
+    #[cfg(test)]
     fn gate_next_refresh_for(&self, target: &str) -> Arc<TestRefreshGate> {
         let gate = Arc::new(TestRefreshGate {
             entered: tokio::sync::Notify::new(),
@@ -2364,6 +2411,14 @@ impl Index {
     #[cfg(test)]
     fn set_refresh_timeout(&self, timeout: Duration) {
         self.refresh_test_hooks.refresh_timeout_ms.store(
+            timeout.as_millis().min(u128::from(u64::MAX)) as u64,
+            Ordering::SeqCst,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_coordinator_timeout(&self, timeout: Duration) {
+        self.refresh_test_hooks.coordinator_timeout_ms.store(
             timeout.as_millis().min(u128::from(u64::MAX)) as u64,
             Ordering::SeqCst,
         );
@@ -4221,7 +4276,8 @@ mod tests {
         let cached_error = index
             .ensure_project_loaded_with_cooldown("project")
             .await
-            .unwrap_err();
+            .unwrap_err()
+            .into_message();
         assert!(
             cached_error.contains("load retry is cooling down"),
             "{cached_error}"

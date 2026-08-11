@@ -69,8 +69,8 @@ use crate::events::{EventBus, EventPayload, Topic};
 use crate::governance::SandboxPermissionsPatch;
 use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{
-    BoardEntry, Index, IndexSnapshot, ProjectCatalogEntry, ProjectIndex, ProjectLoadState,
-    TaskOwner,
+    BoardEntry, Index, IndexSnapshot, ProjectCatalogEntry, ProjectIndex, ProjectLoadRequestError,
+    ProjectLoadState, TaskOwner,
 };
 use crate::recovery_claim::{
     classify_observation, commit_recovery_claim, load_committed_recovery_claim,
@@ -2561,32 +2561,25 @@ async fn get_tx(
     let mut delayed_projects = BTreeSet::new();
     let mut failures = BTreeMap::new();
     for project_id in requested_projects {
-        let loaded = if scoped {
-            state.index.ensure_project_loaded(&project_id).await
-        } else {
-            state
-                .index
-                .ensure_project_loaded_with_cooldown(&project_id)
-                .await
-        };
-        match loaded {
-            Ok(_) => {
-                covered_projects.insert(project_id);
-            }
-            Err(error) if scoped => {
+        if scoped {
+            if let Err(error) = state.index.ensure_project_loaded(&project_id).await {
                 return Err(ApiError::unavailable(format!(
                     "project {project_id} failed to load: {error}"
                 )));
             }
+            covered_projects.insert(project_id);
+            continue;
+        }
+        match state
+            .index
+            .ensure_project_loaded_with_cooldown(&project_id)
+            .await
+        {
+            Ok(_) => {
+                covered_projects.insert(project_id);
+            }
             Err(error) => {
-                let snap = state.index.snapshot().await;
-                record_tx_coverage_error(
-                    &snap,
-                    project_id,
-                    error,
-                    &mut delayed_projects,
-                    &mut failures,
-                );
+                record_tx_coverage_error(project_id, error, &mut delayed_projects, &mut failures);
             }
         }
     }
@@ -2619,20 +2612,18 @@ async fn get_tx(
 }
 
 fn record_tx_coverage_error(
-    snap: &IndexSnapshot,
     project_id: String,
-    error: String,
+    error: ProjectLoadRequestError,
     delayed_projects: &mut BTreeSet<String>,
     failures: &mut BTreeMap<String, String>,
 ) {
-    if snap
-        .project_loads
-        .get(&project_id)
-        .is_some_and(|load| load.state == ProjectLoadState::Delayed)
-    {
-        delayed_projects.insert(project_id);
-    } else {
-        failures.insert(project_id, error);
+    match error {
+        ProjectLoadRequestError::CoordinatorTimeout(_) => {
+            delayed_projects.insert(project_id);
+        }
+        error => {
+            failures.insert(project_id, error.into_message());
+        }
     }
 }
 
@@ -30156,37 +30147,109 @@ pub(crate) mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tx_coverage_keeps_typed_coordinator_timeout_delayed_after_ready_publication() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("project");
+        seed_project(&home, &project_root, "project");
+        let state = direct_catalog_test_state(home).await;
+        state
+            .index
+            .set_coordinator_timeout(Duration::from_millis(150));
+        let scan_gate = state.index.gate_next_refresh();
+        let delay_record_gate = state.index.gate_next_project_load_delay_record();
+
+        let request_state = state.clone();
+        let request = tokio::spawn(async move {
+            get_tx(
+                State(request_state),
+                Extension(Identity::Admin),
+                Query(TxQuery {
+                    project: None,
+                    limit: None,
+                }),
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(2), scan_gate.entered.notified())
+            .await
+            .expect("project scan did not reach the production refresh gate");
+        tokio::time::timeout(Duration::from_secs(2), delay_record_gate.entered.notified())
+            .await
+            .expect("coordinator waiter did not time out before delay recording");
+
+        // The HTTP waiter already owns a typed CoordinatorTimeout. Let the
+        // detached scan publish Ready before that timeout records its honest
+        // informational diagnostic, reproducing the reviewed race exactly.
+        scan_gate.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let snap = state.index.snapshot().await;
+                if snap.projects.contains_key("project")
+                    && snap.project_loads["project"].state == ProjectLoadState::Ready
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached scan did not publish its ready projection");
+        delay_record_gate.release.notify_one();
+
+        let response = tokio::time::timeout(Duration::from_secs(2), request)
+            .await
+            .expect("unscoped tx request did not finish")
+            .expect("unscoped tx task panicked")
+            .expect("unscoped tx should return delayed partial coverage");
+        assert_eq!(
+            response
+                .headers()
+                .get("x-orgasmic-project-coverage")
+                .unwrap(),
+            "partial; loaded=[]; delayed=[project]; failed=[]"
+        );
+        let rows: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            rows,
+            serde_json::json!([]),
+            "response stays a bare JSON array"
+        );
+
+        let snap = state.index.snapshot().await;
+        let load = &snap.project_loads["project"];
+        assert_eq!(load.state, ProjectLoadState::Ready);
+        assert!(
+            load.error
+                .as_deref()
+                .is_some_and(|error| error.contains("coordinator wait timed out")),
+            "Ready projection must retain the coordinator-delay diagnostic: {load:?}"
+        );
+        assert_eq!(load.cooldown_until, None);
+    }
+
     #[test]
-    fn tx_coverage_separates_delay_from_failure_and_preserves_empty_shape() {
-        let mut snap = IndexSnapshot::default();
-        snap.project_loads.insert(
-            "queued".to_string(),
-            crate::index::ProjectLoadStatus {
-                state: ProjectLoadState::Delayed,
-                ..crate::index::ProjectLoadStatus::default()
-            },
-        );
-        snap.project_loads.insert(
-            "broken".to_string(),
-            crate::index::ProjectLoadStatus {
-                state: ProjectLoadState::Failed,
-                ..crate::index::ProjectLoadStatus::default()
-            },
-        );
+    fn tx_coverage_separates_typed_delay_from_failure_and_preserves_empty_shape() {
         let mut delayed = BTreeSet::new();
         let mut failures = BTreeMap::new();
 
         record_tx_coverage_error(
-            &snap,
             "queued".to_string(),
-            "coordinator wait timed out".to_string(),
+            ProjectLoadRequestError::CoordinatorTimeout("coordinator wait timed out".to_string()),
             &mut delayed,
             &mut failures,
         );
         record_tx_coverage_error(
-            &snap,
             "broken".to_string(),
-            "permission denied".to_string(),
+            ProjectLoadRequestError::Refresh("permission denied".to_string()),
             &mut delayed,
             &mut failures,
         );
