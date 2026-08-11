@@ -2417,6 +2417,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn writer_accepts_a_command_after_cached_transaction_replay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("tasks.org");
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        std::fs::write(&target, "before\n").unwrap();
+        let handle = spawn(EventBus::new());
+        let request_id = "req-writer-level-replay".to_string();
+        let rewrites = vec![FileRewrite {
+            path: target.clone(),
+            new_contents: b"committed\n".to_vec(),
+        }];
+        let tx = TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-writer-level-replay"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some(request_id.clone()),
+        };
+        let mutation = MutationIdentity::new("task.create", "orgasmic", "TASK-REPLAY");
+        let mutation_id = "TASK-REPLAY".to_string();
+
+        let first = handle
+            .transaction_mutation(
+                rewrites.clone(),
+                tx.clone(),
+                mutation.clone(),
+                mutation_id.clone(),
+            )
+            .await
+            .expect("initial transaction");
+        let (reply, rx) = oneshot::channel();
+        handle
+            .tx
+            .send(WriterCommand::Transaction {
+                req: TransactionRequest {
+                    rewrites,
+                    tx,
+                    request_id,
+                    mutation: Some(mutation),
+                    mutation_id: Some(mutation_id),
+                },
+                reply,
+            })
+            .await
+            .expect("queue writer-level replay");
+        let replay = rx
+            .await
+            .expect("writer-level replay reply")
+            .expect("writer-level replay result");
+        assert_eq!(replay.tx_id, first.tx_id);
+
+        // This command queues behind the replay. The old `continue` arm exited
+        // the writer loop after replying from cache, so this is the regression
+        // assertion rather than another handle-level idempotency check.
+        handle
+            .rewrite_file(
+                FileRewrite {
+                    path: target.clone(),
+                    new_contents: b"writer-still-live\n".to_vec(),
+                },
+                None,
+            )
+            .await
+            .expect("writer accepts a subsequent command");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "writer-still-live\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tx_path)
+                .unwrap()
+                .matches("tx-writer-level-replay")
+                .count(),
+            1,
+            "cached replay must not append the transaction twice"
+        );
+    }
+
+    #[tokio::test]
     async fn project_sequence_ids_are_assigned_inside_writer() {
         let tmp = tempfile::tempdir().unwrap();
         let tx_path = tmp.path().join("tx").join("2026-06.org");

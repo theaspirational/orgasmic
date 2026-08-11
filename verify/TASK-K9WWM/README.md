@@ -24,7 +24,14 @@ scan, and 15 coalesced requests. An intentionally staggered 30-request stream
 measured four scans and 766 ms (`coalesced_total=27`, one stale generation
 discarded). Production does not coalesce every arrival shape into one scan; the
 bounded 200 ms maximum wait prevents a steady stream from deferring the first
-scan indefinitely.
+scan indefinitely. The 50 ms trailing window is also the uncontended
+acknowledgement floor: an idle target waits for that quiet window before its
+first scan so concurrent mutations can join the same authoritative batch.
+
+Five consecutive projections made stale by same-target mutations bound one
+captured batch's retry window. At that bound its covered committed callers get
+the existing structured committed-but-refresh-failed 503, while newer arrivals
+remain queued and the detached coordinator continues to convergence.
 
 ## Timeout-classification decision
 
