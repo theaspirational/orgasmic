@@ -5,7 +5,7 @@
 :PROPERTIES:
 :ID: TASK-K9WWM
 :PRIORITY: P2
-:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**
+:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**,verify/TASK-K9WWM/**
 :END:
 
 

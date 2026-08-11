@@ -27763,3 +27763,17 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     todo
 :END:
+
+* TX 2026-08-11 Tue 08:51:03 task.property_updated TASK-K9WWM
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5670
+:TIME:         [2026-08-11 Tue 08:51:03]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-K9WWM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Accepted plan requires a TASK-K9WWM injection artifact in addition to daemon and CLI source changes
+:WRITE_SCOPE:  crates/orgasmic-cli/**,crates/orgasmic-daemon/**,verify/TASK-K9WWM/**
+:END:
