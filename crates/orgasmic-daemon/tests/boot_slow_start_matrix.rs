@@ -2,20 +2,20 @@
 //!
 //! orgasmic:TASK-5P60H — the crash-loop report this task audits is a log of
 //! alternating `Address already in use` and instance-lock failures while one
-//! daemon was doing a project scan that outlasted every readiness timeout
+//! daemon was doing pre-bind catalog work that outlasted every readiness timeout
 //! pointed at it. The lock-first boot protocol (TASK-ATAXN, TASK-TZKAC,
 //! TASK-2YZDJ) is supposed to make that impossible. Nothing exercised it against
-//! a scan slow enough to reproduce the window, so "impossible" was an argument
+//! a pre-bind phase slow enough to reproduce the window, so "impossible" was an argument
 //! rather than a result.
 //!
 //! This is that window, deterministically:
 //!
-//! - the winner holds the lock and spends [`SCAN_HOLD`] inside `scanning
-//!   projects`, publishing heartbeats the whole time;
+//! - the winner holds the lock and spends [`CATALOG_HOLD`] inside `loading project
+//!   catalog`, publishing heartbeats the whole time;
 //! - one competitor is given a lock-wait budget an order of magnitude *shorter*
-//!   than the scan — the compressed analogue of a readiness timeout that expires
+//!   than catalog bootstrap — the compressed analogue of a readiness timeout that expires
 //!   mid-boot — and must refuse, naming the live owner it refused for;
-//! - one competitor is given a budget that outlasts the scan and must conclude
+//! - one competitor is given a budget that outlasts catalog bootstrap and must conclude
 //!   with the incumbent's own identity, not a second listener;
 //! - and throughout, the records an autostart reads — boot heartbeat, lock file,
 //!   lock ownership — must name one owner, advancing, classified `starting`.
@@ -39,22 +39,22 @@ use orgasmic_daemon::{
     DaemonAlreadyRunning, DaemonInstanceLockHeld, DaemonOptions, LockHolder, ShutdownBudgets,
 };
 
-/// How long the winner's project scan takes. Long enough that every other actor
+/// How long the winner's catalog phase takes. Long enough that every other actor
 /// in this test is provably still inside it, short enough to keep the suite fast.
-const SCAN_HOLD: Duration = Duration::from_millis(3000);
+const CATALOG_HOLD: Duration = Duration::from_millis(3000);
 
-/// A lock wait that expires *inside* the scan: one tenth of it. This is the
+/// A lock wait that expires *inside* catalog bootstrap: one tenth of it. This is the
 /// readiness timeout that used to fire mid-boot, compressed.
 const IMPATIENT_BUDGET: Duration = Duration::from_millis(300);
 
-/// A lock wait that outlasts the scan, so the competitor is still asking when
+/// A lock wait that outlasts catalog bootstrap, so the competitor is still asking when
 /// the winner finally answers.
 const PATIENT_BUDGET: Duration = Duration::from_millis(12_000);
 
-/// Ceiling on the whole race. Generous next to `SCAN_HOLD` and still decisive.
+/// Ceiling on the whole race. Generous next to `CATALOG_HOLD` and still decisive.
 const BOOT_DEADLINE: Duration = Duration::from_secs(40);
 
-/// Heartbeat cadence: fast enough that a 3s scan publishes many refreshes, so
+/// Heartbeat cadence: fast enough that a 3s catalog hold publishes many refreshes, so
 /// "advancing" is an observation rather than a coin flip.
 const REFRESH_MS: &str = "100";
 
@@ -155,7 +155,7 @@ struct Winner {
 }
 
 #[test]
-fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_listener() {
+fn a_catalog_boot_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_listener() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -175,11 +175,11 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     // them), which is why this file holds exactly one test.
     std::env::set_var(
         "ORGASMIC_TEST_SCAN_HOLD_MS",
-        SCAN_HOLD.as_millis().to_string(),
+        CATALOG_HOLD.as_millis().to_string(),
     );
     std::env::set_var("ORGASMIC_TEST_BOOT_REFRESH_MS", REFRESH_MS);
 
-    // ---- the winner: holds the lock and stays inside the scan --------------
+    // ---- the winner: holds the lock and stays inside catalog bootstrap -----
     let (ready_tx, ready_rx) = mpsc::channel::<Result<Winner, String>>();
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let winner_home = home.clone();
@@ -226,7 +226,7 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     };
     assert_eq!(first.pid, std::process::id());
 
-    // ---- the impatient competitor, refusing inside the slow scan -----------
+    // ---- the impatient competitor, refusing inside slow catalog bootstrap --
     let refusal =
         competing_start(home.clone(), IMPATIENT_BUDGET).unwrap_or_else(|bound| panic!("{bound}"));
     let impatient = refusal.message.clone();
@@ -260,7 +260,7 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
         "the refusal must classify a live pre-bind owner as starting: {impatient}"
     );
     assert!(
-        impatient.contains("scanning projects"),
+        impatient.contains("loading project catalog"),
         "the refusal must name the phase the owner is in: {impatient}"
     );
     assert!(
@@ -282,7 +282,7 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     assert!(
         classify_boot_owner(&during, true, chrono::Utc::now(), heartbeat_stale_after())
             .is_starting(),
-        "a live owner mid-scan must classify as starting, not stale"
+        "a live owner mid-catalog must classify as starting, not stale"
     );
     let lock = home.root.join("daemon.lock");
     assert_eq!(
@@ -343,7 +343,7 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
         patient.message
     );
 
-    // ---- exactly one listener, and the index it serves is complete ---------
+    // ---- exactly one listener, and its unloaded catalog is complete --------
     assert!(
         std::net::TcpListener::bind(("127.0.0.1", port)).is_err(),
         "the daemon's port is free, so nothing is listening on it"
@@ -352,9 +352,16 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     for id in ["alpha", "beta", "gamma"] {
         assert!(
             projects.contains(id),
-            "a normal route answered from a partially rebuilt index (missing {id}): {projects}"
+            "the catalog omitted registered project {id}: {projects}"
         );
     }
+    let catalog: serde_json::Value = serde_json::from_str(&projects).unwrap();
+    assert!(
+        catalog.as_array().unwrap().iter().all(|entry| {
+            entry["load"]["state"] == serde_json::Value::String("unloaded".to_string())
+        }),
+        "catalog discovery must not materialize projects before first access: {projects}"
+    );
 
     // The boot record is retired once ready, so no reader keeps reporting a
     // phase for a daemon that is serving.
@@ -368,7 +375,7 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
     for phase in [
         "loading config",
         "loading auth",
-        "scanning projects",
+        "loading project catalog",
         "migrating sessions",
         "starting runtime",
         "attaching watchers",
@@ -387,13 +394,13 @@ fn a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_list
          they were spent on are not a measurement"
     );
     assert!(
-        report.phase_millis("scanning projects").unwrap() >= SCAN_HOLD.as_millis() as u64,
-        "the slow scan did not show up in its own phase: {}",
+        report.phase_millis("loading project catalog").unwrap() >= CATALOG_HOLD.as_millis() as u64,
+        "the slow catalog bootstrap did not show up in its own phase: {}",
         report.summary()
     );
     assert!(
-        report.total_millis >= SCAN_HOLD.as_millis() as u64,
-        "the boot total does not account for the scan: {}ms",
+        report.total_millis >= CATALOG_HOLD.as_millis() as u64,
+        "the boot total does not account for catalog bootstrap: {}ms",
         report.total_millis
     );
 

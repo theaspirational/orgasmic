@@ -535,7 +535,7 @@ fn lock_file_recorded_pid(home: &Home) -> Option<u32> {
 /// is exactly the shape of the wedged holder the refusal is for.
 ///
 /// orgasmic:TASK-5P60H — the boot record is now *classified* rather than
-/// transcribed. Printing "phase scanning projects" next to an HTTP probe failure
+/// transcribed. Printing "phase loading project catalog" next to an HTTP probe failure
 /// left the reader to decide whether that meant starting or wedged, and the
 /// whole crash-loop report is what happens when that decision goes the wrong
 /// way. [`boot_state::classify_boot_owner`] joins the record to pid liveness and
@@ -964,23 +964,24 @@ impl Daemon {
             "orgasmic daemon starting pre-bind boot work"
         );
 
-        boot_progress.set_phase("scanning projects")?;
+        boot_progress.set_phase("loading project catalog")?;
         boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
         let index = Index::new(home.clone());
-        // AC #1: rebuild before serving normal reads.
-        index.rebuild().await;
-        // orgasmic:TASK-5P60H — a scan made slow on purpose, inside its own
-        // phase and with the refresh loop above still publishing, so a
-        // concurrent-start matrix can hold a real boot open past the readiness
-        // timeout without waiting on a board large enough to do it naturally.
+        // TASK-AJP4A: boot publishes registration plus home-owned safety state.
+        // No ProjectIndex is built before the listener binds.
+        index.bootstrap_catalog().await;
+        // orgasmic:TASK-5P60H — keep the historical test hook as a deliberate
+        // hold inside catalog bootstrap. The concurrent-start matrix still
+        // needs a pre-bind phase that outlasts readiness, while TASK-AJP4A
+        // forbids turning that hold into eager ProjectIndex materialization.
         if let Some(hold) = boot_state::scan_hold_for_tests() {
             tokio::time::sleep(hold).await;
         }
         boot_progress.stop_refresh_loop();
         let initial_snapshot = index.snapshot().await;
         // The two numbers a phase duration is only interpretable against: this
-        // scan cost that much *for this much board* (orgasmic:TASK-5P60H).
-        let scanned_projects = initial_snapshot.board.len();
+        // catalog bootstrap covered this many registrations and home tx rows.
+        let registered_projects = initial_snapshot.board.len();
         let scanned_tx_entries = initial_snapshot.tx.len();
         if let Some(error) = initial_snapshot.first_historical_tx_parse_error().cloned() {
             return Err(HistoricalTxStartupError::from_parse_error(error).into());
@@ -1058,6 +1059,7 @@ impl Daemon {
             manager_driver: Arc::new(tmux::driver()),
             manager_registry,
             events: events.clone(),
+            watcher: Some(watcher.clone()),
             boot: boot.clone(),
             auth: auth_state,
             default_tx_path,
@@ -1126,7 +1128,7 @@ impl Daemon {
         // the whole pre-bind timeline exists, and "8.45 seconds" is not a
         // finding until it says which phase spent them and over how much board.
         let mut boot_report = boot_progress.report();
-        boot_report.projects = scanned_projects;
+        boot_report.projects = registered_projects;
         boot_report.tx_entries = scanned_tx_entries;
         info!(
             address = %local_addr,

@@ -19,7 +19,7 @@ import { useMe } from '@/hooks/useMe';
 import { fetchProjects } from '@/lib/api';
 import { projectChipStyle, projectInitial } from '@/lib/projectColor';
 import { DEFAULT_TAB_VIEW, type ProjectTab, type TabView } from '@/lib/tabsStore';
-import type { ProjectIndex } from '@/lib/types';
+import type { ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
@@ -74,7 +74,7 @@ export function ProjectTabs() {
   });
 
   const projectMeta = useMemo(() => {
-    const map = new Map<string, ProjectIndex>();
+    const map = new Map<string, ProjectCatalogEntry>();
     for (const project of projects ?? []) map.set(project.project_id, project);
     return map;
   }, [projects]);
@@ -203,7 +203,7 @@ function ProjectTabItem({
   onDragEnd,
 }: {
   tab: ProjectTab;
-  meta: ProjectIndex | null;
+  meta: ProjectCatalogEntry | null;
   active: boolean;
   canCloseOthers: boolean;
   canCloseToRight: boolean;
@@ -219,11 +219,11 @@ function ProjectTabItem({
   onDragEnd: () => void;
 }) {
   const viewLabel = VIEW_LABELS[tab.view];
-  const taskCount = meta?.tasks.length;
+  const taskCount = meta?.task_stats?.total;
   const title = meta
     ? `${tab.projectId} · ${meta.branch}${
         taskCount != null ? ` · ${taskCount} task${taskCount === 1 ? '' : 's'}` : ''
-      }`
+      } · ${meta.load.state}`
     : tab.projectId;
 
   return (
@@ -330,7 +330,7 @@ function NewTabMenu({
   openProjectIds,
   onOpenProject,
 }: {
-  projects: ProjectIndex[] | null;
+  projects: ProjectCatalogEntry[] | null;
   openProjectIds: string[];
   onOpenProject: (projectId: string) => void;
 }) {

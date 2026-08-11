@@ -26,6 +26,7 @@ import type {
   ContextPackSummary,
   PromptPartSummary,
   PromptSpecSummary,
+  ProjectCatalogEntry,
   ProjectIndex,
   RecoveryStatus,
   RunRecoverRequest,
@@ -65,8 +66,8 @@ export function fetchBoard(): Promise<BoardEntry[]> {
   return get<BoardEntry[]>('/board');
 }
 
-export function fetchProjects(): Promise<ProjectIndex[]> {
-  return get<ProjectIndex[]>('/projects');
+export function fetchProjects(): Promise<ProjectCatalogEntry[]> {
+  return get<ProjectCatalogEntry[]>('/projects');
 }
 
 export function fetchSkills(): Promise<SkillSummary[]> {
@@ -121,8 +122,8 @@ export type AddProjectRequest = {
   scaffold?: boolean;
 };
 
-export function addProject(req: AddProjectRequest): Promise<ProjectIndex> {
-  return post<ProjectIndex>('/projects', {
+export function addProject(req: AddProjectRequest): Promise<ProjectCatalogEntry> {
+  return post<ProjectCatalogEntry>('/projects', {
     path: req.path,
     scaffold: req.scaffold ?? false,
   });
@@ -138,8 +139,10 @@ export function fetchTask(projectId: string, taskId: string): Promise<TaskDetail
   );
 }
 
-export function fetchTaskActivity(taskId: string): Promise<ActivityEntry[]> {
-  return get<ActivityEntry[]>(`/tasks/${encodeURIComponent(taskId)}/activity`);
+export function fetchTaskActivity(projectId: string, taskId: string): Promise<ActivityEntry[]> {
+  return get<ActivityEntry[]>(
+    `/tasks/${encodeURIComponent(taskId)}/activity${q(projectId)}`,
+  );
 }
 
 export function postTaskComment(

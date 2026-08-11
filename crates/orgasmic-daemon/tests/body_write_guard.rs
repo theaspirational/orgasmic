@@ -558,6 +558,17 @@ async fn phantom_heading_surfaces_via_parse_errors() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
 
+    let project_response = client
+        .get(format!(
+            "http://{}/api/projects/linttest/tasks",
+            running.addr
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert!(project_response.status().is_success());
+
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)

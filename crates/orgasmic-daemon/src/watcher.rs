@@ -5,7 +5,7 @@
 //! directory. Filesystem events are coalesced inside a configurable
 //! debounce window (default 200ms) before triggering an index refresh.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -362,38 +362,47 @@ async fn flush(
     }
 
     if touched_board {
-        let loaded_before: HashSet<String> = snap.projects.keys().cloned().collect();
+        let registered_before = snap
+            .board
+            .iter()
+            .cloned()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect::<HashMap<_, _>>();
         index.refresh_board().await;
         events.publish(Topic::Board, EventPayload::BoardRefreshed);
         let refreshed_board = index.snapshot().await.board;
+        let refreshed_ids = refreshed_board
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<HashSet<_>>();
+        for prior in registered_before.values() {
+            if !refreshed_ids.contains(prior.id.as_str()) {
+                if let Err(err) = watcher.unwatch(prior.path.clone()).await {
+                    warn!(project = %prior.id, error = %err, "unwatch removed project failed");
+                }
+            }
+        }
         for entry in refreshed_board {
-            if loaded_before.contains(&entry.id) {
+            let prior = registered_before.get(&entry.id);
+            if prior == Some(&entry) {
                 continue;
             }
-            // A project appeared on the board after boot (e.g. `orgasmic
-            // project init` against a live daemon): register its fs watch
-            // and load its index now instead of waiting for a restart.
+            if let Some(prior) = prior.filter(|prior| prior.path != entry.path) {
+                if let Err(err) = watcher.unwatch(prior.path.clone()).await {
+                    warn!(project = %entry.id, error = %err, "unwatch prior project root failed");
+                }
+            }
+            // A new or changed board registration must own a watch for its
+            // current root, while its operational projection remains unloaded
+            // until first access or a project-local event.
             if let Err(err) = watcher.watch_project(entry.path.clone()).await {
-                warn!(project = %entry.id, error = %err, "watch newly registered project failed");
+                warn!(project = %entry.id, error = %err, "watch new or changed project failed");
             }
-            if let Err(err) = index.refresh_project(&entry.id).await {
-                warn!(project = %entry.id, error = %err, "load newly registered project failed");
-                continue;
+            if prior.is_some() {
+                index.spawn_repo_url_reprobe_for(entry.id.clone(), entry.path.clone());
+            } else {
+                index.spawn_repo_url_refresh_for(entry.id.clone(), entry.path.clone());
             }
-            index.spawn_repo_url_refresh_for(entry.id.clone(), entry.path.clone());
-            events.publish(
-                Topic::Board,
-                EventPayload::ProjectIndexed {
-                    project_id: entry.id.clone(),
-                },
-            );
-            events.publish(
-                Topic::Task,
-                EventPayload::TaskUpdated {
-                    project_id: entry.id,
-                    task_id: "*".into(),
-                },
-            );
         }
     }
     if touched_home_tx {
@@ -611,6 +620,52 @@ mod tests {
             })
             .await,
             "expected CLI-shaped backlog.org rename to refresh project"
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_board_path_moves_watch_to_the_new_project_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old_root = tmp.path().join("old");
+        let new_root = tmp.path().join("new");
+        let fixture = setup_project(tmp.path(), old_root.clone(), old_root).await;
+        let new_orgasmic = new_root.join(".orgasmic");
+        std::fs::create_dir_all(new_orgasmic.join("tasks")).unwrap();
+        std::fs::write(new_orgasmic.join("project.org"), PROJECT_ORG).unwrap();
+        let new_sprint = new_orgasmic.join("tasks/backlog.org");
+        std::fs::write(&new_sprint, INITIAL_BACKLOG).unwrap();
+        std::fs::write(
+            fixture.home.board(),
+            format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-x\n:PROPERTIES:\n:ID:               proj-x\n:PATH:             {}\n:BRANCH:           next\n:STATUS:           active\n:END:\n",
+                new_root.display()
+            ),
+        )
+        .unwrap();
+        let mut pending = HashSet::from([fixture.home.board()]);
+        flush(
+            &mut pending,
+            &fixture.index,
+            &fixture.home,
+            &fixture.bus,
+            &fixture._handle,
+        )
+        .await;
+        assert_eq!(fixture.index.snapshot().await.board[0].path, new_root);
+
+        // Let the command loop replace the watch before touching the new root.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(&new_sprint, TWO_TASK_BACKLOG).unwrap();
+
+        assert!(
+            eventually(&fixture.index, |snap| {
+                snap.project("proj-x").is_some_and(|project| {
+                    project.root == new_root
+                        && project.tasks.iter().any(|task| task.id == "TASK-002")
+                })
+            })
+            .await,
+            "expected the changed registration's new root to drive watcher convergence"
         );
     }
 

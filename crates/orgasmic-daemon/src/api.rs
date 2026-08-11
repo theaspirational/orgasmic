@@ -68,7 +68,10 @@ use crate::events::{EventBus, EventPayload, Topic};
 #[cfg(test)]
 use crate::governance::SandboxPermissionsPatch;
 use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
-use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
+use crate::index::{
+    BoardEntry, Index, IndexSnapshot, ProjectCatalogEntry, ProjectIndex, ProjectLoadState,
+    TaskOwner,
+};
 use crate::recovery_claim::{
     classify_observation, commit_recovery_claim, load_committed_recovery_claim,
     load_recovery_claim, mark_pending_recovery_spawn_started, pending_recovery_claim_owns_session,
@@ -182,6 +185,8 @@ pub struct ApiState {
     pub manager_driver: Arc<dyn WorkerDriver>,
     pub manager_registry: crate::manager_registration::ManagerRegistry,
     pub events: EventBus,
+    /// Dynamic watch registration for projects added after boot.
+    pub watcher: Option<crate::watcher::WatcherHandle>,
     pub boot: Arc<BootIdentity>,
     pub auth: AuthState,
     pub default_tx_path: PathBuf,
@@ -877,6 +882,7 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/tasks/:id/activity"),
     ("GET", "/graph/nodes"),
     ("GET", "/graph/edges"),
+    ("GET", "/graph/markers/:node_id"),
     ("GET", "/decisions"),
     ("GET", "/decisions/:id"),
     ("GET", "/glossary"),
@@ -1251,21 +1257,21 @@ async fn get_board(
 async fn get_projects(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
-) -> Json<Vec<crate::index::ProjectIndex>> {
-    let snap = state.index.snapshot().await;
-    let supervisor = state.supervisor.snapshot().await;
+) -> Json<Vec<ProjectCatalogEntry>> {
+    let catalog = state.index.catalog().await;
     // Cross-project list: filter to visible projects rather than 403 (admin
     // sees all; a member sees only granted projects).
-    let visible: std::collections::HashSet<String> =
-        authz::visible_project_ids(&identity, snap.projects.keys().map(String::as_str))
-            .into_iter()
-            .map(String::from)
-            .collect();
+    let visible: std::collections::HashSet<String> = authz::visible_project_ids(
+        &identity,
+        catalog.iter().map(|project| project.project_id.as_str()),
+    )
+    .into_iter()
+    .map(String::from)
+    .collect();
     Json(
-        snap.projects
-            .into_values()
+        catalog
+            .into_iter()
             .filter(|project| visible.contains(&project.project_id))
-            .map(|project| apply_task_owners(project, &supervisor.runs))
             .collect(),
     )
 }
@@ -1286,7 +1292,7 @@ pub(crate) struct ExistingProjectIdentity {
 async fn add_project(
     State(state): State<ApiState>,
     Json(req): Json<AddProjectRequest>,
-) -> Result<(StatusCode, Json<ProjectIndex>), ApiError> {
+) -> Result<(StatusCode, Json<ProjectCatalogEntry>), ApiError> {
     if !req.path.is_absolute() {
         return Err(ApiError::bad_request("path must be absolute"));
     }
@@ -1327,35 +1333,28 @@ async fn add_project(
     .map_err(register_project_error)?;
 
     state.index.refresh_board().await;
-    state
-        .index
-        .refresh_project(&inputs.project_id)
-        .await
-        .map_err(|e| {
-            tracing::warn!(project_id = %inputs.project_id, error = %e, "project refresh after registration failed");
-            ApiError::internal("failed to refresh project index")
-        })?;
+    if let Some(watcher) = &state.watcher {
+        watcher
+            .watch_project(project_root.clone())
+            .await
+            .map_err(|error| {
+                tracing::warn!(project_id = %inputs.project_id, error = %error, "project watch after registration failed");
+                ApiError::internal("project registered but watch attachment failed")
+            })?;
+    }
     state
         .index
         .spawn_repo_url_refresh_for(inputs.project_id.clone(), project_root.clone());
     state
         .events
         .publish(Topic::Board, EventPayload::BoardRefreshed);
-    state.events.publish(
-        Topic::Board,
-        EventPayload::ProjectIndexed {
-            project_id: inputs.project_id.clone(),
-        },
-    );
-
-    let snap = state.index.snapshot().await;
-    let supervisor = state.supervisor.snapshot().await;
-    let project = snap
-        .projects
-        .get(&inputs.project_id)
-        .cloned()
-        .map(|project| apply_task_owners(project, &supervisor.runs))
-        .ok_or_else(|| ApiError::internal("project registered but missing from snapshot"))?;
+    let project = state
+        .index
+        .catalog()
+        .await
+        .into_iter()
+        .find(|entry| entry.project_id == inputs.project_id)
+        .ok_or_else(|| ApiError::internal("project registered but missing from catalog"))?;
     Ok((StatusCode::CREATED, Json(project)))
 }
 
@@ -1980,15 +1979,13 @@ async fn get_project(
     Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::index::ProjectIndex>, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) =
+        resolve_authorized_project(&state, &identity, Some(&id), Action::ProjectRead).await?;
     let supervisor = state.supervisor.snapshot().await;
-    // Resolve existence first (404), then gate the capability (403) — mirrors
-    // the artifact-handler pattern (`resolve_artifact_project` + `require`).
     let project = snap
         .project(&id)
         .cloned()
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
-    authz::require(&identity, Some(&id), Action::ProjectRead)?;
+        .ok_or_else(|| ApiError::internal("project load published no projection"))?;
     Ok(Json(apply_task_owners(project, &supervisor.runs)))
 }
 
@@ -1997,12 +1994,12 @@ async fn get_project_tasks(
     Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::index::TaskSummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) =
+        resolve_authorized_project(&state, &identity, Some(&id), Action::TasksRead).await?;
     let supervisor = state.supervisor.snapshot().await;
     let project = snap
         .project(&id)
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
-    authz::require(&identity, Some(&id), Action::TasksRead)?;
+        .ok_or_else(|| ApiError::internal("project load published no projection"))?;
     Ok(Json(
         apply_task_owners(project.clone(), &supervisor.runs).tasks,
     ))
@@ -2013,11 +2010,11 @@ async fn get_task(
     Extension(identity): Extension<Identity>,
     Path((project_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<crate::index::TaskDetail>, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) =
+        resolve_authorized_project(&state, &identity, Some(&project_id), Action::TasksRead).await?;
     let project = snap
         .project(&project_id)
-        .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
-    authz::require(&identity, Some(&project_id), Action::TasksRead)?;
+        .ok_or_else(|| ApiError::internal("project load published no projection"))?;
     if !project.tasks.iter().any(|task| task.id == task_id) {
         tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
         return Err(ApiError::not_found("task not found"));
@@ -2261,7 +2258,9 @@ pub struct TaskCommentResponse {
 
 async fn post_task_comment(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(task_id): Path<String>,
+    Query(q): Query<GraphQuery>,
     Json(req): Json<TaskCommentRequest>,
 ) -> Result<Json<TaskCommentResponse>, ApiError> {
     if req.actor.trim().is_empty() {
@@ -2270,7 +2269,8 @@ async fn post_task_comment(
     if req.body.trim().is_empty() {
         return Err(ApiError::bad_request("comment body is required"));
     }
-    let located = locate_task(&state.index.snapshot().await, &task_id)?;
+    let (located, _) =
+        resolve_authorized_task(&state, &identity, &task_id, q.project.as_deref()).await?;
     let mut extra = vec![("BODY".to_string(), escape_property_value(&req.body))];
     if let Some(run_id) = req.run_id.filter(|value| !value.trim().is_empty()) {
         extra.push(("RUN_ID".to_string(), run_id));
@@ -2302,10 +2302,10 @@ async fn get_task_activity(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
     Path(task_id): Path<String>,
+    Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::ActivityEntry>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let located = locate_task(&snap, &task_id)?;
-    authz::require(&identity, Some(&located.project_id), Action::TasksRead)?;
+    let (located, snap) =
+        resolve_authorized_task(&state, &identity, &task_id, q.project.as_deref()).await?;
     let entries = snap
         .projects
         .get(&located.project_id)
@@ -2333,7 +2333,9 @@ pub struct CreateSubtaskResponse {
 
 async fn post_task_subtask(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(parent_id): Path<String>,
+    Query(q): Query<GraphQuery>,
     Json(req): Json<CreateSubtaskRequest>,
 ) -> Result<Json<CreateSubtaskResponse>, ApiError> {
     if !orgasmic_core::is_valid_task_path_id(&parent_id) {
@@ -2344,8 +2346,8 @@ async fn post_task_subtask(
     if req.title.trim().is_empty() {
         return Err(ApiError::bad_request("subtask title is required"));
     }
-    let snap = state.index.snapshot().await;
-    let located = locate_task(&snap, &parent_id)?;
+    let (located, snap) =
+        resolve_authorized_task(&state, &identity, &parent_id, q.project.as_deref()).await?;
     let project = snap
         .projects
         .get(&located.project_id)
@@ -2418,11 +2420,17 @@ struct LocatedTask {
     project_id: String,
 }
 
-fn locate_task(snap: &IndexSnapshot, task_id: &str) -> Result<LocatedTask, ApiError> {
+fn locate_task(
+    snap: &IndexSnapshot,
+    task_id: &str,
+    project_ids: &[String],
+) -> Result<LocatedTask, ApiError> {
     let mut matches = snap
         .projects
         .iter()
-        .filter(|(_, project)| project.tasks.iter().any(|task| task.id == task_id))
+        .filter(|(project_id, project)| {
+            project_ids.contains(project_id) && project.tasks.iter().any(|task| task.id == task_id)
+        })
         .map(|(project_id, _)| project_id.clone())
         .collect::<Vec<_>>();
     matches.sort();
@@ -2527,16 +2535,44 @@ pub struct GraphEdgesQuery {
 
 async fn get_tx(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<TxQuery>,
-) -> Json<Vec<crate::index::TxRecord>> {
+) -> Result<Json<Vec<crate::index::TxRecord>>, ApiError> {
+    let catalog = state.index.snapshot().await;
+    let covered_projects = if let Some(project_id) = q.project.as_deref() {
+        let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
+        authz::require(&identity, Some(&project_id), Action::TasksRead)?;
+        vec![project_id]
+    } else if matches!(identity, Identity::Admin) {
+        catalog.board.iter().map(|entry| entry.id.clone()).collect()
+    } else {
+        catalog
+            .board
+            .iter()
+            .filter(|entry| authz::require(&identity, Some(&entry.id), Action::TasksRead).is_ok())
+            .map(|entry| entry.id.clone())
+            .collect()
+    };
+    drop(catalog);
+    for project_id in &covered_projects {
+        state
+            .index
+            .ensure_project_loaded(project_id)
+            .await
+            .map_err(|error| {
+                ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+            })?;
+    }
     let snap = state.index.snapshot().await;
+    let covered_projects = covered_projects.into_iter().collect::<BTreeSet<_>>();
     let mut items: Vec<_> = snap
         .tx
         .into_iter()
         .filter(|r| {
-            q.project
-                .as_deref()
-                .is_none_or(|p| r.project_id.as_deref() == Some(p))
+            r.project_id
+                .as_ref()
+                .is_some_and(|project_id| covered_projects.contains(project_id))
+                || (r.project_id.is_none() && matches!(identity, Identity::Admin))
         })
         .collect();
     items.sort_by(|a, b| a.entry.time.cmp(&b.entry.time));
@@ -2546,7 +2582,7 @@ async fn get_tx(
             items = items.into_iter().skip(skip).collect();
         }
     }
-    Json(items)
+    Ok(Json(items))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2614,6 +2650,24 @@ async fn append_tx_request(
     req: TxAppendRequest,
 ) -> Result<TxAppendResponse, ApiError> {
     let now = Utc::now();
+    if let Some(project_id) = req.project.as_deref() {
+        let registered = state
+            .index
+            .snapshot()
+            .await
+            .board
+            .iter()
+            .any(|entry| entry.id == project_id);
+        if registered {
+            state
+                .index
+                .ensure_project_loaded(project_id)
+                .await
+                .map_err(|error| {
+                    ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+                })?;
+        }
+    }
     let snap = state.index.snapshot().await;
     let project_entry = req
         .project
@@ -2775,22 +2829,21 @@ async fn enrich_prompt_compile_request(
         .project
         .clone()
         .unwrap_or_else(|| "orgasmic".to_string());
-    let snap = state.index.snapshot().await;
-    if let Some(project) = snap.projects.get(&project_id) {
-        req.project = Some(project_id.clone());
-        req.context_overrides
-            .entry("project.id".to_string())
-            .or_insert_with(|| project_id.clone());
-        req.context_overrides
-            .entry("project.name".to_string())
-            .or_insert_with(|| project_id.clone());
-        req.context_overrides
-            .entry("project.path".to_string())
-            .or_insert_with(|| project.root.display().to_string());
-        req.context_overrides
-            .entry("project.default_branch".to_string())
-            .or_insert_with(|| project.branch.clone());
-    }
+    let (_, snap) = ensure_loaded_snapshot(state, Some(&project_id)).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
+    req.project = Some(project_id.clone());
+    req.context_overrides
+        .entry("project.id".to_string())
+        .or_insert_with(|| project_id.clone());
+    req.context_overrides
+        .entry("project.name".to_string())
+        .or_insert_with(|| project_id.clone());
+    req.context_overrides
+        .entry("project.path".to_string())
+        .or_insert_with(|| project.root.display().to_string());
+    req.context_overrides
+        .entry("project.default_branch".to_string())
+        .or_insert_with(|| project.branch.clone());
     Ok(req)
 }
 
@@ -2924,7 +2977,7 @@ async fn post_manager_launch(
     State(state): State<ApiState>,
     Json(req): Json<ManagerLaunchRequest>,
 ) -> Result<Json<ManagerLaunchResponse>, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
     let project = snap
         .projects
         .get(&req.project_id)
@@ -3102,7 +3155,7 @@ async fn post_manager_register_inner(
     req: ManagerRegisterRequest,
     capability: Option<&str>,
 ) -> Result<Json<ManagerRegisterResponse>, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
     let project = snap
         .projects
         .get(&req.project_id)
@@ -3448,10 +3501,8 @@ async fn post_manager_dispatch_wait(
     State(state): State<ApiState>,
     Json(req): Json<ManagerDispatchWaitRequest>,
 ) -> Result<Json<ManagerDispatchWaitResponse>, ApiError> {
-    let project = state
-        .index
-        .snapshot()
-        .await
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
+    let project = snap
         .projects
         .get(&req.project_id)
         .cloned()
@@ -3814,8 +3865,8 @@ async fn manager_tier_declarations(
     state: &ApiState,
     project: &str,
     task: &str,
-) -> Vec<ManagerTierDeclaration> {
-    let snap = state.index.snapshot().await;
+) -> Result<Vec<ManagerTierDeclaration>, ApiError> {
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project)).await?;
     let mut found: Vec<_> = snap
         .tx
         .iter()
@@ -3858,7 +3909,7 @@ async fn manager_tier_declarations(
     // Org timestamps are fixed-width and zero-padded, so lexical order is
     // chronological order.
     found.sort_by(|a, b| a.time.cmp(&b.time));
-    found
+    Ok(found)
 }
 
 // orgasmic:TASK-3CM0Q
@@ -3944,7 +3995,7 @@ async fn post_manager_tier(
         ));
     }
 
-    let prior = manager_tier_declarations(&state, &project, &task).await;
+    let prior = manager_tier_declarations(&state, &project, &task).await?;
     let previous = prior.last().cloned();
     let previous_rank = previous
         .as_ref()
@@ -4039,7 +4090,7 @@ async fn get_manager_tier(
             "`project` and `task` are both required to read a tier declaration",
         ));
     }
-    let declarations = manager_tier_declarations(&state, &project, &task).await;
+    let declarations = manager_tier_declarations(&state, &project, &task).await?;
     Ok(Json(ManagerTierStatusResponse {
         task,
         project,
@@ -4219,7 +4270,7 @@ async fn post_stage(
         .clone()
         .unwrap_or_else(|| "orgasmic".to_string());
     let requested_task_id = req.task_id.clone();
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(&project_id)).await?;
     let project = snap
         .projects
         .get(&project_id)
@@ -5568,7 +5619,7 @@ async fn post_task_dispatch(
     validate_dispatch_path("last_path", &req.last_path)?;
     validate_dispatch_path("stdout_path", &req.stdout_path)?;
 
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
     let project = snap
         .projects
         .get(&project_id)
@@ -5830,12 +5881,9 @@ async fn post_task_dispatch_close_guard(
         return Err(ApiError::bad_request("worktree path must not be a symlink"));
     }
 
-    let snap = state.index.snapshot().await;
-    let known_project = snap.projects.contains_key(&project_id);
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
+    debug_assert!(snap.projects.contains_key(&project_id));
     drop(snap);
-    if !known_project {
-        return Err(ApiError::not_found(format!("project {project_id}")));
-    }
 
     let params = DispatchCloseGuardParams {
         project_id: project_id.clone(),
@@ -5944,7 +5992,7 @@ async fn post_task_dispatch_cleanup(
         return Err(ApiError::bad_request("branch must be non-empty"));
     }
 
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
     let project = snap
         .projects
         .get(&project_id)
@@ -7579,9 +7627,18 @@ async fn recovery_association_is_durable(
     state: &ApiState,
     project: Option<&str>,
     run_id: &str,
-) -> bool {
+) -> Result<bool, ApiError> {
+    if let Some(project_id) = project {
+        ensure_loaded_snapshot(state, Some(project_id)).await?;
+    } else {
+        state
+            .index
+            .ensure_all_projects_loaded()
+            .await
+            .map_err(|error| ApiError::unavailable(format!("tx coverage failed: {error}")))?;
+    }
     let snap = state.index.snapshot().await;
-    snap.tx.iter().any(|record| {
+    Ok(snap.tx.iter().any(|record| {
         if record.entry.ty != "run.created" {
             return false;
         }
@@ -7598,7 +7655,7 @@ async fn recovery_association_is_durable(
                 .any(|(k, v)| k == key && v == value)
         };
         has("ORIGIN", "recovery") && has("RUN_ID", run_id)
-    })
+    }))
 }
 
 /// Bind a recovery REPLACEMENT run to the dispatch generation that owns its
@@ -7643,7 +7700,7 @@ async fn record_recovery_replacement_association(
     // exactly the paths this exists for, that cache is always cold. Consult the
     // durable ledger instead. The manager side is set-based and would tolerate a
     // duplicate; the ledger a human reads should not carry one.
-    if recovery_association_is_durable(state, project, replacement_run_id).await {
+    if recovery_association_is_durable(state, project, replacement_run_id).await? {
         return Ok(());
     }
     record_api_tx(
@@ -7726,6 +7783,24 @@ struct PreparedApiTx {
 
 async fn prepare_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<PreparedApiTx, ApiError> {
     let now = Utc::now();
+    if let Some(project_id) = req.project.as_deref() {
+        let registered = state
+            .index
+            .snapshot()
+            .await
+            .board
+            .iter()
+            .any(|entry| entry.id == project_id);
+        if registered {
+            state
+                .index
+                .ensure_project_loaded(project_id)
+                .await
+                .map_err(|error| {
+                    ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+                })?;
+        }
+    }
     let snap = state.index.snapshot().await;
     let project_entry = req
         .project
@@ -7960,18 +8035,15 @@ pub struct StatusResponse {
     pub bind_port: u16,
     pub local_only: bool,
     pub ui_asset_hash: String,
-    /// Projects the index actually loaded, and can therefore answer for.
+    /// Projects whose operational projection is ready.
     pub projects: usize,
-    // orgasmic:task_MRJRK
-    /// Projects the board registers. Equal to `projects` on a healthy daemon;
-    /// the pair is the decisive datum when a route 404s an id that `orgasmic
-    /// project list` (which reads the board file on disk) still shows.
+    /// Projects the board registers. Unloaded projects are healthy catalog
+    /// entries and load naturally on first scoped access.
     pub registered_projects: usize,
-    /// Registered ids the current index snapshot is missing — the condition
-    /// that otherwise only surfaces as a 404 blaming registration. Non-empty
-    /// means those ids 404 on every id-addressed route until a successful
-    /// `orgasmic reindex`; the daemon does not retry on its own.
-    pub unindexed_projects: Vec<String>,
+    pub unloaded_projects: Vec<String>,
+    pub loading_projects: Vec<String>,
+    pub ready_projects: Vec<String>,
+    pub failed_projects: BTreeMap<String, String>,
     pub parse_errors: usize,
     pub tx_count: usize,
     pub rebuilt_at: Option<String>,
@@ -7983,6 +8055,22 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let snap: IndexSnapshot = state.index.snapshot().await;
     let writer = state.writer.status();
     let index_refresh = state.index.refresh_status().await;
+    let unloaded_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Unloaded);
+    let loading_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Loading);
+    let ready_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Ready);
+    let failed_projects = snap
+        .project_loads
+        .iter()
+        .filter(|(_, load)| load.state == crate::index::ProjectLoadState::Failed)
+        .map(|(id, load)| {
+            (
+                id.clone(),
+                load.error
+                    .clone()
+                    .unwrap_or_else(|| "project load failed".to_string()),
+            )
+        })
+        .collect();
     Json(StatusResponse {
         name: "orgasmic",
         version: state.boot.version.clone(),
@@ -7996,9 +8084,12 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         bind_host: state.bind_host,
         bind_port: state.bind_port,
         ui_asset_hash: state.ui_asset_hash,
-        projects: snap.projects.len(),
+        projects: ready_projects.len(),
         registered_projects: snap.board.len(),
-        unindexed_projects: snap.unindexed_board_projects(),
+        unloaded_projects,
+        loading_projects,
+        ready_projects,
+        failed_projects,
         parse_errors: snap.parse_errors.len(),
         tx_count: snap.tx.len(),
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
@@ -8249,6 +8340,15 @@ async fn get_run_history(
     State(state): State<ApiState>,
     Query(query): Query<RunHistoryQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    if let Some(project) = query.project.as_deref() {
+        state
+            .index
+            .ensure_project_loaded(project)
+            .await
+            .map_err(|error| {
+                ApiError::unavailable(format!("project {project} failed to load: {error}"))
+            })?;
+    }
     let board = state.index.snapshot().await.board;
     let roots: Vec<PathBuf> = board
         .iter()
@@ -8326,8 +8426,9 @@ pub struct RunHistoryRollbackRequest {
 
 /// Resolve one registered project id to its canonical root.
 async fn project_root_for(state: &ApiState, project: &str) -> Result<PathBuf, ApiError> {
-    let board = state.index.snapshot().await.board;
-    let entry = board
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project)).await?;
+    let entry = snap
+        .board
         .iter()
         .find(|entry| entry.id == project)
         .ok_or_else(|| ApiError::not_found(format!("project {project}")))?;
@@ -9521,8 +9622,9 @@ async fn recovery_origin_authority(
     requested_project_id: &str,
     prior: &RecoveredRun,
 ) -> Result<RecoveryOriginAuthority, ApiError> {
-    let board = state.index.snapshot().await.board;
-    let matches: Vec<_> = board
+    let (_, snap) = ensure_loaded_snapshot(state, Some(requested_project_id)).await?;
+    let matches: Vec<_> = snap
+        .board
         .iter()
         .filter(|entry| entry.id == requested_project_id)
         .collect();
@@ -11446,6 +11548,18 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
 
     let (mut reattached, mut skipped) = (0usize, 0usize);
     for c in candidates {
+        if let Some(project_id) = c.project_id.as_deref() {
+            if let Err(error) = state.index.ensure_project_loaded(project_id).await {
+                skipped += 1;
+                tracing::warn!(
+                    run_id = %c.run_id,
+                    project_id,
+                    error = %error,
+                    "boot reattach: required project failed to load; skipped"
+                );
+                continue;
+            }
+        }
         // orgasmic:TASK-2QK4P.1.1.1 acceptance 1 — this hint used to be a bool
         // and every failure inside it answered "no pending recovery owns this
         // session", which is the FAIL-OPEN direction: boot then appends a
@@ -13283,9 +13397,41 @@ fn parse_error_views(snap: &IndexSnapshot) -> Vec<ParseErrorView> {
         .collect()
 }
 
-async fn get_parse_errors(State(state): State<ApiState>) -> Json<Vec<ParseErrorView>> {
+async fn get_parse_errors(State(state): State<ApiState>) -> Response {
     let snap = state.index.snapshot().await;
-    Json(parse_error_views(&snap))
+    let ready = snap.project_ids_in_state(ProjectLoadState::Ready);
+    let marker_ready = snap.project_ids_with_markers_loaded();
+    let marker_unloaded = snap
+        .board
+        .iter()
+        .filter(|entry| !marker_ready.contains(&entry.id))
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    let unloaded = snap.project_ids_in_state(ProjectLoadState::Unloaded);
+    let loading = snap.project_ids_in_state(ProjectLoadState::Loading);
+    let failed = snap.project_ids_in_state(ProjectLoadState::Failed);
+    let coverage = format!(
+        "{}; ready={}/{}; markers={}/{}; unloaded=[{}]; marker_unloaded=[{}]; loading=[{}]; failed=[{}]",
+        if ready.len() == snap.board.len() && marker_ready.len() == snap.board.len() {
+            "complete"
+        } else {
+            "partial"
+        },
+        ready.len(),
+        snap.board.len(),
+        marker_ready.len(),
+        snap.board.len(),
+        unloaded.join(","),
+        marker_unloaded.join(","),
+        loading.join(","),
+        failed.join(","),
+    );
+    let mut response = Json(parse_error_views(&snap)).into_response();
+    response.headers_mut().insert(
+        "x-orgasmic-project-coverage",
+        HeaderValue::from_str(&coverage).expect("catalog project ids form a valid header"),
+    );
+    response
 }
 
 /// `orgasmic reindex [--project <id>]` response (TASK-V8WY9): fresh
@@ -13304,26 +13450,57 @@ fn reindex_response(snap: &IndexSnapshot) -> ReindexResponse {
     }
 }
 
-async fn post_reindex(State(state): State<ApiState>) -> Json<ReindexResponse> {
-    state.index.rebuild().await;
+async fn post_reindex(State(state): State<ApiState>) -> Result<Json<ReindexResponse>, ApiError> {
+    let project_ids = state
+        .index
+        .snapshot()
+        .await
+        .board
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    for project_id in project_ids {
+        force_reindex_project(&state, &project_id).await?;
+    }
     let snap = state.index.snapshot().await;
-    Json(reindex_response(&snap))
+    Ok(Json(reindex_response(&snap)))
+}
+
+async fn force_reindex_project(state: &ApiState, project_id: &str) -> Result<(), ApiError> {
+    let catalog = state.index.snapshot().await;
+    select_catalog_project_id(&catalog, Some(project_id))?;
+    drop(catalog);
+    state
+        .index
+        .refresh_project(project_id)
+        .await
+        .map_err(|error| {
+            ApiError::unavailable(format!("project {project_id} reindex failed: {error}"))
+        })?;
+    state
+        .index
+        .ensure_project_markers_loaded(project_id)
+        .await
+        .map_err(|error| ApiError::unavailable(format!("marker reindex failed: {error}")))?;
+    state
+        .index
+        .ensure_project_artifacts_loaded(project_id)
+        .await
+        .map_err(|error| ApiError::unavailable(format!("artifact reindex failed: {error}")))?;
+    let snap = state.index.snapshot().await;
+    if let Some(project) = snap.project(project_id) {
+        state
+            .index
+            .spawn_repo_url_reprobe_for(project_id.to_string(), project.root.clone());
+    }
+    Ok(())
 }
 
 async fn post_reindex_project(
     State(state): State<ApiState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
-    state
-        .index
-        .refresh_project(&project_id)
-        .await
-        .map_err(ApiError::not_found)?;
-    if let Some(project) = state.index.snapshot().await.project(&project_id) {
-        state
-            .index
-            .spawn_repo_url_reprobe_for(project_id.clone(), project.root.clone());
-    }
+    force_reindex_project(&state, &project_id).await?;
     let snap = state.index.snapshot().await;
     Ok(Json(reindex_response(&snap)))
 }
@@ -13363,8 +13540,8 @@ async fn get_org_file(
         return Err(ApiError::not_found("org file not found"));
     }
     let rel_str = rel.to_string_lossy().to_string();
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
+    let (project_id, snap) = ensure_loaded_snapshot(&state, q.project.as_deref()).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     let path = project.root.join(&rel);
     let label = org_file_artifact_label(&rel);
     let contents = read_artifact(&path, label)?;
@@ -13384,8 +13561,9 @@ async fn post_org_file(
     let rel_str = rel.to_string_lossy().to_string();
     OrgFile::parse(req.contents.clone(), rel_str.clone())
         .map_err(|e| org_input_parse_error(FsPath::new(&rel_str), e))?;
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, req.project.as_deref())?;
+    let (resolved_project_id, snap) =
+        ensure_loaded_snapshot(&state, req.project.as_deref()).await?;
+    let project = select_loaded_project(&snap, &resolved_project_id)?;
     let project_id = project.project_id.clone();
     let path = project.root.join(&rel);
     drop(snap);
@@ -13464,9 +13642,10 @@ async fn get_graph_nodes(
     Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GraphNodeSummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     Ok(Json(project.graph.nodes.clone()))
 }
 
@@ -13475,9 +13654,10 @@ async fn get_graph_edges(
     Extension(identity): Extension<Identity>,
     Query(q): Query<GraphEdgesQuery>,
 ) -> Result<Json<Vec<crate::index::GraphEdgeSummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     let graph = &project.graph;
     let (relation_kind, dir_from_relation) = graph_relation_filter(q.relation.as_deref())?;
     // A relation alias already fixes both kind and direction; reject a
@@ -13552,13 +13732,46 @@ pub struct MarkerFilesResponse {
 
 async fn get_graph_markers(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(node_id): Path<String>,
+    Query(q): Query<GraphQuery>,
 ) -> Result<Json<MarkerFilesResponse>, ApiError> {
+    let catalog = state.index.snapshot().await;
+    let project_ids = if let Some(project_id) = q.project.as_deref() {
+        let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
+        authz::require(&identity, Some(&project_id), Action::GraphRead)?;
+        vec![project_id]
+    } else {
+        catalog
+            .board
+            .iter()
+            .filter(|entry| authz::require(&identity, Some(&entry.id), Action::GraphRead).is_ok())
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>()
+    };
+    drop(catalog);
+    for project_id in &project_ids {
+        state
+            .index
+            .ensure_project_markers_loaded(project_id)
+            .await
+            .map_err(|error| {
+                ApiError::unavailable(format!(
+                    "project {project_id} marker coverage failed: {error}"
+                ))
+            })?;
+    }
     let snap = state.index.snapshot().await;
-    Ok(Json(MarkerFilesResponse {
-        files: snap.marker_files(&node_id),
-        node_id,
-    }))
+    let files = project_ids
+        .iter()
+        .filter_map(|project_id| snap.projects.get(project_id))
+        .filter_map(|project| project.markers.get(&node_id))
+        .flatten()
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    Ok(Json(MarkerFilesResponse { files, node_id }))
 }
 
 async fn get_decisions(
@@ -13566,9 +13779,10 @@ async fn get_decisions(
     Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::DecisionSummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     Ok(Json(project.graph.decisions.clone()))
 }
 
@@ -13578,9 +13792,10 @@ async fn get_decision(
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::DecisionSummary>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     project
         .graph
         .decisions
@@ -13596,9 +13811,10 @@ async fn get_glossary(
     Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GlossarySummary>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     Ok(Json(project.graph.glossary.clone()))
 }
 
@@ -13608,9 +13824,10 @@ async fn get_glossary_term(
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::GlossarySummary>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let (project_id, snap) =
+        resolve_authorized_project(&state, &identity, q.project.as_deref(), Action::GraphRead)
+            .await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     project
         .graph
         .glossary
@@ -13921,9 +14138,13 @@ pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
 /// `lint_dangling_graph_edges` (index.rs) resolves edges against. Used by the
 /// write-time reference-property guard below so a token either resolves here
 /// or would also dangle at index time — the two never disagree.
-async fn known_reference_ids(state: &ApiState, project_id: &str) -> BTreeSet<String> {
-    let snap = state.index.snapshot().await;
-    snap.project(project_id)
+async fn known_reference_ids(
+    state: &ApiState,
+    project_id: &str,
+) -> Result<BTreeSet<String>, ApiError> {
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
+    Ok(snap
+        .project(project_id)
         .map(|project| {
             project
                 .graph
@@ -13932,7 +14153,7 @@ async fn known_reference_ids(state: &ApiState, project_id: &str) -> BTreeSet<Str
                 .map(|node| node.id.clone())
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Reject a reference-valued property (dec_HJENQ vocabulary) whose value
@@ -13984,7 +14205,7 @@ async fn create_graph_heading(
         }
     }
     if !req.force {
-        let known_ids = known_reference_ids(state, &project_id).await;
+        let known_ids = known_reference_ids(state, &project_id).await?;
         for (key, value) in &req.properties {
             // Decision PARENT already has dedicated existence/class/cycle
             // validation below (validate_decision_create_parent); don't
@@ -14155,7 +14376,7 @@ async fn mutate_graph_heading(
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
     if !req.force {
-        let known_ids = known_reference_ids(state, &project_id).await;
+        let known_ids = known_reference_ids(state, &project_id).await?;
         for (key, value) in &req.properties {
             // Decision PARENT already has dedicated existence/class/cycle
             // validation below (validate_decision_parent_property_update);
@@ -14731,8 +14952,8 @@ async fn org_node_path(
     id: &str,
     layer: NodeLayer,
 ) -> Result<(String, PathBuf, String), ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, project)?;
+    let (project_id, snap) = ensure_loaded_snapshot(state, project).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     match layer {
         NodeLayer::Task => {
             let task = project
@@ -14798,7 +15019,7 @@ async fn post_org_node_edit(
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
     if !req.force {
-        let known_ids = known_reference_ids(&state, &project_id).await;
+        let known_ids = known_reference_ids(&state, &project_id).await?;
         for op in &req.ops {
             if let NodeEditOp::SetProperty { key, value } = op {
                 // Decision PARENT already has dedicated existence/class/cycle
@@ -15076,10 +15297,8 @@ async fn inbound_reference_owners(
     target_id: &str,
     state: &ApiState,
 ) -> Result<Vec<String>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = snap
-        .project(project_id)
-        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
+    let project = select_loaded_project(&snap, project_id)?;
     let dotorg = project.root.join(".orgasmic");
     let mut paths = vec![
         dotorg.join("project.org"),
@@ -15251,8 +15470,8 @@ async fn graph_path(
     project: Option<&str>,
     layer: GraphLayer,
 ) -> Result<(String, PathBuf), ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, project)?;
+    let (project_id, snap) = ensure_loaded_snapshot(state, project).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     Ok((
         project.project_id.clone(),
         project.root.join(".orgasmic").join(layer.file_name()),
@@ -15456,63 +15675,122 @@ fn reject_glossary_implementation_detail(req: &GraphCreateRequest) -> Result<(),
     Ok(())
 }
 
-/// 404 for a project id absent from the loaded index. Distinguishes a project
-/// the board carries but the index snapshot does not from a genuinely unknown
-/// id, so operators don't chase a registration hypothesis on the former
-/// (TASK-GERBB, TASK-MRJRK).
-///
-/// The message names the index and the remedy, and deliberately asserts no
-/// cause: TASK-GERBB introduced this for the residual window right after
-/// `project init`, but the same state has since been observed ten minutes into
-/// a settled daemon, and what produces it there is still open. What is certain
-/// either way is that registration is not the thing to check — `orgasmic
-/// project list` reads the board file on disk, so it keeps listing the project
-/// while every id-addressed route 404s.
-fn project_not_found_error(snap: &IndexSnapshot, project_id: &str) -> ApiError {
-    if snap.board.iter().any(|entry| entry.id == project_id) {
-        tracing::warn!(
-            project_id = %project_id,
-            "project registered on board but missing from the index snapshot"
-        );
-        return ApiError::not_found(format!(
-            "project {project_id} is registered on the board but missing from the \
-             current index snapshot; registration is not the problem, the index is \
-             — run `orgasmic reindex` to reload it (`orgasmic status` lists this \
-             condition under `unindexed_projects`)"
-        ));
-    }
-    tracing::warn!(project_id = %project_id, "project not found");
-    ApiError::not_found("project not found")
-}
-
-fn select_graph<'a>(
-    snap: &'a IndexSnapshot,
+fn select_catalog_project_id(
+    snap: &IndexSnapshot,
     project: Option<&str>,
-) -> Result<&'a crate::index::GraphIndex, ApiError> {
-    Ok(&select_project(snap, project)?.graph)
-}
-
-fn select_project<'a>(
-    snap: &'a IndexSnapshot,
-    project: Option<&str>,
-) -> Result<&'a crate::index::ProjectIndex, ApiError> {
+) -> Result<String, ApiError> {
     if let Some(id) = project {
-        // orgasmic:task_MRJRK — every id-addressed graph/node route lands
-        // here, so this is where the undifferentiated `project {id}` 404 was
-        // reaching operators.
         return snap
-            .projects
-            .get(id)
-            .ok_or_else(|| project_not_found_error(snap, id));
+            .board
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.id.clone())
+            .ok_or_else(|| ApiError::not_found(format!("project {id}")));
     }
-    if snap.projects.len() == 1 {
-        return snap.projects.values().next().ok_or_else(|| {
-            ApiError::not_found("no project available for graph route".to_string())
-        });
+    if snap.board.len() == 1 {
+        return Ok(snap.board[0].id.clone());
     }
-    Err(ApiError::not_found(
+    Err(ApiError::bad_request(
         "graph route requires ?project= when board has zero or multiple projects",
     ))
+}
+
+async fn ensure_loaded_snapshot(
+    state: &ApiState,
+    project: Option<&str>,
+) -> Result<(String, IndexSnapshot), ApiError> {
+    let catalog = state.index.snapshot().await;
+    let project_id = select_catalog_project_id(&catalog, project)?;
+    drop(catalog);
+    state
+        .index
+        .ensure_project_loaded(&project_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(project_id = %project_id, error = %error, "project load failed");
+            ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+        })?;
+    Ok((project_id, state.index.snapshot().await))
+}
+
+/// Resolve registration, authorize it, then touch the filesystem through the
+/// single-flight project-load boundary and take a fresh snapshot.
+async fn resolve_authorized_project(
+    state: &ApiState,
+    identity: &Identity,
+    project: Option<&str>,
+    action: Action,
+) -> Result<(String, IndexSnapshot), ApiError> {
+    let catalog = state.index.snapshot().await;
+    let project_id = select_catalog_project_id(&catalog, project)?;
+    authz::require(identity, Some(&project_id), action)?;
+    drop(catalog);
+    state
+        .index
+        .ensure_project_loaded(&project_id)
+        .await
+        .map_err(|error| {
+            tracing::warn!(project_id = %project_id, error = %error, "project load failed");
+            ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+        })?;
+    Ok((project_id, state.index.snapshot().await))
+}
+
+/// Resolve the authorized catalog coverage before touching any repository,
+/// then locate the task only inside that coverage. Legacy project-less task
+/// routes remain usable without letting a member's request scan or disclose an
+/// ungranted project.
+async fn resolve_authorized_task(
+    state: &ApiState,
+    identity: &Identity,
+    task_id: &str,
+    project: Option<&str>,
+) -> Result<(LocatedTask, IndexSnapshot), ApiError> {
+    if let Some(project_id) = project {
+        let (_, snap) =
+            resolve_authorized_project(state, identity, Some(project_id), Action::TasksRead)
+                .await?;
+        let loaded = select_loaded_project(&snap, project_id)?;
+        if !loaded.tasks.iter().any(|task| task.id == task_id) {
+            return Err(ApiError::not_found("task not found"));
+        }
+        return Ok((
+            LocatedTask {
+                project_id: project_id.to_string(),
+            },
+            snap,
+        ));
+    }
+
+    let catalog = state.index.snapshot().await;
+    let project_ids = catalog
+        .board
+        .iter()
+        .filter(|entry| authz::require(identity, Some(&entry.id), Action::TasksRead).is_ok())
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    drop(catalog);
+    for project_id in &project_ids {
+        state
+            .index
+            .ensure_project_loaded(project_id)
+            .await
+            .map_err(|error| {
+                ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
+            })?;
+    }
+    let snap = state.index.snapshot().await;
+    let located = locate_task(&snap, task_id, &project_ids)?;
+    Ok((located, snap))
+}
+
+fn select_loaded_project<'a>(
+    snap: &'a IndexSnapshot,
+    project_id: &str,
+) -> Result<&'a ProjectIndex, ApiError> {
+    snap.projects
+        .get(project_id)
+        .ok_or_else(|| ApiError::internal("project load published no projection"))
 }
 
 fn split_dispatch_scope(value: &str) -> Vec<&str> {
@@ -15843,10 +16121,8 @@ async fn post_task_create(
     // while discarding two of three arguments gives the caller no reason to
     // re-check, and a whole session of P1 work was filed unprioritised that way.
     validate_task_property_keys(&req.properties, TASK_PROPERTY_KEYS_UPDATE_ONLY)?;
-    let snap = state.index.snapshot().await;
-    let project = snap
-        .project(&project_id)
-        .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
     let mutation = task_create_mutation_identity(&project_id, &req)?;
     if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
         if let Some(cached) = state
@@ -15869,7 +16145,7 @@ async fn post_task_create(
         }
     }
     if !req.force {
-        let known_ids = known_reference_ids(&state, &project_id).await;
+        let known_ids = known_reference_ids(&state, &project_id).await?;
         for (key, value) in &req.properties {
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
@@ -16136,7 +16412,7 @@ async fn project_board_entry(
     state: &ApiState,
     project_id: &str,
 ) -> Result<crate::index::BoardEntry, ApiError> {
-    let snap = state.index.snapshot().await;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
     snap.board
         .iter()
         .find(|entry| entry.id == project_id)
@@ -16635,10 +16911,8 @@ async fn update_task_state(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let to_state = LifecycleStage::from_str(req.state.as_deref().unwrap_or(""))
         .map_err(|_| ApiError::bad_request("unknown task state"))?;
-    let snap = state.index.snapshot().await;
-    let project = snap
-        .project(project_id)
-        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
+    let project = select_loaded_project(&snap, project_id)?;
     let task = project
         .tasks
         .iter()
@@ -16814,10 +17088,8 @@ async fn update_task_properties(
     want_full: bool,
     req: TaskUpdateRequest,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = snap
-        .project(project_id)
-        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(project_id)).await?;
+    let project = select_loaded_project(&snap, project_id)?;
     let task = project
         .tasks
         .iter()
@@ -16980,16 +17252,35 @@ struct ArtifactCommentRequest {
     author: Option<String>,
 }
 
-fn resolve_artifact_project<'a>(
-    snap: &'a IndexSnapshot,
+async fn resolve_artifact_project(
+    state: &ApiState,
     project: Option<&str>,
-) -> Result<&'a BoardEntry, ApiError> {
+) -> Result<BoardEntry, ApiError> {
     let id = project
         .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("missing required query param: project"))?;
+    let (_, snap) = ensure_loaded_snapshot(state, Some(id)).await?;
     snap.board
         .iter()
         .find(|e| e.id == id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found("project not found"))
+}
+
+async fn resolve_authorized_artifact_project(
+    state: &ApiState,
+    identity: &Identity,
+    project: Option<&str>,
+    action: Action,
+) -> Result<BoardEntry, ApiError> {
+    let id = project
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad_request("missing required query param: project"))?;
+    let (_, snap) = resolve_authorized_project(state, identity, Some(id), action).await?;
+    snap.board
+        .iter()
+        .find(|entry| entry.id == id)
+        .cloned()
         .ok_or_else(|| ApiError::not_found("project not found"))
 }
 
@@ -17016,13 +17307,23 @@ async fn get_artifacts(
     Extension(identity): Extension<Identity>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<Vec<ArtifactSummary>>, ApiError> {
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsRead,
+    )
+    .await?;
+    state
+        .index
+        .ensure_project_artifacts_loaded(&entry.id)
+        .await
+        .map_err(|error| ApiError::unavailable(format!("artifact projection failed: {error}")))?;
     let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
     let project = snap
         .projects
         .get(&entry.id)
-        .ok_or_else(|| ApiError::not_found("project index unavailable"))?;
+        .ok_or_else(|| ApiError::internal("project load published no projection"))?;
     Ok(Json(project.artifacts.clone()))
 }
 
@@ -17033,9 +17334,13 @@ async fn get_artifact(
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<ArtifactDetail>, ApiError> {
     require_readable_art_id(&id)?;
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsRead,
+    )
+    .await?;
     let art_dir = artifact_dir(&entry.path, &id);
     let detail = load_artifact_detail(&art_dir, q.version, q.include_consumed.unwrap_or(false))
         .map_err(|e| match e {
@@ -17064,9 +17369,7 @@ async fn post_artifact_submit(
         });
     }
 
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
-    drop(snap);
+    let entry = resolve_artifact_project(&state, q.project.as_deref()).await?;
 
     let art_dir = artifact_dir(&entry.path, &art_id);
 
@@ -17432,12 +17735,15 @@ async fn post_artifact_add_comment(
     Json(body): Json<ArtifactCommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     require_valid_art_id(&art_id)?;
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsComment,
+    )
+    .await?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
-    drop(snap);
 
     let art_dir = artifact_dir(&project_root, &art_id);
     if !art_dir.join("artifact.org").exists() {
@@ -17596,12 +17902,15 @@ async fn post_artifact_comment_resolve(
     Json(body): Json<ArtifactCommentResolveRequest>,
 ) -> Result<Json<Value>, ApiError> {
     require_valid_art_id(&art_id)?;
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsComment,
+    )
+    .await?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
-    drop(snap);
 
     let art_dir = artifact_dir(&project_root, &art_id);
     if !art_dir.join("artifact.org").exists() {
@@ -17802,7 +18111,7 @@ async fn assemble_artifact_context(
     }
 
     let snap = state.index.snapshot().await;
-    if let Ok(graph) = select_graph(&snap, Some(project_id)) {
+    if let Some(graph) = snap.project(project_id).map(|project| &project.graph) {
         let mut lines: Vec<String> = graph
             .edges
             .iter()
@@ -18429,10 +18738,13 @@ async fn post_artifact_generate(
         return Err(ApiError::bad_request("mode and harness are required"));
     }
 
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
-    drop(snap);
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsGenerate,
+    )
+    .await?;
 
     let art_id = artifacts::new_artifact_id();
     let art_dir = artifact_dir(&entry.path, &art_id);
@@ -18565,10 +18877,13 @@ async fn post_artifact_regenerate(
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
     require_valid_art_id(&art_id)?;
-    let snap = state.index.snapshot().await;
-    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
-    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
-    drop(snap);
+    let entry = resolve_authorized_artifact_project(
+        &state,
+        &identity,
+        q.project.as_deref(),
+        Action::ArtifactsGenerate,
+    )
+    .await?;
 
     let art_dir = artifact_dir(&entry.path, &art_id);
     if !art_dir.join("artifact.org").exists() {
@@ -20016,12 +20331,16 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    async fn direct_stage_test_state(home: Home) -> ApiState {
+    async fn direct_test_state(home: Home, eager: bool) -> ApiState {
         let events = EventBus::new();
         let writer = crate::spawn_writer(events.clone());
         let boot = Arc::new(BootIdentity::new());
         let index = Index::new(home.clone());
-        index.rebuild().await;
+        if eager {
+            index.rebuild().await;
+        } else {
+            index.bootstrap_catalog().await;
+        }
         let supervisor = Supervisor::new(
             writer.clone(),
             boot.clone(),
@@ -20036,6 +20355,7 @@ pub(crate) mod tests {
             manager_driver: Arc::new(orgasmic_drivers::modes::tmux::driver()),
             manager_registry: crate::manager_registration::ManagerRegistry::new(),
             events,
+            watcher: None,
             boot,
             auth: AuthState::new("test-token".to_string()),
             default_tx_path: crate::default_home_tx_path(&home),
@@ -20064,6 +20384,14 @@ pub(crate) mod tests {
             release_tasks: ReleaseTaskTracker::new(),
             recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
         }
+    }
+
+    async fn direct_stage_test_state(home: Home) -> ApiState {
+        direct_test_state(home, true).await
+    }
+
+    async fn direct_catalog_test_state(home: Home) -> ApiState {
+        direct_test_state(home, false).await
     }
 
     #[tokio::test]
@@ -25918,6 +26246,7 @@ pub(crate) mod tests {
 
         // A fresh Supervisor/ApiState never acquired this run — standing in
         // for the post-restart daemon boot.
+        seed_project(&home, &project_root, "orgasmic");
         let state = direct_stage_test_state(home).await;
         reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
         assert!(
@@ -26999,6 +27328,7 @@ pub(crate) mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
+        seed_project(&home, &tmp.path().join("project"), "proj-dispatch");
         let mut state = direct_stage_test_state(home).await;
         state.dispatch_watcher_grace = Duration::from_millis(50);
 
@@ -28573,57 +28903,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn project_not_found_error_names_cause_when_board_lists_but_index_lacks_project() {
-        let mut snap = IndexSnapshot::default();
-        snap.board.push(BoardEntry {
-            id: "proj-ghost".to_string(),
-            path: PathBuf::from("/tmp/proj-ghost"),
-            branch: "main".to_string(),
-            status: "active".to_string(),
-        });
-
-        let err = project_not_found_error(&snap, "proj-ghost");
-
-        assert_eq!(err.status, StatusCode::NOT_FOUND);
-        assert!(
-            err.message
-                .contains("registered on the board but missing from the current index snapshot"),
-            "message should name what is actually wrong: {}",
-            err.message
-        );
-        // TASK-MRJRK retargeted the remedy: `orgasmic reindex` is the one
-        // that was observed to fix this live, and unlike the old `orgasmic
-        // restart` it does not assert a boot-time cause that the evidence
-        // has since ruled out.
-        assert!(
-            err.message.contains("orgasmic reindex"),
-            "message should name the fix: {}",
-            err.message
-        );
-    }
-
-    #[test]
-    fn project_not_found_error_stays_bare_when_id_absent_from_board() {
-        let snap = IndexSnapshot::default();
-
-        let err = project_not_found_error(&snap, "proj-missing");
-
-        assert_eq!(err.status, StatusCode::NOT_FOUND);
-        assert_eq!(err.message, "project not found");
-    }
-
-    /// TASK-MRJRK: `select_project` is the lookup every id-addressed route
-    /// funnels through, and it answered a registered-but-unindexed project
-    /// with the same undifferentiated `project {id}` as a genuinely unknown
-    /// id — which sends the reader to check registration, the one thing that
-    /// is definitely fine (`orgasmic project list` reads the board file on
-    /// disk, so it keeps listing the project either way).
-    ///
-    /// The state is constructed directly, not provoked: what produced it on
-    /// the operator's daemon is still open, and the diagnosis must not wait
-    /// on that.
-    #[test]
-    fn select_project_names_the_index_snapshot_when_a_registered_project_is_missing() {
+    fn catalog_selection_resolves_registered_unloaded_project_and_rejects_unknown_id() {
         let mut snap = IndexSnapshot::default();
         snap.board.push(BoardEntry {
             id: "orgasmic".to_string(),
@@ -28633,43 +28913,19 @@ pub(crate) mod tests {
         });
         assert!(snap.projects.is_empty(), "registered, not indexed");
 
-        let registered = select_project(&snap, Some("orgasmic")).unwrap_err();
-        let unknown = select_project(&snap, Some("no-such-project")).unwrap_err();
+        let registered = select_catalog_project_id(&snap, Some("orgasmic")).unwrap();
+        let unknown = select_catalog_project_id(&snap, Some("no-such-project")).unwrap_err();
 
-        assert_eq!(registered.status, StatusCode::NOT_FOUND);
+        assert_eq!(registered, "orgasmic");
         assert_eq!(unknown.status, StatusCode::NOT_FOUND);
-        assert!(
-            registered.message.contains("registered on the board"),
-            "a registered id must not be reported as unregistered: {}",
-            registered.message
-        );
-        assert!(
-            registered.message.contains("orgasmic reindex"),
-            "the registered-but-unindexed 404 must name the remedy: {}",
-            registered.message
-        );
-        assert_ne!(
-            registered.message, unknown.message,
-            "the two cases must be distinguishable from the error text alone"
-        );
-        assert!(
-            !unknown.message.contains("orgasmic reindex"),
-            "an unknown id must not send the reader to the index: {}",
-            unknown.message
-        );
+        assert_eq!(unknown.message, "project no-such-project");
     }
 
-    /// TASK-MRJRK: the condition has to be visible without provoking it. The
-    /// state is built directly through the board/index split — the board
-    /// carries the project, the snapshot does not — because the cause of that
-    /// divergence is still open.
     #[tokio::test]
-    async fn status_reports_a_registered_project_missing_from_the_index_snapshot() {
+    async fn status_reports_registered_unloaded_project_as_healthy_catalog_state() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        // Index built over an empty board first, so the project below is
-        // registered without ever being loaded.
         let state = direct_stage_test_state(home.clone()).await;
         seed_project(&home, &tmp.path().join("proj"), "orgasmic");
         state.index.refresh_board().await;
@@ -28683,10 +28939,12 @@ pub(crate) mod tests {
             "status must report what the board carries, not only what loaded: {status}"
         );
         assert_eq!(
-            status["unindexed_projects"],
+            status["unloaded_projects"],
             serde_json::json!(["orgasmic"]),
-            "status must name the registered project the index is missing: {status}"
+            "status must name the registered unloaded project: {status}"
         );
+        assert_eq!(status["ready_projects"], serde_json::json!([]));
+        assert_eq!(status["failed_projects"], serde_json::json!({}));
     }
 
     struct TmuxSessionGuard(String);
@@ -29376,15 +29634,56 @@ pub(crate) mod tests {
         let client = reqwest::Client::new();
         let base = format!("http://{}", running.addr);
 
-        let errors: Value = client
+        // Parse-error reporting is deliberately partial until projections are
+        // requested. Marker lookup is the explicit whole-board operation that
+        // asks for recursive source/identity coverage.
+        let core_response = client
+            .get(format!("{base}/api/projects/orgasmic"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(core_response.status().is_success());
+        let partial_errors = client
             .get(format!("{base}/api/graph/parse-errors"))
             .bearer_auth(&token)
             .send()
             .await
-            .unwrap()
-            .json()
+            .unwrap();
+        assert_eq!(
+            partial_errors
+                .headers()
+                .get("x-orgasmic-project-coverage")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "partial; ready=1/1; markers=0/1; unloaded=[]; marker_unloaded=[orgasmic]; loading=[]; failed=[]"
+        );
+
+        let marker_response = client
+            .get(format!("{base}/api/graph/markers/term_A"))
+            .bearer_auth(&token)
+            .send()
             .await
             .unwrap();
+        assert!(marker_response.status().is_success());
+
+        let errors_response = client
+            .get(format!("{base}/api/graph/parse-errors"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            errors_response
+                .headers()
+                .get("x-orgasmic-project-coverage")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "complete; ready=1/1; markers=1/1; unloaded=[]; marker_unloaded=[]; loading=[]; failed=[]"
+        );
+        let errors: Value = errors_response.json().await.unwrap();
         let errors = errors.as_array().expect("parse-errors array");
         let found = errors
             .iter()
@@ -37496,7 +37795,7 @@ pub(crate) mod tests {
             );
             write(
                 task_file_path(root, "backlog.org"),
-                "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+                "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
             );
         }
         write(
@@ -37506,6 +37805,132 @@ pub(crate) mod tests {
                 root_a.display(),
                 root_b.display(),
             ),
+        );
+    }
+
+    #[tokio::test]
+    async fn authz_projectless_task_resolution_never_loads_an_ungranted_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let state = direct_catalog_test_state(home).await;
+        let id = member(&[("proj-a", "viewer")]);
+
+        let comment = post_task_comment(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("TASK-001".into()),
+            Query(graph_query("proj-b")),
+            Json(TaskCommentRequest {
+                actor: "alice".into(),
+                body: "must not reach proj-b".into(),
+                run_id: None,
+                artifacts: Vec::new(),
+                in_reply_to: None,
+                request_id: None,
+            }),
+        )
+        .await;
+        assert_eq!(
+            comment.err().map(|error| error.status),
+            Some(StatusCode::FORBIDDEN)
+        );
+        let subtask = post_task_subtask(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("TASK-001".into()),
+            Query(graph_query("proj-b")),
+            Json(CreateSubtaskRequest {
+                title: "must not reach proj-b".into(),
+                description: None,
+                request_id: None,
+            }),
+        )
+        .await;
+        assert_eq!(
+            subtask.err().map(|error| error.status),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            state.index.snapshot().await.project_loads["proj-b"].state,
+            ProjectLoadState::Unloaded,
+            "explicit authorization must happen before project loading"
+        );
+
+        let activity = get_task_activity(
+            State(state.clone()),
+            Extension(id),
+            Path("TASK-001".into()),
+            Query(GraphQuery { project: None }),
+        )
+        .await
+        .expect("legacy lookup resolves inside member-visible coverage");
+        assert!(activity.0.is_empty());
+        let snap = state.index.snapshot().await;
+        assert_eq!(snap.project_loads["proj-a"].state, ProjectLoadState::Ready);
+        assert_eq!(
+            snap.project_loads["proj-b"].state,
+            ProjectLoadState::Unloaded,
+            "legacy lookup must not scan an ungranted project"
+        );
+    }
+
+    #[tokio::test]
+    async fn authz_projectless_marker_lookup_covers_only_granted_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        write(
+            root_a.join("src/allowed.rs"),
+            "// orgasmic:TASK-AUTHZ-MARKER\n",
+        );
+        write(
+            root_b.join("src/forbidden.rs"),
+            "// orgasmic:TASK-AUTHZ-MARKER\n",
+        );
+        let state = direct_catalog_test_state(home).await;
+        let id = member(&[("proj-a", "viewer")]);
+
+        let forbidden = get_graph_markers(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("TASK-AUTHZ-MARKER".into()),
+            Query(graph_query("proj-b")),
+        )
+        .await;
+        assert_eq!(
+            forbidden.err().map(|error| error.status),
+            Some(StatusCode::FORBIDDEN)
+        );
+        assert_eq!(
+            state.index.snapshot().await.project_loads["proj-b"].state,
+            ProjectLoadState::Unloaded
+        );
+
+        let markers = get_graph_markers(
+            State(state.clone()),
+            Extension(id),
+            Path("TASK-AUTHZ-MARKER".into()),
+            Query(GraphQuery { project: None }),
+        )
+        .await
+        .expect("member marker lookup");
+        assert_eq!(markers.0.files, vec![PathBuf::from("src/allowed.rs")]);
+        let snap = state.index.snapshot().await;
+        assert_eq!(
+            snap.project_ids_with_markers_loaded(),
+            vec!["proj-a".to_string()]
+        );
+        assert_eq!(
+            snap.project_loads["proj-b"].state,
+            ProjectLoadState::Unloaded,
+            "global marker lookup must not scan an ungranted project"
         );
     }
 
