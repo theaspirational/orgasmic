@@ -330,6 +330,41 @@ async fn get_runs_json(
         .unwrap()
 }
 
+async fn wait_for_project_repo_url(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+    project_id: &str,
+    expected_repo_url: &str,
+) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let resp = client
+                .get(format!("http://{addr}/api/projects"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                resp.status().is_success(),
+                "get /projects: {}",
+                resp.status()
+            );
+            let projects: serde_json::Value = resp.json().await.unwrap();
+            if let Some(project) = projects.as_array().unwrap().iter().find(|project| {
+                project["project_id"] == project_id && project["repo_url"] == expected_repo_url
+            }) {
+                return project.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("project {project_id} did not expose repo_url {expected_repo_url:?} within 5s")
+    })
+}
+
 #[tokio::test]
 async fn post_projects_registers_existing_orgasmic_project_and_refreshes_index() {
     let tmp = tempfile::tempdir().unwrap();
@@ -354,28 +389,21 @@ async fn post_projects_registers_existing_orgasmic_project_and_refreshes_index()
     assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "proj-existing");
-    assert_eq!(project["repo_url"], "git@example.com:org/existing.git");
+    assert_eq!(project["repo_url"], "");
     assert_eq!(project["branch"], "");
 
-    let resp = client
-        .get(format!("http://{}/api/projects", running.addr))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(
-        resp.status().is_success(),
-        "get /projects: {}",
-        resp.status()
-    );
-    let projects: serde_json::Value = resp.json().await.unwrap();
-    assert!(projects.as_array().unwrap().iter().any(|project| {
-        project["project_id"] == "proj-existing"
-            && project["tasks"]
-                .as_array()
-                .map(|tasks| tasks.iter().any(|task| task["id"] == "TASK-NEW"))
-                .unwrap_or(false)
-    }));
+    let project = wait_for_project_repo_url(
+        &client,
+        running.addr,
+        &token,
+        "proj-existing",
+        "git@example.com:org/existing.git",
+    )
+    .await;
+    assert!(project["tasks"]
+        .as_array()
+        .map(|tasks| tasks.iter().any(|task| task["id"] == "TASK-NEW"))
+        .unwrap_or(false));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -434,13 +462,21 @@ async fn post_projects_scaffolds_and_registers_uninitialized_project() {
     assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "fresh");
-    assert_eq!(project["repo_url"], "git@example.com:org/fresh.git");
+    assert_eq!(project["repo_url"], "");
     assert_eq!(project["branch"], "");
     let project_org = project_root.join(".orgasmic/project.org");
     assert!(project_org.exists());
     let raw = std::fs::read_to_string(project_org).unwrap();
     assert!(raw.contains(":ID:               fresh"));
     assert!(!raw.contains(":REPO_URL:"));
+    wait_for_project_repo_url(
+        &client,
+        running.addr,
+        &token,
+        "fresh",
+        "git@example.com:org/fresh.git",
+    )
+    .await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1611,7 +1647,7 @@ async fn release_inactive_run_returns_not_found() {
 }
 
 #[tokio::test]
-async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
+async fn commit_to_project_false_keeps_home_tx_and_uses_daemon_actor_without_git_lookup() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1621,18 +1657,16 @@ async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
     );
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    Command::new("git")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .expect("git init");
-    Command::new("git")
-        .args(["config", "user.email", "git@example.com"])
-        .current_dir(&project_root)
-        .output()
-        .expect("git config user.email");
 
-    let running = boot(home.clone()).await;
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            actor: "daemon-test-actor".to_string(),
+            ..test_options()
+        },
+    )
+    .await
+    .expect("boot daemon");
     let token = read_token(&home);
     let client = reqwest::Client::new();
     let resp = client
@@ -1655,7 +1689,7 @@ async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
     assert!(tx_path.starts_with(home.tx()));
     assert!(!tx_id.contains("-proj-"));
     let raw = std::fs::read_to_string(&tx_path).unwrap();
-    assert!(raw.contains(":ACTOR:        git@example.com"));
+    assert!(raw.contains(":ACTOR:        daemon-test-actor"));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
