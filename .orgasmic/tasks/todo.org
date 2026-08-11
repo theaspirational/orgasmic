@@ -1,3 +1,24 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-AJP4A.1.1.1 Close final lazy-load service and queue gaps
+:PROPERTIES:
+:ID: TASK-AJP4A.1.1.1
+:PRIORITY: P1
+:READ_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src/main.rs,crates/orgasmic-cli/src/daemon_service.rs,crates/orgasmic-cli/src/daemon_lifecycle.rs,crates/orgasmic-cli/tests,ui/src
+:TEST_CMD: cargo test -p orgasmic-daemon --lib -- --test-threads=1 && cargo test -p orgasmic-cli && npm --prefix ui test -- --run
+:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src/main.rs,crates/orgasmic-cli/src/daemon_service.rs,crates/orgasmic-cli/src/daemon_lifecycle.rs,crates/orgasmic-cli/tests,ui/src
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Close every actionable M/L follow-up from the independent Opus review of TASK-AJP4A.1.1 while preserving eager catalog plus lazy per-project materialization.
+
+** Acceptance Criteria
+- [ ] The supported scan-timeout override reaches hand-run serve, daemon auto-start, and installed launchd/systemd service units with explicit capture semantics and renderer tests; do not install or restart the live daemon.
+- [ ] Project refresh drops every index lock before any filesystem syscall, including the .orgasmic existence check, with a regression test or structural proof.
+- [ ] The coordinator waiter budget covers a waiter arriving after batch capture and a second settlement scan; add a production-path queued-target test, not only arithmetic coverage.
+- [ ] Recently failed projects have a bounded negative-cache cooldown so routine unscoped transaction notification refreshes report partial coverage without rescanning every bad project on each event; explicit reindex/retry still bypasses the cooldown.
+- [ ] Queue-only delay is represented honestly without marking an unscanned project as path-failed.
+- [ ] Partial transaction coverage notification can be dismissed for the current failed-project set and reappears only when that set changes.
+- [ ] Focused Rust/CLI/UI tests, format, build, clippy, and aggregate gates are run and reported honestly; unrelated supervisor/tmux flakes remain outside scope.
