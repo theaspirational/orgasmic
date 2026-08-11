@@ -1,3 +1,27 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-AJP4A.1 Harden lazy project loading after independent review
+:PROPERTIES:
+:ID: TASK-AJP4A.1
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src,crates/orgasmic-daemon/tests,ui/src
+:TEST_CMD: cargo test -p orgasmic-daemon --lib -- --test-threads=1 && npm --prefix ui test -- --run
+:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src,crates/orgasmic-daemon/tests,ui/src
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Address the independent review of TASK-AJP4A. Preserve eager catalog plus lazy per-project materialization while hardening the first-load/runtime boundaries and restoring complete operator-visible behavior.
+
+** Acceptance Criteria
+- [ ] Project, marker, and artifact first loads are time-bounded with actionable failure state and macOS Files-and-Folders guidance; one stalled projection cannot consume all healthy-project capacity indefinitely.
+- [ ] status --errors full marker coverage cannot fail solely because the ordinary 10-second client timeout is shorter than an intentional board-wide scan.
+- [ ] GET /tx?project=X excludes home-scoped transaction rows and has focused coverage.
+- [ ] Status UI and notifications expose partial parse-error coverage and provide an explicit full-coverage load path; they do not silently show zero while identity diagnostics are unloaded.
+- [ ] Whole-board reindex attempts every registered project and reports per-project failures without aborting at the first one, with a suitable request timeout.
+- [ ] Board cards retain blocked-task pressure for ready projects.
+- [ ] Failed refreshes cannot strand a ready project catalog entry in loading, and failure diagnostics/timestamps are accurate.
+- [ ] Parse-error coverage headers cannot panic on malformed hand-edited project IDs.
+- [ ] Stale rebuild documentation and transient path-change failure behavior are corrected.
+- [ ] Focused Rust/UI tests, cargo build, workspace clippy, and the aggregate test gate are run and reported honestly.
