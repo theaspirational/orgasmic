@@ -15,6 +15,7 @@ import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchProjects } from '@/lib/api';
 import type { ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
+import { cn } from '@/lib/utils';
 
 import { ErrorPanel } from './Primitives';
 
@@ -42,8 +43,12 @@ function relativeTime(iso?: string | null): string {
 
 function loadVariant(state: ProjectCatalogEntry['load']['state']): BadgeVariant {
   if (state === 'failed') return 'destructive';
-  if (state === 'loading') return 'secondary';
+  if (state === 'loading' || state === 'delayed') return 'secondary';
   return 'outline';
+}
+
+function loadDiagnosticClass(state: ProjectCatalogEntry['load']['state']): string {
+  return state === 'failed' ? 'text-destructive' : 'text-muted-foreground';
 }
 
 export function BoardView({
@@ -155,7 +160,7 @@ export function BoardView({
                       </Badge>
                     ) : null}
                     {p.load.error ? (
-                      <span className="line-clamp-2 text-xs text-destructive">
+                      <span className={cn('line-clamp-2 text-xs', loadDiagnosticClass(p.load.state))}>
                         {p.load.error}
                       </span>
                     ) : null}

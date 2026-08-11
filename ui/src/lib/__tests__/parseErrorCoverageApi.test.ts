@@ -94,4 +94,19 @@ describe('parse-error coverage api', () => {
       'x-orgasmic-project-coverage',
     );
   });
+
+  it('preserves the additive delayed tx coverage segment', async () => {
+    getWithHeader.mockResolvedValue({
+      data: [],
+      header: 'partial; loaded=[]; delayed=[queued]; failed=[]',
+    });
+
+    await expect(fetchTxWithCoverage()).resolves.toMatchObject({
+      records: [],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; loaded=[]; delayed=[queued]; failed=[]',
+      },
+    });
+  });
 });

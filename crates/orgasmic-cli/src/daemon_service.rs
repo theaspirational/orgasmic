@@ -949,6 +949,7 @@ fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
     let project_scan_timeout = spec
         .project_scan_timeout
         .as_deref()
+        .filter(|value| !value.chars().any(char::is_control))
         .map(|value| {
             format!(
                 "Environment={}\n",
@@ -1598,6 +1599,17 @@ mod tests {
         );
         assert!(!unit.contains("WorkingDirectory=\""));
         assert!(!unit.contains("append:\""));
+    }
+
+    #[test]
+    fn linux_systemd_unit_omits_scan_timeout_with_control_characters() {
+        let mut unsafe_spec = spec();
+        unsafe_spec.project_scan_timeout = Some("37\nEnvironment=INJECTED=yes".to_string());
+
+        let unit = render_linux_systemd_unit(&unsafe_spec);
+
+        assert!(!unit.contains(PROJECT_SCAN_TIMEOUT_ENV), "{unit}");
+        assert!(!unit.contains("INJECTED"), "{unit}");
     }
 
     #[test]
