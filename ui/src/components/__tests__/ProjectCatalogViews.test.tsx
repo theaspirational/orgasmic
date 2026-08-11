@@ -108,4 +108,18 @@ describe('catalog-driven project discovery', () => {
     const tab = await screen.findByRole('button', { name: 'proj-loading, Tasks' });
     expect(tab).toHaveAttribute('title', 'proj-loading · main · loading');
   });
+
+  it('retains blocked-task pressure on ready project cards', async () => {
+    mocks.fetchProjects.mockResolvedValue([
+      project('proj-ready', 'ready', {
+        task_stats: { total: 7, active: 4, blocked: 2, done: 3 },
+      }),
+    ]);
+
+    render(<BoardView onSelectProject={mocks.onSelectProject} />);
+
+    expect(await screen.findByText('2 blocked')).toBeInTheDocument();
+    expect(screen.getByText('4 active')).toBeInTheDocument();
+    expect(screen.getByText('3 done')).toBeInTheDocument();
+  });
 });

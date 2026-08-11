@@ -17,7 +17,7 @@ export type NotificationRow = {
   actionLabel: string;
   actionIcon?: 'reload';
   onAction: () => void;
-  onDismiss: () => void;
+  onDismiss?: () => void;
 };
 
 export type NotificationSections = {
@@ -146,16 +146,18 @@ function Section({ title, rows, empty }: { title: string; rows: NotificationRow[
                     {row.detail}
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0"
-                  aria-label="Dismiss"
-                  onClick={row.onDismiss}
-                >
-                  <X className="size-3.5" />
-                </Button>
+                {row.onDismiss ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0"
+                    aria-label="Dismiss"
+                    onClick={row.onDismiss}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                ) : null}
               </div>
               <Button type="button" size="sm" className="mt-3" onClick={row.onAction}>
                 {row.actionIcon === 'reload' ? <RotateCw className="size-3.5" /> : null}

@@ -1,4 +1,4 @@
-import { get, HttpError, post } from './transport';
+import { get, getWithHeader, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
 import type {
   ActivityEntry,
@@ -22,6 +22,7 @@ import type {
   ManagerState,
   OrgFileResponse,
   ParseError,
+  ParseErrorsResult,
   CompiledPrompt,
   ContextPackSummary,
   PromptPartSummary,
@@ -249,6 +250,29 @@ export function fetchRun(id: string): Promise<RunDetailResponse> {
 
 export function fetchParseErrors(): Promise<ParseError[]> {
   return get<ParseError[]>('/graph/parse-errors');
+}
+
+export async function fetchParseErrorsWithCoverage(): Promise<ParseErrorsResult> {
+  const { data, header } = await getWithHeader<ParseError[]>(
+    '/graph/parse-errors',
+    'x-orgasmic-project-coverage',
+  );
+  return {
+    errors: data,
+    coverage: {
+      state: header?.startsWith('complete;')
+        ? 'complete'
+        : header?.startsWith('partial;')
+          ? 'partial'
+          : 'unknown',
+      detail: header,
+    },
+  };
+}
+
+export async function loadFullParseErrorCoverage(): Promise<ParseErrorsResult> {
+  await get<{ node_id: string; files: string[] }>('/graph/markers/__coverage__');
+  return fetchParseErrorsWithCoverage();
 }
 
 export function fetchWhoami(): Promise<{ authenticated: boolean; boot_id: string }> {

@@ -7,8 +7,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEventStream } from '@/hooks/useEventStream';
 import {
-  fetchParseErrors,
+  fetchParseErrorsWithCoverage,
   fetchTx,
+  loadFullParseErrorCoverage,
 } from '@/lib/api';
 import type { DaemonEvent, ParseError, QuestionEntry, TxRecord, ViewName } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
@@ -82,7 +83,7 @@ export function NotificationBell({
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed(projectId));
   const tx = useResource(`notifications-tx:${projectId ?? 'all'}`, () => fetchTx(projectId, 200));
-  const parseErrors = useResource('notifications-parse-errors', fetchParseErrors);
+  const parseErrors = useResource('notifications-parse-errors', fetchParseErrorsWithCoverage);
 
   useEffect(() => {
     setDismissed(loadDismissed(projectId));
@@ -133,7 +134,7 @@ export function NotificationBell({
         onDismiss: () => dismiss(`question:${question.tx_id}`),
       }));
 
-    const parseErrorRows: NotificationRow[] = (parseErrors.data ?? [])
+    const parseErrorRows: NotificationRow[] = (parseErrors.data?.errors ?? [])
       .filter((error) => !dismissed.has(`parse:${parseErrorKey(error)}`))
       .map((error) => ({
         key: `parse:${parseErrorKey(error)}`,
@@ -144,8 +145,8 @@ export function NotificationBell({
         onAction: () => {
           void (async () => {
             try {
-              const errors = await fetchParseErrors();
-              toast.success(`Reloaded parse errors: ${errors.length}`);
+              const result = await fetchParseErrorsWithCoverage();
+              toast.success(`Reloaded parse errors: ${result.errors.length}`);
               await parseErrors.refresh();
             } catch (err) {
               toast.error('Reload failed', {
@@ -156,6 +157,30 @@ export function NotificationBell({
         },
         onDismiss: () => dismiss(`parse:${parseErrorKey(error)}`),
       }));
+
+    if (parseErrors.data && parseErrors.data.coverage.state !== 'complete') {
+      parseErrorRows.unshift({
+        key: 'parse-coverage-partial',
+        title: 'Parse-error coverage is partial',
+        detail: parseErrors.data?.coverage.detail
+          ?? 'Identity diagnostics remain unloaded for one or more projects.',
+        actionLabel: 'Load full coverage',
+        actionIcon: 'reload',
+        onAction: () => {
+          void (async () => {
+            try {
+              const result = await loadFullParseErrorCoverage();
+              toast.success(`Full parse-error coverage loaded: ${result.errors.length}`);
+              await parseErrors.refresh();
+            } catch (err) {
+              toast.error('Full coverage failed', {
+                description: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+        },
+      });
+    }
 
     return { questions, parseErrors: parseErrorRows };
   }, [

@@ -209,6 +209,7 @@ export type ProjectCatalogEntry = {
   task_stats?: {
     total: number;
     active: number;
+    blocked: number;
     done: number;
   } | null;
 };
@@ -252,10 +253,21 @@ export type GraphIndex = {
 };
 
 export type ParseError = {
+  project_id?: string | null;
   path: string;
   message: string;
   line?: number | null;
   at: string;
+};
+
+export type ParseErrorCoverage = {
+  state: 'complete' | 'partial' | 'unknown';
+  detail: string | null;
+};
+
+export type ParseErrorsResult = {
+  errors: ParseError[];
+  coverage: ParseErrorCoverage;
 };
 
 export type DaemonStatus = {

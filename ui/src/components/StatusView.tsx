@@ -1,9 +1,14 @@
+import { useState } from 'react';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
 import { useRefreshToken } from '../hooks/useRefreshBus';
 import {
   fetchDaemonStatus,
-  fetchParseErrors,
+  fetchParseErrorsWithCoverage,
   fetchRecoveryStatus,
   fetchWhoami,
+  loadFullParseErrorCoverage,
 } from '../lib/api';
 import { useResource } from '../lib/useResource';
 import { Badge, DataTable, ErrorPanel, JsonPanel, KeyValue, Loading } from './Primitives';
@@ -14,13 +19,30 @@ function runList(runs: { run_id: string; reason?: string }[] | undefined): strin
 }
 
 export function StatusView() {
+  const [loadingFullCoverage, setLoadingFullCoverage] = useState(false);
   const refresh = useRefreshToken();
   const status = useResource(`daemon-status:${refresh}`, fetchDaemonStatus);
   const recovery = useResource(`recovery-status:${refresh}`, fetchRecoveryStatus);
-  const parseErrors = useResource(`parse-errors:${refresh}`, fetchParseErrors);
+  const parseErrors = useResource(`parse-errors:${refresh}`, fetchParseErrorsWithCoverage);
   const whoami = useResource(`whoami:${refresh}`, fetchWhoami);
 
   const loading = status.loading && !status.data;
+  const coverageIncomplete = parseErrors.data?.coverage.state !== 'complete';
+
+  const loadFullCoverage = async () => {
+    setLoadingFullCoverage(true);
+    try {
+      await loadFullParseErrorCoverage();
+      await parseErrors.refresh();
+      toast.success('Full parse-error coverage loaded');
+    } catch (error) {
+      toast.error('Full coverage failed', {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setLoadingFullCoverage(false);
+    }
+  };
 
   if (loading) return <Loading />;
 
@@ -109,8 +131,9 @@ export function StatusView() {
       <div className="panel">
         <header className="panel-header">
           <h3>Parse errors</h3>
-          <Badge tone={(parseErrors.data?.length ?? 0) > 0 ? 'warn' : 'ok'}>
-            {parseErrors.data?.length ?? 0}
+          <Badge tone={coverageIncomplete || (parseErrors.data?.errors.length ?? 0) > 0 ? 'warn' : 'ok'}>
+            {parseErrors.data?.errors.length ?? 0}
+            {coverageIncomplete ? ' partial' : ''}
           </Badge>
         </header>
         {parseErrors.loading && !parseErrors.data ? (
@@ -118,21 +141,43 @@ export function StatusView() {
         ) : parseErrors.error ? (
           <ErrorPanel error={parseErrors.error} />
         ) : (
-          <DataTable
-            rowKey={(row) => `${String(row.path)}:${String(row.at)}`}
-            rows={(parseErrors.data ?? []).map((item) => ({
-              path: item.path,
-              line: item.line ?? '',
-              message: item.message,
-              at: item.at,
-            }))}
-            columns={[
-              { key: 'path', label: 'Path' },
-              { key: 'line', label: 'Line' },
-              { key: 'message', label: 'Message' },
-              { key: 'at', label: 'At' },
-            ]}
-          />
+          <>
+            {coverageIncomplete ? (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Parse-error coverage is partial</p>
+                  <p className="mt-1 break-words text-xs text-muted-foreground">
+                    Identity diagnostics are not complete until source markers load for every project.
+                    {parseErrors.data?.coverage.detail ? ` ${parseErrors.data.coverage.detail}` : ''}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={loadingFullCoverage}
+                  onClick={() => void loadFullCoverage()}
+                >
+                  {loadingFullCoverage ? 'Loading coverage…' : 'Load full coverage'}
+                </Button>
+              </div>
+            ) : null}
+            <DataTable
+              rowKey={(row) => `${String(row.path)}:${String(row.at)}`}
+              rows={(parseErrors.data?.errors ?? []).map((item) => ({
+                path: item.path,
+                line: item.line ?? '',
+                message: item.message,
+                at: item.at,
+              }))}
+              columns={[
+                { key: 'path', label: 'Path' },
+                { key: 'line', label: 'Line' },
+                { key: 'message', label: 'Message' },
+                { key: 'at', label: 'At' },
+              ]}
+            />
+          </>
         )}
       </div>
     </section>
