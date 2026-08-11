@@ -385,6 +385,7 @@ fn service_spec(home: &Home) -> Result<ServiceSpec> {
 
 fn captured_project_scan_timeout(raw: Option<std::ffi::OsString>) -> Option<String> {
     raw.and_then(|value| value.into_string().ok())
+        .filter(|value| !value.chars().any(char::is_control))
 }
 
 /// Write the daemon LaunchAgent definition, replacing whatever is there.
@@ -949,7 +950,6 @@ fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
     let project_scan_timeout = spec
         .project_scan_timeout
         .as_deref()
-        .filter(|value| !value.chars().any(char::is_control))
         .map(|value| {
             format!(
                 "Environment={}\n",
@@ -1602,12 +1602,17 @@ mod tests {
     }
 
     #[test]
-    fn linux_systemd_unit_omits_scan_timeout_with_control_characters() {
+    fn service_renderers_omit_scan_timeout_rejected_at_common_capture_boundary() {
+        let captured = captured_project_scan_timeout(Some("37\nEnvironment=INJECTED=yes".into()));
+        assert_eq!(captured, None);
         let mut unsafe_spec = spec();
-        unsafe_spec.project_scan_timeout = Some("37\nEnvironment=INJECTED=yes".to_string());
+        unsafe_spec.project_scan_timeout = captured;
 
+        let plist = render_macos_launch_agent(&unsafe_spec);
         let unit = render_linux_systemd_unit(&unsafe_spec);
 
+        assert!(!plist.contains(PROJECT_SCAN_TIMEOUT_ENV), "{plist}");
+        assert!(!plist.contains("INJECTED"), "{plist}");
         assert!(!unit.contains(PROJECT_SCAN_TIMEOUT_ENV), "{unit}");
         assert!(!unit.contains("INJECTED"), "{unit}");
     }
@@ -1699,6 +1704,16 @@ mod tests {
         assert_eq!(
             captured_project_scan_timeout(Some("30".into())),
             Some("30".to_string())
+        );
+        assert_eq!(
+            captured_project_scan_timeout(Some("301".into())),
+            Some("301".to_string()),
+            "capture preserves ordinary raw values for daemon-side 1..300 validation"
+        );
+        assert_eq!(
+            captured_project_scan_timeout(Some("invalid".into())),
+            Some("invalid".to_string()),
+            "capture does not duplicate daemon numeric validation"
         );
         assert_eq!(captured_project_scan_timeout(None), None);
 
