@@ -26,7 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fetchProjects } from '@/lib/api';
 import { routeSearch } from '@/lib/searchState';
 import { DEFAULT_TAB_VIEW, getSnapshot as getTabsSnapshot } from '@/lib/tabsStore';
-import type { Me, ProjectIndex } from '@/lib/types';
+import type { Me, ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { useMe } from '@/hooks/useMe';
 import { navPageVisible } from '@/lib/capabilities';
@@ -74,7 +74,7 @@ function rememberProject(projectId: string) {
   window.localStorage.setItem('orgasmic.active_project', projectId);
 }
 
-function chooseInitialProject(projects: ProjectIndex[]): string | null {
+function chooseInitialProject(projects: ProjectCatalogEntry[]): string | null {
   const remembered = readLastProject();
   if (remembered && projects.some((project) => project.project_id === remembered)) {
     return remembered;

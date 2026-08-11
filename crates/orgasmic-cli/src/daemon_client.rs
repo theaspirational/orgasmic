@@ -87,6 +87,15 @@ impl DaemonClient {
         send_json(self.bearer(req), self.timeout).await
     }
 
+    pub(crate) async fn get_with_header<R: DeserializeOwned>(
+        &self,
+        path: &str,
+        header: &str,
+    ) -> Result<(R, Option<String>)> {
+        let req = self.client.get(self.url(path));
+        send_json_with_header(self.bearer(req), self.timeout, header).await
+    }
+
     pub async fn post_json<B: Serialize + ?Sized, R: DeserializeOwned>(
         &self,
         path: &str,
@@ -336,6 +345,35 @@ async fn send_json<R: DeserializeOwned>(
     req: RequestBuilder,
     timeout: std::time::Duration,
 ) -> Result<R> {
+    send_successful(req, timeout)
+        .await?
+        .json::<R>()
+        .await
+        .map_err(|e| anyhow!("decode daemon response: {e}"))
+}
+
+async fn send_json_with_header<R: DeserializeOwned>(
+    req: RequestBuilder,
+    timeout: std::time::Duration,
+    header: &str,
+) -> Result<(R, Option<String>)> {
+    let response = send_successful(req, timeout).await?;
+    let header = response
+        .headers()
+        .get(header)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let value = response
+        .json::<R>()
+        .await
+        .map_err(|e| anyhow!("decode daemon response: {e}"))?;
+    Ok((value, header))
+}
+
+async fn send_successful(
+    req: RequestBuilder,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Response> {
     let response = req.send().await.map_err(|e| {
         anyhow!(transport_error_message(
             &e.to_string(),
@@ -358,10 +396,7 @@ async fn send_json<R: DeserializeOwned>(
         }
         bail!(daemon_http_error_message(status, &body));
     }
-    response
-        .json::<R>()
-        .await
-        .map_err(|e| anyhow!("decode daemon response: {e}"))
+    Ok(response)
 }
 
 fn daemon_http_error_message(status: StatusCode, body: &str) -> String {

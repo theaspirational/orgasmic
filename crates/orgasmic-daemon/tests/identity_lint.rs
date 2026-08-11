@@ -39,6 +39,20 @@ fn seed_project(project_root: &std::path::Path, task_org: &str) {
     write(&project_root.join(".orgasmic/tasks/backlog.org"), task_org);
 }
 
+async fn load_identity_projection(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+) {
+    let response = client
+        .get(format!("http://{addr}/api/graph/markers/identity-lint"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .expect("load identity projection");
+    assert!(response.status().is_success());
+}
+
 #[tokio::test]
 async fn duplicate_identity_surfaces_via_parse_errors() {
     let tmp = tempfile::tempdir().unwrap();
@@ -60,6 +74,7 @@ async fn duplicate_identity_surfaces_via_parse_errors() {
         .expect("boot daemon");
     let token = read_token(&home_for_token);
     let client = reqwest::Client::new();
+    load_identity_projection(&client, running.addr, &token).await;
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)
@@ -105,6 +120,7 @@ async fn malformed_identity_surfaces_via_parse_errors() {
         .expect("boot daemon");
     let token = read_token(&home_for_token);
     let client = reqwest::Client::new();
+    load_identity_projection(&client, running.addr, &token).await;
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)
@@ -155,6 +171,7 @@ async fn heading_id_token_mismatch_surfaces_via_parse_errors() {
         .expect("boot daemon");
     let token = read_token(&home_for_token);
     let client = reqwest::Client::new();
+    load_identity_projection(&client, running.addr, &token).await;
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)
@@ -256,6 +273,7 @@ async fn live_corpus_heading_token_lint_adds_zero_findings() {
         .expect("boot daemon");
     let token = read_token(&home_for_token);
     let client = reqwest::Client::new();
+    load_identity_projection(&client, running.addr, &token).await;
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)

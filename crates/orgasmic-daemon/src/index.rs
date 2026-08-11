@@ -1,10 +1,12 @@
 // orgasmic:arch_C87Z9, dec_YYMSK
-//! In-memory materialized projection of board, projects, tasks, and tx.
+//! In-memory catalog plus lazy materialized projections of projects, tasks,
+//! markers, artifacts, and tx.
 //!
-//! Rebuilt from disk at boot before the daemon serves normal reads
-//! (AC #1). When a working file fails to parse, the last-good projection
-//! for that file is kept and the error is reported through the index's
-//! `parse_errors` map (AC #2 + dec_022).
+//! Boot publishes board registration and home-owned safety state before any
+//! project scan. Project projections are loaded through the refresh
+//! coordinator on first access. When a working file fails to parse, the
+//! last-good projection for that file is kept and the error is reported
+//! through the index's `parse_errors` map (AC #2 + dec_022).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
@@ -230,6 +232,49 @@ pub struct BoardEntry {
     pub status: String,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectLoadState {
+    #[default]
+    Unloaded,
+    Loading,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectLoadStatus {
+    pub state: ProjectLoadState,
+    pub generation: u64,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_loaded_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectTaskStats {
+    pub total: usize,
+    pub active: usize,
+    pub done: usize,
+}
+
+/// Lightweight registration DTO returned by `GET /projects`.
+///
+/// It is derived from the board even when the operational projection has not
+/// been loaded. Projection-derived fields stay absent until a successful load.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectCatalogEntry {
+    pub project_id: String,
+    pub root: PathBuf,
+    pub repo_url: String,
+    pub branch: String,
+    pub status: String,
+    pub load: ProjectLoadStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_stats: Option<ProjectTaskStats>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ParseErrorKind {
@@ -257,9 +302,17 @@ pub struct TxRecord {
 pub struct IndexSnapshot {
     pub board: Vec<BoardEntry>,
     pub projects: HashMap<String, ProjectIndex>,
+    pub project_loads: BTreeMap<String, ProjectLoadStatus>,
+    pub repo_urls: BTreeMap<String, String>,
     pub tx: Vec<TxRecord>,
     pub parse_errors: Vec<ParseError>,
     pub rebuilt_at: Option<DateTime<Utc>>,
+    #[serde(skip)]
+    marker_projects: HashSet<String>,
+    #[serde(skip)]
+    artifact_projects: HashSet<String>,
+    #[serde(skip)]
+    marker_parse_errors: BTreeMap<String, Vec<ParseError>>,
 }
 
 impl IndexSnapshot {
@@ -273,20 +326,22 @@ impl IndexSnapshot {
             .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
     }
 
-    // orgasmic:task_MRJRK
-    /// Registered ids this snapshot cannot answer for: on the board, absent
-    /// from `projects`.
-    ///
-    /// The two maps are written by different paths — `load_board` fills the
-    /// board, `load_project` fills `projects` — and nothing reconciles them,
-    /// so they can disagree indefinitely. Every id-addressed route resolves
-    /// through `projects`, which is what turns the disagreement into a 404
-    /// that reads as "no such project" while `orgasmic project list` (board
-    /// file, on disk) keeps listing it.
-    pub fn unindexed_board_projects(&self) -> Vec<String> {
+    pub fn project_ids_in_state(&self, state: ProjectLoadState) -> Vec<String> {
         self.board
             .iter()
-            .filter(|entry| !self.projects.contains_key(&entry.id))
+            .filter(|entry| {
+                self.project_loads
+                    .get(&entry.id)
+                    .is_some_and(|load| load.state == state)
+            })
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
+    pub fn project_ids_with_markers_loaded(&self) -> Vec<String> {
+        self.board
+            .iter()
+            .filter(|entry| self.marker_projects.contains(&entry.id))
             .map(|entry| entry.id.clone())
             .collect()
     }
@@ -375,14 +430,18 @@ const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum RefreshTarget {
     Project(String),
+    Markers(String),
+    Artifacts(String),
     HomeTx,
 }
 
 impl RefreshTarget {
-    fn label(&self) -> &str {
+    fn label(&self) -> String {
         match self {
-            Self::Project(project_id) => project_id,
-            Self::HomeTx => "home-tx",
+            Self::Project(project_id) => project_id.clone(),
+            Self::Markers(project_id) => format!("markers:{project_id}"),
+            Self::Artifacts(project_id) => format!("artifacts:{project_id}"),
+            Self::HomeTx => "home-tx".to_string(),
         }
     }
 }
@@ -392,6 +451,10 @@ struct TargetRefreshState {
     running: bool,
     window_generation: u64,
     required_generation: u64,
+    /// First-load callers join the scan already in flight. Unlike a mutation,
+    /// joining a first load does not mint a newer generation: every caller is
+    /// waiting for the same first published projection.
+    load_waiters: Vec<oneshot::Sender<Result<(), String>>>,
     mutation_waiters: HashMap<String, Vec<oneshot::Sender<Result<(), String>>>>,
     explicit_waiters: Vec<oneshot::Sender<Result<(), String>>>,
     watcher_waiters: Vec<oneshot::Sender<Result<(), String>>>,
@@ -403,6 +466,10 @@ struct TargetRefreshState {
 impl TargetRefreshState {
     fn has_required(&self) -> bool {
         !self.mutation_waiters.is_empty() || !self.explicit_waiters.is_empty()
+    }
+
+    fn has_work(&self) -> bool {
+        !self.load_waiters.is_empty() || self.has_required() || self.watcher_pending
     }
 
     fn remember_completed(&mut self, tx_id: String) {
@@ -467,6 +534,15 @@ pub struct IndexRefreshStatus {
 #[derive(Debug)]
 enum BuiltRefresh {
     Project(Box<BuiltProjectRefresh>),
+    Markers {
+        board_entry: BoardEntry,
+        markers: BTreeMap<String, Vec<PathBuf>>,
+        parse_errors: Vec<ParseError>,
+    },
+    Artifacts {
+        board_entry: BoardEntry,
+        artifacts: Vec<ArtifactSummary>,
+    },
     HomeTx {
         tx: Vec<TxRecord>,
         parse_errors: Vec<ParseError>,
@@ -483,6 +559,7 @@ struct BuiltProjectRefresh {
 
 struct CapturedRefresh {
     required_generation: u64,
+    load_count: usize,
     mutation_waiters: Vec<(String, usize)>,
     explicit_count: usize,
     watcher_count: usize,
@@ -490,10 +567,12 @@ struct CapturedRefresh {
 
 impl CapturedRefresh {
     fn queued(&self) -> usize {
-        self.mutation_waiters
-            .iter()
-            .map(|(_, count)| count)
-            .sum::<usize>()
+        self.load_count
+            + self
+                .mutation_waiters
+                .iter()
+                .map(|(_, count)| count)
+                .sum::<usize>()
             + self.explicit_count
             + self.watcher_count
     }
@@ -518,36 +597,96 @@ impl Index {
         self.inner.read().await.clone()
     }
 
+    pub async fn catalog(&self) -> Vec<ProjectCatalogEntry> {
+        let snap = self.inner.read().await;
+        snap.board
+            .iter()
+            .map(|entry| {
+                let project = snap.projects.get(&entry.id);
+                let task_stats = project.map(|project| {
+                    let done = project
+                        .tasks
+                        .iter()
+                        .filter(|task| {
+                            matches!(
+                                task.lifecycle_stage,
+                                LifecycleStage::Done | LifecycleStage::Cancelled
+                            )
+                        })
+                        .count();
+                    ProjectTaskStats {
+                        total: project.tasks.len(),
+                        active: project.tasks.len().saturating_sub(done),
+                        done,
+                    }
+                });
+                ProjectCatalogEntry {
+                    project_id: entry.id.clone(),
+                    root: entry.path.clone(),
+                    repo_url: snap.repo_urls.get(&entry.id).cloned().unwrap_or_default(),
+                    branch: entry.branch.clone(),
+                    status: entry.status.clone(),
+                    load: snap
+                        .project_loads
+                        .get(&entry.id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    task_stats,
+                }
+            })
+            .collect()
+    }
+
     pub async fn home_root(&self) -> &Path {
         &self.home.root
     }
 
-    /// Rebuild from disk. Called at boot before the daemon serves normal
-    /// reads (arch_006 / AC #1) and on watcher-driven refresh.
-    pub async fn rebuild(&self) {
-        self.rebuild_with_timeout(Duration::from_secs(5)).await;
+    /// Publish only the registered-project catalog and home-owned tx safety
+    /// state. This is the boot boundary: it performs no project scan.
+    pub async fn bootstrap_catalog(&self) {
+        let mut snap = IndexSnapshot {
+            rebuilt_at: Some(Utc::now()),
+            ..IndexSnapshot::default()
+        };
+        self.load_board(&mut snap);
+        self.load_home_tx(&mut snap);
+        for entry in &snap.board {
+            snap.project_loads
+                .insert(entry.id.clone(), ProjectLoadStatus::default());
+        }
+        *self.inner.write().await = snap;
     }
 
-    async fn rebuild_with_timeout(&self, timeout: Duration) {
-        // Home-owned state is small and must remain available even when one
-        // registered project is on a filesystem that stalls. Move project
-        // traversal to the blocking pool and bound the wait so boot can bind.
+    /// Explicit whole-board rebuild used by the reindex surface and tests.
+    /// Boot deliberately calls [`Self::bootstrap_catalog`] instead.
+    pub async fn rebuild(&self) {
         // A live rebuild starts a fresh snapshot, so carry Git-backed metadata
-        // forward explicitly until its post-bind refresh can replace it.
-        let prior_repo_urls: BTreeMap<String, String> = self
-            .inner
-            .read()
-            .await
-            .projects
-            .iter()
-            .map(|(id, project)| (id.clone(), project.repo_url.clone()))
-            .collect();
+        // forward explicitly until its post-bind refresh can replace it. This
+        // path is an explicit all-project operation and may take as long as the
+        // registered repositories require.
+        let prior_repo_urls: BTreeMap<String, String> = self.inner.read().await.repo_urls.clone();
+        let prior_repo_urls: BTreeMap<String, String> = if prior_repo_urls.is_empty() {
+            self.inner
+                .read()
+                .await
+                .projects
+                .iter()
+                .map(|(id, project)| (id.clone(), project.repo_url.clone()))
+                .collect()
+        } else {
+            prior_repo_urls
+        };
         let mut base = IndexSnapshot {
             rebuilt_at: Some(Utc::now()),
+            repo_urls: prior_repo_urls.clone(),
             ..IndexSnapshot::default()
         };
         self.load_board(&mut base);
         self.load_home_tx(&mut base);
+        for entry in &base.board {
+            base.project_loads
+                .insert(entry.id.clone(), ProjectLoadStatus::default());
+        }
         let board = base.board.clone();
         let mut snap = base;
         for entry in board {
@@ -555,51 +694,47 @@ impl Index {
             let scan_seed = snap.clone();
             let scan_entry = entry.clone();
             let prior_repo_url = prior_repo_urls.get(&entry.id).cloned();
-            let scan = tokio::task::spawn_blocking(move || {
+            match tokio::task::spawn_blocking(move || {
                 let mut next = scan_seed;
                 scan_index.load_project(&scan_entry, &mut next, prior_repo_url);
+                let markers = scan_project_markers(&scan_entry.path);
+                lint_project_identity_state(&scan_entry.path, &markers, &mut next);
+                if let Some(project) = next.projects.get_mut(&scan_entry.id) {
+                    project.markers = markers;
+                    project.artifacts = load_project_artifacts(&scan_entry.path);
+                    next.marker_projects.insert(scan_entry.id.clone());
+                    next.artifact_projects.insert(scan_entry.id.clone());
+                }
                 next
-            });
-            match tokio::time::timeout(timeout, scan).await {
-                Ok(Ok(next)) => snap = next,
-                Ok(Err(error)) => {
+            })
+            .await
+            {
+                Ok(next) => snap = next,
+                Err(error) => {
                     warn!(
                         project = %entry.id,
                         path = %entry.path.display(),
                         error = %error,
-                        "project index scan task failed; omitting project from this index pass"
+                        "project index scan task failed during explicit rebuild"
                     );
-                }
-                Err(_) => {
-                    warn!(
-                        project = %entry.id,
-                        path = %entry.path.display(),
-                        timeout_secs = timeout.as_secs_f64(),
-                        "project index scan timed out; omitting project so daemon boot can continue"
-                    );
-                    warn_macos_files_access_timeout(std::slice::from_ref(&entry.path));
+                    if let Some(load) = snap.project_loads.get_mut(&entry.id) {
+                        load.state = ProjectLoadState::Failed;
+                        load.last_attempt_at = Some(Utc::now());
+                        load.error = Some(format!("project index scan task failed: {error}"));
+                    }
                 }
             }
         }
         rebuild_all_activity_indexes(&mut snap);
-        // orgasmic:task_MRJRK — a pass that publishes fewer projects than the
-        // board registers says so, once, at the point it happens. Nothing
-        // retries the missing ones: the two give-up branches above forget
-        // rather than reschedule, and no other path ever removes a key from
-        // `projects`. Deliberately not a self-heal — an automatic re-scan
-        // here would erase the evidence of a gap whose cause is still open,
-        // and the operator would keep hitting it without ever seeing it.
-        let unindexed = snap.unindexed_board_projects();
-        if !unindexed.is_empty() {
-            warn!(
-                projects = ?unindexed,
-                registered = snap.board.len(),
-                loaded = snap.projects.len(),
-                "index rebuild published fewer projects than the board registers; \
-                 these ids 404 on every id-addressed route until the next \
-                 successful `orgasmic reindex` (reported by GET /daemon/status \
-                 as unindexed_projects)"
-            );
+        for entry in &snap.board {
+            if snap.projects.contains_key(&entry.id) {
+                let load = snap.project_loads.entry(entry.id.clone()).or_default();
+                load.state = ProjectLoadState::Ready;
+                load.generation = load.generation.saturating_add(1);
+                load.last_attempt_at = Some(Utc::now());
+                load.last_loaded_at = Some(Utc::now());
+                load.error = None;
+            }
         }
         *self.inner.write().await = snap;
         if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
@@ -625,9 +760,9 @@ impl Index {
     async fn refresh_repo_urls(&self, force: bool) {
         let targets: Vec<(String, PathBuf)> = {
             let snap = self.inner.read().await;
-            snap.projects
+            snap.board
                 .iter()
-                .map(|(id, project)| (id.clone(), project.root.clone()))
+                .map(|entry| (entry.id.clone(), entry.path.clone()))
                 .collect()
         };
         for (project_id, project_root) in targets {
@@ -636,15 +771,176 @@ impl Index {
         }
     }
 
+    /// Ensure one registered project's operational projection is available.
+    ///
+    /// First readers join the same coordinator-owned scan. A failed first load
+    /// remains visible in the catalog and the next access starts a retry.
+    pub async fn ensure_project_loaded(&self, project_id: &str) -> Result<u64, String> {
+        {
+            let mut snap = self.inner.write().await;
+            if !snap.board.iter().any(|entry| entry.id == project_id) {
+                return Err(format!("unknown project {project_id}"));
+            }
+            let ready = snap
+                .project_loads
+                .get(project_id)
+                .is_some_and(|load| load.state == ProjectLoadState::Ready)
+                && snap.projects.contains_key(project_id);
+            if ready {
+                return Ok(snap
+                    .project_loads
+                    .get(project_id)
+                    .map(|load| load.generation)
+                    .unwrap_or_default());
+            }
+            let load = snap
+                .project_loads
+                .entry(project_id.to_string())
+                .or_default();
+            if load.state != ProjectLoadState::Loading {
+                load.state = ProjectLoadState::Loading;
+                load.last_attempt_at = Some(Utc::now());
+            }
+        }
+        let target = RefreshTarget::Project(project_id.to_string());
+        let result = self.request_project_load(target.clone()).await;
+        if let Err(error) = &result {
+            self.record_project_load_failure(project_id, error).await;
+        }
+        result?;
+        let snap = self.inner.read().await;
+        let load = snap
+            .project_loads
+            .get(project_id)
+            .ok_or_else(|| format!("project {project_id} load state disappeared"))?;
+        if load.state != ProjectLoadState::Ready || !snap.projects.contains_key(project_id) {
+            return Err(format!(
+                "project {project_id} load completed without a ready projection"
+            ));
+        }
+        Ok(load.generation)
+    }
+
+    pub async fn ensure_all_projects_loaded(&self) -> Result<(), String> {
+        let ids: Vec<String> = self
+            .inner
+            .read()
+            .await
+            .board
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+        for id in ids {
+            self.ensure_project_loaded(&id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn ensure_project_markers_loaded(&self, project_id: &str) -> Result<(), String> {
+        self.ensure_project_loaded(project_id).await?;
+        if self.inner.read().await.marker_projects.contains(project_id) {
+            return Ok(());
+        }
+        self.request_project_load(RefreshTarget::Markers(project_id.to_string()))
+            .await
+    }
+
+    pub async fn ensure_all_project_markers_loaded(&self) -> Result<(), String> {
+        let ids: Vec<String> = self
+            .inner
+            .read()
+            .await
+            .board
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect();
+        for id in ids {
+            self.ensure_project_markers_loaded(&id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn ensure_project_artifacts_loaded(&self, project_id: &str) -> Result<(), String> {
+        self.ensure_project_loaded(project_id).await?;
+        if self
+            .inner
+            .read()
+            .await
+            .artifact_projects
+            .contains(project_id)
+        {
+            return Ok(());
+        }
+        self.request_project_load(RefreshTarget::Artifacts(project_id.to_string()))
+            .await
+    }
+
+    async fn request_project_load(&self, target: RefreshTarget) -> Result<(), String> {
+        self.refresh
+            .metrics
+            .requests_total
+            .fetch_add(1, Ordering::Relaxed);
+        let (reply, rx) = oneshot::channel();
+        let mut coordinator = self.refresh.state.lock().await;
+        let state = coordinator.targets.entry(target.clone()).or_default();
+        if state.running || state.has_work() {
+            self.refresh
+                .metrics
+                .coalesced_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        state.load_waiters.push(reply);
+        if !state.running {
+            state.running = true;
+            state.window_generation = state.window_generation.wrapping_add(1);
+            self.spawn_refresh_worker(target);
+        }
+        drop(coordinator);
+        rx.await
+            .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
+    }
+
+    async fn record_project_load_failure(&self, project_id: &str, error: &str) {
+        let mut snap = self.inner.write().await;
+        if snap.projects.contains_key(project_id) {
+            return;
+        }
+        let load = snap
+            .project_loads
+            .entry(project_id.to_string())
+            .or_default();
+        load.state = ProjectLoadState::Failed;
+        load.error = Some(error.to_string());
+    }
+
     /// Force one authoritative project refresh and wait for publication.
     pub async fn refresh_project(&self, project_id: &str) -> Result<(), String> {
+        self.mark_loading_if_unready(project_id).await?;
         self.request_required_refresh(RefreshTarget::Project(project_id.to_string()), None)
             .await
+    }
+
+    async fn mark_loading_if_unready(&self, project_id: &str) -> Result<(), String> {
+        let mut snap = self.inner.write().await;
+        if !snap.board.iter().any(|entry| entry.id == project_id) {
+            return Err(format!("unknown project {project_id}"));
+        }
+        if snap.projects.contains_key(project_id) {
+            return Ok(());
+        }
+        let load = snap
+            .project_loads
+            .entry(project_id.to_string())
+            .or_default();
+        load.state = ProjectLoadState::Loading;
+        load.last_attempt_at = Some(Utc::now());
+        Ok(())
     }
 
     /// Refresh after a committed project mutation. The detached coordinator
     /// owns the scan, so dropping the HTTP waiter cannot cancel convergence.
     pub async fn refresh_after_tx(&self, project_id: &str, tx_id: &str) -> Result<(), String> {
+        self.mark_loading_if_unready(project_id).await?;
         self.request_required_refresh(
             RefreshTarget::Project(project_id.to_string()),
             Some(tx_id.to_string()),
@@ -663,12 +959,11 @@ impl Index {
     /// arriving during a scan schedules a follow-up without delaying mutation
     /// acknowledgement.
     pub async fn schedule_watcher_refresh(&self, project_id: &str) -> Result<(), String> {
+        self.mark_loading_if_unready(project_id).await?;
         let target = RefreshTarget::Project(project_id.to_string());
         {
             let snap = self.inner.read().await;
-            if !snap.board.iter().any(|entry| entry.id == project_id) {
-                return Err(format!("unknown project {project_id}"));
-            }
+            debug_assert!(snap.board.iter().any(|entry| entry.id == project_id));
         }
         self.refresh
             .metrics
@@ -841,6 +1136,7 @@ impl Index {
                     .collect();
                 let captured = CapturedRefresh {
                     required_generation: state.required_generation,
+                    load_count: state.load_waiters.len(),
                     mutation_waiters,
                     explicit_count: state.explicit_waiters.len(),
                     watcher_count: state.watcher_waiters.len(),
@@ -849,7 +1145,9 @@ impl Index {
                 captured
             };
             let queued = captured.queued();
-            let cause = if !captured.mutation_waiters.is_empty() {
+            let cause = if captured.load_count > 0 {
+                "first-load"
+            } else if !captured.mutation_waiters.is_empty() {
                 "mutation"
             } else if captured.explicit_count > 0 {
                 "explicit"
@@ -860,7 +1158,7 @@ impl Index {
             // Home-ledger refreshes are cheap and independent of the global
             // project-scan cap. Two slow projects must not block a committed
             // home tx from becoming readable.
-            let project_permit = if matches!(target, RefreshTarget::Project(_)) {
+            let project_permit = if !matches!(target, RefreshTarget::HomeTx) {
                 match self.refresh.project_scans.acquire().await {
                     Ok(permit) => Some(permit),
                     Err(_) => {
@@ -908,6 +1206,9 @@ impl Index {
                 Ok(built) => self.publish_refresh(&target, built).await,
                 Err(error) => Err(error),
             };
+            if let (RefreshTarget::Project(project_id), Err(error)) = (&target, &result) {
+                self.record_project_load_failure(project_id, error).await;
+            }
 
             let mut coordinator = self.refresh.state.lock().await;
             let Some(state) = coordinator.targets.get_mut(&target) else {
@@ -956,7 +1257,7 @@ impl Index {
                 }
             }
 
-            if state.has_required() || state.watcher_pending {
+            if state.has_work() {
                 drop(coordinator);
                 continue;
             }
@@ -966,6 +1267,12 @@ impl Index {
     }
 
     fn settle_captured_ok(state: &mut TargetRefreshState, captured: CapturedRefresh) {
+        // A first-load waiter that arrived while the scan was running wants
+        // this same publication, not a follow-up generation. Drain all of
+        // them, including arrivals after capture.
+        for waiter in state.load_waiters.drain(..) {
+            let _ = waiter.send(Ok(()));
+        }
         for (tx_id, _) in captured.mutation_waiters {
             // A duplicate waiter for the same tx is covered by the same
             // committed bytes even if it registered after capture. Distinct
@@ -1001,6 +1308,9 @@ impl Index {
         captured: CapturedRefresh,
         error: &str,
     ) {
+        for waiter in state.load_waiters.drain(..) {
+            let _ = waiter.send(Err(error.to_string()));
+        }
         for (tx_id, captured_count) in captured.mutation_waiters {
             let mut remove_entry = false;
             if let Some(waiters) = state.mutation_waiters.get_mut(&tx_id) {
@@ -1042,6 +1352,9 @@ impl Index {
                 let _ = waiter.send(Err(message.to_string()));
             }
         }
+        for waiter in state.load_waiters.drain(..) {
+            let _ = waiter.send(Err(message.to_string()));
+        }
         for waiter in state.explicit_waiters.drain(..) {
             let _ = waiter.send(Err(message.to_string()));
         }
@@ -1070,7 +1383,24 @@ impl Index {
                 else {
                     return Err(format!("unknown project {project_id}"));
                 };
+                let orgasmic_dir = board_entry.path.join(".orgasmic");
+                if !orgasmic_dir.is_dir() {
+                    return Err(format!(
+                        "project {project_id} has no readable .orgasmic directory"
+                    ));
+                }
                 let prior_project = seed.projects.get(&project_id).cloned();
+                let prior_repo_url = seed
+                    .repo_urls
+                    .get(&project_id)
+                    .filter(|repo_url| !repo_url.is_empty())
+                    .cloned()
+                    .or_else(|| {
+                        prior_project
+                            .as_ref()
+                            .map(|project| project.repo_url.clone())
+                            .filter(|repo_url| !repo_url.is_empty())
+                    });
                 let mut next = IndexSnapshot {
                     board: vec![board_entry.clone()],
                     projects: prior_project
@@ -1079,9 +1409,11 @@ impl Index {
                     tx: Vec::new(),
                     parse_errors: Vec::new(),
                     rebuilt_at: seed.rebuilt_at,
+                    repo_urls: seed.repo_urls.clone(),
+                    ..IndexSnapshot::default()
                 };
                 drop(seed);
-                scan_index.load_project(&board_entry, &mut next, None);
+                scan_index.load_project(&board_entry, &mut next, prior_repo_url);
                 let project = next.projects.remove(&project_id);
                 let tx = next
                     .tx
@@ -1099,6 +1431,47 @@ impl Index {
                     tx,
                     parse_errors,
                 })))
+            }
+            RefreshTarget::Markers(project_id) => {
+                let Some(board_entry) = seed
+                    .board
+                    .iter()
+                    .find(|entry| entry.id == project_id)
+                    .cloned()
+                else {
+                    return Err(format!("unknown project {project_id}"));
+                };
+                if !seed.projects.contains_key(&project_id) {
+                    return Err(format!("project {project_id} is not loaded"));
+                }
+                drop(seed);
+                let markers = scan_project_markers(&board_entry.path);
+                let mut lint_snapshot = IndexSnapshot::default();
+                lint_project_identity_state(&board_entry.path, &markers, &mut lint_snapshot);
+                Ok(BuiltRefresh::Markers {
+                    board_entry,
+                    markers,
+                    parse_errors: lint_snapshot.parse_errors,
+                })
+            }
+            RefreshTarget::Artifacts(project_id) => {
+                let Some(board_entry) = seed
+                    .board
+                    .iter()
+                    .find(|entry| entry.id == project_id)
+                    .cloned()
+                else {
+                    return Err(format!("unknown project {project_id}"));
+                };
+                if !seed.projects.contains_key(&project_id) {
+                    return Err(format!("project {project_id} is not loaded"));
+                }
+                drop(seed);
+                let artifacts = load_project_artifacts(&board_entry.path);
+                Ok(BuiltRefresh::Artifacts {
+                    board_entry,
+                    artifacts,
+                })
             }
             RefreshTarget::HomeTx => {
                 let mut next = IndexSnapshot {
@@ -1197,16 +1570,90 @@ impl Index {
                 // was built. Publication merges the live URL so the stale
                 // seed can never overwrite that independently refreshed field.
                 project.repo_url = snap
-                    .projects
+                    .repo_urls
                     .get(&board_entry.id)
-                    .map(|live| live.repo_url.clone())
+                    .filter(|repo_url| !repo_url.is_empty())
+                    .cloned()
+                    .or_else(|| {
+                        snap.projects
+                            .get(&board_entry.id)
+                            .map(|live| live.repo_url.clone())
+                            .filter(|repo_url| !repo_url.is_empty())
+                    })
                     .unwrap_or(project.repo_url);
+                // Any core publication invalidates the optional recursive
+                // projections. Their next owning route reloads them lazily.
+                snap.marker_projects.remove(&board_entry.id);
+                snap.artifact_projects.remove(&board_entry.id);
+                snap.marker_parse_errors.remove(&board_entry.id);
                 // Home-ledger and project scans may run concurrently. Rebuild
                 // this cheap derived view from the tx set under publication so
                 // an older project scan cannot overwrite activity published by
                 // a newer home-ledger refresh.
                 project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
-                snap.projects.insert(board_entry.id, project);
+                snap.repo_urls
+                    .insert(board_entry.id.clone(), project.repo_url.clone());
+                let loaded_at = project.last_loaded_at.unwrap_or_else(Utc::now);
+                snap.projects.insert(board_entry.id.clone(), project);
+                let load = snap.project_loads.entry(board_entry.id).or_default();
+                load.state = ProjectLoadState::Ready;
+                load.generation = load.generation.saturating_add(1);
+                load.last_attempt_at.get_or_insert(loaded_at);
+                load.last_loaded_at = Some(loaded_at);
+                load.error = None;
+            }
+            BuiltRefresh::Markers {
+                board_entry,
+                markers,
+                parse_errors,
+            } => {
+                let Some(current_entry) =
+                    snap.board.iter().find(|entry| entry.id == board_entry.id)
+                else {
+                    return Err(format!("unknown project {}", board_entry.id));
+                };
+                if current_entry != &board_entry {
+                    return Err(format!(
+                        "project {} registration changed during marker scan",
+                        board_entry.id
+                    ));
+                }
+                let Some(project) = snap.projects.get_mut(&board_entry.id) else {
+                    return Err(format!("project {} is not loaded", board_entry.id));
+                };
+                project.markers = markers;
+                if let Some(prior) = snap.marker_parse_errors.remove(&board_entry.id) {
+                    snap.parse_errors.retain(|error| {
+                        !prior
+                            .iter()
+                            .any(|old| old.path == error.path && old.message == error.message)
+                    });
+                }
+                snap.parse_errors.extend(parse_errors.iter().cloned());
+                snap.marker_parse_errors
+                    .insert(board_entry.id.clone(), parse_errors);
+                snap.marker_projects.insert(board_entry.id);
+            }
+            BuiltRefresh::Artifacts {
+                board_entry,
+                artifacts,
+            } => {
+                let Some(current_entry) =
+                    snap.board.iter().find(|entry| entry.id == board_entry.id)
+                else {
+                    return Err(format!("unknown project {}", board_entry.id));
+                };
+                if current_entry != &board_entry {
+                    return Err(format!(
+                        "project {} registration changed during artifact scan",
+                        board_entry.id
+                    ));
+                }
+                let Some(project) = snap.projects.get_mut(&board_entry.id) else {
+                    return Err(format!("project {} is not loaded", board_entry.id));
+                };
+                project.artifacts = artifacts;
+                snap.artifact_projects.insert(board_entry.id);
             }
             BuiltRefresh::HomeTx { tx, parse_errors } => {
                 snap.tx.retain(|record| record.project_id.is_some());
@@ -1278,7 +1725,7 @@ impl Index {
             .active_scans_by_target
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let count = active.entry(target.label().to_string()).or_default();
+        let count = active.entry(target.label()).or_default();
         *count += 1;
         self.refresh_test_hooks
             .max_same_target_scans
@@ -1292,7 +1739,7 @@ impl Index {
             .active_scans_by_target
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some(count) = active.get_mut(target.label()) {
+        if let Some(count) = active.get_mut(&target.label()) {
             *count = count.saturating_sub(1);
         }
     }
@@ -1386,19 +1833,70 @@ impl Index {
             }
             return;
         };
+        let mut snap = self.inner.write().await;
+        if !snap
+            .board
+            .iter()
+            .any(|entry| entry.id == project_id && entry.path == project_root)
+        {
+            return;
+        }
         self.repo_url_probed
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .insert(probe_key);
-        if let Some(project) = self.inner.write().await.projects.get_mut(project_id) {
+        snap.repo_urls
+            .insert(project_id.to_string(), repo_url.clone());
+        if let Some(project) = snap.projects.get_mut(project_id) {
             project.repo_url = repo_url;
         }
     }
 
     pub async fn refresh_board(&self) {
+        let mut loaded = IndexSnapshot::default();
+        self.load_board(&mut loaded);
         let mut snap = self.inner.write().await;
-        snap.board.clear();
-        self.load_board(&mut snap);
+        let prior_board: BTreeMap<String, BoardEntry> = snap
+            .board
+            .iter()
+            .cloned()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect();
+        let registered: BTreeMap<String, BoardEntry> = loaded
+            .board
+            .iter()
+            .cloned()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect();
+        let changed: HashSet<String> = registered
+            .iter()
+            .filter(|(id, entry)| prior_board.get(*id).is_some_and(|prior| prior != *entry))
+            .map(|(id, _)| id.clone())
+            .collect();
+        snap.board = loaded.board;
+        snap.parse_errors
+            .retain(|error| error.path != self.home.board());
+        snap.parse_errors.extend(loaded.parse_errors);
+        snap.projects
+            .retain(|id, _| registered.contains_key(id) && !changed.contains(id));
+        snap.project_loads
+            .retain(|id, _| registered.contains_key(id) && !changed.contains(id));
+        snap.repo_urls
+            .retain(|id, _| registered.contains_key(id) && !changed.contains(id));
+        snap.marker_projects
+            .retain(|id| registered.contains_key(id) && !changed.contains(id));
+        snap.artifact_projects
+            .retain(|id| registered.contains_key(id) && !changed.contains(id));
+        let registered_ids: Vec<String> = snap.board.iter().map(|entry| entry.id.clone()).collect();
+        for id in registered_ids {
+            snap.project_loads.entry(id).or_default();
+        }
+        snap.rebuilt_at = Some(Utc::now());
+        drop(snap);
+        self.repo_url_probed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|(id, path)| registered.get(id).is_some_and(|entry| entry.path == *path));
     }
 
     fn load_board(&self, snap: &mut IndexSnapshot) {
@@ -1528,9 +2026,6 @@ impl Index {
         }
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
-        project.markers = scan_project_markers(&board_entry.path);
-        project.artifacts = load_project_artifacts(&board_entry.path);
-        lint_project_identity_state(&board_entry.path, &project.markers, snap);
         let prior = snap.projects.insert(board_entry.id.clone(), project);
         // Last-good fallback: if we ended up with zero tasks but the prior
         // snapshot had some and the new parse hit errors, keep the prior.
@@ -2256,43 +2751,6 @@ async fn git_remote_origin_url_with_program(
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
-fn macos_files_access_hint(path: &Path, user_home: &Path) -> Option<String> {
-    let protected = [
-        ("Documents", user_home.join("Documents")),
-        ("Desktop", user_home.join("Desktop")),
-        ("Downloads", user_home.join("Downloads")),
-    ];
-    protected.into_iter().find_map(|(folder, root)| {
-        path.starts_with(root).then(|| {
-            format!(
-                "project scan timed out at {} under ~/{}; grant the orgasmic daemon Files and Folders access for {} in System Settings > Privacy & Security, then restart the daemon",
-                path.display(),
-                folder,
-                folder
-            )
-        })
-    })
-}
-
-fn warn_macos_files_access_timeout(paths: &[PathBuf]) {
-    #[cfg(target_os = "macos")]
-    {
-        let Some(user_home) = std::env::var_os("HOME").map(PathBuf::from) else {
-            return;
-        };
-        for path in paths {
-            if let Some(hint) = macos_files_access_hint(path, &user_home) {
-                warn!(project = %path.display(), "{hint}");
-            }
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = paths;
-    }
-}
-
 fn own_vec(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
@@ -2748,6 +3206,231 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn catalog_bootstrap_exposes_unloaded_project_without_scanning() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+
+        index.bootstrap_catalog().await;
+
+        let catalog = index.catalog().await;
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].project_id, "project");
+        assert_eq!(catalog[0].load.state, ProjectLoadState::Unloaded);
+        assert_eq!(catalog[0].task_stats, None);
+        assert!(index.snapshot().await.projects.is_empty());
+        assert_eq!(index.refresh_status().await.scans_total, 0);
+    }
+
+    #[tokio::test]
+    async fn concurrent_first_access_single_flights_one_published_generation() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        let gate = index.gate_next_refresh();
+
+        let first = {
+            let index = index.clone();
+            tokio::spawn(async move { index.ensure_project_loaded("project").await })
+        };
+        gate.entered.notified().await;
+        assert_eq!(
+            index.snapshot().await.project_loads["project"].state,
+            ProjectLoadState::Loading
+        );
+        let second = {
+            let index = index.clone();
+            tokio::spawn(async move { index.ensure_project_loaded("project").await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while index.refresh_status().await.requests_total < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        gate.release.notify_one();
+
+        let first_generation = first.await.unwrap().unwrap();
+        let second_generation = second.await.unwrap().unwrap();
+        assert_eq!(first_generation, second_generation);
+        assert_eq!(first_generation, 1);
+        let status = index.refresh_status().await;
+        assert_eq!(status.scans_total, 1, "{status:?}");
+        assert_eq!(status.coalesced_total, 1, "{status:?}");
+        assert_eq!(index.max_same_target_scans(), 1);
+        assert!(index.snapshot().await.task("project", "TASK-001").is_some());
+    }
+
+    #[tokio::test]
+    async fn failed_first_load_is_observable_and_next_access_retries() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.fail_next_refresh();
+
+        let first_error = index.ensure_project_loaded("project").await.unwrap_err();
+        let failed = index.catalog().await.remove(0);
+        assert_eq!(failed.load.state, ProjectLoadState::Failed);
+        assert_eq!(failed.load.error.as_deref(), Some(first_error.as_str()));
+        assert!(failed.load.last_attempt_at.is_some());
+
+        let generation = index.ensure_project_loaded("project").await.unwrap();
+        assert_eq!(generation, 1);
+        let ready = index.catalog().await.remove(0);
+        assert_eq!(ready.load.state, ProjectLoadState::Ready);
+        assert_eq!(ready.load.error, None);
+        assert!(ready.task_stats.is_some());
+        assert_eq!(index.refresh_status().await.scans_total, 2);
+    }
+
+    #[tokio::test]
+    async fn task_projection_does_not_scan_source_markers_or_artifacts() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        write(
+            &project.join("src/lib.rs"),
+            "// orgasmic:TASK-SOURCE-MARKER\n",
+        );
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+
+        index.ensure_project_loaded("project").await.unwrap();
+        let core = index.snapshot().await;
+        assert!(core.projects["project"].markers.is_empty());
+        assert!(core.projects["project"].artifacts.is_empty());
+        assert!(!core.marker_projects.contains("project"));
+        assert!(!core.artifact_projects.contains("project"));
+        assert_eq!(index.refresh_status().await.scans_total, 1);
+
+        index
+            .ensure_project_markers_loaded("project")
+            .await
+            .unwrap();
+        let with_markers = index.snapshot().await;
+        assert!(with_markers.marker_projects.contains("project"));
+        assert!(with_markers.projects["project"]
+            .markers
+            .contains_key("TASK-SOURCE-MARKER"));
+        assert!(!with_markers.artifact_projects.contains("project"));
+
+        index
+            .ensure_project_artifacts_loaded("project")
+            .await
+            .unwrap();
+        assert!(index.snapshot().await.artifact_projects.contains("project"));
+        assert_eq!(index.refresh_status().await.scans_total, 3);
+    }
+
+    #[tokio::test]
+    async fn watcher_and_committed_mutation_load_only_their_unloaded_projects() {
+        let (tmp, home) = make_home();
+        let first_root = tmp.path().join("first");
+        let second_root = tmp.path().join("second");
+        seed_project(&first_root);
+        seed_project(&second_root);
+        write(
+            &home.board(),
+            &format!(
+                "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT first\n:PROPERTIES:\n:ID: first\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n\n* PROJECT second\n:PROPERTIES:\n:ID: second\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+                first_root.display(),
+                second_root.display(),
+            ),
+        );
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+
+        let (watcher, mutation) = tokio::join!(
+            index.schedule_watcher_refresh("first"),
+            index.refresh_after_tx("second", "tx-first-load"),
+        );
+        watcher.unwrap();
+        mutation.unwrap();
+
+        let snapshot = index.snapshot().await;
+        assert_eq!(
+            snapshot.project_loads["first"].state,
+            ProjectLoadState::Ready
+        );
+        assert_eq!(
+            snapshot.project_loads["second"].state,
+            ProjectLoadState::Ready
+        );
+        assert!(snapshot.task("first", "TASK-001").is_some());
+        assert!(snapshot.task("second", "TASK-001").is_some());
+        assert_eq!(index.refresh_status().await.scans_total, 2);
+    }
+
+    #[tokio::test]
+    async fn board_addition_stays_unloaded_and_scan_free() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        let index = Index::new(home.clone());
+        index.bootstrap_catalog().await;
+        seed_board(&home, &project, "project");
+
+        index.refresh_board().await;
+
+        let snapshot = index.snapshot().await;
+        assert_eq!(
+            snapshot.project_loads["project"].state,
+            ProjectLoadState::Unloaded
+        );
+        assert!(!snapshot.projects.contains_key("project"));
+        assert_eq!(index.refresh_status().await.scans_total, 0);
+    }
+
+    #[tokio::test]
+    async fn changed_board_registration_invalidates_projection_and_repo_url() {
+        let (tmp, home) = make_home();
+        let old_root = tmp.path().join("old");
+        let new_root = tmp.path().join("new");
+        seed_project(&old_root);
+        seed_project(&new_root);
+        seed_board(&home, &old_root, "project");
+        let index = Index::new(home.clone());
+        index.rebuild().await;
+        {
+            let mut snap = index.inner.write().await;
+            snap.repo_urls.insert(
+                "project".to_string(),
+                "ssh://git@example.com/old/project.git".to_string(),
+            );
+            snap.projects.get_mut("project").unwrap().repo_url =
+                "ssh://git@example.com/old/project.git".to_string();
+        }
+        write(
+            &home.board(),
+            &format!(
+                "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT project\n:PROPERTIES:\n:ID: project\n:PATH: {}\n:BRANCH: next\n:STATUS: active\n:END:\n",
+                new_root.display()
+            ),
+        );
+
+        index.refresh_board().await;
+
+        let snap = index.snapshot().await;
+        assert_eq!(snap.board[0].path, new_root);
+        assert_eq!(
+            snap.project_loads["project"].state,
+            ProjectLoadState::Unloaded
+        );
+        assert!(!snap.projects.contains_key("project"));
+        assert!(!snap.repo_urls.contains_key("project"));
+    }
+
+    #[tokio::test]
     async fn repo_url_resolution_is_disabled_until_post_bind_refresh() {
         let (tmp, home) = make_home();
         let project = tmp.path().join("project");
@@ -3115,7 +3798,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(unix)]
-    async fn blocked_project_scan_times_out_without_blocking_the_index() {
+    async fn blocked_project_catalog_bootstrap_does_not_scan() {
         use std::os::unix::ffi::OsStrExt;
 
         let (tmp, home) = make_home();
@@ -3130,59 +3813,25 @@ mod tests {
         let index = Index::new(home);
 
         let started = std::time::Instant::now();
-        index.rebuild_with_timeout(Duration::from_millis(50)).await;
+        index.bootstrap_catalog().await;
 
         assert!(
             started.elapsed() < Duration::from_secs(1),
-            "project scan timeout did not bound rebuild"
+            "catalog bootstrap touched a registered project"
         );
         let snapshot = index.snapshot().await;
         assert_eq!(snapshot.board.len(), 1);
         assert!(
             !snapshot.projects.contains_key("blocked-project"),
-            "timed-out project should be omitted from the pass"
+            "catalog bootstrap must not materialize a project"
         );
-        // orgasmic:task_MRJRK — omitting it is the deliberate bound; leaving
-        // it unreported is not. This is the one code path that can drop a
-        // registered project from the snapshot, and nothing retries it, so
-        // the pass has to hand the condition to `/daemon/status`.
         assert_eq!(
-            snapshot.unindexed_board_projects(),
-            vec!["blocked-project".to_string()],
-            "a project the pass gave up on must be reported, not just dropped"
+            snapshot.project_loads["blocked-project"].state,
+            ProjectLoadState::Unloaded,
+            "registered project must remain explicitly discoverable as unloaded"
         );
-
-        // Release the abandoned blocking-pool scan before the tempdir is
-        // removed. Unlink the FIFO after pairing its blocked reader, replace
-        // the path with a regular file for any later reads in the same scan,
-        // then close the old pipe. The timed-out result is ignored.
-        let mut fifo_writer = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&task_file)
-            .unwrap();
+        assert_eq!(index.refresh_status().await.scans_total, 0);
         std::fs::remove_file(&task_file).unwrap();
-        std::fs::write(&task_file, "#+title: tasks\n#+orgasmic_version: 1\n\n").unwrap();
-        std::io::Write::write_all(
-            &mut fifo_writer,
-            b"#+title: tasks\n#+orgasmic_version: 1\n\n",
-        )
-        .unwrap();
-        drop(fifo_writer);
-    }
-
-    #[test]
-    fn protected_folder_timeout_hint_is_path_specific_and_actionable() {
-        let user_home = Path::new("/Users/example");
-        let project = user_home.join("Documents/work/orgasmic");
-        let hint = macos_files_access_hint(&project, user_home).unwrap();
-
-        assert!(hint.contains(&project.display().to_string()));
-        assert!(hint.contains("Files and Folders"));
-        assert!(hint.contains("System Settings > Privacy & Security"));
-        assert_eq!(
-            macos_files_access_hint(Path::new("/tmp/project"), user_home),
-            None
-        );
     }
 
     #[test]
@@ -3516,6 +4165,11 @@ mod tests {
             "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
+        assert!(
+            !index.snapshot().await.marker_projects.contains("proj-x"),
+            "core refresh invalidates the recursive marker projection"
+        );
+        index.ensure_project_markers_loaded("proj-x").await.unwrap();
         let snap = index.snapshot().await;
         assert_eq!(
             snap.parse_error_counts_by_project().get("proj-x").copied(),
@@ -3710,6 +4364,11 @@ The following criteria must hold before close.
             "pub fn new() {}\n// orgasmic:dec_002\n",
         );
         index.refresh_project("proj-x").await.unwrap();
+        assert!(
+            !index.snapshot().await.marker_projects.contains("proj-x"),
+            "core refresh invalidates the recursive marker projection"
+        );
+        index.ensure_project_markers_loaded("proj-x").await.unwrap();
         let snap = index.snapshot().await;
         let project = snap.project("proj-x").unwrap();
 

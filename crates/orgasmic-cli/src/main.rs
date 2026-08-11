@@ -2395,7 +2395,17 @@ fn cmd_status_errors(home: &Home) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        let errors: Vec<ParseErrorView> = client.get("/graph/parse-errors").await?;
+        // `status --errors` is an explicit full-coverage request. Marker
+        // discovery is intentionally not part of core project loading, so use
+        // the marker route to ensure that lazy projection before reading the
+        // parse-error view it contributes to.
+        let _: serde_json::Value = client.get("/graph/markers/__coverage__").await?;
+        let (errors, coverage): (Vec<ParseErrorView>, Option<String>) = client
+            .get_with_header("/graph/parse-errors", "x-orgasmic-project-coverage")
+            .await?;
+        if let Some(coverage) = coverage.filter(|coverage| coverage.starts_with("partial;")) {
+            eprintln!("[warn] parse-error coverage is {coverage}");
+        }
         if errors.is_empty() {
             println!("0 parse errors");
             return Ok(());

@@ -191,6 +191,28 @@ export type ProjectIndex = {
   last_loaded_at?: string | null;
 };
 
+export type ProjectLoadState = 'unloaded' | 'loading' | 'ready' | 'failed';
+
+export type ProjectCatalogEntry = {
+  project_id: string;
+  root: string;
+  repo_url: string;
+  branch: string;
+  status: string;
+  load: {
+    state: ProjectLoadState;
+    generation: number;
+    last_attempt_at?: string | null;
+    last_loaded_at?: string | null;
+    error?: string | null;
+  };
+  task_stats?: {
+    total: number;
+    active: number;
+    done: number;
+  } | null;
+};
+
 export type DecisionSummary = {
   id: string;
   title: string;
@@ -251,8 +273,10 @@ export type DaemonStatus = {
   ui_asset_hash?: string;
   projects: number;
   registered_projects?: number;
-  /** Board-registered ids the index snapshot is missing (TASK-MRJRK). */
-  unindexed_projects?: string[];
+  unloaded_projects?: string[];
+  loading_projects?: string[];
+  ready_projects?: string[];
+  failed_projects?: Record<string, string>;
   parse_errors: number;
   tx_count: number;
   rebuilt_at?: string | null;
