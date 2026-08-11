@@ -370,6 +370,7 @@ pub(crate) struct TestRefreshGate {
 // orgasmic:TASK-K9WWM
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
 const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
+const MAX_CONSECUTIVE_STALE_DISCARDS: u32 = 5;
 const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -796,6 +797,8 @@ impl Index {
     }
 
     async fn run_refresh_worker(&self, target: RefreshTarget) {
+        let mut stale_batch = None;
+        let mut consecutive_stale_discards = 0_u32;
         loop {
             // Trailing-edge coalescing: a busy mutation batch gets one scan
             // after requests have been quiet for 50ms, rather than one scan per
@@ -901,17 +904,6 @@ impl Index {
                 .metrics
                 .max_scan_duration_ms
                 .fetch_max(duration_ms, Ordering::Relaxed);
-            if duration >= Duration::from_secs(1) {
-                warn!(
-                    target = target.label(),
-                    cause,
-                    queued,
-                    coalesced_total = self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
-                    duration_ms,
-                    "slow index refresh scan"
-                );
-            }
-
             // Publication may wait for the index write lock, but never while
             // holding the coordinator mutex. New targets and new generations
             // stay registerable while this target publishes.
@@ -930,17 +922,57 @@ impl Index {
             // retain every waiter and force another fresh generation. Errors,
             // by contrast, belong to the captured batch only; later arrivals
             // survive and converge on the next pass.
-            if result.is_ok() && state.required_generation != captured.required_generation {
+            let stale = result.is_ok() && state.required_generation != captured.required_generation;
+            let stale_discards_for_batch = if stale {
+                consecutive_stale_discards.saturating_add(1)
+            } else {
+                consecutive_stale_discards
+            };
+            if duration >= Duration::from_secs(1) {
+                warn!(
+                    target = target.label(),
+                    cause,
+                    queued,
+                    coalesced_total = self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
+                    stale_discards_for_batch,
+                    duration_ms,
+                    "slow index refresh scan"
+                );
+            }
+
+            if stale {
                 self.refresh
                     .metrics
                     .discarded_total
                     .fetch_add(1, Ordering::Relaxed);
+                consecutive_stale_discards = stale_discards_for_batch;
+                if stale_batch.is_none() {
+                    stale_batch = Some(captured);
+                }
+                if consecutive_stale_discards >= MAX_CONSECUTIVE_STALE_DISCARDS {
+                    let captured = stale_batch
+                        .take()
+                        .expect("a stale discard always retains its first captured batch");
+                    let error = format!(
+                        "index refresh remained stale for {consecutive_stale_discards} consecutive scans"
+                    );
+                    Self::settle_captured_error(state, captured, &error);
+                    warn!(
+                        target = target.label(),
+                        cause,
+                        stale_discards_for_batch = consecutive_stale_discards,
+                        "index refresh stopped waiting for an older committed batch after repeated stale projections"
+                    );
+                    consecutive_stale_discards = 0;
+                }
                 drop(coordinator);
                 continue;
             }
 
             match &result {
                 Ok(()) => {
+                    stale_batch = None;
+                    consecutive_stale_discards = 0;
                     for (tx_id, _) in captured.mutation_waiters {
                         if let Some(waiters) = state.mutation_waiters.remove(&tx_id) {
                             for waiter in waiters {
@@ -957,36 +989,9 @@ impl Index {
                     }
                 }
                 Err(error) => {
-                    for (tx_id, captured_count) in captured.mutation_waiters {
-                        let mut remove_entry = false;
-                        if let Some(waiters) = state.mutation_waiters.get_mut(&tx_id) {
-                            for waiter in waiters.drain(..captured_count.min(waiters.len())) {
-                                let _ = waiter.send(Err(error.clone()));
-                            }
-                            remove_entry = waiters.is_empty();
-                        }
-                        if remove_entry {
-                            state.mutation_waiters.remove(&tx_id);
-                        }
-                    }
-                    for waiter in state
-                        .explicit_waiters
-                        .drain(..captured.explicit_count.min(state.explicit_waiters.len()))
-                    {
-                        let _ = waiter.send(Err(error.clone()));
-                    }
-                    for waiter in state
-                        .watcher_waiters
-                        .drain(..captured.watcher_count.min(state.watcher_waiters.len()))
-                    {
-                        let _ = waiter.send(Err(error.clone()));
-                    }
-                    // `watcher_pending` was cleared when this batch was
-                    // captured. A watcher arriving during the failed scan set
-                    // it again and must remain pending for the next pass.
-                    if state.watcher_waiters.is_empty() {
-                        state.watcher_pending = false;
-                    }
+                    stale_batch = None;
+                    consecutive_stale_discards = 0;
+                    Self::settle_captured_error(state, captured, error);
                 }
             }
 
@@ -996,6 +1001,42 @@ impl Index {
             }
             state.running = false;
             break;
+        }
+    }
+
+    fn settle_captured_error(
+        state: &mut TargetRefreshState,
+        captured: CapturedRefresh,
+        error: &str,
+    ) {
+        for (tx_id, captured_count) in captured.mutation_waiters {
+            let mut remove_entry = false;
+            if let Some(waiters) = state.mutation_waiters.get_mut(&tx_id) {
+                for waiter in waiters.drain(..captured_count.min(waiters.len())) {
+                    let _ = waiter.send(Err(error.to_string()));
+                }
+                remove_entry = waiters.is_empty();
+            }
+            if remove_entry {
+                state.mutation_waiters.remove(&tx_id);
+            }
+        }
+        for waiter in state
+            .explicit_waiters
+            .drain(..captured.explicit_count.min(state.explicit_waiters.len()))
+        {
+            let _ = waiter.send(Err(error.to_string()));
+        }
+        for waiter in state
+            .watcher_waiters
+            .drain(..captured.watcher_count.min(state.watcher_waiters.len()))
+        {
+            let _ = waiter.send(Err(error.to_string()));
+        }
+        // `watcher_pending` was cleared when this batch was captured. A
+        // watcher arriving later must remain pending for the next pass.
+        if state.watcher_waiters.is_empty() {
+            state.watcher_pending = false;
         }
     }
 
@@ -1021,9 +1062,10 @@ impl Index {
 
     async fn build_refresh(&self, target: RefreshTarget) -> Result<BuiltRefresh, String> {
         // Move the bounded seed clone to the blocking pool too. A project
-        // acknowledgement clones only that project's last-good value and its
-        // tx/parse-error partition, never the entire multi-project snapshot on
-        // an async runtime worker.
+        // acknowledgement clones only that project's last-good value. The tx
+        // and parse-error partitions are private scan outputs, so seed them
+        // empty rather than cloning data that load_project immediately
+        // replaces.
         let seed = self.inner.clone().read_owned().await;
         let scan_index = self.clone();
         let built = tokio::task::spawn_blocking(move || match target {
@@ -1042,23 +1084,11 @@ impl Index {
                     projects: prior_project
                         .map(|project| HashMap::from([(project_id.clone(), project)]))
                         .unwrap_or_default(),
-                    tx: seed
-                        .tx
-                        .iter()
-                        .filter(|record| record.project_id.as_deref() == Some(project_id.as_str()))
-                        .cloned()
-                        .collect(),
-                    parse_errors: seed
-                        .parse_errors
-                        .iter()
-                        .filter(|error| is_under(&error.path, &board_entry.path))
-                        .cloned()
-                        .collect(),
+                    tx: Vec::new(),
+                    parse_errors: Vec::new(),
                     rebuilt_at: seed.rebuilt_at,
                 };
                 drop(seed);
-                next.parse_errors.clear();
-                next.tx.clear();
                 scan_index.load_project(&board_entry, &mut next, None);
                 let project = next.projects.remove(&project_id);
                 let tx = next
@@ -1079,26 +1109,13 @@ impl Index {
                 })))
             }
             RefreshTarget::HomeTx => {
-                let home_tx = scan_index.home.tx();
                 let mut next = IndexSnapshot {
-                    tx: seed
-                        .tx
-                        .iter()
-                        .filter(|record| record.project_id.is_none())
-                        .cloned()
-                        .collect(),
-                    parse_errors: seed
-                        .parse_errors
-                        .iter()
-                        .filter(|error| is_under(&error.path, &home_tx))
-                        .cloned()
-                        .collect(),
+                    tx: Vec::new(),
+                    parse_errors: Vec::new(),
                     rebuilt_at: seed.rebuilt_at,
                     ..IndexSnapshot::default()
                 };
                 drop(seed);
-                next.tx.clear();
-                next.parse_errors.clear();
                 scan_index.load_home_tx(&mut next);
                 Ok(BuiltRefresh::HomeTx {
                     tx: next
@@ -1369,6 +1386,12 @@ impl Index {
         )
         .await;
         let Some(repo_url) = repo_url else {
+            if !force {
+                self.repo_url_probed
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(&probe_key);
+            }
             return;
         };
         self.repo_url_probed
@@ -2830,6 +2853,45 @@ mod tests {
         .unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_registration_git_probe_can_retry_later() {
+        fn git(cwd: &Path, args: &[&str]) {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap()
+                .success());
+        }
+
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        git(&project, &["init", "--quiet"]);
+        let index = Index::new(home);
+        index.rebuild().await;
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+
+        // The repository exists but has no origin, so the first non-forced
+        // registration-path probe deterministically fails.
+        index.refresh_repo_url("project", &project, false).await;
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 1);
+        assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
+
+        let expected = "ssh://git@example.com/org/project.git";
+        git(&project, &["remote", "add", "origin", expected]);
+        index.refresh_repo_url("project", &project, false).await;
+
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
     }
 
     #[tokio::test]
@@ -4351,6 +4413,109 @@ The following criteria must hold before close.
         assert_eq!(status.discarded_total, 1, "{status:?}");
         assert_eq!(status.scans_total, 2, "{status:?}");
         assert!(index.snapshot().await.task("project", "TASK-002").is_some());
+    }
+
+    #[tokio::test]
+    async fn sustained_stale_generations_fail_older_batch_but_newer_waiters_converge() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.rebuild().await;
+
+        let gates = (0..=MAX_CONSECUTIVE_STALE_DISCARDS)
+            .map(|_| index.gate_next_refresh())
+            .collect::<Vec<_>>();
+        let older = {
+            let index = index.clone();
+            tokio::spawn(async move { index.refresh_after_tx("project", "tx-older").await })
+        };
+        let mut newer = Vec::new();
+        let backlog = project.join(".orgasmic/tasks/backlog.org");
+
+        for discard in 0..MAX_CONSECUTIVE_STALE_DISCARDS {
+            gates[discard as usize].entered.notified().await;
+            assert!(
+                !older.is_finished(),
+                "an older waiter must not be acknowledged from a stale projection"
+            );
+
+            let task_number = discard + 2;
+            let mut contents = std::fs::read_to_string(&backlog).unwrap();
+            contents.push_str(&format!(
+                "\n* BACKLOG TASK-{task_number:03} Later mutation\n:PROPERTIES:\n:ID: TASK-{task_number:03}\n:END:\n"
+            ));
+            write(&backlog, &contents);
+            let request = {
+                let index = index.clone();
+                tokio::spawn(async move {
+                    index
+                        .refresh_after_tx("project", &format!("tx-newer-{discard}"))
+                        .await
+                })
+            };
+            newer.push(request);
+            let expected_requests = u64::from(discard) + 2;
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while index.refresh_status().await.requests_total < expected_requests {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            gates[discard as usize].release.notify_one();
+        }
+
+        // The bounded discard settles only the first captured committed batch.
+        // The coordinator is detached and has already started a final scan for
+        // all arrivals that made the older projections stale.
+        gates[MAX_CONSECUTIVE_STALE_DISCARDS as usize]
+            .entered
+            .notified()
+            .await;
+        let error = tokio::time::timeout(Duration::from_secs(1), older)
+            .await
+            .expect("older committed waiter exceeded the bounded stale retry window")
+            .unwrap()
+            .expect_err("an older waiter must receive the committed refresh failure");
+        assert!(error.contains(&format!(
+            "remained stale for {MAX_CONSECUTIVE_STALE_DISCARDS} consecutive scans"
+        )));
+        assert!(
+            newer.iter().all(|request| !request.is_finished()),
+            "newer arrivals must stay queued while the detached coordinator converges"
+        );
+
+        gates[MAX_CONSECUTIVE_STALE_DISCARDS as usize]
+            .release
+            .notify_one();
+        for request in newer {
+            request.await.unwrap().unwrap();
+        }
+
+        let status = index.refresh_status().await;
+        eprintln!("TASK-K9WWM sustained stale metrics: older_error={error:?} {status:?}");
+        assert_eq!(
+            status.discarded_total,
+            u64::from(MAX_CONSECUTIVE_STALE_DISCARDS),
+            "{status:?}"
+        );
+        assert_eq!(
+            status.scans_total,
+            u64::from(MAX_CONSECUTIVE_STALE_DISCARDS) + 1,
+            "{status:?}"
+        );
+        assert_eq!(status.pending_targets, 0, "{status:?}");
+        let latest_task = format!("TASK-{:03}", MAX_CONSECUTIVE_STALE_DISCARDS + 1);
+        assert!(
+            index
+                .snapshot()
+                .await
+                .task("project", &latest_task)
+                .is_some(),
+            "the surviving waiters must observe the newest on-disk generation"
+        );
     }
 
     #[tokio::test]
