@@ -158,6 +158,10 @@ Examples:
 
 Filesystem project scans default to 5 seconds. ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS
 accepts whole seconds from 1 through 300; invalid or zero values use the default.
+Hand-run serve and detached auto-start inherit the value at process launch.
+Persistent launchd/systemd services capture it when daemon start, daemon restart,
+install, or update writes the service definition; rerun one of those commands
+after changing the value.
 
 Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/token")]
     Serve {
@@ -1110,7 +1114,8 @@ enum RecoveryCmd {
 enum DaemonCmd {
     /// Show local daemon process state without starting it.
     Status,
-    /// Start the local daemon in the background if it is not running.
+    /// Start the local daemon in the background if it is not running. Persistent
+    /// services capture ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS from this process.
     Start,
     /// Stop the local daemon process.
     Stop {
@@ -1118,7 +1123,8 @@ enum DaemonCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Stop and start the local daemon process.
+    /// Stop and start the local daemon process, recapturing the supported
+    /// project-scan timeout override for persistent services.
     Restart(DaemonRestartArgs),
 }
 

@@ -91,6 +91,14 @@ export function StatusView() {
             {status.data?.loading_projects?.length ? (
               <KeyValue label="Loading" value={status.data.loading_projects.join(', ')} />
             ) : null}
+            {status.data?.delayed_projects && Object.keys(status.data.delayed_projects).length > 0 ? (
+              <KeyValue
+                label="Delayed"
+                value={Object.entries(status.data.delayed_projects)
+                  .map(([id, error]) => `${id}: ${error}`)
+                  .join('; ')}
+              />
+            ) : null}
             {status.data?.failed_projects && Object.keys(status.data.failed_projects).length > 0 ? (
               <KeyValue
                 label="Failed"
