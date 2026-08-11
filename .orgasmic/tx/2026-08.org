@@ -29227,3 +29227,61 @@
 :REASON:       edited decision node dec_YYMSK
 :NODE_ID:      dec_YYMSK
 :END:
+
+* TX 2026-08-11 Tue 15:16:34 task.edited TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5753
+:TIME:         [2026-08-11 Tue 15:16:34]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-AJP4A
+:NODE_ID:      TASK-AJP4A
+:END:
+
+* TX 2026-08-11 Tue 15:16:35 task.property_updated TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5754
+:TIME:         [2026-08-11 Tue 15:16:35]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Manager plan found project-less API and catalog consumers across CLI and UI
+:READ_SCOPE:   crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs crates/orgasmic-cli/src ui/src/app/router.tsx ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/BoardView.tsx ui/src/components/TaskDialog.tsx ui/src/components/StatusView.tsx
+:WRITE_SCOPE:  crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs crates/orgasmic-daemon/tests crates/orgasmic-cli/src ui/src/app/router.tsx ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/BoardView.tsx ui/src/components/TaskDialog.tsx ui/src/components/StatusView.tsx ui/src/components/__tests__
+:END:
+
+* TX 2026-08-11 Tue 15:16:48 task.edited TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5755
+:TIME:         [2026-08-11 Tue 15:16:48]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-AJP4A
+:NODE_ID:      TASK-AJP4A
+:END:
+
+* TX 2026-08-11 Tue 15:16:48 task.state_transitioned TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5756
+:TIME:         [2026-08-11 Tue 15:16:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Manager plan complete; dispatching selected Codex tmux implementer
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
