@@ -29013,3 +29013,102 @@
 :TIER:         trivial
 :TRIGGERS:     none
 :END:
+
+* TX 2026-08-11 Tue 14:00:48 task.created TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5738
+:TIME:         [2026-08-11 Tue 14:00:48]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User requested nested subtask rendering in the Tasks list using the supplied ClickUp hierarchy as the interaction reference
+:END:
+
+* TX 2026-08-11 Tue 14:01:00 manager.tier TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5739
+:TIME:         [2026-08-11 Tue 14:01:00]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:REASON:       tier trivial; no trigger fired
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-11 Tue 14:01:05 task.state_transitioned TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5740
+:TIME:         [2026-08-11 Tue 14:01:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-J3JB0 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-11 Tue 14:10:09 task.property_updated TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5741
+:TIME:         [2026-08-11 Tue 14:10:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       update properties on TASK-J3JB0
+:WRITE_SCOPE:  ui/src/components/TasksPage.tsx,ui/src/components/taskTree.ts,ui/src/components/__tests__/TasksPage.test.tsx
+:END:
+
+* TX 2026-08-11 Tue 14:20:15 task.edited TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5742
+:TIME:         [2026-08-11 Tue 14:20:15]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-J3JB0
+:NODE_ID:      TASK-J3JB0
+:END:
+
+* TX 2026-08-11 Tue 14:20:39 task.edited TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5743
+:TIME:         [2026-08-11 Tue 14:20:39]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-J3JB0
+:NODE_ID:      TASK-J3JB0
+:END:
+
+* TX 2026-08-11 Tue 14:20:52 task.state_transitioned TASK-J3JB0
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5744
+:TIME:         [2026-08-11 Tue 14:20:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J3JB0
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Nested task hierarchy implemented and verified by focused/full UI gates, production build, live desktop/mobile rendering, and the complete repository build, clippy, and classified test suite
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

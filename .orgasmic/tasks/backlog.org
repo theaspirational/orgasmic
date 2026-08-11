@@ -5356,3 +5356,4 @@ Represent partial verification and recoverable worker output explicitly. A dispa
 - A resume command verifies the recorded commit and executes only missing authorized gates, then produces a truthful terminal record.
 - Repeated resume is idempotent and cannot promote an unreviewed or dirty tree.
 - Reproduce the two-pass, one-interrupted TASK-K9WWM shape and show recovery without ad-hoc process inspection or a replacement implementation dispatch.
+
