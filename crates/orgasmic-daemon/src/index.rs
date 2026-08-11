@@ -370,7 +370,6 @@ pub(crate) struct TestRefreshGate {
 // orgasmic:TASK-K9WWM
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
 const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
-const MAX_CONSECUTIVE_STALE_DISCARDS: u32 = 5;
 const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -797,8 +796,6 @@ impl Index {
     }
 
     async fn run_refresh_worker(&self, target: RefreshTarget) {
-        let mut stale_batch = None;
-        let mut consecutive_stale_discards = 0_u32;
         loop {
             // Trailing-edge coalescing: a busy mutation batch gets one scan
             // after requests have been quiet for 50ms, rather than one scan per
@@ -917,80 +914,44 @@ impl Index {
                 return;
             };
 
-            // A successful projection can acknowledge only if no required
-            // mutation registered before this acknowledgement. If one did,
-            // retain every waiter and force another fresh generation. Errors,
-            // by contrast, belong to the captured batch only; later arrivals
-            // survive and converge on the next pass.
-            let stale = result.is_ok() && state.required_generation != captured.required_generation;
-            let stale_discards_for_batch = if stale {
-                consecutive_stale_discards.saturating_add(1)
-            } else {
-                consecutive_stale_discards
-            };
+            // Every mutation in the captured batch committed before this scan
+            // began, so a successful publication covers that batch even when
+            // a newer required generation arrived during the scan. Settle only
+            // the captured batch and loop so distinct later arrivals receive a
+            // projection built after their own registration. Errors likewise
+            // belong only to the captured batch.
+            let superseded =
+                result.is_ok() && state.required_generation != captured.required_generation;
             if duration >= Duration::from_secs(1) {
                 warn!(
                     target = target.label(),
                     cause,
                     queued,
                     coalesced_total = self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
-                    stale_discards_for_batch,
+                    published_generation_superseded = superseded,
                     duration_ms,
                     "slow index refresh scan"
                 );
             }
 
-            if stale {
+            if superseded {
                 self.refresh
                     .metrics
                     .discarded_total
                     .fetch_add(1, Ordering::Relaxed);
-                consecutive_stale_discards = stale_discards_for_batch;
-                if stale_batch.is_none() {
-                    stale_batch = Some(captured);
-                }
-                if consecutive_stale_discards >= MAX_CONSECUTIVE_STALE_DISCARDS {
-                    let captured = stale_batch
-                        .take()
-                        .expect("a stale discard always retains its first captured batch");
-                    let error = format!(
-                        "index refresh remained stale for {consecutive_stale_discards} consecutive scans"
-                    );
-                    Self::settle_captured_error(state, captured, &error);
-                    warn!(
-                        target = target.label(),
-                        cause,
-                        stale_discards_for_batch = consecutive_stale_discards,
-                        "index refresh stopped waiting for an older committed batch after repeated stale projections"
-                    );
-                    consecutive_stale_discards = 0;
-                }
-                drop(coordinator);
-                continue;
+                tracing::debug!(
+                    target = target.label(),
+                    published_generation = captured.required_generation,
+                    required_generation = state.required_generation,
+                    "published index refresh covered captured batch; newer generation requires follow-up"
+                );
             }
 
             match &result {
                 Ok(()) => {
-                    stale_batch = None;
-                    consecutive_stale_discards = 0;
-                    for (tx_id, _) in captured.mutation_waiters {
-                        if let Some(waiters) = state.mutation_waiters.remove(&tx_id) {
-                            for waiter in waiters {
-                                let _ = waiter.send(Ok(()));
-                            }
-                        }
-                        state.remember_completed(tx_id);
-                    }
-                    for waiter in state.explicit_waiters.drain(..captured.explicit_count) {
-                        let _ = waiter.send(Ok(()));
-                    }
-                    for waiter in state.watcher_waiters.drain(..captured.watcher_count) {
-                        let _ = waiter.send(Ok(()));
-                    }
+                    Self::settle_captured_ok(state, captured);
                 }
                 Err(error) => {
-                    stale_batch = None;
-                    consecutive_stale_discards = 0;
                     Self::settle_captured_error(state, captured, error);
                 }
             }
@@ -1001,6 +962,37 @@ impl Index {
             }
             state.running = false;
             break;
+        }
+    }
+
+    fn settle_captured_ok(state: &mut TargetRefreshState, captured: CapturedRefresh) {
+        for (tx_id, _) in captured.mutation_waiters {
+            // A duplicate waiter for the same tx is covered by the same
+            // committed bytes even if it registered after capture. Distinct
+            // tx ids remain queued for the follow-up generation.
+            if let Some(waiters) = state.mutation_waiters.remove(&tx_id) {
+                for waiter in waiters {
+                    let _ = waiter.send(Ok(()));
+                }
+            }
+            state.remember_completed(tx_id);
+        }
+        for waiter in state
+            .explicit_waiters
+            .drain(..captured.explicit_count.min(state.explicit_waiters.len()))
+        {
+            let _ = waiter.send(Ok(()));
+        }
+        for waiter in state
+            .watcher_waiters
+            .drain(..captured.watcher_count.min(state.watcher_waiters.len()))
+        {
+            let _ = waiter.send(Ok(()));
+        }
+        // `watcher_pending` was cleared when this batch was captured. A
+        // watcher arriving later must remain pending for the next pass.
+        if state.watcher_waiters.is_empty() {
+            state.watcher_pending = false;
         }
     }
 
@@ -4416,7 +4408,7 @@ The following criteria must hold before close.
     }
 
     #[tokio::test]
-    async fn sustained_stale_generations_fail_older_batch_but_newer_waiters_converge() {
+    async fn covered_batch_is_acknowledged_while_later_arrivals_converge() {
         let (tmp, home) = make_home();
         let project = tmp.path().join("project");
         seed_project(&project);
@@ -4424,97 +4416,99 @@ The following criteria must hold before close.
         let index = Index::new(home);
         index.rebuild().await;
 
-        let gates = (0..=MAX_CONSECUTIVE_STALE_DISCARDS)
-            .map(|_| index.gate_next_refresh())
-            .collect::<Vec<_>>();
+        let backlog = project.join(".orgasmic/tasks/backlog.org");
+        let mut contents = std::fs::read_to_string(&backlog).unwrap();
+        contents
+            .push_str("\n* BACKLOG TASK-002 Older mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
+        write(&backlog, &contents);
+
+        let first_gate = index.gate_next_refresh();
+        let second_gate = index.gate_next_refresh();
         let older = {
             let index = index.clone();
             tokio::spawn(async move { index.refresh_after_tx("project", "tx-older").await })
         };
-        let mut newer = Vec::new();
-        let backlog = project.join(".orgasmic/tasks/backlog.org");
+        first_gate.entered.notified().await;
 
-        for discard in 0..MAX_CONSECUTIVE_STALE_DISCARDS {
-            gates[discard as usize].entered.notified().await;
-            assert!(
-                !older.is_finished(),
-                "an older waiter must not be acknowledged from a stale projection"
-            );
+        // A later waiter for the captured tx is covered by the same committed
+        // bytes. A distinct tx, explicit waiter, and watcher all remain queued
+        // for a projection built after their registration.
+        let duplicate = {
+            let index = index.clone();
+            tokio::spawn(async move { index.refresh_after_tx("project", "tx-older").await })
+        };
+        contents
+            .push_str("\n* BACKLOG TASK-003 Later mutation\n:PROPERTIES:\n:ID: TASK-003\n:END:\n");
+        write(&backlog, &contents);
+        let newer = {
+            let index = index.clone();
+            tokio::spawn(async move { index.refresh_after_tx("project", "tx-newer").await })
+        };
+        let explicit = {
+            let index = index.clone();
+            tokio::spawn(async move { index.refresh_project("project").await })
+        };
+        let watcher = {
+            let index = index.clone();
+            tokio::spawn(async move { index.schedule_watcher_refresh("project").await })
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while index.refresh_status().await.requests_total < 5 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
 
-            let task_number = discard + 2;
-            let mut contents = std::fs::read_to_string(&backlog).unwrap();
-            contents.push_str(&format!(
-                "\n* BACKLOG TASK-{task_number:03} Later mutation\n:PROPERTIES:\n:ID: TASK-{task_number:03}\n:END:\n"
-            ));
-            write(&backlog, &contents);
-            let request = {
-                let index = index.clone();
-                tokio::spawn(async move {
-                    index
-                        .refresh_after_tx("project", &format!("tx-newer-{discard}"))
-                        .await
-                })
-            };
-            newer.push(request);
-            let expected_requests = u64::from(discard) + 2;
-            tokio::time::timeout(Duration::from_secs(1), async {
-                while index.refresh_status().await.requests_total < expected_requests {
-                    tokio::task::yield_now().await;
-                }
-            })
+        first_gate.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), older)
             .await
-            .unwrap();
-            gates[discard as usize].release.notify_one();
-        }
-
-        // The bounded discard settles only the first captured committed batch.
-        // The coordinator is detached and has already started a final scan for
-        // all arrivals that made the older projections stale.
-        gates[MAX_CONSECUTIVE_STALE_DISCARDS as usize]
-            .entered
-            .notified()
-            .await;
-        let error = tokio::time::timeout(Duration::from_secs(1), older)
-            .await
-            .expect("older committed waiter exceeded the bounded stale retry window")
+            .expect("covered older waiter was not acknowledged after publication")
             .unwrap()
-            .expect_err("an older waiter must receive the committed refresh failure");
-        assert!(error.contains(&format!(
-            "remained stale for {MAX_CONSECUTIVE_STALE_DISCARDS} consecutive scans"
-        )));
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), duplicate)
+            .await
+            .expect("duplicate waiter for the covered tx was not acknowledged")
+            .unwrap()
+            .unwrap();
+
+        second_gate.entered.notified().await;
+        let first_projection = index.snapshot().await;
         assert!(
-            newer.iter().all(|request| !request.is_finished()),
-            "newer arrivals must stay queued while the detached coordinator converges"
+            first_projection.task("project", "TASK-002").is_some(),
+            "the first successful publication must expose the covered mutation"
+        );
+        assert!(
+            first_projection.task("project", "TASK-003").is_none(),
+            "the first projection must not claim the later mutation"
+        );
+        assert!(
+            !newer.is_finished(),
+            "the distinct later tx was over-acknowledged"
+        );
+        assert!(
+            !explicit.is_finished(),
+            "the later explicit waiter was over-acknowledged"
+        );
+        assert!(
+            !watcher.is_finished(),
+            "the later watcher waiter was over-acknowledged"
         );
 
-        gates[MAX_CONSECUTIVE_STALE_DISCARDS as usize]
-            .release
-            .notify_one();
-        for request in newer {
-            request.await.unwrap().unwrap();
-        }
+        second_gate.release.notify_one();
+        newer.await.unwrap().unwrap();
+        explicit.await.unwrap().unwrap();
+        watcher.await.unwrap().unwrap();
 
         let status = index.refresh_status().await;
-        eprintln!("TASK-K9WWM sustained stale metrics: older_error={error:?} {status:?}");
-        assert_eq!(
-            status.discarded_total,
-            u64::from(MAX_CONSECUTIVE_STALE_DISCARDS),
-            "{status:?}"
-        );
-        assert_eq!(
-            status.scans_total,
-            u64::from(MAX_CONSECUTIVE_STALE_DISCARDS) + 1,
-            "{status:?}"
-        );
+        eprintln!("TASK-K9WWM covered-batch metrics: {status:?}");
+        assert_eq!(status.discarded_total, 1, "{status:?}");
+        assert_eq!(status.scans_total, 2, "{status:?}");
+        assert_eq!(status.coalesced_total, 4, "{status:?}");
         assert_eq!(status.pending_targets, 0, "{status:?}");
-        let latest_task = format!("TASK-{:03}", MAX_CONSECUTIVE_STALE_DISCARDS + 1);
         assert!(
-            index
-                .snapshot()
-                .await
-                .task("project", &latest_task)
-                .is_some(),
-            "the surviving waiters must observe the newest on-disk generation"
+            index.snapshot().await.task("project", "TASK-003").is_some(),
+            "the follow-up publication must expose the later mutation"
         );
     }
 
