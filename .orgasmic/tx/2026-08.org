@@ -28867,3 +28867,149 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-11 Tue 13:48:32 task.created TASK-79VKP
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5727
+:TIME:         [2026-08-11 Tue 13:48:32]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Group the actionable issues measured in the TASK-K9WWM friction inventory and expose genuine ownership gaps
+:END:
+
+* TX 2026-08-11 Tue 13:48:58 task.created TASK-79VKP.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5728
+:TIME:         [2026-08-11 Tue 13:48:58]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       No backlog task owns the repeated entry, project-context, and prompt-compilation cost measured across nine workers
+:END:
+
+* TX 2026-08-11 Tue 13:49:16 task.created TASK-79VKP.2
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5729
+:TIME:         [2026-08-11 Tue 13:49:16]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       No backlog task owns the full worker lifecycle imposed on a one-file test-contract correction after production review
+:END:
+
+* TX 2026-08-11 Tue 13:49:33 task.created TASK-79VKP.3
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5730
+:TIME:         [2026-08-11 Tue 13:49:33]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Existing tasks own atomic close and missing-review diagnostics, but no task owns the repeated manual handoff sequence
+:END:
+
+* TX 2026-08-11 Tue 13:49:52 task.created TASK-79VKP.4
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5731
+:TIME:         [2026-08-11 Tue 13:49:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.4
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Existing tasks own warning dedup and incorrect advice, but no task owns repeated reclaimable-worktree inventory noise on every status poll
+:END:
+
+* TX 2026-08-11 Tue 13:50:08 task.created TASK-79VKP.5
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5732
+:TIME:         [2026-08-11 Tue 13:50:08]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Existing verification tasks own coverage and host safety, but none owns safe reuse of worker gates by the manager
+:END:
+
+* TX 2026-08-11 Tue 13:50:28 task.created TASK-79VKP.6
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5733
+:TIME:         [2026-08-11 Tue 13:50:28]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-3X5AQ proves shared target directories unsound, but no implementation task owns safe cache reuse and bounded per-worktree build storage
+:END:
+
+* TX 2026-08-11 Tue 13:50:47 task.created TASK-79VKP.7
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5734
+:TIME:         [2026-08-11 Tue 13:50:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP.7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       No backlog task owns recovery from command-host interruption when a worker preserved a clean commit and partial gate evidence
+:END:
+
+* TX 2026-08-11 Tue 13:51:23 task.property_updated TASK-79VKP
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5735
+:TIME:         [2026-08-11 Tue 13:51:23]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Aggregate new gap owners and the existing dispatch-record discoverability owner under the friction umbrella
+:DEPENDS_ON:   TASK-79VKP.1 TASK-79VKP.2 TASK-79VKP.3 TASK-79VKP.4 TASK-79VKP.5 TASK-79VKP.6 TASK-79VKP.7 TASK-A1KJW
+:END:
+
+* TX 2026-08-11 Tue 13:51:45 task.edited TASK-79VKP
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5736
+:TIME:         [2026-08-11 Tue 13:51:45]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-79VKP
+:NODE_ID:      TASK-79VKP
+:END:
+
+* TX 2026-08-11 Tue 13:52:09 manager.tier TASK-79VKP
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5737
+:TIME:         [2026-08-11 Tue 13:52:09]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-79VKP
+:REASON:       Graph-only backlog reconciliation through daemon CLI; no tracked source implementation
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
