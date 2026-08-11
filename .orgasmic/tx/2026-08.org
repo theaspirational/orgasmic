@@ -29470,3 +29470,72 @@
 :MODEL_OVERRIDE: opus-5
 :EFFORT_OVERRIDE: medium
 :END:
+
+* TX 2026-08-11 Tue 17:48:04 manager.dispatch_aborted TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5766
+:TIME:         [2026-08-11 Tue 17:48:04]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:REASON:       Claude CLI rejected exact model opus-5 as unavailable; retrying with supported Opus alias
+:CLOSED_TX:    tx-20260811-orgasmic-5764
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a-review
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5764/last.txt
+:END:
+
+* TX 2026-08-11 Tue 17:48:12 manager.dispatch_started TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5767
+:TIME:         [2026-08-11 Tue 17:48:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:REASON:
+:KIND:         reviewer
+:MODE:         tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a-review
+:BRANCH:       task-ajp4a-lazy-index-review-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review.org
+:STARTED_AT:   [2026-08-11 Tue 17:48:12]
+:LIVENESS:     c8237ccb2d13a88efc1dbfeccd1270f8b96a8866
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        opus
+:EFFORT:       medium
+:REASON_INITIAL: Exact opus-5 ID unavailable; retry with Claude Opus alias at operator-selected medium effort
+:END:
+
+* TX 2026-08-11 Tue 17:48:12 run.created TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5768
+:TIME:         [2026-08-11 Tue 17:48:12]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-AJP4A-reviewer-20260811T174812.jsonl
+:REASON:       Exact opus-5 ID unavailable; retry with Claude Opus alias at operator-selected medium effort
+:RUN_ID:       run-20260811T174812-0a4693adb1f04afc8a00100964cf3493
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-tmux
+:KIND:         reviewer
+:DRIVER:       tmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review.org
+:LAST_PATH:    .orgasmic/tmp/dispatch/review/review-f07c90e62c9c4e5281fc3174760123bf-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/review/review-f07c90e62c9c4e5281fc3174760123bf-stdout.log
+:DISPATCH_ATTEMPT: f07c90e62c9c4e5281fc3174760123bf
+:DISPATCH_TX:  tx-20260811-orgasmic-5767
+:MODEL_OVERRIDE: opus
+:EFFORT_OVERRIDE: medium
+:END:
