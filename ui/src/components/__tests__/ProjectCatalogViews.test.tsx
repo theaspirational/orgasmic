@@ -122,4 +122,24 @@ describe('catalog-driven project discovery', () => {
     expect(screen.getByText('4 active')).toBeInTheDocument();
     expect(screen.getByText('3 done')).toBeInTheDocument();
   });
+
+  it('uses destructive diagnostics only for genuine project load failures', async () => {
+    mocks.fetchProjects.mockResolvedValue([
+      project('proj-delayed', 'delayed', {
+        load: { state: 'delayed', generation: 0, error: 'queued behind slow scans' },
+      }),
+      project('proj-ready', 'ready', {
+        load: { state: 'ready', generation: 1, error: 'last refresh was delayed' },
+      }),
+      project('proj-failed', 'failed', {
+        load: { state: 'failed', generation: 0, error: 'permission denied' },
+      }),
+    ]);
+
+    render(<BoardView onSelectProject={mocks.onSelectProject} />);
+
+    expect(await screen.findByText('queued behind slow scans')).toHaveClass('text-muted-foreground');
+    expect(screen.getByText('last refresh was delayed')).toHaveClass('text-muted-foreground');
+    expect(screen.getByText('permission denied')).toHaveClass('text-destructive');
+  });
 });

@@ -2558,6 +2558,7 @@ async fn get_tx(
     };
     drop(catalog);
     let mut covered_projects = BTreeSet::new();
+    let mut delayed_projects = BTreeSet::new();
     let mut failures = BTreeMap::new();
     for project_id in requested_projects {
         let loaded = if scoped {
@@ -2578,7 +2579,14 @@ async fn get_tx(
                 )));
             }
             Err(error) => {
-                failures.insert(project_id, error);
+                let snap = state.index.snapshot().await;
+                record_tx_coverage_error(
+                    &snap,
+                    project_id,
+                    error,
+                    &mut delayed_projects,
+                    &mut failures,
+                );
             }
         }
     }
@@ -2600,16 +2608,7 @@ async fn get_tx(
             items = items.into_iter().skip(skip).collect();
         }
     }
-    let coverage = format!(
-        "{}; loaded=[{}]; failed=[{}]",
-        if failures.is_empty() {
-            "complete"
-        } else {
-            "partial"
-        },
-        coverage_project_ids(&covered_projects.iter().cloned().collect::<Vec<_>>()),
-        coverage_project_ids(&failures.keys().cloned().collect::<Vec<_>>()),
-    );
+    let coverage = tx_coverage_header(&covered_projects, &delayed_projects, &failures);
     let mut response = Json(items).into_response();
     response.headers_mut().insert(
         "x-orgasmic-project-coverage",
@@ -2617,6 +2616,50 @@ async fn get_tx(
             .unwrap_or_else(|_| HeaderValue::from_static("partial; invalid-project-id")),
     );
     Ok(response)
+}
+
+fn record_tx_coverage_error(
+    snap: &IndexSnapshot,
+    project_id: String,
+    error: String,
+    delayed_projects: &mut BTreeSet<String>,
+    failures: &mut BTreeMap<String, String>,
+) {
+    if snap
+        .project_loads
+        .get(&project_id)
+        .is_some_and(|load| load.state == ProjectLoadState::Delayed)
+    {
+        delayed_projects.insert(project_id);
+    } else {
+        failures.insert(project_id, error);
+    }
+}
+
+fn tx_coverage_header(
+    covered_projects: &BTreeSet<String>,
+    delayed_projects: &BTreeSet<String>,
+    failures: &BTreeMap<String, String>,
+) -> String {
+    let delayed_segment = if delayed_projects.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; delayed=[{}]",
+            coverage_project_ids(&delayed_projects.iter().cloned().collect::<Vec<_>>())
+        )
+    };
+    format!(
+        "{}; loaded=[{}]{}; failed=[{}]",
+        if delayed_projects.is_empty() && failures.is_empty() {
+            "complete"
+        } else {
+            "partial"
+        },
+        coverage_project_ids(&covered_projects.iter().cloned().collect::<Vec<_>>()),
+        delayed_segment,
+        coverage_project_ids(&failures.keys().cloned().collect::<Vec<_>>()),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -30110,6 +30153,63 @@ pub(crate) mod tests {
         assert!(
             state.index.refresh_status().await.scans_total > scans_after_failure,
             "explicit reindex must execute a real scan"
+        );
+    }
+
+    #[test]
+    fn tx_coverage_separates_delay_from_failure_and_preserves_empty_shape() {
+        let mut snap = IndexSnapshot::default();
+        snap.project_loads.insert(
+            "queued".to_string(),
+            crate::index::ProjectLoadStatus {
+                state: ProjectLoadState::Delayed,
+                ..crate::index::ProjectLoadStatus::default()
+            },
+        );
+        snap.project_loads.insert(
+            "broken".to_string(),
+            crate::index::ProjectLoadStatus {
+                state: ProjectLoadState::Failed,
+                ..crate::index::ProjectLoadStatus::default()
+            },
+        );
+        let mut delayed = BTreeSet::new();
+        let mut failures = BTreeMap::new();
+
+        record_tx_coverage_error(
+            &snap,
+            "queued".to_string(),
+            "coordinator wait timed out".to_string(),
+            &mut delayed,
+            &mut failures,
+        );
+        record_tx_coverage_error(
+            &snap,
+            "broken".to_string(),
+            "permission denied".to_string(),
+            &mut delayed,
+            &mut failures,
+        );
+
+        assert_eq!(delayed, BTreeSet::from(["queued".to_string()]));
+        assert_eq!(
+            failures,
+            BTreeMap::from([("broken".to_string(), "permission denied".to_string())])
+        );
+        assert_eq!(
+            tx_coverage_header(&BTreeSet::new(), &delayed, &failures),
+            "partial; loaded=[]; delayed=[queued]; failed=[broken]"
+        );
+        assert_eq!(
+            tx_coverage_header(&BTreeSet::new(), &BTreeSet::new(), &BTreeMap::new()),
+            "complete; loaded=[]; failed=[]",
+            "empty delayed coverage must preserve the established wire shape"
+        );
+
+        let encoded_delay = BTreeSet::from(["proj-é".to_string()]);
+        assert_eq!(
+            tx_coverage_header(&BTreeSet::new(), &encoded_delay, &BTreeMap::new()),
+            "partial; loaded=[]; delayed=[proj-%C3%A9]; failed=[]"
         );
     }
 

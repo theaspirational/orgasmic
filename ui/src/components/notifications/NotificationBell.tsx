@@ -65,11 +65,25 @@ function parseErrorKey(error: ParseError): string {
   return `${error.path}:${error.line ?? ''}:${error.at}`;
 }
 
+function txCoverageProjectIds(detail: string | null, segment: 'delayed' | 'failed'): string[] {
+  const encoded = detail?.match(new RegExp(`(?:^|;\\s*)${segment}=\\[([^\\]]*)\\]`))?.[1];
+  if (encoded == null) return [];
+  return encoded
+    .split(',')
+    .map((projectId) => projectId.trim())
+    .filter(Boolean)
+    .map((projectId) => {
+      try {
+        return decodeURIComponent(projectId);
+      } catch {
+        return projectId;
+      }
+    });
+}
+
 function txCoverageDismissalKey(detail: string | null): string {
-  const failed = detail?.match(/(?:^|;\s*)failed=\[([^\]]*)\]/)?.[1];
-  const failedSet = failed == null
-    ? 'unknown'
-    : failed.split(',').map((projectId) => projectId.trim()).filter(Boolean).sort().join(',');
+  const failed = txCoverageProjectIds(detail, 'failed');
+  const failedSet = failed.length === 0 ? 'unknown' : failed.sort().join(',');
   return `tx-coverage-partial:${failedSet}`;
 }
 
@@ -138,12 +152,29 @@ export function NotificationBell({
   const sections = useMemo<NotificationSections>(() => {
     const coverage: NotificationRow[] = [];
     if (tx.data?.coverage.state === 'partial') {
+      const delayedProjects = txCoverageProjectIds(tx.data.coverage.detail, 'delayed');
+      const failedProjects = txCoverageProjectIds(tx.data.coverage.detail, 'failed');
+      if (delayedProjects.length > 0) {
+        coverage.push({
+          key: `tx-coverage-delayed:${delayedProjects.slice().sort().join(',')}`,
+          title: 'Activity loading is delayed',
+          detail: `Coordinator capacity delayed: ${delayedProjects.join(', ')}. This does not diagnose project paths.`,
+          actionLabel: 'View status',
+          onAction: () => {
+            onNavigate('status');
+            setOpen(false);
+          },
+        });
+      }
+      const hasLegacyPartial = delayedProjects.length === 0 && failedProjects.length === 0;
       const dismissalKey = txCoverageDismissalKey(tx.data.coverage.detail);
-      if (!dismissed.has(dismissalKey)) {
+      if ((failedProjects.length > 0 || hasLegacyPartial) && !dismissed.has(dismissalKey)) {
         coverage.push({
           key: dismissalKey,
           title: 'Activity coverage is partial',
-          detail: tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
+          detail: failedProjects.length > 0
+            ? `Failed project ledgers: ${failedProjects.join(', ')}.`
+            : tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
           actionLabel: 'View status',
           onAction: () => {
             onNavigate('status');

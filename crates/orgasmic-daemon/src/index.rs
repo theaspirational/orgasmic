@@ -654,7 +654,10 @@ impl Default for RefreshCoordinator {
 }
 
 impl RefreshCoordinator {
-    fn begin_blocking_scan(&self, target: &RefreshTarget) -> Result<u64, String> {
+    fn begin_blocking_scan(
+        self: &Arc<Self>,
+        target: &RefreshTarget,
+    ) -> Result<BlockingScanCompletion, String> {
         let mut targets = self
             .blocking_scans
             .targets
@@ -683,7 +686,11 @@ impl RefreshCoordinator {
                 timed_out: false,
             },
         );
-        Ok(token)
+        Ok(BlockingScanCompletion {
+            coordinator: self.clone(),
+            target: target.clone(),
+            token,
+        })
     }
 
     fn mark_blocking_scan_timed_out(&self, target: &RefreshTarget, token: u64) {
@@ -1618,9 +1625,10 @@ impl Index {
                 None
             };
             let started = Instant::now();
-            let blocking_token = self.refresh.begin_blocking_scan(&target);
-            let (built, scanned) = match blocking_token {
-                Ok(blocking_token) => {
+            let blocking_scan = self.refresh.begin_blocking_scan(&target);
+            let (built, scanned) = match blocking_scan {
+                Ok(completion) => {
+                    let blocking_token = completion.token;
                     self.refresh
                         .metrics
                         .in_flight_targets
@@ -1633,7 +1641,7 @@ impl Index {
                     self.note_test_scan_started(&target);
                     let built = match tokio::time::timeout(
                         scan_timeout,
-                        self.build_refresh(target.clone(), blocking_token),
+                        self.build_refresh(target.clone(), completion),
                     )
                     .await
                     {
@@ -1902,7 +1910,7 @@ impl Index {
     async fn build_refresh(
         &self,
         target: RefreshTarget,
-        blocking_token: u64,
+        completion: BlockingScanCompletion,
     ) -> Result<BuiltRefresh, String> {
         // Capture every required value into owned data inside this lexical
         // scope. The read guard is dropped before `RefreshSeed` can enter the
@@ -1973,11 +1981,6 @@ impl Index {
         let target_label = target.label();
         #[cfg(test)]
         let blocking_target_label = target_label.clone();
-        let completion = BlockingScanCompletion {
-            coordinator: self.refresh.clone(),
-            target: target.clone(),
-            token: blocking_token,
-        };
         let blocking_scan = move || match scan_seed {
             RefreshSeed::Project {
                 project_id,
@@ -3937,7 +3940,7 @@ mod tests {
         seed_board(&home, &project, "project");
         let index = Index::new(home);
         index.bootstrap_catalog().await;
-        index.set_refresh_timeout(Duration::from_millis(800));
+        index.set_refresh_timeout(Duration::from_secs(5));
         let first_gate = index.gate_next_refresh_for("project");
 
         let first = {
@@ -3987,6 +3990,64 @@ mod tests {
         assert_eq!(status.requests_total, 2, "{status:?}");
         assert_eq!(status.scans_total, 1, "{status:?}");
         assert_eq!(status.coalesced_total, 1, "{status:?}");
+    }
+
+    #[tokio::test]
+    async fn production_refresh_seed_failures_release_same_target_registration() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+
+        let cases = [
+            (
+                RefreshTarget::Project("unknown".to_string()),
+                "unknown project unknown",
+            ),
+            (
+                RefreshTarget::Markers("unknown".to_string()),
+                "unknown project unknown",
+            ),
+            (
+                RefreshTarget::Markers("project".to_string()),
+                "project project is not loaded",
+            ),
+            (
+                RefreshTarget::Artifacts("unknown".to_string()),
+                "unknown project unknown",
+            ),
+            (
+                RefreshTarget::Artifacts("project".to_string()),
+                "project project is not loaded",
+            ),
+        ];
+
+        for (target, expected) in cases {
+            for attempt in 1..=2 {
+                let error = tokio::time::timeout(
+                    Duration::from_secs(1),
+                    index.request_project_load(target.clone()),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("attempt {attempt} for {} hung", target.label()))
+                .expect_err("seed capture should reject this target")
+                .into_message();
+                assert_eq!(error, expected, "attempt {attempt} for {}", target.label());
+                assert!(
+                    !error.contains("filesystem scan still running"),
+                    "attempt {attempt} for {} retained its blocking registration: {error}",
+                    target.label()
+                );
+            }
+        }
+
+        assert_eq!(
+            index.refresh_status().await.scans_total,
+            10,
+            "each immediate retry must enter the production scan path"
+        );
     }
 
     #[test]
