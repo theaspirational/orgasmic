@@ -27646,3 +27646,61 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-11 Tue 06:20:16 task.created TASK-8H8A2
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5662
+:TIME:         [2026-08-11 Tue 06:20:16]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8H8A2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Operator chose zero automatic hosted compute while retaining manual soak coverage
+:END:
+
+* TX 2026-08-11 Tue 06:20:23 manager.tier TASK-8H8A2
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5663
+:TIME:         [2026-08-11 Tue 06:20:23]
+:TYPE:         manager.tier
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8H8A2
+:REASON:       P2 one-file workflow trigger edit; no blast-radius, breadth, or coupling trigger
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-11 Tue 06:20:23 task.state_transitioned TASK-8H8A2
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5664
+:TIME:         [2026-08-11 Tue 06:20:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8H8A2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Implement approved manual-only soak trigger through a PR
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-11 Tue 06:21:32 task.state_transitioned TASK-8H8A2
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5665
+:TIME:         [2026-08-11 Tue 06:21:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8H8A2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Removed the daily cron while preserving manual soak execution; Actionlint, YAML parse, Bash syntax, and ShellCheck green
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

@@ -1,37 +1,27 @@
 # orgasmic:TASK-WE0Q7
 #
-# The scheduled minutes-scale daemon soak — the only gate in this repository
+# The manual minutes-scale daemon soak — the only gate in this repository
 # that runs a daemon for longer than about ten seconds.
 #
-# WHY `schedule:` AND NOT `workflow_dispatch:` ALONE
-# --------------------------------------------------
-# Every other nightly here is dispatch-only, driven by hand or by an external
-# trigger. That is fine for a publish job: nobody forgets to publish. It is
-# useless for a blindspot gate — a soak that only runs when someone remembers
-# to run it is the same blindspot with extra steps (TASK-WE0Q7). So this one
-# carries a real cron, and `workflow_dispatch` on top for on-demand runs.
-#
-# GitHub disables scheduled workflows in a repository with no activity for 60
-# days and emails the owner; a repo this active will not hit that, but if the
-# soak ever goes quiet for weeks, that is the first thing to check.
+# WHY `workflow_dispatch:` ALONE
+# ------------------------------
+# Hosted-compute elimination is the operator priority (TASK-8H8A2). The soak
+# remains available on demand for daemon lifecycle changes and stable-release
+# preparation, but GitHub must not spend runner time merely because a day passed.
 #
 # The operator machine could run the same script from a launchd interval — the
 # script is self-contained and takes no arguments — but installing a LaunchAgent
 # is exactly the kind of machine-level side effect this task's own safety rules
-# forbid the work from doing on its own. CI carries the schedule; the local
-# option stays a deliberate operator choice.
+# forbid the work from doing on its own. Local or GitHub execution therefore
+# stays a deliberate operator choice.
 #
 # ubuntu-latest, not macOS: the class this watches (tokio timers, shutdown
 # budgets, watcher loops, fd/handle accumulation) is not platform-specific, and
 # a daily macOS runner costs 10x the minutes for the same signal.
 
-name: Nightly daemon soak
+name: Daemon soak (manual)
 
 on:
-  schedule:
-    # 09:20 UTC daily. Off the hour on purpose: GitHub's scheduler queues
-    # heavily at :00 and a soak that starts late is a soak that reports late.
-    - cron: "20 9 * * *"
   workflow_dispatch:
     inputs:
       duration_seconds:
