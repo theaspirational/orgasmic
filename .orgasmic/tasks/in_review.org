@@ -1,25 +1,3 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-AJP4A.1.1 Close residual lazy-load availability gaps
-:PROPERTIES:
-:ID: TASK-AJP4A.1.1
-:PRIORITY: P1
-:READ_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src,crates/orgasmic-daemon/tests,ui/src
-:TEST_CMD: cargo test -p orgasmic-daemon --lib -- --test-threads=1 && npm --prefix ui test -- --run
-:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs,crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/src,crates/orgasmic-daemon/tests,ui/src
-:FIX_SUBTASK: t
-:END:
-
-** Description
-Close the residual availability and correctness gaps identified by the independent review of TASK-AJP4A.1 while preserving eager catalog plus lazy per-project loading.
-
-** Acceptance Criteria
-- [ ] A healthy project queued behind multiple timed-out scans cannot exhaust a fixed coordinator budget before its own bounded scan runs, and queue-delay errors never falsely blame that project path or macOS permissions.
-- [ ] Timed-out spawn_blocking scans cannot accumulate one new uncancellable thread per retry; per-target stale work is guarded and observable until it actually exits.
-- [ ] Full marker coverage attempts every authorized project, returns successful coverage plus per-project failures, and status/UI surface partial outcomes rather than aborting on the first bad project.
-- [ ] Unscoped transaction aggregation cannot lose every project because one load fails; partial coverage is explicit to consumers.
-- [ ] Blocked task counts use unresolved dependency state rather than mere depends_on presence, including satisfied and missing dependency tests.
-- [ ] A partial whole-board reindex produces a non-zero CLI outcome while retaining its useful per-project JSON result.
-- [ ] Scan timeout has an explicit supported override for legitimately large or cold repositories without making requests unbounded.
-- [ ] Focused Rust/UI tests, format, build, clippy, and aggregate gates are run and reported honestly.
