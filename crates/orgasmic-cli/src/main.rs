@@ -2399,7 +2399,7 @@ fn cmd_status_errors(home: &Home) -> Result<()> {
         // discovery is intentionally not part of core project loading, so use
         // the marker route to ensure that lazy projection before reading the
         // parse-error view it contributes to.
-        let _: serde_json::Value = client.get("/graph/markers/__coverage__").await?;
+        let _: serde_json::Value = client.get_full_board("/graph/markers/__coverage__").await?;
         let (errors, coverage): (Vec<ParseErrorView>, Option<String>) = client
             .get_with_header("/graph/parse-errors", "x-orgasmic-project-coverage")
             .await?;
@@ -2438,7 +2438,9 @@ fn cmd_reindex(home: &Home, project: Option<&str>) -> Result<()> {
             Some(id) => format!("/reindex/{}", daemon_client::path_segment(id)),
             None => "/reindex".to_string(),
         };
-        let value: serde_json::Value = client.post_json(&path, &serde_json::json!({})).await?;
+        let value: serde_json::Value = client
+            .post_full_board_json(&path, &serde_json::json!({}))
+            .await?;
         println!("{}", serde_json::to_string_pretty(&value)?);
         Ok::<(), anyhow::Error>(())
     })

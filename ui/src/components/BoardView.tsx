@@ -144,6 +144,11 @@ export function BoardView({
                         {s.active} active
                       </Badge>
                     ) : null}
+                    {s && s.blocked > 0 ? (
+                      <Badge variant="destructive" className="font-mono text-[10px]">
+                        {s.blocked} blocked
+                      </Badge>
+                    ) : null}
                     {s && s.done > 0 ? (
                       <Badge variant="secondary" className="font-mono text-[10px]">
                         {s.done} done

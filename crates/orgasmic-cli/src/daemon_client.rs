@@ -29,6 +29,10 @@ const DEFAULT_DISPATCH_REQUEST_TIMEOUT_SECS: u64 = 30;
 /// progressing. Keep a full ten seconds of response/scheduling margin beyond
 /// the daemon-owned budget.
 const DEFAULT_RUN_RELEASE_REQUEST_TIMEOUT_SECS: u64 = 30;
+/// Explicit whole-board marker/reindex operations deliberately traverse every
+/// registered project. Their client budget must outlast the generic 10-second
+/// request window without making unrelated commands equally patient.
+const DEFAULT_FULL_BOARD_REQUEST_TIMEOUT_SECS: u64 = 300;
 const API_PREFIX: &str = "/api";
 const DAEMON_URL_ENV: &str = "ORGASMIC_DAEMON_URL";
 const DAEMON_TOKEN_ENV: &str = "ORGASMIC_DAEMON_TOKEN";
@@ -96,6 +100,12 @@ impl DaemonClient {
         send_json_with_header(self.bearer(req), self.timeout, header).await
     }
 
+    pub(crate) async fn get_full_board<R: DeserializeOwned>(&self, path: &str) -> Result<R> {
+        let timeout = std::time::Duration::from_secs(DEFAULT_FULL_BOARD_REQUEST_TIMEOUT_SECS);
+        let req = self.client.get(self.url(path)).timeout(timeout);
+        send_json(self.bearer(req), timeout).await
+    }
+
     pub async fn post_json<B: Serialize + ?Sized, R: DeserializeOwned>(
         &self,
         path: &str,
@@ -103,6 +113,16 @@ impl DaemonClient {
     ) -> Result<R> {
         let req = self.client.post(self.url(path)).json(body);
         send_json(self.bearer(req), self.timeout).await
+    }
+
+    pub(crate) async fn post_full_board_json<B: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R> {
+        let timeout = std::time::Duration::from_secs(DEFAULT_FULL_BOARD_REQUEST_TIMEOUT_SECS);
+        let req = self.client.post(self.url(path)).timeout(timeout).json(body);
+        send_json(self.bearer(req), timeout).await
     }
 
     pub(crate) async fn post_run_release<B: Serialize + ?Sized, R: DeserializeOwned>(
@@ -730,6 +750,12 @@ mod tests {
                 > orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT,
             "the client must not time out while a valid release can still be finalizing"
         );
+    }
+
+    #[test]
+    fn full_board_timeout_is_deliberate_and_does_not_change_the_generic_budget() {
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT_SECS, 10);
+        assert_eq!(DEFAULT_FULL_BOARD_REQUEST_TIMEOUT_SECS, 300);
     }
 
     #[test]

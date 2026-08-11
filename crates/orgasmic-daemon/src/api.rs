@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Extension, MatchedPath, Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -853,7 +853,8 @@ pub fn router(state: ApiState) -> Router {
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
-                .allow_headers(Any),
+                .allow_headers(Any)
+                .expose_headers([HeaderName::from_static("x-orgasmic-project-coverage")]),
         )
 }
 
@@ -2539,6 +2540,7 @@ async fn get_tx(
     Query(q): Query<TxQuery>,
 ) -> Result<Json<Vec<crate::index::TxRecord>>, ApiError> {
     let catalog = state.index.snapshot().await;
+    let include_home_tx = q.project.is_none() && matches!(identity, Identity::Admin);
     let covered_projects = if let Some(project_id) = q.project.as_deref() {
         let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
         authz::require(&identity, Some(&project_id), Action::TasksRead)?;
@@ -2572,7 +2574,7 @@ async fn get_tx(
             r.project_id
                 .as_ref()
                 .is_some_and(|project_id| covered_projects.contains(project_id))
-                || (r.project_id.is_none() && matches!(identity, Identity::Admin))
+                || (r.project_id.is_none() && include_home_tx)
         })
         .collect();
     items.sort_by(|a, b| a.entry.time.cmp(&b.entry.time));
@@ -13421,17 +13423,36 @@ async fn get_parse_errors(State(state): State<ApiState>) -> Response {
         snap.board.len(),
         marker_ready.len(),
         snap.board.len(),
-        unloaded.join(","),
-        marker_unloaded.join(","),
-        loading.join(","),
-        failed.join(","),
+        coverage_project_ids(&unloaded),
+        coverage_project_ids(&marker_unloaded),
+        coverage_project_ids(&loading),
+        coverage_project_ids(&failed),
     );
     let mut response = Json(parse_error_views(&snap)).into_response();
-    response.headers_mut().insert(
-        "x-orgasmic-project-coverage",
-        HeaderValue::from_str(&coverage).expect("catalog project ids form a valid header"),
-    );
+    let coverage = HeaderValue::from_str(&coverage)
+        .unwrap_or_else(|_| HeaderValue::from_static("partial; invalid-project-id"));
     response
+        .headers_mut()
+        .insert("x-orgasmic-project-coverage", coverage);
+    response
+}
+
+fn coverage_project_ids(project_ids: &[String]) -> String {
+    project_ids
+        .iter()
+        .map(|project_id| {
+            let mut encoded = String::new();
+            for byte in project_id.bytes() {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+                    encoded.push(char::from(byte));
+                } else {
+                    encoded.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            encoded
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// `orgasmic reindex [--project <id>]` response (TASK-V8WY9): fresh
@@ -13441,12 +13462,14 @@ async fn get_parse_errors(State(state): State<ApiState>) -> Response {
 struct ReindexResponse {
     projects: BTreeMap<String, usize>,
     total_parse_errors: usize,
+    failures: BTreeMap<String, String>,
 }
 
-fn reindex_response(snap: &IndexSnapshot) -> ReindexResponse {
+fn reindex_response(snap: &IndexSnapshot, failures: BTreeMap<String, String>) -> ReindexResponse {
     ReindexResponse {
         projects: snap.parse_error_counts_by_project(),
         total_parse_errors: snap.parse_errors.len(),
+        failures,
     }
 }
 
@@ -13459,11 +13482,14 @@ async fn post_reindex(State(state): State<ApiState>) -> Result<Json<ReindexRespo
         .into_iter()
         .map(|entry| entry.id)
         .collect::<Vec<_>>();
+    let mut failures = BTreeMap::new();
     for project_id in project_ids {
-        force_reindex_project(&state, &project_id).await?;
+        if let Err(error) = force_reindex_project(&state, &project_id).await {
+            failures.insert(project_id, error.message);
+        }
     }
     let snap = state.index.snapshot().await;
-    Ok(Json(reindex_response(&snap)))
+    Ok(Json(reindex_response(&snap, failures)))
 }
 
 async fn force_reindex_project(state: &ApiState, project_id: &str) -> Result<(), ApiError> {
@@ -13502,7 +13528,7 @@ async fn post_reindex_project(
 ) -> Result<Json<ReindexResponse>, ApiError> {
     force_reindex_project(&state, &project_id).await?;
     let snap = state.index.snapshot().await;
-    Ok(Json(reindex_response(&snap)))
+    Ok(Json(reindex_response(&snap, BTreeMap::new())))
 }
 
 #[derive(Debug, Deserialize)]
@@ -29647,9 +29673,17 @@ pub(crate) mod tests {
         let partial_errors = client
             .get(format!("{base}/api/graph/parse-errors"))
             .bearer_auth(&token)
+            .header(header::ORIGIN, "http://localhost:5173")
             .send()
             .await
             .unwrap();
+        assert_eq!(
+            partial_errors
+                .headers()
+                .get(header::ACCESS_CONTROL_EXPOSE_HEADERS)
+                .unwrap(),
+            "x-orgasmic-project-coverage"
+        );
         assert_eq!(
             partial_errors
                 .headers()
@@ -29777,9 +29811,73 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(reindexed["projects"]["orgasmic"], 0, "{reindexed}");
         assert_eq!(reindexed["total_parse_errors"], 0, "{reindexed}");
+        assert_eq!(reindexed["failures"], serde_json::json!({}), "{reindexed}");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn reindex_all_attempts_later_projects_after_one_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let first_root = tmp.path().join("first");
+        let second_root = tmp.path().join("second");
+        seed_project(&home, &first_root, "first");
+        seed_project(&home, &second_root, "second");
+        write(
+            home.board(),
+            &format!(
+                "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT first\n:PROPERTIES:\n:ID: first\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n\n* PROJECT second\n:PROPERTIES:\n:ID: second\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+                first_root.display(),
+                second_root.display(),
+            ),
+        );
+        let state = direct_stage_test_state(home).await;
+        state.index.fail_next_refresh();
+        let scans_before = state.index.refresh_status().await.scans_total;
+
+        let Json(response) = post_reindex(State(state.clone())).await.unwrap();
+
+        assert!(
+            response.failures.contains_key("first"),
+            "{:?}",
+            response.failures
+        );
+        assert!(
+            !response.failures.contains_key("second"),
+            "{:?}",
+            response.failures
+        );
+        assert_eq!(response.projects.get("second"), Some(&0));
+        assert!(
+            state.index.refresh_status().await.scans_total >= scans_before + 4,
+            "the second project core + marker + artifact scans were not attempted"
+        );
+        assert_eq!(
+            state.index.snapshot().await.project_loads["second"].generation,
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_error_coverage_header_sanitizes_hand_edited_project_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-é");
+        let state = direct_test_state(home, false).await;
+
+        let response = get_parse_errors(State(state)).await;
+        let coverage = response
+            .headers()
+            .get("x-orgasmic-project-coverage")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(coverage.contains("proj-%C3%A9"), "{coverage}");
     }
 
     #[tokio::test]
@@ -30726,6 +30824,52 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn project_task_mutation_is_immediately_visible_with_home_tx() {
         assert_project_task_mutation_visibility(false).await;
+    }
+
+    #[tokio::test]
+    async fn scoped_tx_listing_excludes_newer_home_rows_before_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let mut project_entry = TxEntry::new(
+            "tx-project",
+            "test.project",
+            "[2026-08-11 Tue 10:00:00]",
+            "test",
+            "test",
+        );
+        project_entry.project = Some("orgasmic".to_string());
+        let mut home_entry = TxEntry::new(
+            "tx-home-newer",
+            "test.home",
+            "[2026-08-11 Tue 11:00:00]",
+            "test",
+            "test",
+        );
+        home_entry.project = Some("orgasmic".to_string());
+        write(
+            project_root.join(".orgasmic/tx/2026-08.org"),
+            &project_entry.render(),
+        );
+        write(home.tx().join("2026-08.org"), &home_entry.render());
+        let state = direct_stage_test_state(home).await;
+
+        let Json(rows) = get_tx(
+            State(state),
+            Extension(Identity::Admin),
+            Query(TxQuery {
+                project: Some("orgasmic".to_string()),
+                limit: Some(1),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entry.tx_id, "tx-project");
+        assert_eq!(rows[0].project_id.as_deref(), Some("orgasmic"));
     }
 
     async fn assert_project_task_mutation_visibility(commit_to_project: bool) {
