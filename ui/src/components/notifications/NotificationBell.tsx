@@ -9,6 +9,7 @@ import { useEventStream } from '@/hooks/useEventStream';
 import {
   fetchParseErrorsWithCoverage,
   fetchTx,
+  fetchTxWithCoverage,
   loadFullParseErrorCoverage,
 } from '@/lib/api';
 import type { DaemonEvent, ParseError, QuestionEntry, TxRecord, ViewName } from '@/lib/types';
@@ -65,7 +66,7 @@ function parseErrorKey(error: ParseError): string {
 }
 
 function total(sections: NotificationSections): number {
-  return sections.questions.length + sections.parseErrors.length;
+  return sections.coverage.length + sections.questions.length + sections.parseErrors.length;
 }
 
 export function NotificationBell({
@@ -82,7 +83,15 @@ export function NotificationBell({
   const mobileSheetTitleId = useId();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed(projectId));
-  const tx = useResource(`notifications-tx:${projectId ?? 'all'}`, () => fetchTx(projectId, 200));
+  const tx = useResource(`notifications-tx:${projectId ?? 'all'}`, async () => {
+    if (projectId) {
+      return {
+        records: await fetchTx(projectId, 200),
+        coverage: { state: 'complete' as const, detail: null, failures: {} },
+      };
+    }
+    return fetchTxWithCoverage(200);
+  });
   const parseErrors = useResource('notifications-parse-errors', fetchParseErrorsWithCoverage);
 
   useEffect(() => {
@@ -119,7 +128,21 @@ export function NotificationBell({
   );
 
   const sections = useMemo<NotificationSections>(() => {
-    const questions: NotificationRow[] = openQuestions(tx.data ?? [])
+    const coverage: NotificationRow[] = [];
+    if (tx.data?.coverage.state === 'partial') {
+      coverage.push({
+        key: 'tx-coverage-partial',
+        title: 'Activity coverage is partial',
+        detail: tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
+        actionLabel: 'View status',
+        onAction: () => {
+          onNavigate('status');
+          setOpen(false);
+        },
+      });
+    }
+
+    const questions: NotificationRow[] = openQuestions(tx.data?.records ?? [])
       .filter((question) => !dismissed.has(`question:${question.tx_id}`))
       .map((question) => ({
         key: `question:${question.tx_id}`,
@@ -170,7 +193,14 @@ export function NotificationBell({
           void (async () => {
             try {
               const result = await loadFullParseErrorCoverage();
-              toast.success(`Full parse-error coverage loaded: ${result.errors.length}`);
+              const skipped = Object.keys(result.coverage.failures);
+              if (skipped.length > 0) {
+                toast.warning(`Parse-error coverage loaded partially: ${result.errors.length}`, {
+                  description: `Skipped projects: ${skipped.join(', ')}`,
+                });
+              } else {
+                toast.success(`Full parse-error coverage loaded: ${result.errors.length}`);
+              }
               await parseErrors.refresh();
             } catch (err) {
               toast.error('Full coverage failed', {
@@ -182,7 +212,7 @@ export function NotificationBell({
       });
     }
 
-    return { questions, parseErrors: parseErrorRows };
+    return { coverage, questions, parseErrors: parseErrorRows };
   }, [
     dismiss,
     dismissed,

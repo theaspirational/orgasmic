@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   fetchRecoveryStatus: vi.fn(),
   fetchWhoami: vi.fn(),
   fetchTx: vi.fn(),
+  fetchTxWithCoverage: vi.fn(),
   fetchParseErrorsWithCoverage: vi.fn(),
   loadFullParseErrorCoverage: vi.fn(),
 }));
@@ -30,7 +31,7 @@ vi.mock('@/hooks/useEventStream', () => ({
 }));
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
 import { StatusView } from '../StatusView';
@@ -41,6 +42,7 @@ const partial = {
   coverage: {
     state: 'partial' as const,
     detail: 'partial; ready=1/2; markers=0/2; marker_unloaded=[one,two]',
+    failures: {},
   },
 };
 
@@ -49,6 +51,7 @@ const complete = {
   coverage: {
     state: 'complete' as const,
     detail: 'complete; ready=2/2; markers=2/2',
+    failures: {},
   },
 };
 
@@ -78,6 +81,10 @@ beforeEach(() => {
   });
   mocks.fetchWhoami.mockResolvedValue({ authenticated: true, boot_id: 'boot-test' });
   mocks.fetchTx.mockResolvedValue([]);
+  mocks.fetchTxWithCoverage.mockResolvedValue({
+    records: [],
+    coverage: { state: 'complete', detail: 'complete; loaded=[]; failed=[]', failures: {} },
+  });
   mocks.fetchParseErrorsWithCoverage.mockResolvedValue(partial);
   mocks.loadFullParseErrorCoverage.mockResolvedValue(complete);
 });
@@ -115,5 +122,43 @@ describe('parse-error coverage', () => {
     expect(await screen.findByText('Parse-error coverage is partial')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Load full coverage' }));
     await waitFor(() => expect(mocks.loadFullParseErrorCoverage).toHaveBeenCalledTimes(1));
+  });
+
+  it('names projects skipped by an explicit partial coverage load', async () => {
+    mocks.loadFullParseErrorCoverage.mockResolvedValue({
+      errors: [],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; marker_unloaded=[blocked]',
+        failures: { blocked: 'filesystem scan timed out' },
+      },
+    });
+    render(<StatusView />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load full coverage' }));
+    expect(await screen.findByText('Skipped projects: blocked')).toBeInTheDocument();
+  });
+
+  it('surfaces partial unscoped activity coverage in notifications', async () => {
+    mocks.fetchTxWithCoverage.mockResolvedValue({
+      records: [],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; loaded=[healthy]; failed=[blocked]',
+        failures: {},
+      },
+    });
+    render(
+      <NotificationBell
+        projectId={null}
+        onNavigate={vi.fn()}
+        onOpenTask={vi.fn()}
+      />,
+    );
+
+    const bell = await screen.findByRole('button', { name: 'Notifications: 2 unread' });
+    fireEvent.click(bell);
+    expect(await screen.findByText('Activity coverage is partial')).toBeInTheDocument();
+    expect(screen.getByText('partial; loaded=[healthy]; failed=[blocked]')).toBeInTheDocument();
   });
 });

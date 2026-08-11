@@ -154,6 +154,10 @@ Examples:
     #[command(after_help = "\
 Examples:
   orgasmic serve --port 4848
+  ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS=30 orgasmic serve
+
+Filesystem project scans default to 5 seconds. ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS
+accepts whole seconds from 1 through 300; invalid or zero values use the default.
 
 Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/token")]
     Serve {
@@ -2363,6 +2367,12 @@ struct ParseErrorView {
     message: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct MarkerCoverageResponse {
+    #[serde(default)]
+    failures: std::collections::BTreeMap<String, String>,
+}
+
 /// Best-effort node/property attribution parsed out of a parse-error
 /// message. Covers the two dangling-reference detectors the daemon emits
 /// today (`identity_lint::lint_dangling_references` and
@@ -2399,7 +2409,11 @@ fn cmd_status_errors(home: &Home) -> Result<()> {
         // discovery is intentionally not part of core project loading, so use
         // the marker route to ensure that lazy projection before reading the
         // parse-error view it contributes to.
-        let _: serde_json::Value = client.get_full_board("/graph/markers/__coverage__").await?;
+        let marker_coverage: MarkerCoverageResponse =
+            client.get_full_board("/graph/markers/__coverage__").await?;
+        for (project_id, error) in &marker_coverage.failures {
+            eprintln!("[warn] skipped project {project_id}: {error}");
+        }
         let (errors, coverage): (Vec<ParseErrorView>, Option<String>) = client
             .get_with_header("/graph/parse-errors", "x-orgasmic-project-coverage")
             .await?;
@@ -2442,6 +2456,14 @@ fn cmd_reindex(home: &Home, project: Option<&str>) -> Result<()> {
             .post_full_board_json(&path, &serde_json::json!({}))
             .await?;
         println!("{}", serde_json::to_string_pretty(&value)?);
+        if project.is_none()
+            && value
+                .get("failures")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|failures| !failures.is_empty())
+        {
+            anyhow::bail!("whole-board reindex completed with project failures");
+        }
         Ok::<(), anyhow::Error>(())
     })
 }
@@ -3657,12 +3679,19 @@ fn cmd_tx(home: &Home, cmd: TxCmd) -> Result<()> {
             TxCmd::List { project, limit } => {
                 let mut path = "/tx?limit=".to_string();
                 path.push_str(&limit.to_string());
-                if let Some(p) = project {
+                if let Some(ref p) = project {
                     path.push_str("&project=");
-                    path.push_str(&p);
+                    path.push_str(p);
                 }
-                let value: serde_json::Value = client.get(&path).await?;
+                let (value, coverage): (serde_json::Value, Option<String>) = client
+                    .get_with_header(&path, "x-orgasmic-project-coverage")
+                    .await?;
                 println!("{}", serde_json::to_string_pretty(&value)?);
+                if project.is_none() {
+                    if let Some(coverage) = coverage.filter(|value| value.starts_with("partial;")) {
+                        eprintln!("[warn] tx coverage is {coverage}");
+                    }
+                }
             }
         }
         Ok::<(), anyhow::Error>(())

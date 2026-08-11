@@ -2538,10 +2538,11 @@ async fn get_tx(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
     Query(q): Query<TxQuery>,
-) -> Result<Json<Vec<crate::index::TxRecord>>, ApiError> {
+) -> Result<Response, ApiError> {
     let catalog = state.index.snapshot().await;
+    let scoped = q.project.is_some();
     let include_home_tx = q.project.is_none() && matches!(identity, Identity::Admin);
-    let covered_projects = if let Some(project_id) = q.project.as_deref() {
+    let requested_projects = if let Some(project_id) = q.project.as_deref() {
         let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
         authz::require(&identity, Some(&project_id), Action::TasksRead)?;
         vec![project_id]
@@ -2556,17 +2557,24 @@ async fn get_tx(
             .collect()
     };
     drop(catalog);
-    for project_id in &covered_projects {
-        state
-            .index
-            .ensure_project_loaded(project_id)
-            .await
-            .map_err(|error| {
-                ApiError::unavailable(format!("project {project_id} failed to load: {error}"))
-            })?;
+    let mut covered_projects = BTreeSet::new();
+    let mut failures = BTreeMap::new();
+    for project_id in requested_projects {
+        match state.index.ensure_project_loaded(&project_id).await {
+            Ok(_) => {
+                covered_projects.insert(project_id);
+            }
+            Err(error) if scoped => {
+                return Err(ApiError::unavailable(format!(
+                    "project {project_id} failed to load: {error}"
+                )));
+            }
+            Err(error) => {
+                failures.insert(project_id, error);
+            }
+        }
     }
     let snap = state.index.snapshot().await;
-    let covered_projects = covered_projects.into_iter().collect::<BTreeSet<_>>();
     let mut items: Vec<_> = snap
         .tx
         .into_iter()
@@ -2584,7 +2592,23 @@ async fn get_tx(
             items = items.into_iter().skip(skip).collect();
         }
     }
-    Ok(Json(items))
+    let coverage = format!(
+        "{}; loaded=[{}]; failed=[{}]",
+        if failures.is_empty() {
+            "complete"
+        } else {
+            "partial"
+        },
+        coverage_project_ids(&covered_projects.iter().cloned().collect::<Vec<_>>()),
+        coverage_project_ids(&failures.keys().cloned().collect::<Vec<_>>()),
+    );
+    let mut response = Json(items).into_response();
+    response.headers_mut().insert(
+        "x-orgasmic-project-coverage",
+        HeaderValue::from_str(&coverage)
+            .unwrap_or_else(|_| HeaderValue::from_static("partial; invalid-project-id")),
+    );
+    Ok(response)
 }
 
 #[derive(Debug, Deserialize)]
@@ -13754,6 +13778,8 @@ fn graph_relation_filter(
 pub struct MarkerFilesResponse {
     pub node_id: String,
     pub files: Vec<PathBuf>,
+    pub projects: BTreeMap<String, usize>,
+    pub failures: BTreeMap<String, String>,
 }
 
 async fn get_graph_markers(
@@ -13763,6 +13789,7 @@ async fn get_graph_markers(
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<MarkerFilesResponse>, ApiError> {
     let catalog = state.index.snapshot().await;
+    let scoped = q.project.is_some();
     let project_ids = if let Some(project_id) = q.project.as_deref() {
         let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
         authz::require(&identity, Some(&project_id), Action::GraphRead)?;
@@ -13776,19 +13803,38 @@ async fn get_graph_markers(
             .collect::<Vec<_>>()
     };
     drop(catalog);
-    for project_id in &project_ids {
-        state
-            .index
-            .ensure_project_markers_loaded(project_id)
-            .await
-            .map_err(|error| {
-                ApiError::unavailable(format!(
+    let mut covered_projects = Vec::new();
+    let mut failures = BTreeMap::new();
+    for project_id in project_ids {
+        match state.index.ensure_project_markers_loaded(&project_id).await {
+            Ok(()) => covered_projects.push(project_id),
+            Err(error) if scoped => {
+                return Err(ApiError::unavailable(format!(
                     "project {project_id} marker coverage failed: {error}"
-                ))
-            })?;
+                )));
+            }
+            Err(error) => {
+                failures.insert(project_id, error);
+            }
+        }
     }
     let snap = state.index.snapshot().await;
-    let files = project_ids
+    let projects = covered_projects
+        .iter()
+        .filter_map(|project_id| {
+            snap.projects.get(project_id).map(|project| {
+                (
+                    project_id.clone(),
+                    project
+                        .markers
+                        .get(&node_id)
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                )
+            })
+        })
+        .collect();
+    let files = covered_projects
         .iter()
         .filter_map(|project_id| snap.projects.get(project_id))
         .filter_map(|project| project.markers.get(&node_id))
@@ -13797,7 +13843,12 @@ async fn get_graph_markers(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    Ok(Json(MarkerFilesResponse { files, node_id }))
+    Ok(Json(MarkerFilesResponse {
+        files,
+        node_id,
+        projects,
+        failures,
+    }))
 }
 
 async fn get_decisions(
@@ -29862,6 +29913,135 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn full_marker_coverage_returns_later_successes_and_per_project_failures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let first_root = tmp.path().join("first");
+        let second_root = tmp.path().join("second");
+        seed_project(&home, &first_root, "first");
+        seed_project(&home, &second_root, "second");
+        write(
+            second_root.join("src/covered.rs"),
+            "// orgasmic:TASK-COVERED\n",
+        );
+        write(
+            home.board(),
+            &format!(
+                "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT first\n:PROPERTIES:\n:ID: first\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n\n* PROJECT second\n:PROPERTIES:\n:ID: second\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+                first_root.display(),
+                second_root.display(),
+            ),
+        );
+        let state = direct_catalog_test_state(home).await;
+        state.index.fail_next_refresh();
+
+        let Json(response) = get_graph_markers(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path("TASK-COVERED".to_string()),
+            Query(GraphQuery { project: None }),
+        )
+        .await
+        .expect("full marker coverage should return partial results");
+
+        assert!(
+            response.failures.contains_key("first"),
+            "{:?}",
+            response.failures
+        );
+        assert!(
+            !response.failures.contains_key("second"),
+            "{:?}",
+            response.failures
+        );
+        assert_eq!(response.projects.get("second"), Some(&1));
+        assert!(!response.projects.contains_key("first"));
+        assert_eq!(response.files, vec![PathBuf::from("src/covered.rs")]);
+        let snapshot = state.index.snapshot().await;
+        assert_eq!(
+            snapshot.project_ids_with_markers_loaded(),
+            vec!["second".to_string()]
+        );
+        assert_eq!(
+            snapshot.project_loads["first"].state,
+            ProjectLoadState::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn unscoped_tx_returns_home_and_later_project_rows_with_partial_coverage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let first_root = tmp.path().join("first");
+        let second_root = tmp.path().join("second");
+        seed_project(&home, &first_root, "first");
+        seed_project(&home, &second_root, "second");
+        write(
+            home.board(),
+            &format!(
+                "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT first\n:PROPERTIES:\n:ID: first\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n\n* PROJECT second\n:PROPERTIES:\n:ID: second\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+                first_root.display(),
+                second_root.display(),
+            ),
+        );
+        let mut project_entry = TxEntry::new(
+            "tx-second",
+            "test.project",
+            "[2026-08-11 Tue 10:00:00]",
+            "test",
+            "test",
+        );
+        project_entry.project = Some("second".to_string());
+        write(
+            second_root.join(".orgasmic/tx/2026-08.org"),
+            &project_entry.render(),
+        );
+        let home_entry = TxEntry::new(
+            "tx-home",
+            "test.home",
+            "[2026-08-11 Tue 09:00:00]",
+            "test",
+            "test",
+        );
+        write(home.tx().join("2026-08.org"), &home_entry.render());
+        let state = direct_catalog_test_state(home).await;
+        state.index.fail_next_refresh();
+
+        let response = get_tx(
+            State(state),
+            Extension(Identity::Admin),
+            Query(TxQuery {
+                project: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("unscoped tx should return a partial result");
+        assert_eq!(
+            response
+                .headers()
+                .get("x-orgasmic-project-coverage")
+                .unwrap(),
+            "partial; loaded=[second]; failed=[first]"
+        );
+        let rows: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let tx_ids = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| row["entry"]["tx_id"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(tx_ids, BTreeSet::from(["tx-home", "tx-second"]));
+    }
+
+    #[tokio::test]
     async fn parse_error_coverage_header_sanitizes_hand_edited_project_ids() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -30856,7 +31036,7 @@ pub(crate) mod tests {
         write(home.tx().join("2026-08.org"), &home_entry.render());
         let state = direct_stage_test_state(home).await;
 
-        let Json(rows) = get_tx(
+        let response = get_tx(
             State(state),
             Extension(Identity::Admin),
             Query(TxQuery {
@@ -30866,10 +31046,17 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        let rows: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
 
+        let rows = rows.as_array().unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].entry.tx_id, "tx-project");
-        assert_eq!(rows[0].project_id.as_deref(), Some("orgasmic"));
+        assert_eq!(rows[0]["entry"]["tx_id"], "tx-project");
+        assert_eq!(rows[0]["project_id"], "orgasmic");
     }
 
     async fn assert_project_task_mutation_visibility(commit_to_project: bool) {

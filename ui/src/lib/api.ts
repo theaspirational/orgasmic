@@ -45,6 +45,7 @@ import type {
   TaskSubtaskRequest,
   TaskSummary,
   TxRecord,
+  TxResult,
 } from './types';
 
 function q(project?: string | null, extra?: Record<string, string | number | undefined>): string {
@@ -266,13 +267,30 @@ export async function fetchParseErrorsWithCoverage(): Promise<ParseErrorsResult>
           ? 'partial'
           : 'unknown',
       detail: header,
+      failures: {},
     },
   };
 }
 
 export async function loadFullParseErrorCoverage(): Promise<ParseErrorsResult> {
-  await get<{ node_id: string; files: string[] }>('/graph/markers/__coverage__');
-  return fetchParseErrorsWithCoverage();
+  const markerCoverage = await get<{
+    node_id: string;
+    files: string[];
+    projects: Record<string, number>;
+    failures: Record<string, string>;
+  }>('/graph/markers/__coverage__');
+  const result = await fetchParseErrorsWithCoverage();
+  const failures = markerCoverage.failures ?? {};
+  if (Object.keys(failures).length === 0) return result;
+  const skipped = Object.keys(failures).join(',');
+  return {
+    ...result,
+    coverage: {
+      state: 'partial',
+      detail: `${result.coverage.detail ?? 'partial'}; skipped=[${skipped}]`,
+      failures,
+    },
+  };
 }
 
 export function fetchWhoami(): Promise<{ authenticated: boolean; boot_id: string }> {
@@ -281,6 +299,25 @@ export function fetchWhoami(): Promise<{ authenticated: boolean; boot_id: string
 
 export function fetchTx(project?: string | null, limit = 50): Promise<TxRecord[]> {
   return get<TxRecord[]>(`/tx${q(project, { limit })}`);
+}
+
+export async function fetchTxWithCoverage(limit = 50): Promise<TxResult> {
+  const { data, header } = await getWithHeader<TxRecord[]>(
+    `/tx${q(null, { limit })}`,
+    'x-orgasmic-project-coverage',
+  );
+  return {
+    records: data,
+    coverage: {
+      state: header?.startsWith('complete;')
+        ? 'complete'
+        : header?.startsWith('partial;')
+          ? 'partial'
+          : 'unknown',
+      detail: header,
+      failures: {},
+    },
+  };
 }
 
 export function fetchDecisions(project?: string | null): Promise<DecisionSummary[]> {
