@@ -21,6 +21,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use fs2::FileExt;
@@ -305,6 +306,28 @@ pub struct PendingWrite {
     pub path: Option<PathBuf>,
 }
 
+#[derive(Debug, Default)]
+struct WriterMetrics {
+    in_flight_started: std::sync::Mutex<Option<Instant>>,
+    completed_total: AtomicU64,
+    failed_total: AtomicU64,
+    last_duration_ms: AtomicU64,
+    max_duration_ms: AtomicU64,
+}
+
+/// Boot-local writer diagnostics exposed through `/daemon/status`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct WriterStatus {
+    pub liveness: bool,
+    pub queue_depth: usize,
+    pub in_flight_operation: Option<PendingWrite>,
+    pub in_flight_age_ms: Option<u64>,
+    pub completed_total: u64,
+    pub failed_total: u64,
+    pub last_duration_ms: u64,
+    pub max_duration_ms: u64,
+}
+
 /// What [`WriterHandle::shutdown_within`] observed. `TimedOut` is the outcome
 /// callers must make durable: the writer still owns unwritten work and the
 /// process is about to exit anyway.
@@ -340,6 +363,7 @@ pub struct WriterHandle {
     /// Head-of-line write, published by the writer task so a shutdown that
     /// gives up can name what it gave up on.
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
+    metrics: Arc<WriterMetrics>,
     /// Appends currently queued behind a session lease
     /// (orgasmic:TASK-FZB6T.3 finding 1). Read only by the regression that
     /// schedules an append at the pre-rename instant; the writer publishes it
@@ -939,6 +963,27 @@ impl WriterHandle {
             .clone()
     }
 
+    pub fn status(&self) -> WriterStatus {
+        let in_flight = self.in_flight_write();
+        let in_flight_age_ms = self
+            .metrics
+            .in_flight_started
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .map(|started| started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        WriterStatus {
+            liveness: !self.tx.is_closed(),
+            queue_depth: self.tx.max_capacity().saturating_sub(self.tx.capacity()),
+            in_flight_operation: in_flight,
+            in_flight_age_ms,
+            completed_total: self.metrics.completed_total.load(Ordering::Relaxed),
+            failed_total: self.metrics.failed_total.load(Ordering::Relaxed),
+            last_duration_ms: self.metrics.last_duration_ms.load(Ordering::Relaxed),
+            max_duration_ms: self.metrics.max_duration_ms.load(Ordering::Relaxed),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn gate_next_transaction(&self) -> Arc<TestTransactionGate> {
         let gate = Arc::new(TestTransactionGate {
@@ -975,12 +1020,14 @@ pub fn spawn_with_catalog(
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
     let in_flight = Arc::new(std::sync::Mutex::new(None));
+    let metrics = Arc::new(WriterMetrics::default());
     let deferred_appends = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     tokio::spawn(writer_loop(
         rx,
         events,
         Arc::clone(&idempotency),
         Arc::clone(&in_flight),
+        Arc::clone(&metrics),
         catalog,
         Arc::clone(&deferred_appends),
     ));
@@ -988,6 +1035,7 @@ pub fn spawn_with_catalog(
         tx,
         idempotency,
         in_flight,
+        metrics,
         deferred_appends,
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
@@ -1082,6 +1130,7 @@ async fn writer_loop(
     events: EventBus,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
+    metrics: Arc<WriterMetrics>,
     catalog: Option<crate::run_catalog::RunCatalog>,
     deferred_appends: Arc<std::sync::atomic::AtomicUsize>,
 ) {
@@ -1098,10 +1147,16 @@ async fn writer_loop(
         // orgasmic:TASK-Q07Y5 — publish the head-of-line write before running
         // it. A shutdown that gives up on its budget reads this to say which
         // write it gave up on; without it the report is a bare count.
+        let command_started = Instant::now();
+        let pending = describe_command(&current);
+        let mut command_failed = false;
         {
-            let pending = describe_command(&current);
             let stall = injected_write_stall(&pending);
-            *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending);
+            *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending.clone());
+            *metrics
+                .in_flight_started
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(command_started);
             if let Some(stall) = stall {
                 std::thread::sleep(stall);
             }
@@ -1120,6 +1175,7 @@ async fn writer_loop(
                 }
                 let outcomes = process_tx_batch(&mut tx_handles, &mut seq_cache, batch);
                 for (req, result, reply) in outcomes {
+                    command_failed |= result.is_err();
                     if let Ok(ref ok) = result {
                         events.publish(
                             Topic::Daemon,
@@ -1153,7 +1209,7 @@ async fn writer_loop(
                     });
                     deferred_appends.store(deferred.len(), Ordering::SeqCst);
                 } else {
-                    run_session_append(
+                    command_failed = run_session_append(
                         &mut session_handles,
                         &events,
                         catalog.as_ref(),
@@ -1166,27 +1222,12 @@ async fn writer_loop(
             }
             WriterCommand::Rewrite { req, reply } => {
                 let result = rewrite_file_inner(&req);
-                if result.is_ok() {
-                    events.publish(
-                        Topic::Graph,
-                        EventPayload::GraphChanged {
-                            node_id: req.path.display().to_string(),
-                        },
-                    );
-                }
+                command_failed = result.is_err();
                 let _ = reply.send(result);
             }
             WriterCommand::Mutate { req, reply } => {
-                let path = req.path.clone();
                 let result = mutate_file_inner(req);
-                if result.is_ok() {
-                    events.publish(
-                        Topic::Graph,
-                        EventPayload::GraphChanged {
-                            node_id: path.display().to_string(),
-                        },
-                    );
-                }
+                command_failed = result.is_err();
                 let _ = reply.send(result);
             }
             WriterCommand::Transaction { req, reply } => {
@@ -1206,54 +1247,57 @@ async fn writer_loop(
                         None => unreachable!("all writer transactions carry an identity"),
                     }
                 };
-                match cached {
+                let mut reply = Some(reply);
+                let execute = match cached {
                     Ok(Some(result)) => {
-                        let _ = reply.send(Ok(result));
-                        continue;
+                        let _ = reply
+                            .take()
+                            .expect("writer reply available")
+                            .send(Ok(result));
+                        false
                     }
                     Err(error) => {
-                        let _ = reply.send(Err(error));
-                        continue;
+                        command_failed = true;
+                        let _ = reply
+                            .take()
+                            .expect("writer reply available")
+                            .send(Err(error));
+                        false
                     }
-                    Ok(None) => {}
-                }
-                let result = transaction_inner(
-                    &mut tx_handles,
-                    &mut seq_cache,
-                    &req.rewrites,
-                    req.tx.clone(),
-                    &req.request_id,
-                    || Ok(()),
-                );
-                if let Ok(ref ok) = result {
-                    let mut cache = idempotency.lock().await;
-                    cache.insert(
-                        req.request_id.clone(),
-                        CachedResponse::Tx {
-                            result: ok.clone(),
-                            mutation: req.mutation.clone(),
-                            mutation_id: req.mutation_id.clone(),
-                        },
+                    Ok(None) => true,
+                };
+                if execute {
+                    let result = transaction_inner(
+                        &mut tx_handles,
+                        &mut seq_cache,
+                        &req.rewrites,
+                        req.tx.clone(),
+                        &req.request_id,
+                        || Ok(()),
                     );
-                    drop(cache);
-                    for rewrite in &req.rewrites {
+                    command_failed = result.is_err();
+                    if let Ok(ref ok) = result {
+                        let mut cache = idempotency.lock().await;
+                        cache.insert(
+                            req.request_id.clone(),
+                            CachedResponse::Tx {
+                                result: ok.clone(),
+                                mutation: req.mutation.clone(),
+                                mutation_id: req.mutation_id.clone(),
+                            },
+                        );
+                        drop(cache);
                         events.publish(
-                            Topic::Graph,
-                            EventPayload::GraphChanged {
-                                node_id: rewrite.path.display().to_string(),
+                            Topic::Daemon,
+                            EventPayload::TxAppended {
+                                project_id: req.tx.project_id.clone(),
+                                tx_id: ok.tx_id.clone(),
+                                ty: req.tx.entry.ty.clone(),
                             },
                         );
                     }
-                    events.publish(
-                        Topic::Daemon,
-                        EventPayload::TxAppended {
-                            project_id: req.tx.project_id.clone(),
-                            tx_id: ok.tx_id.clone(),
-                            ty: req.tx.entry.ty.clone(),
-                        },
-                    );
+                    let _ = reply.take().expect("writer reply available").send(result);
                 }
-                let _ = reply.send(result);
             }
             WriterCommand::LeaseSessions { paths, reply } => {
                 // Two transactions holding the same path would each believe it
@@ -1261,6 +1305,7 @@ async fn writer_loop(
                 let held = paths.iter().find(|path| leased.contains(*path)).cloned();
                 match held {
                     Some(path) => {
+                        command_failed = true;
                         let _ = reply.send(Err(anyhow!(
                             "session {} is already held by a maintenance lease",
                             path.display()
@@ -1294,7 +1339,7 @@ async fn writer_loop(
                 deferred_appends.store(deferred.len(), Ordering::SeqCst);
                 let _ = reply.send(());
                 for entry in ready {
-                    run_session_append(
+                    command_failed |= run_session_append(
                         &mut session_handles,
                         &events,
                         catalog.as_ref(),
@@ -1319,14 +1364,67 @@ async fn writer_loop(
                 }
                 deferred_appends.store(0, Ordering::SeqCst);
                 *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                *metrics
+                    .in_flight_started
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = None;
+                record_writer_command(
+                    &metrics,
+                    command_started.elapsed(),
+                    false,
+                    &pending,
+                    rx.len(),
+                );
                 let _ = reply.send(());
                 break;
             }
         }
         *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *metrics
+            .in_flight_started
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        record_writer_command(
+            &metrics,
+            command_started.elapsed(),
+            command_failed,
+            &pending,
+            rx.len(),
+        );
         if cmd.is_none() {
             cmd = rx.recv().await;
         }
+    }
+}
+
+fn record_writer_command(
+    metrics: &WriterMetrics,
+    duration: std::time::Duration,
+    failed: bool,
+    pending: &PendingWrite,
+    queue_depth: usize,
+) {
+    if failed {
+        metrics.failed_total.fetch_add(1, Ordering::Relaxed);
+    } else {
+        metrics.completed_total.fetch_add(1, Ordering::Relaxed);
+    }
+    let duration_ms = duration.as_millis().min(u128::from(u64::MAX)) as u64;
+    metrics
+        .last_duration_ms
+        .store(duration_ms, Ordering::Relaxed);
+    metrics
+        .max_duration_ms
+        .fetch_max(duration_ms, Ordering::Relaxed);
+    if duration >= std::time::Duration::from_secs(1) {
+        warn!(
+            target = ?pending.path,
+            cause = pending.kind,
+            queue_depth,
+            coalescing_count = 0,
+            duration_ms,
+            "slow writer command"
+        );
     }
 }
 
@@ -1343,7 +1441,7 @@ fn run_session_append(
     req: SessionAppend,
     reply: oneshot::Sender<Result<SessionAppendResult>>,
     #[cfg(test)] injected_failure: Option<Arc<test_hooks::SessionAppendFailure>>,
-) {
+) -> bool {
     let SessionAppend {
         run_id,
         session_path,
@@ -1399,7 +1497,9 @@ fn run_session_append(
             );
         }
     }
+    let failed = result.is_err();
     let _ = reply.send(result);
+    failed
 }
 
 struct PendingTxBatchItem {

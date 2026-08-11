@@ -1022,8 +1022,6 @@ impl Daemon {
         supervisor.begin_boot_reattach();
         let manager_registry = manager_registration::ManagerRegistry::new();
         manager_registration::spawn_liveness_loop(manager_registry.clone(), supervisor.clone());
-        index.spawn_tx_listener(events.clone());
-
         // Project roots for boot auto-reattach, run once `api_state` exists
         // below (the dispatch completion watcher it may respawn needs the
         // full `ApiState`, not just `home`/`supervisor`).
