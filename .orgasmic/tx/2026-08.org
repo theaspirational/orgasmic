@@ -30547,3 +30547,53 @@
 :MODEL_OVERRIDE: opus
 :EFFORT_OVERRIDE: medium
 :END:
+
+* TX 2026-08-11 Tue 22:43:13 reviewer.reported TASK-AJP4A.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5822
+:TIME:         [2026-08-11 Tue 22:43:13]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1.1
+:RUN_ID:       run-20260811T223355-5d2f41e3903d4847ad4170424c988cc9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a.1.1.1.1-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5820/last.txt
+:END:
+
+* TX 2026-08-11 Tue 22:43:51 reviewer.done TASK-AJP4A.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5823
+:TIME:         [2026-08-11 Tue 22:43:51]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1.1
+:REASON:       Opus approved the lease and UI correction but identified a medium ready-with-delay /tx classification gap; follow-up will classify the typed coordinator timeout directly and remove per-failure snapshots
+:MODEL:        opus
+:EFFORT:       medium
+:REVIEWED_DIFF: 05d9f25..198954f
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260811-orgasmic-5820
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5820/last.txt
+:END:
+
+* TX 2026-08-11 Tue 22:43:51 task.state_transitioned TASK-AJP4A.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5824
+:TIME:         [2026-08-11 Tue 22:43:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-AJP4A.1.1.1.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
