@@ -1335,6 +1335,9 @@ async fn add_project(
             ApiError::internal("failed to refresh project index")
         })?;
     state
+        .index
+        .spawn_repo_url_refresh_for(inputs.project_id.clone(), project_root.clone());
+    state
         .events
         .publish(Topic::Board, EventPayload::BoardRefreshed);
     state.events.publish(
@@ -2395,7 +2398,14 @@ async fn post_task_subtask(
         )
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(&state, project_tx, destination_project_id).await;
+    refresh_after_tx(&state, project_tx, destination_project_id, &tx_id).await?;
+    state.events.publish(
+        Topic::Task,
+        EventPayload::TaskUpdated {
+            project_id: located.project_id,
+            task_id: subtask_id.clone(),
+        },
+    );
     Ok(Json(CreateSubtaskResponse {
         id: subtask_id,
         heading,
@@ -2656,13 +2666,7 @@ async fn append_tx_request(
         )
         .await
         .map_err(writer_append_error)?;
-    if project_tx {
-        if let Some(project_id) = destination_project_id {
-            let _ = state.index.refresh_project(&project_id).await;
-        }
-    } else {
-        state.index.refresh_home_tx().await;
-    }
+    refresh_after_tx(state, project_tx, destination_project_id, &res.tx_id).await?;
     Ok(TxAppendResponse {
         tx_id: res.tx_id,
         tx_path: res.tx_path,
@@ -7692,7 +7696,13 @@ async fn record_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<String, Ap
         .append_tx(prepared.tx, None)
         .await
         .map_err(writer_append_error)?;
-    refresh_after_tx(state, prepared.project_tx, prepared.destination_project_id).await;
+    refresh_after_tx(
+        state,
+        prepared.project_tx,
+        prepared.destination_project_id,
+        &res.tx_id,
+    )
+    .await?;
     Ok(res.tx_id)
 }
 
@@ -7761,14 +7771,34 @@ async fn refresh_after_tx(
     state: &ApiState,
     project_tx: bool,
     destination_project_id: Option<String>,
-) {
+    tx_id: &str,
+) -> Result<(), ApiError> {
     if project_tx {
         if let Some(project_id) = destination_project_id {
-            let _ = state.index.refresh_project(&project_id).await;
+            state
+                .index
+                .refresh_after_tx(&project_id, tx_id)
+                .await
+                .map_err(|error| committed_refresh_error(tx_id, error))?;
         }
     } else {
-        state.index.refresh_home_tx().await;
+        state
+            .index
+            .refresh_home_after_tx(tx_id)
+            .await
+            .map_err(|error| committed_refresh_error(tx_id, error))?;
     }
+    Ok(())
+}
+
+fn committed_refresh_error(tx_id: &str, error: impl std::fmt::Display) -> ApiError {
+    tracing::error!(tx_id, error = %error, "committed mutation index refresh failed");
+    ApiError::service_unavailable(json!({
+        "error": format!("mutation committed but index refresh failed: {error}"),
+        "committed": true,
+        "tx_id": tx_id,
+        "index_status": "refresh_failed",
+    }))
 }
 
 fn safe_session_fragment(value: &str) -> String {
@@ -7921,10 +7951,14 @@ pub struct StatusResponse {
     pub parse_errors: usize,
     pub tx_count: usize,
     pub rebuilt_at: Option<String>,
+    pub writer: crate::writer::WriterStatus,
+    pub index_refresh: crate::index::IndexRefreshStatus,
 }
 
 async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let snap: IndexSnapshot = state.index.snapshot().await;
+    let writer = state.writer.status();
+    let index_refresh = state.index.refresh_status().await;
     Json(StatusResponse {
         name: "orgasmic",
         version: state.boot.version.clone(),
@@ -7944,6 +7978,8 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         parse_errors: snap.parse_errors.len(),
         tx_count: snap.tx.len(),
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
+        writer,
+        index_refresh,
     })
 }
 
@@ -13236,6 +13272,7 @@ fn reindex_response(snap: &IndexSnapshot) -> ReindexResponse {
 
 async fn post_reindex(State(state): State<ApiState>) -> Json<ReindexResponse> {
     state.index.rebuild().await;
+    state.index.spawn_repo_url_refresh();
     let snap = state.index.snapshot().await;
     Json(reindex_response(&snap))
 }
@@ -13249,6 +13286,11 @@ async fn post_reindex_project(
         .refresh_project(&project_id)
         .await
         .map_err(ApiError::not_found)?;
+    if let Some(project) = state.index.snapshot().await.project(&project_id) {
+        state
+            .index
+            .spawn_repo_url_refresh_for(project_id.clone(), project.root.clone());
+    }
     let snap = state.index.snapshot().await;
     Ok(Json(reindex_response(&snap)))
 }
@@ -13339,7 +13381,12 @@ async fn post_org_file(
         },
     )
     .await?;
-    let _ = state.index.refresh_project(&project_id).await;
+    state.events.publish(
+        Topic::Graph,
+        EventPayload::GraphChanged {
+            node_id: path.display().to_string(),
+        },
+    );
     Ok(Json(OrgFileResponse {
         project: project_id,
         path: rel_str,
@@ -15137,8 +15184,9 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
         req.state,
         prepared_tx.project_tx,
         prepared_tx.destination_project_id,
+        &tx_id,
     )
-    .await;
+    .await?;
     if req.layer == NodeLayer::Task {
         req.state.events.publish(
             Topic::Task,
@@ -15159,7 +15207,6 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
             },
         );
     }
-    let _ = req.state.index.refresh_project(&req.project_id).await;
     Ok(tx_id)
 }
 
@@ -15234,8 +15281,9 @@ async fn write_graph_and_record(
         req.state,
         prepared_tx.project_tx,
         prepared_tx.destination_project_id,
+        &tx_id,
     )
-    .await;
+    .await?;
     let layer = req.layer.layer_name().to_string();
     if req.action == "created" {
         req.state.events.publish(
@@ -15259,7 +15307,6 @@ async fn write_graph_and_record(
             },
         );
     }
-    let _ = req.state.index.refresh_project(&req.project_id).await;
     Ok(Json(GraphMutationResponse {
         id: response_node_id,
         action: req.action.to_string(),
@@ -15857,7 +15904,13 @@ async fn post_task_create(
         .map_err(writer_transaction_error)?;
     let tx_id = cached.tx_id;
     let response_task_id = cached.mutation_id;
-    refresh_after_tx(&state, prepared.project_tx, prepared.destination_project_id).await;
+    refresh_after_tx(
+        &state,
+        prepared.project_tx,
+        prepared.destination_project_id,
+        &tx_id,
+    )
+    .await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
@@ -15865,7 +15918,6 @@ async fn post_task_create(
             task_id: response_task_id.clone(),
         },
     );
-    let _ = state.index.refresh_project(&project_id).await;
     Ok(Json(TaskCreateResponse {
         id: response_task_id,
         tx_id,
@@ -16112,9 +16164,15 @@ async fn write_goal_file_and_record(
         req.state,
         prepared_tx.project_tx,
         prepared_tx.destination_project_id,
+        &tx_id,
     )
-    .await;
-    let _ = req.state.index.refresh_project(req.project_id).await;
+    .await?;
+    req.state.events.publish(
+        Topic::Graph,
+        EventPayload::GraphChanged {
+            node_id: req.path.display().to_string(),
+        },
+    );
     Ok((tx_id, tx_path))
 }
 
@@ -16442,9 +16500,9 @@ async fn write_task_lifecycle_and_record(
         req.state,
         prepared_tx.project_tx,
         prepared_tx.destination_project_id,
+        &tx_id,
     )
-    .await;
-    let _ = req.state.index.refresh_project(req.project_id).await;
+    .await?;
     Ok(tx_id)
 }
 
@@ -16726,8 +16784,9 @@ async fn write_task_property_and_record(
         req.state,
         prepared_tx.project_tx,
         prepared_tx.destination_project_id,
+        &tx_id,
     )
-    .await;
+    .await?;
     Ok(tx_id)
 }
 
@@ -17090,7 +17149,7 @@ async fn post_artifact_submit(
         ];
 
         let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
-        if let Err(e) = state
+        let tx_id = match state
             .writer
             .transaction(
                 vec![
@@ -17120,11 +17179,14 @@ async fn post_artifact_submit(
             )
             .await
         {
-            if let Some((run_id, token)) = submit_in_flight {
-                abort_artifactor_submit_terminal(&state, &run_id, token).await;
+            Ok(tx_id) => tx_id,
+            Err(e) => {
+                if let Some((run_id, token)) = submit_in_flight {
+                    abort_artifactor_submit_terminal(&state, &run_id, token).await;
+                }
+                return Err(ApiError::internal(format!("write artifact files: {e}")));
             }
-            return Err(ApiError::internal(format!("write artifact files: {e}")));
-        }
+        };
         if let Some((run_id, token)) = submit_in_flight {
             commit_artifactor_submit_terminal(&state, &run_id, token).await;
             // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
@@ -17132,7 +17194,7 @@ async fn post_artifact_submit(
             release_artifactor_run_after_submit(&state, &run_id).await;
         }
 
-        let _ = state.index.refresh_project(&entry.id).await;
+        refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
         state.events.publish(
             Topic::Artifact,
             EventPayload::ArtifactChanged {
@@ -17198,7 +17260,7 @@ async fn post_artifact_submit(
     }
 
     let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
-    if let Err(e) = state
+    let tx_id = match state
         .writer
         .transaction(
             rewrites,
@@ -17215,11 +17277,14 @@ async fn post_artifact_submit(
         )
         .await
     {
-        if let Some((run_id, token)) = submit_in_flight {
-            abort_artifactor_submit_terminal(&state, &run_id, token).await;
+        Ok(tx_id) => tx_id,
+        Err(e) => {
+            if let Some((run_id, token)) = submit_in_flight {
+                abort_artifactor_submit_terminal(&state, &run_id, token).await;
+            }
+            return Err(ApiError::internal(format!("write artifact files: {e}")));
         }
-        return Err(ApiError::internal(format!("write artifact files: {e}")));
-    }
+    };
     if let Some((run_id, token)) = submit_in_flight {
         commit_artifactor_submit_terminal(&state, &run_id, token).await;
         // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
@@ -17227,7 +17292,7 @@ async fn post_artifact_submit(
         release_artifactor_run_after_submit(&state, &run_id).await;
     }
 
-    let _ = state.index.refresh_project(&entry.id).await;
+    refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -17456,7 +17521,7 @@ async fn post_artifact_add_comment(
 
     // Single writer.transaction bundling the reviews.org rewrite + the tx
     // append (matching submit): either both land or neither does.
-    state
+    let tx_id = state
         .writer
         .transaction(
             vec![FileRewrite {
@@ -17477,7 +17542,7 @@ async fn post_artifact_add_comment(
         .await
         .map_err(|e| ApiError::internal(format!("write artifact comment: {e}")))?;
 
-    let _ = state.index.refresh_project(&project_id).await;
+    refresh_after_tx(&state, true, Some(project_id.clone()), &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactCommentAdded {
@@ -17575,7 +17640,7 @@ async fn post_artifact_comment_resolve(
 
     // Single writer.transaction bundling the reviews.org rewrite + the tx
     // append (matching submit): either both land or neither does.
-    state
+    let tx_id = state
         .writer
         .transaction(
             vec![FileRewrite {
@@ -17596,7 +17661,7 @@ async fn post_artifact_comment_resolve(
         .await
         .map_err(|e| ApiError::internal(format!("write comment resolution: {e}")))?;
 
-    let _ = state.index.refresh_project(&project_id).await;
+    refresh_after_tx(&state, true, Some(project_id.clone()), &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18013,7 +18078,7 @@ async fn launch_artifact_generation(
         ("MODE".into(), persisted_address.mode.clone()),
         ("HARNESS".into(), persisted_address.harness.clone()),
     ];
-    if let Err(e) = state
+    let tx_id = match state
         .writer
         .transaction(
             vec![FileRewrite {
@@ -18033,15 +18098,18 @@ async fn launch_artifact_generation(
         )
         .await
     {
-        cleanup
-            .release_on_error("launch_address_persist_failed")
-            .await;
-        return Err(ApiError::internal(format!(
-            "persist artifact launch address: {e}"
-        )));
-    }
+        Ok(tx_id) => tx_id,
+        Err(e) => {
+            cleanup
+                .release_on_error("launch_address_persist_failed")
+                .await;
+            return Err(ApiError::internal(format!(
+                "persist artifact launch address: {e}"
+            )));
+        }
+    };
     cleanup.disarm();
-    let _ = state.index.refresh_project(&entry.id).await;
+    refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await?;
 
     Ok(run_id)
 }
@@ -18140,12 +18208,17 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
         )
         .await;
 
-    if let Err(e) = result {
-        tracing::error!(art_id, run_id, error = %e, "artifact generation-state revert failed");
+    let tx_id = match result {
+        Ok(tx_id) => tx_id,
+        Err(e) => {
+            tracing::error!(art_id, run_id, error = %e, "artifact generation-state revert failed");
+            return;
+        }
+    };
+    if let Err(error) = refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await {
+        tracing::error!(art_id, run_id, error = %error.message, "artifact revert committed but refresh failed");
         return;
     }
-
-    let _ = state.index.refresh_project(&entry.id).await;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18227,7 +18300,7 @@ async fn close_out_artifact_regenerate_round(
         ),
     ];
 
-    state
+    let tx_id = state
         .writer
         .transaction(
             vec![
@@ -18254,7 +18327,7 @@ async fn close_out_artifact_regenerate_round(
         .await
         .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
 
-    let _ = state.index.refresh_project(&entry.id).await;
+    refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18378,7 +18451,7 @@ async fn post_artifact_generate(
         ("PROMPT".into(), prompt_escaped.clone()),
     ];
 
-    state
+    let tx_id = state
         .writer
         .transaction(
             vec![
@@ -18405,7 +18478,7 @@ async fn post_artifact_generate(
         .await
         .map_err(|e| ApiError::internal(format!("write artifact record: {e}")))?;
 
-    let _ = state.index.refresh_project(&entry.id).await;
+    refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18641,10 +18714,11 @@ async fn post_artifact_regenerate(
 /// HTTP error returned by daemon routes.
 ///
 /// Wire envelope (stable; consumed by `ui/src/lib/transport.ts`): a JSON object
-/// with a single string field `error` holding the public message, e.g.
-/// `{"error":"task not found"}`. No other top-level fields are emitted (`code`,
-/// `details`, `trace_id`, etc.). Unsafe details (paths, I/O errors, driver
-/// internals) are logged via `tracing` and never included in the body.
+/// with a string field `error` holding the public message, e.g.
+/// `{"error":"task not found"}`. Structured conflict/recovery responses and
+/// committed-but-refresh-failed 503s add their documented reconciliation
+/// fields. Unsafe details (paths, I/O errors, driver internals) are logged via
+/// `tracing` and never included in the body.
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -19964,6 +20038,45 @@ pub(crate) mod tests {
             release_tasks: ReleaseTaskTracker::new(),
             recovery_generation_transitions: RecoveryGenerationTransitionTracker::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn committed_refresh_failure_returns_structured_503() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let state = direct_stage_test_state(home.clone()).await;
+        state.index.fail_next_refresh();
+
+        let error = append_tx_request(
+            &state,
+            TxAppendRequest {
+                request_id: Some("refresh-failure".to_string()),
+                r#type: "test.committed_refresh_failure".to_string(),
+                actor: None,
+                machine: None,
+                project: None,
+                task: None,
+                target: None,
+                reason: Some("prove committed 503".to_string()),
+                extra: Vec::new(),
+                tx_path: None,
+            },
+        )
+        .await
+        .expect_err("injected refresh failure must be reported");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = error.body.expect("structured committed response");
+        assert_eq!(body["committed"], true);
+        assert_eq!(body["index_status"], "refresh_failed");
+        let tx_id = body["tx_id"].as_str().expect("tx id");
+        let ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        assert!(ledger.contains(tx_id), "committed tx missing from ledger");
+        let status = get_status(State(state.clone())).await.0;
+        assert!(status.writer.liveness);
+        assert!(status.writer.completed_total >= 1, "{:?}", status.writer);
+        assert_eq!(status.index_refresh.requests_total, 1);
+        assert_eq!(status.index_refresh.scans_total, 1);
     }
 
     fn launch_stamp() -> chrono::DateTime<Utc> {

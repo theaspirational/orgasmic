@@ -6,13 +6,13 @@
 //! for that file is kept and the error is reported through the index's
 //! `parse_errors` map (AC #2 + dec_022).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
@@ -25,11 +25,10 @@ use orgasmic_core::{
 use serde::{Serialize, Serializer};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, Mutex, RwLock, Semaphore};
 use tracing::warn;
 
 use crate::artifacts::{load_project_artifacts, ArtifactSummary};
-use crate::events::{EventBus, EventPayload};
 
 /// One project's materialized state.
 #[derive(Debug, Clone, Serialize)]
@@ -223,7 +222,7 @@ pub struct GraphNodeSummary {
     pub superseded: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct BoardEntry {
     pub id: String,
     pub path: PathBuf,
@@ -342,9 +341,137 @@ impl IndexSnapshot {
 pub struct Index {
     inner: Arc<RwLock<IndexSnapshot>>,
     home: Home,
+    refresh: Arc<RefreshCoordinator>,
     repo_url_refresh_enabled: Arc<AtomicBool>,
     #[cfg(test)]
     git_spawn_attempts: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(test)]
+    refresh_test_hooks: Arc<RefreshTestHooks>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Default)]
+struct RefreshTestHooks {
+    fail_next: std::sync::atomic::AtomicUsize,
+    next_gates: std::sync::Mutex<VecDeque<Arc<TestRefreshGate>>>,
+    next_git_gate: std::sync::Mutex<Option<Arc<TestRefreshGate>>>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestRefreshGate {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+// orgasmic:TASK-K9WWM
+const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
+const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+enum RefreshTarget {
+    Project(String),
+    HomeTx,
+}
+
+impl RefreshTarget {
+    fn label(&self) -> &str {
+        match self {
+            Self::Project(project_id) => project_id,
+            Self::HomeTx => "home-tx",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct TargetRefreshState {
+    running: bool,
+    window_generation: u64,
+    required_generation: u64,
+    mutation_waiters: HashMap<String, Vec<oneshot::Sender<Result<(), String>>>>,
+    explicit_waiters: Vec<oneshot::Sender<Result<(), String>>>,
+    watcher_waiters: Vec<oneshot::Sender<Result<(), String>>>,
+    watcher_pending: bool,
+    completed_tx_ids: HashSet<String>,
+    completed_tx_order: VecDeque<String>,
+}
+
+impl TargetRefreshState {
+    fn has_required(&self) -> bool {
+        !self.mutation_waiters.is_empty() || !self.explicit_waiters.is_empty()
+    }
+
+    fn remember_completed(&mut self, tx_id: String) {
+        if !self.completed_tx_ids.insert(tx_id.clone()) {
+            return;
+        }
+        self.completed_tx_order.push_back(tx_id);
+        while self.completed_tx_order.len() > MAX_COMPLETED_TX_IDS_PER_TARGET {
+            if let Some(expired) = self.completed_tx_order.pop_front() {
+                self.completed_tx_ids.remove(&expired);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RefreshCoordinatorState {
+    targets: HashMap<RefreshTarget, TargetRefreshState>,
+}
+
+#[derive(Debug, Default)]
+struct RefreshMetrics {
+    requests_total: AtomicU64,
+    scans_total: AtomicU64,
+    coalesced_total: AtomicU64,
+    discarded_total: AtomicU64,
+    in_flight_targets: AtomicU64,
+    last_scan_duration_ms: AtomicU64,
+    max_scan_duration_ms: AtomicU64,
+}
+
+#[derive(Debug)]
+struct RefreshCoordinator {
+    state: Mutex<RefreshCoordinatorState>,
+    global_scans: Semaphore,
+    metrics: RefreshMetrics,
+}
+
+impl Default for RefreshCoordinator {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(RefreshCoordinatorState::default()),
+            global_scans: Semaphore::new(2),
+            metrics: RefreshMetrics::default(),
+        }
+    }
+}
+
+/// Boot-local refresh diagnostics exposed through `/daemon/status`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct IndexRefreshStatus {
+    pub pending_targets: usize,
+    pub in_flight_targets: u64,
+    pub requests_total: u64,
+    pub scans_total: u64,
+    pub coalesced_total: u64,
+    pub discarded_total: u64,
+    pub last_scan_duration_ms: u64,
+    pub max_scan_duration_ms: u64,
+}
+
+#[derive(Debug)]
+enum BuiltRefresh {
+    Project {
+        board_entry: BoardEntry,
+        project: Option<ProjectIndex>,
+        tx: Vec<TxRecord>,
+        parse_errors: Vec<ParseError>,
+    },
+    HomeTx {
+        tx: Vec<TxRecord>,
+        parse_errors: Vec<ParseError>,
+    },
 }
 
 impl Index {
@@ -352,9 +479,12 @@ impl Index {
         Self {
             inner: Arc::new(RwLock::new(IndexSnapshot::default())),
             home,
+            refresh: Arc::new(RefreshCoordinator::default()),
             repo_url_refresh_enabled: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             git_spawn_attempts: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            refresh_test_hooks: Arc::new(RefreshTestHooks::default()),
         }
     }
 
@@ -364,23 +494,6 @@ impl Index {
 
     pub async fn home_root(&self) -> &Path {
         &self.home.root
-    }
-
-    pub fn spawn_tx_listener(&self, events: EventBus) {
-        let index = self.clone();
-        tokio::spawn(async move {
-            let mut rx = events.subscribe();
-            while let Ok(event) = rx.recv().await {
-                let EventPayload::TxAppended { project_id, .. } = event.payload else {
-                    continue;
-                };
-                if let Some(project_id) = project_id {
-                    let _ = index.refresh_project(&project_id).await;
-                } else {
-                    index.refresh_home_tx().await;
-                }
-            }
-        });
     }
 
     /// Rebuild from disk. Called at boot before the daemon serves normal
@@ -496,32 +609,570 @@ impl Index {
         }
     }
 
-    /// Refresh one project after a watcher event. Preserves the rest of the
-    /// snapshot; on parse failure, keeps the last-good project entry.
+    /// Force one authoritative project refresh and wait for publication.
     pub async fn refresh_project(&self, project_id: &str) -> Result<(), String> {
-        let snap_read = self.inner.read().await;
-        let Some(prior_board) = snap_read.board.iter().find(|e| e.id == project_id).cloned() else {
-            return Err(format!("unknown project {project_id}"));
-        };
-        drop(snap_read);
-        let mut snap = self.inner.write().await;
-        snap.parse_errors
-            .retain(|e| !is_under(&e.path, &prior_board.path));
-        snap.tx
-            .retain(|r| r.project_id.as_deref() != Some(project_id));
-        let entry = prior_board.clone();
-        self.load_project(&entry, &mut snap, None);
-        let project_root = entry.path.clone();
-        drop(snap);
-        if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
-            self.refresh_repo_url(project_id, &project_root).await;
+        self.request_required_refresh(RefreshTarget::Project(project_id.to_string()), None)
+            .await
+    }
+
+    /// Refresh after a committed project mutation. The detached coordinator
+    /// owns the scan, so dropping the HTTP waiter cannot cancel convergence.
+    pub async fn refresh_after_tx(&self, project_id: &str, tx_id: &str) -> Result<(), String> {
+        self.request_required_refresh(
+            RefreshTarget::Project(project_id.to_string()),
+            Some(tx_id.to_string()),
+        )
+        .await
+    }
+
+    /// Refresh after a committed home-ledger mutation.
+    pub async fn refresh_home_after_tx(&self, tx_id: &str) -> Result<(), String> {
+        self.request_required_refresh(RefreshTarget::HomeTx, Some(tx_id.to_string()))
+            .await
+    }
+
+    /// Watcher-only convergence. Its watcher waiter controls wildcard-event
+    /// publication, but never joins the required-mutation generation: an event
+    /// arriving during a scan schedules a follow-up without delaying mutation
+    /// acknowledgement.
+    pub async fn schedule_watcher_refresh(&self, project_id: &str) -> Result<(), String> {
+        let target = RefreshTarget::Project(project_id.to_string());
+        {
+            let snap = self.inner.read().await;
+            if !snap.board.iter().any(|entry| entry.id == project_id) {
+                return Err(format!("unknown project {project_id}"));
+            }
         }
+        self.refresh
+            .metrics
+            .requests_total
+            .fetch_add(1, Ordering::Relaxed);
+        let (reply, rx) = oneshot::channel();
+        let mut coordinator = self.refresh.state.lock().await;
+        let state = coordinator.targets.entry(target.clone()).or_default();
+        if state.running || state.watcher_pending || state.has_required() {
+            self.refresh
+                .metrics
+                .coalesced_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        state.watcher_waiters.push(reply);
+        state.watcher_pending = true;
+        state.window_generation = state.window_generation.wrapping_add(1);
+        if !state.running {
+            state.running = true;
+            self.spawn_refresh_worker(target);
+        }
+        drop(coordinator);
+        rx.await
+            .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
+    }
+
+    /// Watcher-only home-ledger convergence.
+    pub async fn schedule_home_tx_refresh(&self) -> Result<(), String> {
+        let target = RefreshTarget::HomeTx;
+        self.refresh
+            .metrics
+            .requests_total
+            .fetch_add(1, Ordering::Relaxed);
+        let (reply, rx) = oneshot::channel();
+        let mut coordinator = self.refresh.state.lock().await;
+        let state = coordinator.targets.entry(target.clone()).or_default();
+        if state.running || state.watcher_pending || state.has_required() {
+            self.refresh
+                .metrics
+                .coalesced_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        state.watcher_waiters.push(reply);
+        state.watcher_pending = true;
+        state.window_generation = state.window_generation.wrapping_add(1);
+        if !state.running {
+            state.running = true;
+            self.spawn_refresh_worker(target);
+        }
+        drop(coordinator);
+        rx.await
+            .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
+    }
+
+    async fn request_required_refresh(
+        &self,
+        target: RefreshTarget,
+        tx_id: Option<String>,
+    ) -> Result<(), String> {
+        self.refresh
+            .metrics
+            .requests_total
+            .fetch_add(1, Ordering::Relaxed);
+        let (reply, rx) = oneshot::channel();
+        let mut reply = Some(reply);
+        {
+            let mut coordinator = self.refresh.state.lock().await;
+            let state = coordinator.targets.entry(target.clone()).or_default();
+            let mut duplicate_pending = false;
+            if let Some(tx_id) = tx_id.as_ref() {
+                if state.completed_tx_ids.contains(tx_id) {
+                    self.refresh
+                        .metrics
+                        .coalesced_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                }
+                if let Some(waiters) = state.mutation_waiters.get_mut(tx_id) {
+                    waiters.push(reply.take().expect("refresh reply available"));
+                    duplicate_pending = true;
+                    self.refresh
+                        .metrics
+                        .coalesced_total
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            if duplicate_pending {
+                drop(coordinator);
+                return rx
+                    .await
+                    .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()));
+            }
+            if state.running || state.has_required() || state.watcher_pending {
+                self.refresh
+                    .metrics
+                    .coalesced_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            match tx_id {
+                Some(tx_id) => {
+                    state
+                        .mutation_waiters
+                        .insert(tx_id, vec![reply.take().expect("refresh reply available")]);
+                }
+                None => state
+                    .explicit_waiters
+                    .push(reply.take().expect("refresh reply available")),
+            }
+            state.required_generation = state.required_generation.wrapping_add(1);
+            state.window_generation = state.window_generation.wrapping_add(1);
+            if !state.running {
+                state.running = true;
+                self.spawn_refresh_worker(target);
+            }
+        }
+        rx.await
+            .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
+    }
+
+    fn spawn_refresh_worker(&self, target: RefreshTarget) {
+        let index = self.clone();
+        tokio::spawn(async move {
+            index.run_refresh_worker(target).await;
+        });
+    }
+
+    async fn run_refresh_worker(&self, target: RefreshTarget) {
+        loop {
+            // Trailing-edge coalescing: a busy mutation batch gets one scan
+            // after requests have been quiet for 50ms, rather than one scan per
+            // writer acknowledgement.
+            loop {
+                let generation = {
+                    let coordinator = self.refresh.state.lock().await;
+                    coordinator
+                        .targets
+                        .get(&target)
+                        .map(|state| state.window_generation)
+                        .unwrap_or_default()
+                };
+                tokio::time::sleep(REFRESH_COALESCE_WINDOW).await;
+                let stable = {
+                    let coordinator = self.refresh.state.lock().await;
+                    coordinator
+                        .targets
+                        .get(&target)
+                        .is_none_or(|state| state.window_generation == generation)
+                };
+                if stable {
+                    break;
+                }
+            }
+
+            let (required_generation, required_tx_ids, explicit_count, watcher_count) = {
+                let mut coordinator = self.refresh.state.lock().await;
+                let Some(state) = coordinator.targets.get_mut(&target) else {
+                    return;
+                };
+                let required_tx_ids = state.mutation_waiters.keys().cloned().collect::<Vec<_>>();
+                let explicit_count = state.explicit_waiters.len();
+                let watcher_count = state.watcher_waiters.len();
+                state.watcher_pending = false;
+                (
+                    state.required_generation,
+                    required_tx_ids,
+                    explicit_count,
+                    watcher_count,
+                )
+            };
+            let queued = required_tx_ids.len() + explicit_count + watcher_count;
+            let cause = if !required_tx_ids.is_empty() {
+                "mutation"
+            } else if explicit_count > 0 {
+                "explicit"
+            } else {
+                "watcher"
+            };
+
+            let permit = match self.refresh.global_scans.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => {
+                    self.fail_refresh_target(&target, "index refresh coordinator stopped")
+                        .await;
+                    return;
+                }
+            };
+            self.refresh
+                .metrics
+                .in_flight_targets
+                .fetch_add(1, Ordering::Relaxed);
+            self.refresh
+                .metrics
+                .scans_total
+                .fetch_add(1, Ordering::Relaxed);
+            let started = Instant::now();
+            let built = self.build_refresh(target.clone()).await;
+            let duration = started.elapsed();
+            self.refresh
+                .metrics
+                .in_flight_targets
+                .fetch_sub(1, Ordering::Relaxed);
+            drop(permit);
+            let duration_ms = duration.as_millis().min(u128::from(u64::MAX)) as u64;
+            self.refresh
+                .metrics
+                .last_scan_duration_ms
+                .store(duration_ms, Ordering::Relaxed);
+            self.refresh
+                .metrics
+                .max_scan_duration_ms
+                .fetch_max(duration_ms, Ordering::Relaxed);
+            if duration >= Duration::from_secs(1) {
+                warn!(
+                    target = target.label(),
+                    cause,
+                    queued,
+                    coalesced_total = self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
+                    duration_ms,
+                    "slow index refresh scan"
+                );
+            }
+
+            let mut coordinator = self.refresh.state.lock().await;
+            let Some(state) = coordinator.targets.get_mut(&target) else {
+                return;
+            };
+            if state.required_generation != required_generation {
+                self.refresh
+                    .metrics
+                    .discarded_total
+                    .fetch_add(1, Ordering::Relaxed);
+                drop(coordinator);
+                continue;
+            }
+
+            let result = match built {
+                Ok(built) => self.publish_refresh(&target, built).await,
+                Err(error) => Err(error),
+            };
+
+            match &result {
+                Ok(()) => {
+                    for tx_id in required_tx_ids {
+                        if let Some(waiters) = state.mutation_waiters.remove(&tx_id) {
+                            for waiter in waiters {
+                                let _ = waiter.send(Ok(()));
+                            }
+                        }
+                        state.remember_completed(tx_id);
+                    }
+                    for waiter in state.explicit_waiters.drain(..explicit_count) {
+                        let _ = waiter.send(Ok(()));
+                    }
+                    for waiter in state.watcher_waiters.drain(..watcher_count) {
+                        let _ = waiter.send(Ok(()));
+                    }
+                }
+                Err(error) => {
+                    for waiters in state.mutation_waiters.drain().map(|(_, waiters)| waiters) {
+                        for waiter in waiters {
+                            let _ = waiter.send(Err(error.clone()));
+                        }
+                    }
+                    for waiter in state.explicit_waiters.drain(..) {
+                        let _ = waiter.send(Err(error.clone()));
+                    }
+                    for waiter in state.watcher_waiters.drain(..) {
+                        let _ = waiter.send(Err(error.clone()));
+                    }
+                    state.watcher_pending = false;
+                }
+            }
+
+            if state.has_required() || state.watcher_pending {
+                drop(coordinator);
+                continue;
+            }
+            state.running = false;
+            break;
+        }
+    }
+
+    async fn fail_refresh_target(&self, target: &RefreshTarget, message: &str) {
+        let mut coordinator = self.refresh.state.lock().await;
+        let Some(state) = coordinator.targets.get_mut(target) else {
+            return;
+        };
+        for waiters in state.mutation_waiters.drain().map(|(_, waiters)| waiters) {
+            for waiter in waiters {
+                let _ = waiter.send(Err(message.to_string()));
+            }
+        }
+        for waiter in state.explicit_waiters.drain(..) {
+            let _ = waiter.send(Err(message.to_string()));
+        }
+        for waiter in state.watcher_waiters.drain(..) {
+            let _ = waiter.send(Err(message.to_string()));
+        }
+        state.watcher_pending = false;
+        state.running = false;
+    }
+
+    async fn build_refresh(&self, target: RefreshTarget) -> Result<BuiltRefresh, String> {
+        #[cfg(test)]
+        if self
+            .refresh_test_hooks
+            .fail_next
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err("injected index refresh failure".to_string());
+        }
+        #[cfg(test)]
+        let gate = self
+            .refresh_test_hooks
+            .next_gates
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop_front();
+        #[cfg(test)]
+        if let Some(gate) = gate {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
+        let seed = self.inner.read().await.clone();
+        let scan_index = self.clone();
+        tokio::task::spawn_blocking(move || match target {
+            RefreshTarget::Project(project_id) => {
+                let Some(board_entry) = seed
+                    .board
+                    .iter()
+                    .find(|entry| entry.id == project_id)
+                    .cloned()
+                else {
+                    return Err(format!("unknown project {project_id}"));
+                };
+                let mut next = seed;
+                next.parse_errors
+                    .retain(|error| !is_under(&error.path, &board_entry.path));
+                next.tx
+                    .retain(|record| record.project_id.as_deref() != Some(project_id.as_str()));
+                scan_index.load_project(&board_entry, &mut next, None);
+                let project = next.projects.remove(&project_id);
+                let tx = next
+                    .tx
+                    .into_iter()
+                    .filter(|record| record.project_id.as_deref() == Some(project_id.as_str()))
+                    .collect();
+                let parse_errors = next
+                    .parse_errors
+                    .into_iter()
+                    .filter(|error| is_under(&error.path, &board_entry.path))
+                    .collect();
+                Ok(BuiltRefresh::Project {
+                    board_entry,
+                    project,
+                    tx,
+                    parse_errors,
+                })
+            }
+            RefreshTarget::HomeTx => {
+                let mut next = seed;
+                next.tx.retain(|record| record.project_id.is_some());
+                next.parse_errors
+                    .retain(|error| !is_under(&error.path, &scan_index.home.tx()));
+                scan_index.load_home_tx(&mut next);
+                Ok(BuiltRefresh::HomeTx {
+                    tx: next
+                        .tx
+                        .into_iter()
+                        .filter(|record| record.project_id.is_none())
+                        .collect(),
+                    parse_errors: next
+                        .parse_errors
+                        .into_iter()
+                        .filter(|error| is_under(&error.path, &scan_index.home.tx()))
+                        .collect(),
+                })
+            }
+        })
+        .await
+        .map_err(|error| format!("index refresh scan task failed: {error}"))?
+    }
+
+    async fn publish_refresh(
+        &self,
+        target: &RefreshTarget,
+        built: BuiltRefresh,
+    ) -> Result<(), String> {
+        let mut snap = self.inner.write().await;
+        match built {
+            BuiltRefresh::Project {
+                board_entry,
+                project,
+                tx,
+                parse_errors,
+            } => {
+                let Some(current_entry) =
+                    snap.board.iter().find(|entry| entry.id == board_entry.id)
+                else {
+                    return Err(format!("unknown project {}", board_entry.id));
+                };
+                if current_entry != &board_entry {
+                    return Err(format!(
+                        "project {} registration changed during refresh",
+                        board_entry.id
+                    ));
+                }
+                snap.parse_errors
+                    .retain(|error| !is_under(&error.path, &board_entry.path));
+                snap.parse_errors.extend(parse_errors);
+                snap.tx
+                    .retain(|record| record.project_id.as_deref() != Some(board_entry.id.as_str()));
+                snap.tx.extend(tx);
+                let Some(mut project) = project else {
+                    return Err(format!(
+                        "project {} scan produced no projection",
+                        board_entry.id
+                    ));
+                };
+                // Home-ledger and project scans may run concurrently. Rebuild
+                // this cheap derived view from the tx set under publication so
+                // an older project scan cannot overwrite activity published by
+                // a newer home-ledger refresh.
+                project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
+                snap.projects.insert(board_entry.id, project);
+            }
+            BuiltRefresh::HomeTx { tx, parse_errors } => {
+                snap.tx.retain(|record| record.project_id.is_some());
+                snap.tx.extend(tx);
+                snap.parse_errors
+                    .retain(|error| !is_under(&error.path, &self.home.tx()));
+                snap.parse_errors.extend(parse_errors);
+                rebuild_all_activity_indexes(&mut snap);
+            }
+        }
+        tracing::debug!(target = target.label(), "published index refresh snapshot");
         Ok(())
+    }
+
+    pub async fn refresh_status(&self) -> IndexRefreshStatus {
+        let coordinator = self.refresh.state.lock().await;
+        let pending_targets = coordinator
+            .targets
+            .values()
+            .filter(|state| state.has_required() || state.watcher_pending)
+            .count();
+        IndexRefreshStatus {
+            pending_targets,
+            in_flight_targets: self
+                .refresh
+                .metrics
+                .in_flight_targets
+                .load(Ordering::Relaxed),
+            requests_total: self.refresh.metrics.requests_total.load(Ordering::Relaxed),
+            scans_total: self.refresh.metrics.scans_total.load(Ordering::Relaxed),
+            coalesced_total: self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
+            discarded_total: self.refresh.metrics.discarded_total.load(Ordering::Relaxed),
+            last_scan_duration_ms: self
+                .refresh
+                .metrics
+                .last_scan_duration_ms
+                .load(Ordering::Relaxed),
+            max_scan_duration_ms: self
+                .refresh
+                .metrics
+                .max_scan_duration_ms
+                .load(Ordering::Relaxed),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_refresh(&self) {
+        self.refresh_test_hooks.fail_next.store(1, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gate_next_refresh(&self) -> Arc<TestRefreshGate> {
+        let gate = Arc::new(TestRefreshGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        self.refresh_test_hooks
+            .next_gates
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push_back(gate.clone());
+        gate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gate_next_git_probe(&self) -> Arc<TestRefreshGate> {
+        let gate = Arc::new(TestRefreshGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        *self
+            .refresh_test_hooks
+            .next_git_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(gate.clone());
+        gate
+    }
+
+    pub fn spawn_repo_url_refresh_for(&self, project_id: String, project_root: PathBuf) {
+        if !self.repo_url_refresh_enabled.load(Ordering::Acquire) {
+            return;
+        }
+        let index = self.clone();
+        tokio::spawn(async move {
+            index.refresh_repo_url(&project_id, &project_root).await;
+        });
     }
 
     async fn refresh_repo_url(&self, project_id: &str, project_root: &Path) {
         if !project_root.join(".git").exists() {
             return;
+        }
+        #[cfg(test)]
+        let gate = self
+            .refresh_test_hooks
+            .next_git_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        #[cfg(test)]
+        if let Some(gate) = gate {
+            gate.entered.notify_one();
+            gate.release.notified().await;
         }
         #[cfg(test)]
         self.git_spawn_attempts.fetch_add(1, Ordering::Relaxed);
@@ -546,12 +1197,9 @@ impl Index {
     }
 
     pub async fn refresh_home_tx(&self) {
-        let mut snap = self.inner.write().await;
-        snap.tx.retain(|r| r.project_id.is_some());
-        snap.parse_errors
-            .retain(|e| !is_under(&e.path, &self.home.tx()));
-        self.load_home_tx(&mut snap);
-        rebuild_all_activity_indexes(&mut snap);
+        let _ = self
+            .request_required_refresh(RefreshTarget::HomeTx, None)
+            .await;
     }
 
     fn load_board(&self, snap: &mut IndexSnapshot) {
@@ -1943,6 +2591,35 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn stalled_git_probe_neither_delays_mutation_nor_counts_as_refresh_scan() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let index = Index::new(home);
+        index.rebuild().await;
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+        let git_gate = index.gate_next_git_probe();
+        index.spawn_repo_url_refresh_for("project".to_string(), project);
+        git_gate.entered.notified().await;
+
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            index.refresh_after_tx("project", "tx-during-git"),
+        )
+        .await
+        .expect("stalled Git probe delayed mutation acknowledgement")
+        .unwrap();
+        let status = index.refresh_status().await;
+        assert_eq!(status.requests_total, 1, "{status:?}");
+        assert_eq!(status.scans_total, 1, "{status:?}");
+        git_gate.release.notify_one();
+    }
+
     /// Establish the precondition "this project has a Git-backed repo_url".
     ///
     /// `refresh_repo_url` bounds its Git probe and, when that bound is spent,
@@ -3243,5 +3920,183 @@ The following criteria must hold before close.
         let snap = index.snapshot().await;
         assert_eq!(snap.tx.len(), 1);
         assert_eq!(snap.tx[0].entry.tx_id, "tx-1");
+    }
+
+    #[tokio::test]
+    async fn sixteen_same_project_mutations_coalesce_without_concurrent_scans() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.rebuild().await;
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(17));
+        let mut requests = Vec::new();
+        for number in 0..16 {
+            let index = index.clone();
+            let barrier = barrier.clone();
+            requests.push(tokio::spawn(async move {
+                barrier.wait().await;
+                index
+                    .refresh_after_tx("project", &format!("tx-{number}"))
+                    .await
+            }));
+        }
+        barrier.wait().await;
+        for request in requests {
+            request.await.unwrap().unwrap();
+        }
+        let status = index.refresh_status().await;
+        eprintln!("TASK-K9WWM coordinator metrics: {status:?}");
+        assert!(status.scans_total <= 2, "{status:?}");
+        assert_eq!(status.in_flight_targets, 0, "{status:?}");
+
+        let before = status.scans_total;
+        index.refresh_after_tx("project", "tx-0").await.unwrap();
+        assert_eq!(index.refresh_status().await.scans_total, before);
+    }
+
+    #[tokio::test]
+    async fn cancelled_waiter_does_not_cancel_refresh_convergence() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.rebuild().await;
+        let gate = index.gate_next_refresh();
+        let request_index = index.clone();
+        let request =
+            tokio::spawn(
+                async move { request_index.refresh_after_tx("project", "tx-cancel").await },
+            );
+        gate.entered.notified().await;
+        request.abort();
+        gate.release.notify_one();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let status = index.refresh_status().await;
+                if status.scans_total == 1 && status.in_flight_targets == 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached refresh converged after waiter cancellation");
+        let before = index.refresh_status().await.scans_total;
+        index
+            .refresh_after_tx("project", "tx-cancel")
+            .await
+            .unwrap();
+        assert_eq!(index.refresh_status().await.scans_total, before);
+    }
+
+    #[tokio::test]
+    async fn mutation_arriving_during_scan_discards_stale_generation() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.rebuild().await;
+        let gate = index.gate_next_refresh();
+        let first_index = index.clone();
+        let first =
+            tokio::spawn(async move { first_index.refresh_after_tx("project", "tx-first").await });
+        gate.entered.notified().await;
+
+        let backlog = project.join(".orgasmic/tasks/backlog.org");
+        let mut contents = std::fs::read_to_string(&backlog).unwrap();
+        contents
+            .push_str("\n* BACKLOG TASK-002 Later mutation\n:PROPERTIES:\n:ID: TASK-002\n:END:\n");
+        write(&backlog, &contents);
+        let second_index = index.clone();
+        let second =
+            tokio::spawn(
+                async move { second_index.refresh_after_tx("project", "tx-second").await },
+            );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while index.refresh_status().await.requests_total < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        gate.release.notify_one();
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        let status = index.refresh_status().await;
+        assert_eq!(status.discarded_total, 1, "{status:?}");
+        assert_eq!(status.scans_total, 2, "{status:?}");
+        assert!(index.snapshot().await.task("project", "TASK-002").is_some());
+    }
+
+    #[tokio::test]
+    async fn snapshot_reads_remain_responsive_while_scan_is_gated() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.rebuild().await;
+        let gate = index.gate_next_refresh();
+        let request_index = index.clone();
+        let request =
+            tokio::spawn(async move { request_index.refresh_after_tx("project", "tx-read").await });
+        gate.entered.notified().await;
+        let snapshot = tokio::time::timeout(Duration::from_millis(25), index.snapshot())
+            .await
+            .expect("snapshot read blocked behind off-lock scan");
+        assert!(snapshot.project("project").is_some());
+        gate.release.notify_one();
+        request.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn different_projects_scan_concurrently_with_global_limit_two() {
+        let (tmp, home) = make_home();
+        let projects = ["one", "two", "three"];
+        let mut board = "#+title: board\n#+orgasmic_version: 1\n".to_string();
+        for id in projects {
+            let root = tmp.path().join(id);
+            seed_project(&root);
+            board.push_str(&format!(
+                "\n* PROJECT {id}\n:PROPERTIES:\n:ID: {id}\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+                root.display()
+            ));
+        }
+        write(&home.board(), &board);
+        let index = Index::new(home);
+        index.rebuild().await;
+        let gates = [
+            index.gate_next_refresh(),
+            index.gate_next_refresh(),
+            index.gate_next_refresh(),
+        ];
+        let requests = projects.map(|id| {
+            let index = index.clone();
+            tokio::spawn(async move { index.refresh_after_tx(id, &format!("tx-{id}")).await })
+        });
+        gates[0].entered.notified().await;
+        gates[1].entered.notified().await;
+        assert_eq!(index.refresh_status().await.in_flight_targets, 2);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), gates[2].entered.notified())
+                .await
+                .is_err(),
+            "third project started before a global permit was released"
+        );
+        gates[0].release.notify_one();
+        gates[2].entered.notified().await;
+        gates[1].release.notify_one();
+        gates[2].release.notify_one();
+        for request in requests {
+            request.await.unwrap().unwrap();
+        }
+        assert_eq!(index.refresh_status().await.scans_total, 3);
     }
 }

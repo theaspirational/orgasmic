@@ -356,12 +356,32 @@ async fn send_json<R: DeserializeOwned>(
         if status == StatusCode::CONFLICT {
             bail!("conflict — node changed on disk; reload base_version and retry: {body}");
         }
-        bail!("daemon returned {status}: {body}");
+        bail!(daemon_http_error_message(status, &body));
     }
     response
         .json::<R>()
         .await
         .map_err(|e| anyhow!("decode daemon response: {e}"))
+}
+
+fn daemon_http_error_message(status: StatusCode, body: &str) -> String {
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
+            let committed = value.get("committed").and_then(|value| value.as_bool());
+            let index_status = value.get("index_status").and_then(|value| value.as_str());
+            let tx_id = value.get("tx_id").and_then(|value| value.as_str());
+            if committed == Some(true) && index_status == Some("refresh_failed") {
+                return format!(
+                    "mutation committed{} but the daemon index refresh failed — re-read the exact \
+                     state before deciding whether another mutation is needed; do not blindly retry",
+                    tx_id
+                        .map(|tx_id| format!(" as {tx_id}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+    }
+    format!("daemon returned {status}: {body}")
 }
 
 pub(crate) fn read_bearer_token(home: &Home) -> Result<String> {
@@ -553,6 +573,17 @@ mod tests {
         assert_eq!(api_path("/daemon/status"), "/api/daemon/status");
         assert_eq!(api_path("daemon/status"), "/api/daemon/status");
         assert_eq!(api_path("/api/daemon/status"), "/api/daemon/status");
+    }
+
+    #[test]
+    fn committed_refresh_failure_requires_reconciliation_not_blind_retry() {
+        let message = daemon_http_error_message(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":"scan failed","committed":true,"tx_id":"tx-42","index_status":"refresh_failed"}"#,
+        );
+        assert!(message.contains("mutation committed as tx-42"), "{message}");
+        assert!(message.contains("re-read the exact state"), "{message}");
+        assert!(message.contains("do not blindly retry"), "{message}");
     }
 
     #[test]

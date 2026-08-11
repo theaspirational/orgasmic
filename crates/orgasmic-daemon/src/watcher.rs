@@ -380,6 +380,7 @@ async fn flush(
                 warn!(project = %entry.id, error = %err, "load newly registered project failed");
                 continue;
             }
+            index.spawn_repo_url_refresh_for(entry.id.clone(), entry.path.clone());
             events.publish(
                 Topic::Board,
                 EventPayload::ProjectIndexed {
@@ -396,11 +397,13 @@ async fn flush(
         }
     }
     if touched_home_tx {
-        index.refresh_home_tx().await;
-        events.publish(Topic::Daemon, EventPayload::DaemonHeartbeat);
+        match index.schedule_home_tx_refresh().await {
+            Ok(()) => events.publish(Topic::Daemon, EventPayload::DaemonHeartbeat),
+            Err(err) => warn!(error = %err, "home tx refresh failed"),
+        }
     }
     for project_id in touched_projects {
-        if let Err(err) = index.refresh_project(&project_id).await {
+        if let Err(err) = index.schedule_watcher_refresh(&project_id).await {
             warn!(project = %project_id, error = %err, "project refresh failed");
             continue;
         }
