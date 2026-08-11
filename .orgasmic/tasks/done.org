@@ -31548,3 +31548,11 @@ Extract the rolling-release draft-to-publish transition into one policy-aware he
 - Repository gates: cargo build green; cargo clippy --workspace --all-targets green; scripts/run-tests.sh RED on two unrelated recovery_fault_restart.rs address-file parse races at line 450, both green in isolation. No Rust files are changed by this task.
 ** Notes
 The unrelated recovery and Cursor-readiness blockers were repaired by TASK-JMDKM. This task closes on the combined PR tree, whose exact local certification is the merge gate.
+
+* DONE TASK-8H8A2 Make daemon soak manual-only
+:PROPERTIES:
+:ID: TASK-8H8A2
+:PRIORITY: P2
+:TEST_CMD: actionlint -ignore SC2046 .github/workflows/nightly-soak.yml
+:WRITE_SCOPE: .github/workflows/nightly-soak.yml
+:END:
