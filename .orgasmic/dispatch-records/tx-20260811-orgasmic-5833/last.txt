@@ -1,0 +1,243 @@
+# TASK-AJP4A.1.1.1.1.1 (coordinator-delay classification) — independent final review
+
+Reviewer: Claude Opus 5, medium effort. Range `4f63d3a..8fc15af` (merge `c948872`),
+3 files, +206/-72. Implementer: Codex gpt-5.6-sol xhigh — treated as claim, re-derived
+from source and re-ran gates.
+
+## Verdict
+
+**Approve — ship.** All four acceptance criteria are met on the production path, not
+only in unit scaffolding. No HIGH or MEDIUM findings. Two LOW notes below (one
+defense-in-depth, one test-coverage) plus one recorded behavioral narrowing that I
+judge intended and correct. Gates green: fmt, clippy `-D warnings` workspace
+all-targets, targeted daemon/CLI tests, workspace build. Worktree remained read-only
+(`git status --porcelain` empty after all runs); no daemon/service/LaunchAgent was
+touched.
+
+## Findings
+
+### LOW (design / defense-in-depth) — renderers lost their own control-char guard
+`crates/orgasmic-cli/src/daemon_service.rs:950` dropped
+`.filter(|value| !value.chars().any(char::is_control))` from the systemd renderer;
+the check now lives once at the capture boundary,
+`daemon_service.rs:386` (`captured_project_scan_timeout`).
+
+This is **currently sound**: I enumerated every `ServiceSpec` construction site and
+production has exactly one, `daemon_service.rs:363`, which sources
+`project_scan_timeout` solely from `captured_project_scan_timeout(std::env::var_os(...))`
+at `daemon_service.rs:380`. The other two hits (`daemon_service.rs:1105`, `:1117`) are
+test helpers. So the choke point is real and both platforms are covered.
+
+The residual is that both renderers are now individually unguarded, and neither
+escaping helper neutralizes a control character:
+- `xml_escape` (`daemon_service.rs:1033`) escapes only `& < > " '` — a raw newline or
+  NUL in a plist `<string>` yields malformed XML that launchd rejects, so the daemon
+  never installs.
+- `systemd_quote_arg` (`daemon_service.rs:1046`) escapes only `\` and `"` — unit files
+  are line-oriented, so a raw newline still terminates the `Environment=` directive
+  regardless of the surrounding quotes.
+
+Impact today: none. Impact if a future change adds a second `ServiceSpec` producer
+(config file, CLI flag, remote provisioning) that bypasses the helper: plist-corruption
+DoS on macOS and directive injection on systemd, with no test catching it because
+`service_renderers_omit_scan_timeout_rejected_at_common_capture_boundary`
+(`daemon_service.rs:1605`) feeds the renderers through the capture helper rather than
+probing them directly.
+
+Fix direction (optional, non-blocking): keep the capture-boundary filter as the single
+source of truth, but make the invariant enforced rather than conventional — either
+give `ServiceSpec.project_scan_timeout` a newtype whose only constructor is
+`captured_project_scan_timeout`, or re-add a cheap `debug_assert!(!value.chars().any(char::is_control))`
+inside each renderer so a future bypass fails loudly in tests instead of silently at
+install time.
+
+Note this change is a **net security improvement**, not a regression: pre-change, the
+macOS plist path had no filter at all, so the same hostile
+`ORGASMIC_PROJECT_SCAN_TIMEOUT` would have produced a malformed plist. Moving the check
+to capture closed that hole.
+
+### LOW (test) — the race test's "bare JSON array" assertion is the degenerate case
+`crates/orgasmic-daemon/src/api.rs:30203-30213` asserts
+`rows == serde_json::json!([])`. Because the single seeded project is the delayed one
+and the request carries no home tx rows, the array is necessarily empty. The assertion
+proves the response is still a bare array rather than an envelope object — which is the
+stated criterion — but it does not additionally prove that a delayed project's rows are
+excluded from a *non-empty* array while other projects' rows survive.
+
+That gap is covered elsewhere for the failure branch:
+`unscoped_tx_returns_home_and_later_project_rows_with_partial_coverage`
+(`api.rs:~30095`) asserts `partial; loaded=[second]; failed=[first]` against a
+non-empty array containing exactly `{tx-home, tx-second}`. No equivalent
+multi-project assertion exists for the delayed branch. Low severity because the
+exclusion logic is shared — `covered_projects` filtering at `api.rs:2589-2595` is
+identical for both branches — so the delayed case cannot diverge without also breaking
+the covered failure test.
+
+Fix direction: if this is revisited, seed a second healthy project in the race test and
+assert its rows are present while the delayed project's are absent.
+
+## Recorded behavioral narrowing (informational, not a defect)
+
+`record_tx_coverage_error` (`api.rs:2613-2625`) now classifies purely from the caller's
+own typed outcome. Previously it consulted the shared snapshot, so *any* error on a
+project whose state happened to be `Delayed` reported as delayed. Concretely: if a
+project sits `Delayed` from an earlier coordinator timeout and this request's scan then
+fails for a genuine reason (returning `ProjectLoadRequestError::Refresh`), the old code
+said `delayed`, the new code says `failed`.
+
+I judge the new behavior correct and squarely what the acceptance criteria asked for —
+the header should describe what *this* request experienced, not an unrelated request's
+residue — but it is a real change in output for that input and is worth having on
+record.
+
+## Verification of the six brief items
+
+**1. Typed `CoordinatorTimeout` survives a Ready publication — CONFIRMED.**
+`ProjectLoadRequestError` is now `pub(crate)` (`index.rs:553`) and
+`ensure_project_loaded_with_cooldown` returns it unerased (`index.rs:1082-1087`).
+`ensure_project_loaded_inner` propagates via `result?` at `index.rs:1163` — critically,
+*before* re-reading the snapshot at `index.rs:1164`, so a concurrently-published Ready
+projection cannot rewrite the outcome. `record_tx_coverage_error` matches on the enum
+variant (`api.rs:2618-2624`). Zero string matching and zero post-hoc state inference
+remain on this path — the deleted code is exactly the
+`snap.project_loads.get(...).is_some_and(|load| load.state == Delayed)` lookup.
+`CoordinatorTimeout` is constructed at precisely one site, the `tokio::time::timeout`
+expiry arm at `index.rs:1285-1287`; every genuine scan error takes the `Ok(result)` arm
+and maps to `Refresh` (`index.rs:1281-1283`). So no real failure can be laundered into
+`delayed`, and no timeout can be reported as a genuine failure.
+The `pub`→`pub(crate)` narrowing is safe: `api.rs:2575` is the only non-test caller.
+
+**2. Bare JSON array plus `delayed=[project]` in the forced race — CONFIRMED, and the
+test genuinely discriminates.** `tx_coverage_keeps_typed_coordinator_timeout_delayed_after_ready_publication`
+(`api.rs:30151`) drives the real `get_tx` handler over a real `Index`, forces a 150 ms
+coordinator timeout, then holds the delay-record gate open while polling until the
+detached scan has actually published `state == Ready` *and* `snap.projects` contains the
+key — i.e. it establishes the exact interleaving before releasing. It asserts the header
+is `partial; loaded=[]; delayed=[project]; failed=[]`, the body is a bare array, and the
+final load is `Ready` with the retained `coordinator wait timed out` diagnostic and
+`cooldown_until == None`. Under the old snapshot-based classification the observed state
+at that instant is `Ready`, not `Delayed`, so the old code would have written the project
+into `failures` — the test fails against the pre-change logic and is therefore a real
+regression guard, not a tautology. Passed 5/5 consecutive runs (0.19–0.22 s each), so
+the 150 ms wall-clock element is not a flake source; the barriers, not the clock, carry
+the ordering.
+Ordinary refresh failures still classify as failed: verified by the untouched
+production-path test at `api.rs:~30095` (`partial; loaded=[second]; failed=[first]`,
+non-empty array), which I ran and which passes.
+
+**3. Per-project snapshot clone eliminated — CONFIRMED.** The
+`let snap = state.index.snapshot().await;` that previously ran inside the error arm is
+gone; `record_tx_coverage_error` no longer takes an `&IndexSnapshot`
+(`api.rs:2613-2617`). Unscoped `/tx` now takes exactly **two** `IndexSnapshot` clones
+regardless of how many projects fail or delay: the catalog at `api.rs:2542` and the
+post-loop projection at `api.rs:2586`. Previously it was `2 + N_unsuccessful`.
+Lock boundaries are correct: `catalog` is explicitly `drop`ped at `api.rs:2559` before
+the load loop begins, and the post-loop snapshot is acquired after the loop ends, so no
+index lock is held across any `.await` inside the loop. The scoped branch was refactored
+into an early `continue` (`api.rs:2562-2571`) and preserves its 503 semantics unchanged.
+`IndexSnapshot` and `ProjectLoadState` remain used elsewhere in `api.rs` (11 and 20
+occurrences), so the narrowed import introduces no dead-import warning — confirmed by
+clippy `-D warnings`.
+
+**4. Control-char validation is common to both render paths — CONFIRMED.** Single check
+at `daemon_service.rs:387`, single production producer at `daemon_service.rs:363/380`,
+therefore both `render_macos_launch_agent` (`:850`) and `render_linux_systemd_unit`
+(`:950`) are covered. Ordinary raw values still pass through untouched for daemon-side
+bounded validation: `project_scan_timeout_is_captured_raw_and_rendered_only_when_present`
+(`daemon_service.rs:1701`) asserts `"30" → Some("30")`, `"301" → Some("301")`, and
+`"invalid" → Some("invalid")` — so the capture layer deliberately does not duplicate or
+pre-empt the daemon's 1..300 numeric validation, it only strips control characters.
+`None → None` preserved. See the LOW finding above for the residual.
+
+**5. Test-only barriers do not touch production — CONFIRMED.** Every added hook is
+`#[cfg(test)]`: the `next_delay_record_gate` and `coordinator_timeout_ms` fields
+(`index.rs:421`, `:427`), `gate_next_project_load_delay_record` (`index.rs:2342`),
+`wait_for_project_load_delay_record_gate` (`index.rs:2357`), and
+`set_coordinator_timeout` (`index.rs:2419`). The one production-path insertion,
+`index.rs:1157-1158`, is itself `#[cfg(test)]`-gated and compiles to nothing in release.
+The coordinator-timeout override at `index.rs:1267-1278` is a `#[cfg(test)]` shadowing
+`let` that falls through to the real `first_load_coordinator_timeout` value whenever the
+override is 0 (the default), so even test builds that do not opt in keep production
+timing. Lazy-load and scan-ownership semantics are untouched: `record_project_load_delay`
+(`index.rs:1331`) retains its `expected_entry` board-identity guard and its `Unloaded`
+bailout, and still sets `Ready` when a last-good projection exists rather than clobbering
+it to `Delayed` — that is what lets the honest diagnostic ride along on a Ready state.
+The 72 `index::` module tests all pass.
+
+**6. No live mutation, no eager discovery, no scope drift — CONFIRMED.** Diff touches
+exactly the three declared read/write-scope files. No `daemon start`, no `service
+install`, no LaunchAgent write, no `orgasmic` CLI invocation was run during this review;
+all probing was `cargo` in the review worktree. `git status --porcelain` is empty after
+every command, so the worktree stayed read-only. The lazy per-project discovery design is
+preserved — `ensure_project_loaded_inner` still refreshes one project on demand and the
+whole-board cooldown path is unchanged apart from the error type.
+
+## Verification notes
+
+Independent reruns from scratch in the review worktree, treating the implementer summary
+as an unverified claim:
+
+| Gate | Command | Result |
+|---|---|---|
+| Formatting | `cargo fmt --all -- --check` | clean, rc 0 |
+| Lint | `cargo clippy --workspace --all-targets -- -D warnings` | rc 0, 0 warnings; log confirms `orgasmic-daemon` and `orgasmic-cli` were both compiled, not cached past |
+| `/tx` coverage | `cargo test -p orgasmic-daemon --lib api::tests::tx_coverage` | 2 passed |
+| Race test flake probe | same, `tx_coverage_keeps_typed`, ×5 | 5/5 passed, 0.19–0.22 s |
+| All `api::tests::tx*` | `cargo test -p orgasmic-daemon --lib api::tests::tx` | 3 passed |
+| Coverage-header family | `cargo test -p orgasmic-daemon --lib coverage` | 5 passed |
+| Unscoped `/tx` production path | `cargo test -p orgasmic-daemon --lib api::tests::unscoped` | 1 passed |
+| Index module | `cargo test -p orgasmic-daemon --lib index::` | 72 passed |
+| CLI service | `cargo test -p orgasmic-cli --bins daemon_service::` | 27 passed |
+| Build | `cargo build --workspace` | Finished, rc 0 |
+| Read-only check | `git status --porcelain` | empty |
+
+Per the brief, the broad daemon aggregate was **not** rerun; its prior classification
+(1,897 passed, 3 unrelated timing flakes) is carried forward as an implementer claim I
+did not independently reproduce — see residual risk below.
+
+Production-path probe for the behavioral claims: item 2's evidence is the real `get_tx`
+axum handler over a real `Index` with a real seeded project on disk, not a unit test of
+the classifier in isolation. The isolated classifier test
+(`tx_coverage_separates_typed_delay_from_failure_and_preserves_empty_shape`,
+`api.rs:30216`) is supplementary, covering the `Refresh → failed` half.
+
+Failure classification: no failures observed in any run, so nothing to classify as
+regression / pre-existing / flaky / environment-blocked.
+
+## Open questions
+
+1. Is the classification narrowing described above (a `Refresh` error on an
+   already-`Delayed` project now reporting `failed` instead of `delayed`) an intended
+   consequence the manager wants recorded in the task history? I read it as correct and
+   in the spirit of the acceptance criteria, and it blocks nothing.
+2. Should the `ServiceSpec.project_scan_timeout` invariant be made structural (newtype
+   or `debug_assert!`) now, or tracked as a follow-up? I recommend follow-up — it is
+   hardening against a hypothetical future caller, not a live defect.
+
+## Residual risks
+
+- **Unrerun aggregate.** The broad daemon suite was excluded by the brief. The three
+  changed files are exercised by the 104 targeted tests I did run plus a clean workspace
+  clippy and build, so cross-module fallout is unlikely, but it is not independently
+  proven here.
+- **Renderer-level guard.** As in the LOW finding: the control-char invariant is enforced
+  by convention (one capture site) rather than by the type system. Safe today, verified
+  by enumeration, but silently breakable.
+- **Delayed-branch row exclusion at scale.** No test asserts a delayed project's rows are
+  excluded from a *non-empty* multi-project `/tx` array. The filtering code is shared with
+  the well-covered failed branch, so the risk is small.
+- **Timing hook.** `set_coordinator_timeout` gives tests a wall-clock lever. The new test
+  is barrier-ordered and did not flake in 5 runs, but a future test that leans on the
+  150 ms value without barriers would be flaky by construction.
+
+## Fix directions
+
+Nothing is required before landing. If the two LOW notes are addressed later:
+
+1. `daemon_service.rs:74-86` — make `project_scan_timeout` a newtype (e.g.
+   `ScanTimeoutValue`) constructible only through `captured_project_scan_timeout`, so a
+   future `ServiceSpec` producer cannot skip the control-char filter. Cheaper
+   alternative: `debug_assert!` inside each of the two renderers.
+2. `api.rs:30151` — seed a second healthy project in the race test and assert its rows
+   are present while the delayed project's are absent, giving the delayed branch the same
+   non-empty-array coverage the failed branch already has at `api.rs:~30095`.
