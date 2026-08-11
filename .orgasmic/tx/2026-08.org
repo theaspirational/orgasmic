@@ -29948,3 +29948,41 @@
 :SHA:          c233a1ce106c54d48ca640806d0a8dd4dba5aca1
 :REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5788/last.txt
 :END:
+
+* TX 2026-08-11 Tue 20:15:46 implementer.done TASK-AJP4A.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5791
+:TIME:         [2026-08-11 Tue 20:15:46]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1
+:REASON:       Merged residual lazy-index availability and partial-result fixes; focused gates are green, aggregate remains red only for two out-of-scope supervisor fixture races plus one registered tmux flake
+:WORKER_SESSION: 019ff239-6b65-7cc2-9815-8bffb4465a9f
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:WORKER_COMMIT: c233a1ce106c54d48ca640806d0a8dd4dba5aca1
+:MERGE_SHA:    79430729787a798755d41e74c3d1df264a21c5d9
+:BRANCH:       codex/task-ajp4a-1-1-fix
+:CLOSED_TX:    tx-20260811-orgasmic-5788
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260811-orgasmic-5788/last.txt
+:END:
+
+* TX 2026-08-11 Tue 20:15:46 task.state_transitioned TASK-AJP4A.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5792
+:TIME:         [2026-08-11 Tue 20:15:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-AJP4A.1.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
