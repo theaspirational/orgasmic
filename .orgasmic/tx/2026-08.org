@@ -29285,3 +29285,18 @@
 :FROM_STATE:   todo
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-08-11 Tue 15:17:32 task.state_transitioned TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260811-orgasmic-5757
+:TIME:         [2026-08-11 Tue 15:17:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Dispatch requires TODO; worker launch will own in-progress lifecycle
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:

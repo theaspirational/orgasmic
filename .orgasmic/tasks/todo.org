@@ -1,3 +1,50 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-AJP4A Load registered project indexes lazily on first access
+:PROPERTIES:
+:ID: TASK-AJP4A
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs crates/orgasmic-cli/src ui/src/app/router.tsx ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/BoardView.tsx ui/src/components/TaskDialog.tsx ui/src/components/StatusView.tsx
+:TEST_CMD:   scripts/run-tests.sh
+:WRITE_SCOPE: crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/recovery_claim.rs crates/orgasmic-daemon/tests crates/orgasmic-cli/src ui/src/app/router.tsx ui/src/lib/api.ts ui/src/lib/types.ts ui/src/components/ProjectTabs.tsx ui/src/components/BoardView.tsx ui/src/components/TaskDialog.tsx ui/src/components/StatusView.tsx ui/src/components/__tests__
+:IMPLEMENTS:  dec_YYMSK
+:END:
+
+Replace eager whole-board project materialization at daemon boot with dynamic per-project loading. Boot must know the registered project catalog and remain able to watch and address every project, but it must not build every ProjectIndex before binding. Any project-scoped UI, API, CLI, writer, recovery, or watcher path must pass through one single-flight project-load boundary.
+
+Keep the lightweight .orgasmic projection separate from recursive repository source-marker discovery. Opening the Tasks tab should load the task/graph/tx state required for project operation without traversing unrelated source trees. Global routes must never silently present unloaded projects as missing.
+
+Measured recurrence on 2026-08-11: the restart boot scan omitted orgasmic, ddd, and vscode-orsl after the five-second per-project limit; the eventual explicit vscode-orsl scan took 12.785 seconds and converged successfully.
+** Acceptance Criteria
+- [ ] Daemon boot loads the registered-project catalog and home-owned safety state, attaches project watches, and binds without eagerly materializing every registered ProjectIndex.
+- [ ] Every project-scoped API, CLI, writer, recovery, and watcher path uses one single-flight ensure-loaded boundary; concurrent first access performs one project scan and all callers observe the same published generation.
+- [ ] Opening a project UI tab naturally triggers the project load through its existing project request; no UI-only loading mechanism owns correctness.
+- [ ] Registered projects remain discoverable before loading. Catalog/list/status responses expose explicit unloaded, loading, ready, and failed state instead of omitting projects or returning a misleading unregistered 404.
+- [ ] Core project materialization reads required .orgasmic task, graph, tx, and integrity state. Recursive source-marker discovery and artifact-only work are separate lazy projections and do not delay the Tasks surface.
+- [ ] Global endpoints either state partial/loading coverage or deliberately ensure the required projects; they never return silently incomplete cross-project results.
+- [ ] Watcher events for unloaded or stale projects converge through the same coordinator, and successful writes remain read-after-write consistent.
+- [ ] Recovery preloads only projects it must reconcile; an unrelated slow or unreadable registered repository cannot delay daemon readiness.
+- [ ] Deterministic tests cover blocked-project boot, first-access loading, concurrent coalescing, failed-load diagnostics and retry, watcher convergence, project catalog visibility, and existing last-good/read-after-write behavior.
+- [ ] cargo build, cargo clippy --workspace --all-targets, and scripts/run-tests.sh are green with required tooling evidence.
+** Plan
+1. Separate catalog from materialized state. Keep board registration eager and introduce a serializable project load state (unloaded, loading, ready, failed) owned by the index. Return one catalog DTO per board entry from GET /projects, including registration metadata and load diagnostics, without requiring ProjectIndex membership.
+
+2. Replace boot rebuild with catalog bootstrap. Before bind, load board registration plus home-owned tx/auth safety state only. Attach watches for every registered root. Remove the sequential per-project load loop and its five-second timeout from the boot path. Repository metadata probes stay post-bind and address board roots rather than only loaded projects.
+
+3. Reuse the refresh coordinator as the single-flight load boundary. Add ensure_project_loaded(project_id) that validates registration, returns immediately when ready, coalesces concurrent first access into one project scan, records loading/ready/failed state, and permits a later access to retry a failed load. Force reindex, mutation acknowledgement, and watcher refresh continue through the same coordinator and publication generation.
+
+4. Centralize API resolution. Authorize the requested project ID before filesystem work, then ensure-load it and take a fresh snapshot. Convert project and graph selection choke points to this async resolver. Routes with a project path/query load only that project. Project-less routes must use board cardinality rather than loaded-project cardinality and must either require an explicit project or explicitly ensure all registered projects; silently searching only the loaded subset is forbidden.
+
+5. Make UI discovery catalog-driven. Introduce ProjectCatalogEntry in the TS contract. Router landing, project tabs, and the new-tab menu use catalog entries and therefore display every registered project before loading. Board cards expose load state; task counts and other projection-derived stats render only when available. Opening any project view calls its existing project endpoint and naturally starts loading.
+
+6. Keep core project loading bounded to operational .orgasmic state. Split recursive source marker walking into a separately tracked on-demand projection used by marker/identity routes. Split artifact-only summary loading likewise or load it at the artifact endpoint. Task reads must not recursively traverse repository source. Marker aggregation with all-project scope must make that full coverage explicit.
+
+7. Preserve convergence and recovery. Board additions attach a watch but stay unloaded. A watcher event, committed writer refresh, dispatch need, or recovery need may load that one project through the same coordinator. Recovery enumerates registered roots and preloads only projects required for reconciliation. Existing last-good parse behavior and synchronous read-after-write publication remain intact.
+
+8. Update observability. Status reports registered totals plus unloaded/loading/ready/failed IDs or counts; an unloaded registered project is healthy, not the old unindexed error. Failed loads retain the actionable error until retry. Refresh metrics continue to count/coalesce first-load work.
+
+9. Verify deterministically. Add index/API/watcher tests for no project scan before bind, catalog visibility, first-access load, concurrent coalescing, failure plus retry, watcher/mutation load, board addition without eager load, explicit global coverage, marker/artifact separation, and last-good/read-after-write behavior. Update UI tests for unloaded catalog entries and loading project tabs, then run formatting, focused daemon/UI gates, cargo build, workspace clippy, and scripts/run-tests.sh with required tooling evidence.
+** Worklog
+- [2026-08-11 Tue] Manager planned the risky slice. Operator selection: implementation tmux/codex model gpt-5.6-sol effort xhigh; independent review tmux/claude model opus-5 effort medium. Plan keeps catalog eager, project projection lazy on any scoped access, and marker/artifact discovery separate.
+
