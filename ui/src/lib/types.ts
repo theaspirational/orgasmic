@@ -263,10 +263,16 @@ export type ParseError = {
 export type ParseErrorCoverage = {
   state: 'complete' | 'partial' | 'unknown';
   detail: string | null;
+  failures: Record<string, string>;
 };
 
 export type ParseErrorsResult = {
   errors: ParseError[];
+  coverage: ParseErrorCoverage;
+};
+
+export type TxResult = {
+  records: TxRecord[];
   coverage: ParseErrorCoverage;
 };
 
@@ -292,6 +298,18 @@ export type DaemonStatus = {
   parse_errors: number;
   tx_count: number;
   rebuilt_at?: string | null;
+  index_refresh?: {
+    pending_targets: number;
+    in_flight_targets: number;
+    stale_blocking_scans: number;
+    scan_timeout_ms: number;
+    requests_total: number;
+    scans_total: number;
+    coalesced_total: number;
+    discarded_total: number;
+    last_scan_duration_ms: number;
+    max_scan_duration_ms: number;
+  };
 };
 
 export type FilesystemRoot = {

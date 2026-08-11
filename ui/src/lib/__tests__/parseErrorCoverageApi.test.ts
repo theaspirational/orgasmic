@@ -9,7 +9,11 @@ vi.mock('@/lib/transport', () => ({
   HttpError: class HttpError extends Error {},
 }));
 
-import { fetchParseErrorsWithCoverage, loadFullParseErrorCoverage } from '../api';
+import {
+  fetchParseErrorsWithCoverage,
+  fetchTxWithCoverage,
+  loadFullParseErrorCoverage,
+} from '../api';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -27,6 +31,7 @@ describe('parse-error coverage api', () => {
       coverage: {
         state: 'partial',
         detail: 'partial; ready=1/2; markers=0/2',
+        failures: {},
       },
     });
     expect(getWithHeader).toHaveBeenCalledWith(
@@ -36,7 +41,7 @@ describe('parse-error coverage api', () => {
   });
 
   it('loads recursive marker coverage only on the explicit full action', async () => {
-    get.mockResolvedValue({ node_id: '__coverage__', files: [] });
+    get.mockResolvedValue({ node_id: '__coverage__', files: [], projects: {}, failures: {} });
     getWithHeader.mockResolvedValue({
       data: [],
       header: 'complete; ready=2/2; markers=2/2',
@@ -47,5 +52,46 @@ describe('parse-error coverage api', () => {
     });
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith('/graph/markers/__coverage__');
+  });
+
+  it('keeps loaded errors and names projects skipped by full marker coverage', async () => {
+    get.mockResolvedValue({
+      node_id: '__coverage__',
+      files: [],
+      projects: { healthy: 0 },
+      failures: { blocked: 'filesystem scan timed out' },
+    });
+    getWithHeader.mockResolvedValue({
+      data: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
+      header: 'partial; ready=1/2; markers=1/2; marker_unloaded=[blocked]',
+    });
+
+    await expect(loadFullParseErrorCoverage()).resolves.toEqual({
+      errors: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; ready=1/2; markers=1/2; marker_unloaded=[blocked]; skipped=[blocked]',
+        failures: { blocked: 'filesystem scan timed out' },
+      },
+    });
+  });
+
+  it('carries partial unscoped tx coverage alongside successful rows', async () => {
+    getWithHeader.mockResolvedValue({
+      data: [{ project_id: 'healthy', entry: { tx_id: 'tx-healthy' } }],
+      header: 'partial; loaded=[healthy]; failed=[blocked]',
+    });
+
+    await expect(fetchTxWithCoverage(200)).resolves.toMatchObject({
+      records: [{ project_id: 'healthy' }],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; loaded=[healthy]; failed=[blocked]',
+      },
+    });
+    expect(getWithHeader).toHaveBeenCalledWith(
+      '/tx?limit=200',
+      'x-orgasmic-project-coverage',
+    );
   });
 });

@@ -398,6 +398,7 @@ pub struct Index {
     inner: Arc<RwLock<IndexSnapshot>>,
     home: Home,
     refresh: Arc<RefreshCoordinator>,
+    project_refresh_scan_timeout: Duration,
     repo_url_refresh_enabled: Arc<AtomicBool>,
     repo_url_probed: Arc<std::sync::Mutex<HashSet<(String, PathBuf)>>>,
     #[cfg(test)]
@@ -412,6 +413,7 @@ struct RefreshTestHooks {
     fail_next: std::sync::atomic::AtomicUsize,
     next_gates: std::sync::Mutex<VecDeque<Arc<TestRefreshGate>>>,
     next_target_gates: std::sync::Mutex<HashMap<String, VecDeque<Arc<TestRefreshGate>>>>,
+    next_blocking_target_delays: std::sync::Mutex<HashMap<String, VecDeque<Duration>>>,
     next_git_gate: std::sync::Mutex<Option<Arc<TestRefreshGate>>>,
     active_scans_by_target: std::sync::Mutex<HashMap<String, usize>>,
     max_same_target_scans: std::sync::atomic::AtomicUsize,
@@ -429,7 +431,11 @@ pub(crate) struct TestRefreshGate {
 const REFRESH_COALESCE_WINDOW: Duration = Duration::from_millis(50);
 const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
 const PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
-const FIRST_LOAD_COORDINATOR_TIMEOUT: Duration = Duration::from_secs(8);
+const MAX_PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(300);
+const PROJECT_REFRESH_SCAN_TIMEOUT_ENV: &str = "ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS";
+const FIRST_LOAD_COORDINATOR_MARGIN: Duration = Duration::from_secs(3);
+const CORE_PROJECT_SCAN_PERMITS: usize = 2;
+const OPTIONAL_PROJECT_SCAN_PERMITS: usize = 2;
 const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -458,6 +464,76 @@ impl RefreshTarget {
             Self::HomeTx => None,
         }
     }
+
+    fn shares_scan_lane(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Project(_), Self::Project(_))
+                | (
+                    Self::Markers(_) | Self::Artifacts(_),
+                    Self::Markers(_) | Self::Artifacts(_)
+                )
+        )
+    }
+
+    fn scan_lane_permits(&self) -> usize {
+        match self {
+            Self::Project(_) => CORE_PROJECT_SCAN_PERMITS,
+            Self::Markers(_) | Self::Artifacts(_) => OPTIONAL_PROJECT_SCAN_PERMITS,
+            Self::HomeTx => 1,
+        }
+    }
+}
+
+fn parse_project_refresh_scan_timeout(raw: &str) -> Option<Duration> {
+    raw.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+        .filter(|timeout| *timeout <= MAX_PROJECT_REFRESH_SCAN_TIMEOUT)
+}
+
+fn configured_project_refresh_scan_timeout() -> Duration {
+    let Ok(raw) = std::env::var(PROJECT_REFRESH_SCAN_TIMEOUT_ENV) else {
+        return PROJECT_REFRESH_SCAN_TIMEOUT;
+    };
+    if let Some(timeout) = parse_project_refresh_scan_timeout(&raw) {
+        return timeout;
+    }
+    warn!(
+        variable = PROJECT_REFRESH_SCAN_TIMEOUT_ENV,
+        value = %raw,
+        default_seconds = PROJECT_REFRESH_SCAN_TIMEOUT.as_secs(),
+        max_seconds = MAX_PROJECT_REFRESH_SCAN_TIMEOUT.as_secs(),
+        "ignoring invalid project refresh scan timeout override"
+    );
+    PROJECT_REFRESH_SCAN_TIMEOUT
+}
+
+fn first_load_coordinator_timeout(
+    scan_timeout: Duration,
+    lane_depth: usize,
+    lane_permits: usize,
+) -> Duration {
+    let lane_permits = lane_permits.max(1);
+    let waves = lane_depth.max(1).div_ceil(lane_permits);
+    let wave_budget = scan_timeout.saturating_add(REFRESH_COALESCE_MAX_WAIT);
+    wave_budget
+        .checked_mul(u32::try_from(waves).unwrap_or(u32::MAX))
+        .unwrap_or(Duration::MAX)
+        .saturating_add(FIRST_LOAD_COORDINATOR_MARGIN)
+}
+
+fn coordinator_queue_timeout_message(
+    target: &RefreshTarget,
+    coordinator_timeout: Duration,
+) -> String {
+    format!(
+        "{} coordinator wait timed out after {:.1}s while queued behind slow scans; this does not diagnose the project path or macOS permissions",
+        target.label(),
+        coordinator_timeout.as_secs_f64(),
+    )
 }
 
 #[derive(Debug, Default)]
@@ -511,8 +587,21 @@ struct RefreshMetrics {
     coalesced_total: AtomicU64,
     discarded_total: AtomicU64,
     in_flight_targets: AtomicU64,
+    stale_blocking_scans: AtomicU64,
     last_scan_duration_ms: AtomicU64,
     max_scan_duration_ms: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlockingScanEntry {
+    token: u64,
+    timed_out: bool,
+}
+
+#[derive(Debug, Default)]
+struct BlockingScanRegistry {
+    targets: std::sync::Mutex<HashMap<RefreshTarget, BlockingScanEntry>>,
+    next_token: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -520,6 +609,7 @@ struct RefreshCoordinator {
     state: Mutex<RefreshCoordinatorState>,
     core_project_scans: Semaphore,
     optional_project_scans: Semaphore,
+    blocking_scans: BlockingScanRegistry,
     metrics: RefreshMetrics,
 }
 
@@ -527,13 +617,103 @@ impl Default for RefreshCoordinator {
     fn default() -> Self {
         Self {
             state: Mutex::new(RefreshCoordinatorState::default()),
-            core_project_scans: Semaphore::new(2),
+            core_project_scans: Semaphore::new(CORE_PROJECT_SCAN_PERMITS),
             // Marker and artifact traversal can recurse through much larger
             // trees than the core task projection. Keep it off the core lane
             // so optional coverage work cannot starve task-first access.
-            optional_project_scans: Semaphore::new(2),
+            optional_project_scans: Semaphore::new(OPTIONAL_PROJECT_SCAN_PERMITS),
+            blocking_scans: BlockingScanRegistry::default(),
             metrics: RefreshMetrics::default(),
         }
+    }
+}
+
+impl RefreshCoordinator {
+    fn begin_blocking_scan(&self, target: &RefreshTarget) -> Result<u64, String> {
+        let mut targets = self
+            .blocking_scans
+            .targets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(entry) = targets.get(target) {
+            let state = if entry.timed_out {
+                "timed-out"
+            } else {
+                "in-flight"
+            };
+            return Err(format!(
+                "{} has a {state} filesystem scan still running; retry after that stale scan exits",
+                target.label()
+            ));
+        }
+        let token = self
+            .blocking_scans
+            .next_token
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        targets.insert(
+            target.clone(),
+            BlockingScanEntry {
+                token,
+                timed_out: false,
+            },
+        );
+        Ok(token)
+    }
+
+    fn mark_blocking_scan_timed_out(&self, target: &RefreshTarget, token: u64) {
+        let mut targets = self
+            .blocking_scans
+            .targets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(entry) = targets.get_mut(target).filter(|entry| entry.token == token) else {
+            return;
+        };
+        if !entry.timed_out {
+            entry.timed_out = true;
+            self.metrics
+                .stale_blocking_scans
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn finish_blocking_scan(&self, target: &RefreshTarget, token: u64) {
+        let mut targets = self
+            .blocking_scans
+            .targets
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let timed_out = targets
+            .get(target)
+            .filter(|entry| entry.token == token)
+            .is_some_and(|entry| entry.timed_out);
+        if targets
+            .get(target)
+            .is_some_and(|entry| entry.token == token)
+        {
+            targets.remove(target);
+        } else {
+            return;
+        }
+        if timed_out {
+            self.metrics
+                .stale_blocking_scans
+                .fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+struct BlockingScanCompletion {
+    coordinator: Arc<RefreshCoordinator>,
+    target: RefreshTarget,
+    token: u64,
+}
+
+impl Drop for BlockingScanCompletion {
+    fn drop(&mut self) {
+        self.coordinator
+            .finish_blocking_scan(&self.target, self.token);
     }
 }
 
@@ -542,6 +722,8 @@ impl Default for RefreshCoordinator {
 pub struct IndexRefreshStatus {
     pub pending_targets: usize,
     pub in_flight_targets: u64,
+    pub stale_blocking_scans: u64,
+    pub scan_timeout_ms: u64,
     pub requests_total: u64,
     pub scans_total: u64,
     pub coalesced_total: u64,
@@ -603,6 +785,7 @@ impl Index {
             inner: Arc::new(RwLock::new(IndexSnapshot::default())),
             home,
             refresh: Arc::new(RefreshCoordinator::default()),
+            project_refresh_scan_timeout: configured_project_refresh_scan_timeout(),
             repo_url_refresh_enabled: Arc::new(AtomicBool::new(false)),
             repo_url_probed: Arc::new(std::sync::Mutex::new(HashSet::new())),
             #[cfg(test)]
@@ -623,6 +806,19 @@ impl Index {
             .map(|entry| {
                 let project = snap.projects.get(&entry.id);
                 let task_stats = project.map(|project| {
+                    let dependency_is_resolved: HashMap<&str, bool> = project
+                        .tasks
+                        .iter()
+                        .map(|task| {
+                            (
+                                task.id.as_str(),
+                                matches!(
+                                    task.lifecycle_stage,
+                                    LifecycleStage::Done | LifecycleStage::Cancelled
+                                ),
+                            )
+                        })
+                        .collect();
                     let done = project
                         .tasks
                         .iter()
@@ -640,7 +836,12 @@ impl Index {
                             !matches!(
                                 task.lifecycle_stage,
                                 LifecycleStage::Done | LifecycleStage::Cancelled
-                            ) && !task.depends_on.is_empty()
+                            ) && task.depends_on.iter().any(|dependency| {
+                                !dependency_is_resolved
+                                    .get(dependency.as_str())
+                                    .copied()
+                                    .unwrap_or(false)
+                            })
                         })
                         .count();
                     ProjectTaskStats {
@@ -840,9 +1041,7 @@ impl Index {
             expected_entry
         };
         let target = RefreshTarget::Project(project_id.to_string());
-        let result = self
-            .request_project_load(target.clone(), Some(&expected_entry.path))
-            .await;
+        let result = self.request_project_load(target.clone()).await;
         if let Err(error) = &result {
             self.record_project_load_failure(project_id, error, Some(&expected_entry))
                 .await;
@@ -881,7 +1080,7 @@ impl Index {
         if self.inner.read().await.marker_projects.contains(project_id) {
             return Ok(());
         }
-        self.request_project_load(RefreshTarget::Markers(project_id.to_string()), None)
+        self.request_project_load(RefreshTarget::Markers(project_id.to_string()))
             .await
     }
 
@@ -911,15 +1110,11 @@ impl Index {
         {
             return Ok(());
         }
-        self.request_project_load(RefreshTarget::Artifacts(project_id.to_string()), None)
+        self.request_project_load(RefreshTarget::Artifacts(project_id.to_string()))
             .await
     }
 
-    async fn request_project_load(
-        &self,
-        target: RefreshTarget,
-        expected_path: Option<&Path>,
-    ) -> Result<(), String> {
+    async fn request_project_load(&self, target: RefreshTarget) -> Result<(), String> {
         self.refresh
             .metrics
             .requests_total
@@ -939,19 +1134,25 @@ impl Index {
             state.window_generation = state.window_generation.wrapping_add(1);
             self.spawn_refresh_worker(target.clone());
         }
+        let lane_depth = coordinator
+            .targets
+            .iter()
+            .filter(|(candidate, state)| state.running && target.shares_scan_lane(candidate))
+            .count();
+        let coordinator_timeout = first_load_coordinator_timeout(
+            self.refresh_scan_timeout(),
+            lane_depth,
+            target.scan_lane_permits(),
+        );
         drop(coordinator);
-        match tokio::time::timeout(FIRST_LOAD_COORDINATOR_TIMEOUT, rx).await {
+        match tokio::time::timeout(coordinator_timeout, rx).await {
             Ok(result) => {
                 result.unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
             }
-            Err(_) => Err(self
-                .refresh_timeout_message(
-                    &target,
-                    FIRST_LOAD_COORDINATOR_TIMEOUT,
-                    "coordinator wait",
-                    expected_path,
-                )
-                .await),
+            Err(_) => Err(coordinator_queue_timeout_message(
+                &target,
+                coordinator_timeout,
+            )),
         }
     }
 
@@ -1261,17 +1462,6 @@ impl Index {
                 }
                 RefreshTarget::HomeTx => None,
             };
-            self.refresh
-                .metrics
-                .in_flight_targets
-                .fetch_add(1, Ordering::Relaxed);
-            self.refresh
-                .metrics
-                .scans_total
-                .fetch_add(1, Ordering::Relaxed);
-            #[cfg(test)]
-            self.note_test_scan_started(&target);
-            let started = Instant::now();
             let scan_timeout = self.refresh_scan_timeout();
             let scan_registration = if let Some(project_id) = target.project_id() {
                 self.inner
@@ -1284,43 +1474,69 @@ impl Index {
             } else {
                 None
             };
-            let built = match tokio::time::timeout(scan_timeout, self.build_refresh(target.clone()))
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    // Dropping `build_refresh` drops its JoinHandle but cannot
-                    // cancel blocking filesystem work already running on an OS
-                    // thread. Publication is outside that closure, so late work
-                    // has no route back into the snapshot. Releasing this async
-                    // permit keeps healthy projects moving meanwhile.
-                    Err(self
-                        .refresh_timeout_message(
-                            &target,
-                            scan_timeout,
-                            "filesystem scan",
-                            scan_registration.as_ref().map(|entry| entry.path.as_path()),
-                        )
-                        .await)
+            let started = Instant::now();
+            let blocking_token = self.refresh.begin_blocking_scan(&target);
+            let (built, scanned) = match blocking_token {
+                Ok(blocking_token) => {
+                    self.refresh
+                        .metrics
+                        .in_flight_targets
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.refresh
+                        .metrics
+                        .scans_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    #[cfg(test)]
+                    self.note_test_scan_started(&target);
+                    let built = match tokio::time::timeout(
+                        scan_timeout,
+                        self.build_refresh(target.clone(), blocking_token),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => {
+                            // Dropping `build_refresh` drops its JoinHandle but cannot
+                            // cancel blocking filesystem work already running on an OS
+                            // thread. Its completion guard stays inside that closure,
+                            // blocks same-target retries, and releases only when the OS
+                            // work really exits. Publication remains outside the closure,
+                            // so a late result still has no route into the snapshot.
+                            self.refresh
+                                .mark_blocking_scan_timed_out(&target, blocking_token);
+                            Err(self
+                                .refresh_timeout_message(
+                                    &target,
+                                    scan_timeout,
+                                    "filesystem scan",
+                                    scan_registration.as_ref().map(|entry| entry.path.as_path()),
+                                )
+                                .await)
+                        }
+                    };
+                    #[cfg(test)]
+                    self.note_test_scan_finished(&target);
+                    self.refresh
+                        .metrics
+                        .in_flight_targets
+                        .fetch_sub(1, Ordering::Relaxed);
+                    (built, true)
                 }
+                Err(error) => (Err(error), false),
             };
             let duration = started.elapsed();
-            #[cfg(test)]
-            self.note_test_scan_finished(&target);
-            self.refresh
-                .metrics
-                .in_flight_targets
-                .fetch_sub(1, Ordering::Relaxed);
             drop(project_permit);
             let duration_ms = duration.as_millis().min(u128::from(u64::MAX)) as u64;
-            self.refresh
-                .metrics
-                .last_scan_duration_ms
-                .store(duration_ms, Ordering::Relaxed);
-            self.refresh
-                .metrics
-                .max_scan_duration_ms
-                .fetch_max(duration_ms, Ordering::Relaxed);
+            if scanned {
+                self.refresh
+                    .metrics
+                    .last_scan_duration_ms
+                    .store(duration_ms, Ordering::Relaxed);
+                self.refresh
+                    .metrics
+                    .max_scan_duration_ms
+                    .fetch_max(duration_ms, Ordering::Relaxed);
+            }
             // Publication may wait for the index write lock, but never while
             // holding the coordinator mutex. New targets and new generations
             // stay registerable while this target publishes.
@@ -1400,7 +1616,7 @@ impl Index {
                 return Duration::from_millis(timeout_ms);
             }
         }
-        PROJECT_REFRESH_SCAN_TIMEOUT
+        self.project_refresh_scan_timeout
     }
 
     async fn refresh_timeout_message(
@@ -1540,7 +1756,11 @@ impl Index {
         state.running = false;
     }
 
-    async fn build_refresh(&self, target: RefreshTarget) -> Result<BuiltRefresh, String> {
+    async fn build_refresh(
+        &self,
+        target: RefreshTarget,
+        blocking_token: u64,
+    ) -> Result<BuiltRefresh, String> {
         // Move the bounded seed clone to the blocking pool too. A project
         // acknowledgement clones only that project's last-good value. The tx
         // and parse-error partitions are private scan outputs, so seed them
@@ -1550,7 +1770,14 @@ impl Index {
         let scan_index = self.clone();
         #[cfg(test)]
         let target_label = target.label();
-        let built = tokio::task::spawn_blocking(move || match target {
+        #[cfg(test)]
+        let blocking_target_label = target_label.clone();
+        let completion = BlockingScanCompletion {
+            coordinator: self.refresh.clone(),
+            target: target.clone(),
+            token: blocking_token,
+        };
+        let blocking_scan = move || match target {
             RefreshTarget::Project(project_id) => {
                 let Some(board_entry) = seed
                     .board
@@ -1590,6 +1817,8 @@ impl Index {
                     ..IndexSnapshot::default()
                 };
                 drop(seed);
+                #[cfg(test)]
+                scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 scan_index.load_project(&board_entry, &mut next, prior_repo_url);
                 let project = next.projects.remove(&project_id);
                 let tx = next
@@ -1622,6 +1851,8 @@ impl Index {
                     return Err(format!("project {project_id} is not loaded"));
                 }
                 drop(seed);
+                #[cfg(test)]
+                scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 let markers = scan_project_markers(&board_entry.path);
                 let mut lint_snapshot = IndexSnapshot::default();
                 lint_project_identity_state(&board_entry.path, &markers, &mut lint_snapshot);
@@ -1644,6 +1875,8 @@ impl Index {
                     return Err(format!("project {project_id} is not loaded"));
                 }
                 drop(seed);
+                #[cfg(test)]
+                scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 let artifacts = load_project_artifacts(&board_entry.path);
                 Ok(BuiltRefresh::Artifacts {
                     board_entry,
@@ -1658,6 +1891,8 @@ impl Index {
                     ..IndexSnapshot::default()
                 };
                 drop(seed);
+                #[cfg(test)]
+                scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 scan_index.load_home_tx(&mut next);
                 Ok(BuiltRefresh::HomeTx {
                     tx: next
@@ -1672,9 +1907,15 @@ impl Index {
                         .collect(),
                 })
             }
-        })
-        .await
-        .map_err(|error| format!("index refresh scan task failed: {error}"))?;
+        };
+        let (built_tx, built_rx) = oneshot::channel();
+        let _blocking_task = tokio::task::spawn_blocking(move || {
+            let _completion = completion;
+            let _ = built_tx.send(blocking_scan());
+        });
+        let built = built_rx
+            .await
+            .map_err(|_| "index refresh scan task stopped without a result".to_string())??;
 
         // Tests pause here, after the projection is genuinely built but before
         // publication. This exercises stale-generation and live-metadata merge
@@ -1712,7 +1953,7 @@ impl Index {
         {
             return Err("injected index refresh failure".to_string());
         }
-        built
+        Ok(built)
     }
 
     async fn publish_refresh(
@@ -1868,6 +2109,15 @@ impl Index {
                 .metrics
                 .in_flight_targets
                 .load(Ordering::Relaxed),
+            stale_blocking_scans: self
+                .refresh
+                .metrics
+                .stale_blocking_scans
+                .load(Ordering::Relaxed),
+            scan_timeout_ms: self
+                .refresh_scan_timeout()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
             requests_total: self.refresh.metrics.requests_total.load(Ordering::Relaxed),
             scans_total: self.refresh.metrics.scans_total.load(Ordering::Relaxed),
             coalesced_total: self.refresh.metrics.coalesced_total.load(Ordering::Relaxed),
@@ -1918,6 +2168,31 @@ impl Index {
             .or_default()
             .push_back(gate.clone());
         gate
+    }
+
+    #[cfg(test)]
+    fn delay_next_blocking_refresh_for(&self, target: &str, delay: Duration) {
+        self.refresh_test_hooks
+            .next_blocking_target_delays
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .entry(target.to_string())
+            .or_default()
+            .push_back(delay);
+    }
+
+    #[cfg(test)]
+    fn apply_blocking_refresh_delay(&self, target: &str) {
+        let delay = self
+            .refresh_test_hooks
+            .next_blocking_target_delays
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get_mut(target)
+            .and_then(VecDeque::pop_front);
+        if let Some(delay) = delay {
+            std::thread::sleep(delay);
+        }
     }
 
     #[cfg(test)]
@@ -3461,6 +3736,132 @@ mod tests {
         assert_eq!(catalog[0].task_stats, None);
         assert!(index.snapshot().await.projects.is_empty());
         assert_eq!(index.refresh_status().await.scans_total, 0);
+    }
+
+    #[test]
+    fn production_first_load_budget_covers_every_queued_scan_wave() {
+        assert_eq!(PROJECT_REFRESH_SCAN_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(CORE_PROJECT_SCAN_PERMITS, 2);
+        assert_eq!(
+            first_load_coordinator_timeout(PROJECT_REFRESH_SCAN_TIMEOUT, 1, 2),
+            Duration::from_millis(8_200)
+        );
+        assert_eq!(
+            first_load_coordinator_timeout(PROJECT_REFRESH_SCAN_TIMEOUT, 5, 2),
+            Duration::from_millis(18_600),
+            "four slow scans ahead of a healthy fifth project require three bounded waves"
+        );
+        assert!(
+            first_load_coordinator_timeout(Duration::from_secs(30), 5, 2) > Duration::from_secs(90),
+            "the coordinator budget must derive from the effective scan override"
+        );
+
+        let message = coordinator_queue_timeout_message(
+            &RefreshTarget::Project("healthy-project".to_string()),
+            first_load_coordinator_timeout(PROJECT_REFRESH_SCAN_TIMEOUT, 5, 2),
+        );
+        assert!(message.contains("queued behind slow scans"));
+        assert!(message.contains("does not diagnose the project path"));
+        assert!(!message.contains("not mounted or readable"));
+        assert!(!message.contains("Files and Folders"));
+    }
+
+    #[test]
+    fn scan_timeout_override_accepts_only_bounded_non_zero_seconds() {
+        assert_eq!(
+            parse_project_refresh_scan_timeout("30"),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(parse_project_refresh_scan_timeout("0"), None);
+        assert_eq!(parse_project_refresh_scan_timeout("invalid"), None);
+        assert_eq!(parse_project_refresh_scan_timeout("301"), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn timed_out_blocking_scan_guards_retries_until_os_work_exits() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.set_refresh_timeout(Duration::from_millis(100));
+        index.delay_next_blocking_refresh_for("project", Duration::from_secs(3));
+
+        let first = {
+            let index = index.clone();
+            tokio::spawn(async move { index.ensure_project_loaded("project").await })
+        };
+        let first_error = tokio::time::timeout(Duration::from_secs(2), first)
+            .await
+            .expect("timed-out blocking scan did not settle its first waiter")
+            .unwrap()
+            .unwrap_err();
+        let timed_out = index.refresh_status().await;
+        let late_result_not_published = index.snapshot().await.projects.is_empty();
+
+        let retry_error = tokio::time::timeout(
+            Duration::from_secs(2),
+            index.ensure_project_loaded("project"),
+        )
+        .await
+        .expect("same-target retry did not receive the stale-scan guard response")
+        .unwrap_err();
+        let guarded = index.refresh_status().await;
+
+        assert!(
+            first_error.contains("filesystem scan timed out"),
+            "{first_error}"
+        );
+        assert_eq!(timed_out.scans_total, 1, "{timed_out:?}");
+        assert_eq!(timed_out.stale_blocking_scans, 1, "{timed_out:?}");
+        assert!(late_result_not_published);
+        assert!(
+            retry_error.contains("timed-out filesystem scan still running"),
+            "{retry_error}"
+        );
+        assert!(!retry_error.contains("Files and Folders"), "{retry_error}");
+        assert_eq!(guarded.scans_total, 1, "{guarded:?}");
+        assert_eq!(guarded.stale_blocking_scans, 1, "{guarded:?}");
+
+        tokio::time::timeout(Duration::from_secs(4), async {
+            while index.refresh_status().await.stale_blocking_scans != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stale blocking scan guard did not release after OS work exited");
+        assert!(
+            index.snapshot().await.projects.is_empty(),
+            "the late timed-out result must never publish"
+        );
+
+        index.ensure_project_loaded("project").await.unwrap();
+        let recovered = index.refresh_status().await;
+        assert_eq!(recovered.scans_total, 2, "{recovered:?}");
+        assert_eq!(recovered.stale_blocking_scans, 0, "{recovered:?}");
+        assert!(index.snapshot().await.task("project", "TASK-001").is_some());
+    }
+
+    #[tokio::test]
+    async fn blocked_task_count_uses_unresolved_project_local_dependencies() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        write(
+            &project.join(".orgasmic/tasks/backlog.org"),
+            "#+title: dependency states\n#+orgasmic_version: 1\n\n* BACKLOG TASK-ACTIVE Active dependency\n:PROPERTIES:\n:ID: TASK-ACTIVE\n:END:\n\n* DONE TASK-DONE Satisfied dependency\n:PROPERTIES:\n:ID: TASK-DONE\n:END:\n\n* CANCELLED TASK-CANCEL Cancelled dependency\n:PROPERTIES:\n:ID: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-BLOCKED Active dependency blocks\n:PROPERTIES:\n:ID: TASK-BLOCKED\n:DEPENDS_ON: TASK-ACTIVE\n:END:\n\n* BACKLOG TASK-SATISFIED Done dependency does not block\n:PROPERTIES:\n:ID: TASK-SATISFIED\n:DEPENDS_ON: TASK-DONE\n:END:\n\n* BACKLOG TASK-CANCELLED Cancelled dependency does not block\n:PROPERTIES:\n:ID: TASK-CANCELLED\n:DEPENDS_ON: TASK-CANCEL\n:END:\n\n* BACKLOG TASK-MISSING Missing dependency blocks\n:PROPERTIES:\n:ID: TASK-MISSING\n:DEPENDS_ON: TASK-NOT-HERE\n:END:\n",
+        );
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.ensure_project_loaded("project").await.unwrap();
+
+        let stats = index.catalog().await.remove(0).task_stats.unwrap();
+        assert_eq!(stats.total, 7);
+        assert_eq!(stats.done, 2);
+        assert_eq!(stats.active, 5);
+        assert_eq!(stats.blocked, 2);
     }
 
     #[tokio::test]

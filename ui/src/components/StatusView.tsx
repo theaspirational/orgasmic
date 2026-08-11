@@ -20,6 +20,7 @@ function runList(runs: { run_id: string; reason?: string }[] | undefined): strin
 
 export function StatusView() {
   const [loadingFullCoverage, setLoadingFullCoverage] = useState(false);
+  const [coverageFailures, setCoverageFailures] = useState<Record<string, string>>({});
   const refresh = useRefreshToken();
   const status = useResource(`daemon-status:${refresh}`, fetchDaemonStatus);
   const recovery = useResource(`recovery-status:${refresh}`, fetchRecoveryStatus);
@@ -32,9 +33,17 @@ export function StatusView() {
   const loadFullCoverage = async () => {
     setLoadingFullCoverage(true);
     try {
-      await loadFullParseErrorCoverage();
+      const result = await loadFullParseErrorCoverage();
+      setCoverageFailures(result.coverage.failures);
       await parseErrors.refresh();
-      toast.success('Full parse-error coverage loaded');
+      const skipped = Object.keys(result.coverage.failures);
+      if (skipped.length > 0) {
+        toast.warning('Parse-error coverage loaded partially', {
+          description: `Skipped projects: ${skipped.join(', ')}`,
+        });
+      } else {
+        toast.success('Full parse-error coverage loaded');
+      }
     } catch (error) {
       toast.error('Full coverage failed', {
         description: error instanceof Error ? error.message : String(error),
@@ -92,6 +101,16 @@ export function StatusView() {
             ) : null}
             <KeyValue label="Tx entries" value={status.data?.tx_count} />
             <KeyValue label="Parse errors (count)" value={status.data?.parse_errors} />
+            <KeyValue
+              label="Stale filesystem scans"
+              value={status.data?.index_refresh?.stale_blocking_scans}
+            />
+            <KeyValue
+              label="Filesystem scan timeout"
+              value={status.data?.index_refresh?.scan_timeout_ms != null
+                ? `${status.data.index_refresh.scan_timeout_ms} ms`
+                : undefined}
+            />
             <KeyValue label="Index rebuilt" value={status.data?.rebuilt_at} />
           </>
         )}
@@ -150,6 +169,11 @@ export function StatusView() {
                     Identity diagnostics are not complete until source markers load for every project.
                     {parseErrors.data?.coverage.detail ? ` ${parseErrors.data.coverage.detail}` : ''}
                   </p>
+                  {Object.keys(coverageFailures).length > 0 ? (
+                    <p className="mt-1 break-words text-xs text-muted-foreground">
+                      Skipped projects: {Object.keys(coverageFailures).join(', ')}
+                    </p>
+                  ) : null}
                 </div>
                 <Button
                   type="button"

@@ -107,3 +107,60 @@ async fn status_errors_attributes_dangling_ref_and_reindex_clears_it_after_fix()
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partial_full_board_commands_keep_json_and_errors_but_exit_honestly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let unreadable_root = tmp.path().join("unreadable");
+    std::fs::create_dir_all(&unreadable_root).unwrap();
+    let healthy_root = tmp.path().join("healthy");
+    seed_project(&home, &healthy_root, "healthy");
+    write(
+        &healthy_root.join(".orgasmic/glossary.org"),
+        "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID: term_A\n:RELATES_TO: missing-slug\n:END:\n",
+    );
+    write(
+        &home.board(),
+        &format!(
+            "#+title: board\n#+orgasmic_version: 1\n\n* PROJECT unreadable\n:PROPERTIES:\n:ID: unreadable\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n\n* PROJECT healthy\n:PROPERTIES:\n:ID: healthy\n:PATH: {}\n:BRANCH: main\n:STATUS: active\n:END:\n",
+            unreadable_root.display(),
+            healthy_root.display(),
+        ),
+    );
+
+    let running = Daemon::run(home.clone(), test_options())
+        .await
+        .expect("boot daemon");
+    let daemon_url = format!("http://{}", running.addr);
+
+    let status = run_orgasmic(&home, &daemon_url, &["status", "--errors"]);
+    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    let status_stderr = String::from_utf8_lossy(&status.stderr);
+    assert!(status.status.success(), "{status_stdout}\n{status_stderr}");
+    assert!(status_stdout.contains("missing-slug"), "{status_stdout}");
+    assert!(
+        status_stderr.contains("skipped project unreadable"),
+        "{status_stderr}"
+    );
+
+    let reindex = run_orgasmic(&home, &daemon_url, &["reindex"]);
+    let reindex_stdout = String::from_utf8_lossy(&reindex.stdout).to_string();
+    let reindex_stderr = String::from_utf8_lossy(&reindex.stderr);
+    assert!(
+        !reindex.status.success(),
+        "{reindex_stdout}\n{reindex_stderr}"
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&reindex_stdout).expect("partial reindex stdout remains JSON");
+    assert!(value["failures"]["unreadable"].is_string(), "{value}");
+    assert_eq!(value["projects"]["healthy"], 1, "{value}");
+    assert!(
+        reindex_stderr.contains("whole-board reindex completed with project failures"),
+        "{reindex_stderr}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
