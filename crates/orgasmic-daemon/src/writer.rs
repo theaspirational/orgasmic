@@ -938,7 +938,11 @@ impl WriterHandle {
 
     fn shutdown_timed_out(&self) -> WriterShutdownOutcome {
         WriterShutdownOutcome::TimedOut {
-            queued: self.tx.max_capacity().saturating_sub(self.tx.capacity()),
+            queued: self
+                .tx
+                .max_capacity()
+                .saturating_sub(self.tx.capacity())
+                .saturating_add(self.deferred_appends.load(Ordering::SeqCst)),
             in_flight: self
                 .in_flight
                 .lock()
@@ -974,7 +978,11 @@ impl WriterHandle {
             .map(|started| started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
         WriterStatus {
             liveness: !self.tx.is_closed(),
-            queue_depth: self.tx.max_capacity().saturating_sub(self.tx.capacity()),
+            queue_depth: self
+                .tx
+                .max_capacity()
+                .saturating_sub(self.tx.capacity())
+                .saturating_add(self.deferred_appends.load(Ordering::SeqCst)),
             in_flight_operation: in_flight,
             in_flight_age_ms,
             completed_total: self.metrics.completed_total.load(Ordering::Relaxed),
@@ -1098,6 +1106,15 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
     }
 }
 
+fn describe_session_append(req: &SessionAppend) -> PendingWrite {
+    PendingWrite {
+        kind: "session".to_string(),
+        run_id: Some(req.run_id.clone()),
+        tx_type: None,
+        path: Some(req.session_path.clone()),
+    }
+}
+
 /// Test-only stall injected in front of a matching write, so a test can hold
 /// the writer exactly the way a blocked `fsync` does — on the thread, inside
 /// the command, with `shutdown` queued behind it (TASK-Q07Y5).
@@ -1150,6 +1167,7 @@ async fn writer_loop(
         let command_started = Instant::now();
         let pending = describe_command(&current);
         let mut command_failed = false;
+        let mut record_current = true;
         {
             let stall = injected_write_stall(&pending);
             *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending.clone());
@@ -1208,6 +1226,11 @@ async fn writer_loop(
                         injected_failure,
                     });
                     deferred_appends.store(deferred.len(), Ordering::SeqCst);
+                    // This command is still pending: it has moved from the
+                    // channel into the lease-owned deferred queue, not
+                    // completed. Its eventual execution records exactly one
+                    // outcome below.
+                    record_current = false;
                 } else {
                     command_failed = run_session_append(
                         &mut session_handles,
@@ -1338,8 +1361,17 @@ async fn writer_loop(
                 deferred = still_held;
                 deferred_appends.store(deferred.len(), Ordering::SeqCst);
                 let _ = reply.send(());
-                for entry in ready {
-                    command_failed |= run_session_append(
+                let ready_count = ready.len();
+                for (offset, entry) in ready.into_iter().enumerate() {
+                    let deferred_pending = describe_session_append(&entry.req);
+                    let deferred_started = Instant::now();
+                    *in_flight.lock().unwrap_or_else(|e| e.into_inner()) =
+                        Some(deferred_pending.clone());
+                    *metrics
+                        .in_flight_started
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner()) = Some(deferred_started);
+                    let failed = run_session_append(
                         &mut session_handles,
                         &events,
                         catalog.as_ref(),
@@ -1347,6 +1379,15 @@ async fn writer_loop(
                         entry.reply,
                         #[cfg(test)]
                         entry.injected_failure,
+                    );
+                    record_writer_command(
+                        &metrics,
+                        deferred_started.elapsed(),
+                        failed,
+                        &deferred_pending,
+                        rx.len()
+                            .saturating_add(deferred.len())
+                            .saturating_add(ready_count.saturating_sub(offset + 1)),
                     );
                 }
             }
@@ -1384,13 +1425,15 @@ async fn writer_loop(
             .in_flight_started
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = None;
-        record_writer_command(
-            &metrics,
-            command_started.elapsed(),
-            command_failed,
-            &pending,
-            rx.len(),
-        );
+        if record_current {
+            record_writer_command(
+                &metrics,
+                command_started.elapsed(),
+                command_failed,
+                &pending,
+                rx.len().saturating_add(deferred.len()),
+            );
+        }
         if cmd.is_none() {
             cmd = rx.recv().await;
         }
@@ -1421,7 +1464,6 @@ fn record_writer_command(
             target = ?pending.path,
             cause = pending.kind,
             queue_depth,
-            coalescing_count = 0,
             duration_ms,
             "slow writer command"
         );
@@ -2299,6 +2341,55 @@ mod tests {
             }
             other => panic!("expected RunLifecycle, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn deferred_session_append_counts_as_queued_until_it_executes_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("deferred.jsonl");
+        let handle = spawn(EventBus::new());
+        let lease = handle.lease_sessions(vec![path.clone()]).await.unwrap();
+        let after_lease = handle.status();
+
+        let append = {
+            let handle = handle.clone();
+            let path = path.clone();
+            tokio::spawn(async move {
+                handle
+                    .append_session(SessionAppend {
+                        run_id: "run-deferred-metrics".into(),
+                        session_path: path,
+                        identity: RuntimeIdentity::new("run-deferred-metrics", "boot-test"),
+                        authority: None,
+                        kind: SessionEventKind::Lifecycle,
+                        event: serde_json::json!({"phase": "release"}),
+                    })
+                    .await
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while handle.deferred_session_appends() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let deferred = handle.status();
+        assert_eq!(deferred.queue_depth, 1, "{deferred:?}");
+        assert_eq!(
+            deferred.completed_total, after_lease.completed_total,
+            "deferral is not completion"
+        );
+
+        lease.release().await;
+        append.await.unwrap().unwrap();
+        let completed = handle.status();
+        assert_eq!(completed.queue_depth, 0, "{completed:?}");
+        assert_eq!(
+            completed.completed_total,
+            after_lease.completed_total + 2,
+            "release command and deferred append each complete once"
+        );
     }
 
     #[tokio::test]

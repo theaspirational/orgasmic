@@ -601,6 +601,7 @@ impl ReleaseTaskTracker {
             let outcome = fut.await;
             match &outcome {
                 Ok(_) => {}
+                Err(error) if error.committed_tx_id().is_some() => {}
                 Err(error) => admission.record_lost(format!(
                     "release finalization failed before its terminal tx landed: {}",
                     error.message
@@ -2386,7 +2387,6 @@ async fn post_task_subtask(
     )
     .await?;
     let project_tx = prepared.project_tx;
-    let destination_project_id = prepared.destination_project_id.clone();
     let tx_id = state
         .writer
         .transaction(
@@ -2398,7 +2398,7 @@ async fn post_task_subtask(
         )
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(&state, project_tx, destination_project_id, &tx_id).await?;
+    refresh_after_project_mutation(&state, &located.project_id, project_tx, &tx_id).await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
@@ -7690,19 +7690,31 @@ async fn record_recovery_replacement_association_from_claim(
 }
 
 async fn record_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<String, ApiError> {
+    record_api_tx_after_project_mutation(state, req, None).await
+}
+
+async fn record_api_tx_after_project_mutation(
+    state: &ApiState,
+    req: ApiTxRequest,
+    mutation_project_id: Option<&str>,
+) -> Result<String, ApiError> {
     let prepared = prepare_api_tx(state, req).await?;
     let res = state
         .writer
         .append_tx(prepared.tx, None)
         .await
         .map_err(writer_append_error)?;
-    refresh_after_tx(
-        state,
-        prepared.project_tx,
-        prepared.destination_project_id,
-        &res.tx_id,
-    )
-    .await?;
+    if let Some(project_id) = mutation_project_id {
+        refresh_after_project_mutation(state, project_id, prepared.project_tx, &res.tx_id).await?;
+    } else {
+        refresh_after_tx(
+            state,
+            prepared.project_tx,
+            prepared.destination_project_id,
+            &res.tx_id,
+        )
+        .await?;
+    }
     Ok(res.tx_id)
 }
 
@@ -7788,6 +7800,32 @@ async fn refresh_after_tx(
             .await
             .map_err(|error| committed_refresh_error(tx_id, error))?;
     }
+    Ok(())
+}
+
+/// Publish every projection made stale by one project-file mutation. The
+/// project is always refreshed; a home-routed tx refreshes the home ledger as
+/// part of the same API-level acknowledgement orchestration.
+async fn refresh_after_project_mutation(
+    state: &ApiState,
+    project_id: &str,
+    project_tx: bool,
+    tx_id: &str,
+) -> Result<(), ApiError> {
+    if project_tx {
+        return state
+            .index
+            .refresh_after_tx(project_id, tx_id)
+            .await
+            .map_err(|error| committed_refresh_error(tx_id, error));
+    }
+
+    let (project_result, home_result) = tokio::join!(
+        state.index.refresh_after_tx(project_id, tx_id),
+        state.index.refresh_home_after_tx(tx_id),
+    );
+    project_result.map_err(|error| committed_refresh_error(tx_id, error))?;
+    home_result.map_err(|error| committed_refresh_error(tx_id, error))?;
     Ok(())
 }
 
@@ -7889,14 +7927,13 @@ fn valid_project_root(path: &FsPath) -> bool {
 
 fn choose_actor(
     req: &TxAppendRequest,
-    project_entry: Option<&BoardEntry>,
+    _project_entry: Option<&BoardEntry>,
     state: &ApiState,
 ) -> String {
     req.actor
         .clone()
         .and_then(non_empty)
         .or_else(|| state.manager_actor.clone())
-        .or_else(|| project_entry.and_then(|entry| git_user_email(&entry.path)))
         .unwrap_or_else(|| state.actor.clone())
 }
 
@@ -7907,19 +7944,6 @@ fn non_empty(value: String) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
-}
-
-fn git_user_email(project_root: &FsPath) -> Option<String> {
-    let output = Command::new("git")
-        .args(["config", "user.email"])
-        .current_dir(project_root)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let email = String::from_utf8(output.stdout).ok()?;
-    non_empty(email)
 }
 
 #[derive(Debug, Serialize)]
@@ -9066,12 +9090,22 @@ async fn release_run_and_record_tx(
                 // The lease is already gone, so there is nobody left to retry:
                 // log loudly rather than let the run go quietly unreported.
                 Err(error) => {
-                    tracing::error!(
-                        run_id = %id,
-                        tx_type = %ty,
-                        error = %error.message,
-                        "released run but failed to write its terminal tx"
-                    );
+                    if let Some(committed_tx_id) = error.committed_tx_id() {
+                        tracing::error!(
+                            run_id = %id,
+                            tx_type = %ty,
+                            tx_id = committed_tx_id,
+                            error = %error.message,
+                            "released run and wrote its terminal tx, but projection refresh failed"
+                        );
+                    } else {
+                        tracing::error!(
+                            run_id = %id,
+                            tx_type = %ty,
+                            error = %error.message,
+                            "released run but failed to write its terminal tx"
+                        );
+                    }
                     return Err(error);
                 }
             }
@@ -13272,7 +13306,6 @@ fn reindex_response(snap: &IndexSnapshot) -> ReindexResponse {
 
 async fn post_reindex(State(state): State<ApiState>) -> Json<ReindexResponse> {
     state.index.rebuild().await;
-    state.index.spawn_repo_url_refresh();
     let snap = state.index.snapshot().await;
     Json(reindex_response(&snap))
 }
@@ -13289,7 +13322,7 @@ async fn post_reindex_project(
     if let Some(project) = state.index.snapshot().await.project(&project_id) {
         state
             .index
-            .spawn_repo_url_refresh_for(project_id.clone(), project.root.clone());
+            .spawn_repo_url_reprobe_for(project_id.clone(), project.root.clone());
     }
     let snap = state.index.snapshot().await;
     Ok(Json(reindex_response(&snap)))
@@ -13367,7 +13400,7 @@ async fn post_org_file(
         )
         .await
         .map_err(|e| writer_rewrite_error(&path, e))?;
-    let tx_id = record_api_tx(
+    let tx_id = record_api_tx_after_project_mutation(
         &state,
         ApiTxRequest {
             ty: "org.file_rewritten".to_string(),
@@ -13379,6 +13412,7 @@ async fn post_org_file(
             request_id: req.request_id.map(|id| format!("{id}/tx")),
             extra: Vec::new(),
         },
+        Some(&project_id),
     )
     .await?;
     state.events.publish(
@@ -13935,6 +13969,13 @@ async fn create_graph_heading(
             .await
             .map_err(|error| ApiError::bad_request(error.to_string()))?
         {
+            refresh_after_project_mutation(
+                state,
+                &project_id,
+                state.tx_commit_to_project,
+                &cached.tx_id,
+            )
+            .await?;
             return Ok(Json(GraphMutationResponse {
                 id: cached.mutation_id,
                 action: "created".to_string(),
@@ -15180,13 +15221,8 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
         .transaction(vec![primary_rewrite], prepared_tx.tx)
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(
-        req.state,
-        prepared_tx.project_tx,
-        prepared_tx.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(req.state, &req.project_id, prepared_tx.project_tx, &tx_id)
+        .await?;
     if req.layer == NodeLayer::Task {
         req.state.events.publish(
             Topic::Task,
@@ -15277,13 +15313,8 @@ async fn write_graph_and_record(
             req.node_id.clone(),
         ),
     };
-    refresh_after_tx(
-        req.state,
-        prepared_tx.project_tx,
-        prepared_tx.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(req.state, &req.project_id, prepared_tx.project_tx, &tx_id)
+        .await?;
     let layer = req.layer.layer_name().to_string();
     if req.action == "created" {
         req.state.events.publish(
@@ -15824,6 +15855,13 @@ async fn post_task_create(
             .await
             .map_err(|error| ApiError::bad_request(error.to_string()))?
         {
+            refresh_after_project_mutation(
+                &state,
+                &project_id,
+                state.tx_commit_to_project,
+                &cached.tx_id,
+            )
+            .await?;
             return Ok(Json(TaskCreateResponse {
                 id: cached.mutation_id,
                 tx_id: cached.tx_id,
@@ -15904,13 +15942,7 @@ async fn post_task_create(
         .map_err(writer_transaction_error)?;
     let tx_id = cached.tx_id;
     let response_task_id = cached.mutation_id;
-    refresh_after_tx(
-        &state,
-        prepared.project_tx,
-        prepared.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(&state, &project_id, prepared.project_tx, &tx_id).await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
@@ -16160,13 +16192,8 @@ async fn write_goal_file_and_record(
         )
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(
-        req.state,
-        prepared_tx.project_tx,
-        prepared_tx.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(req.state, req.project_id, prepared_tx.project_tx, &tx_id)
+        .await?;
     req.state.events.publish(
         Topic::Graph,
         EventPayload::GraphChanged {
@@ -16496,13 +16523,8 @@ async fn write_task_lifecycle_and_record(
         .transaction(file_rewrites, prepared_tx.tx)
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(
-        req.state,
-        prepared_tx.project_tx,
-        prepared_tx.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(req.state, req.project_id, prepared_tx.project_tx, &tx_id)
+        .await?;
     Ok(tx_id)
 }
 
@@ -16780,13 +16802,8 @@ async fn write_task_property_and_record(
         )
         .await
         .map_err(writer_transaction_error)?;
-    refresh_after_tx(
-        req.state,
-        prepared_tx.project_tx,
-        prepared_tx.destination_project_id,
-        &tx_id,
-    )
-    .await?;
+    refresh_after_project_mutation(req.state, req.project_id, prepared_tx.project_tx, &tx_id)
+        .await?;
     Ok(tx_id)
 }
 
@@ -17194,7 +17211,7 @@ async fn post_artifact_submit(
             release_artifactor_run_after_submit(&state, &run_id).await;
         }
 
-        refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
+        refresh_after_project_mutation(&state, &entry.id, true, &tx_id).await?;
         state.events.publish(
             Topic::Artifact,
             EventPayload::ArtifactChanged {
@@ -17292,7 +17309,7 @@ async fn post_artifact_submit(
         release_artifactor_run_after_submit(&state, &run_id).await;
     }
 
-    refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(&state, &entry.id, true, &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -17542,7 +17559,7 @@ async fn post_artifact_add_comment(
         .await
         .map_err(|e| ApiError::internal(format!("write artifact comment: {e}")))?;
 
-    refresh_after_tx(&state, true, Some(project_id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(&state, &project_id, true, &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactCommentAdded {
@@ -17661,7 +17678,7 @@ async fn post_artifact_comment_resolve(
         .await
         .map_err(|e| ApiError::internal(format!("write comment resolution: {e}")))?;
 
-    refresh_after_tx(&state, true, Some(project_id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(&state, &project_id, true, &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18109,7 +18126,7 @@ async fn launch_artifact_generation(
         }
     };
     cleanup.disarm();
-    refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(state, &entry.id, true, &tx_id).await?;
 
     Ok(run_id)
 }
@@ -18215,7 +18232,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
             return;
         }
     };
-    if let Err(error) = refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await {
+    if let Err(error) = refresh_after_project_mutation(state, &entry.id, true, &tx_id).await {
         tracing::error!(art_id, run_id, error = %error.message, "artifact revert committed but refresh failed");
         return;
     }
@@ -18327,7 +18344,7 @@ async fn close_out_artifact_regenerate_round(
         .await
         .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
 
-    refresh_after_tx(state, true, Some(entry.id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(state, &entry.id, true, &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18478,7 +18495,7 @@ async fn post_artifact_generate(
         .await
         .map_err(|e| ApiError::internal(format!("write artifact record: {e}")))?;
 
-    refresh_after_tx(&state, true, Some(entry.id.clone()), &tx_id).await?;
+    refresh_after_project_mutation(&state, &entry.id, true, &tx_id).await?;
     state.events.publish(
         Topic::Artifact,
         EventPayload::ArtifactChanged {
@@ -18730,6 +18747,15 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    fn committed_tx_id(&self) -> Option<&str> {
+        self.body.as_ref().and_then(|body| {
+            (body.get("committed")?.as_bool()?
+                && body.get("index_status")?.as_str()? == "refresh_failed")
+                .then(|| body.get("tx_id").and_then(Value::as_str))
+                .flatten()
+        })
+    }
+
     fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -20077,6 +20103,67 @@ pub(crate) mod tests {
         assert!(status.writer.completed_total >= 1, "{:?}", status.writer);
         assert_eq!(status.index_refresh.requests_total, 1);
         assert_eq!(status.index_refresh.scans_total, 1);
+    }
+
+    #[tokio::test]
+    async fn release_terminal_tx_committed_refresh_failure_is_truthful_and_durable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home.clone()).await;
+        let (run_id, _) =
+            acquire_a_run_nothing_will_ever_end(&state, &project_root, "TASK-K9-RELEASE").await;
+        state.index.fail_next_refresh();
+
+        let error = post_run_release(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunReleaseRequest {
+                reason: Some("release with terminal tx refresh failure".to_string()),
+                request_id: None,
+                finalized_by_worker: false,
+                caller_identity: None,
+                terminal_tx: Some(TxAppendRequest {
+                    request_id: Some("k9-terminal-tx".to_string()),
+                    r#type: "implementer.reported".to_string(),
+                    actor: None,
+                    machine: None,
+                    project: Some("proj".to_string()),
+                    task: Some("TASK-K9-RELEASE".to_string()),
+                    target: None,
+                    reason: Some("worker reported".to_string()),
+                    extra: vec![("RUN_ID".to_string(), run_id.clone())],
+                    tx_path: None,
+                }),
+            }),
+        )
+        .await
+        .expect_err("committed refresh failure remains a structured 503");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        let tx_id = error
+            .committed_tx_id()
+            .expect("release error must say its terminal tx committed")
+            .to_string();
+        let ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        assert!(ledger.contains(&tx_id), "terminal tx did not land durably");
+        assert!(ledger.contains("implementer.reported"));
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.run_id != run_id),
+            "the release itself must remain committed"
+        );
+        assert!(
+            state.release_tasks.lost_finalizations().is_empty(),
+            "a committed terminal tx is not a lost finalization: {:?}",
+            state.release_tasks.lost_finalizations()
+        );
     }
 
     fn launch_stamp() -> chrono::DateTime<Utc> {
@@ -30327,6 +30414,364 @@ pub(crate) mod tests {
         }));
         assert!(after.contains("** Description\nEdited task detail.\n"));
         assert!(after.contains("** Acceptance Criteria\n- [ ] Opens from the indexed snapshot.\n"));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn project_task_mutation_is_immediately_visible_with_project_tx() {
+        assert_project_task_mutation_visibility(true).await;
+    }
+
+    #[tokio::test]
+    async fn project_task_mutation_is_immediately_visible_with_home_tx() {
+        assert_project_task_mutation_visibility(false).await;
+    }
+
+    async fn assert_project_task_mutation_visibility(commit_to_project: bool) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(
+            home.config(),
+            format!("tx:\n  commit_to_project: {commit_to_project}\n"),
+        )
+        .unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let base = format!("http://{}", running.addr);
+        let payload = serde_json::json!({
+            "id": "TASK-R4WSF",
+            "title": "Read after write",
+            "request_id": format!("raw-safe-{commit_to_project}"),
+        });
+
+        let create = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        let create_status = create.status();
+        let created: Value = create.json().await.unwrap();
+        assert!(create_status.is_success(), "{create_status} {created}");
+        let tx_id = created["tx_id"].as_str().unwrap().to_string();
+
+        let tasks: Value = client
+            .get(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            tasks
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["id"] == "TASK-R4WSF"),
+            "success returned before the project projection contained the task: {tasks}"
+        );
+        let tx: Value = client
+            .get(format!("{base}/api/tx"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let record = tx
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["entry"]["tx_id"] == tx_id)
+            .expect("the mutation tx must be in the immediate tx projection");
+        assert_eq!(record["entry"]["project"], "orgasmic");
+        assert_eq!(
+            record["project_id"].is_string(),
+            commit_to_project,
+            "tx storage projection does not match routing: {record}"
+        );
+
+        let before_replay: Value = client
+            .get(format!("{base}/api/daemon/status"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let replay: Value = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&payload)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(replay["id"], created["id"]);
+        assert_eq!(replay["tx_id"], created["tx_id"]);
+        let after_replay: Value = client
+            .get(format!("{base}/api/daemon/status"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            after_replay["index_refresh"]["scans_total"],
+            before_replay["index_refresh"]["scans_total"],
+            "published idempotent replay must not scan again"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    fn task_create_request(id: &str, request_id: &str) -> TaskCreateRequest {
+        TaskCreateRequest {
+            id: Some(id.to_string()),
+            title: "Repair projection".to_string(),
+            tags: Vec::new(),
+            properties: BTreeMap::new(),
+            body: None,
+            reason: None,
+            request_id: Some(request_id.to_string()),
+            force: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn cached_task_retry_after_committed_503_repairs_projection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        state.index.fail_next_refresh();
+
+        let error = post_task_create(
+            State(state.clone()),
+            Path("orgasmic".to_string()),
+            Json(task_create_request("TASK-R3P41", "task-repair")),
+        )
+        .await
+        .expect_err("committed mutation with failed publication must return 503");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("orgasmic", "TASK-R3P41")
+                .is_none(),
+            "failed publication seam must leave the projection stale"
+        );
+        let scans_after_failure = state.index.refresh_status().await.scans_total;
+
+        let repaired = post_task_create(
+            State(state.clone()),
+            Path("orgasmic".to_string()),
+            Json(task_create_request("TASK-R3P41", "task-repair")),
+        )
+        .await
+        .expect("cached retry must reconcile before returning success")
+        .0;
+        assert_eq!(
+            repaired.tx_id,
+            error
+                .body
+                .as_ref()
+                .and_then(|body| body["tx_id"].as_str())
+                .unwrap()
+        );
+        assert!(state
+            .index
+            .snapshot()
+            .await
+            .task("orgasmic", "TASK-R3P41")
+            .is_some());
+        assert_eq!(
+            state.index.refresh_status().await.scans_total,
+            scans_after_failure + 1
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_graph_retry_after_committed_503_repairs_projection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let mut state = direct_stage_test_state(home).await;
+        state.tx_commit_to_project = true;
+        state.index.fail_next_refresh();
+        let request = || GraphCreateRequest {
+            project: Some("orgasmic".to_string()),
+            request_id: Some("graph-repair".to_string()),
+            id: Some("dec_REPAIR".to_string()),
+            title: Some("Repair graph projection".to_string()),
+            properties: BTreeMap::new(),
+            body: None,
+            force: false,
+            allow_marker: false,
+        };
+
+        let error = create_graph_heading(&state, GraphLayer::Decision, request())
+            .await
+            .expect_err("committed graph mutation with failed publication must return 503");
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(state.index.snapshot().await.projects["orgasmic"]
+            .graph
+            .decisions
+            .iter()
+            .all(|decision| decision.id != "dec_REPAIR"));
+        let repaired = create_graph_heading(&state, GraphLayer::Decision, request())
+            .await
+            .expect("cached graph retry must reconcile")
+            .0;
+        assert_eq!(repaired.id, "dec_REPAIR");
+        assert!(state.index.snapshot().await.projects["orgasmic"]
+            .graph
+            .decisions
+            .iter()
+            .any(|decision| decision.id == "dec_REPAIR"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sixteen_concurrent_api_writes_finish_within_budget_without_refresh_amplification() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let base = format!("http://{}", running.addr);
+        let before: Value = client
+            .get(format!("{base}/api/daemon/status"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let before_scans = before["index_refresh"]["scans_total"].as_u64().unwrap();
+        let started = std::time::Instant::now();
+
+        let mut writes = tokio::task::JoinSet::new();
+        for number in 0..16 {
+            let client = client.clone();
+            let token = token.clone();
+            let base = base.clone();
+            writes.spawn(async move {
+                let response = client
+                    .post(format!("{base}/api/tx"))
+                    .bearer_auth(token)
+                    .json(&serde_json::json!({
+                        "request_id": format!("k9-concurrent-{number}"),
+                        "type": "test.concurrent_mutation",
+                        "project": "orgasmic",
+                        "reason": format!("concurrent mutation {number}"),
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap();
+                assert!(status.is_success(), "{status} {body}");
+                body["tx_id"].as_str().unwrap().to_string()
+            });
+        }
+        let tx_ids = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut tx_ids = BTreeSet::new();
+            while let Some(result) = writes.join_next().await {
+                assert!(
+                    tx_ids.insert(result.unwrap()),
+                    "duplicate tx acknowledgement"
+                );
+            }
+            tx_ids
+        })
+        .await
+        .expect("production API writes exceeded the unchanged generic 10-second budget");
+        assert_eq!(tx_ids.len(), 16);
+
+        let tx: Value = client
+            .get(format!("{base}/api/tx?project=orgasmic"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let landed = tx
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["entry"]["ty"] == "test.concurrent_mutation")
+            .map(|record| record["entry"]["tx_id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            landed.len(),
+            16,
+            "every accepted write must land exactly once"
+        );
+        assert_eq!(landed.iter().collect::<BTreeSet<_>>().len(), 16);
+        assert!(landed.iter().all(|tx_id| tx_ids.contains(tx_id)));
+
+        let after: Value = client
+            .get(format!("{base}/api/daemon/status"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let scans = after["index_refresh"]["scans_total"].as_u64().unwrap() - before_scans;
+        eprintln!(
+            "TASK-K9WWM API concurrency: elapsed_ms={} scans={scans} status={}",
+            started.elapsed().as_millis(),
+            after["index_refresh"]
+        );
+        assert!(
+            scans <= 2,
+            "16 simultaneous writes amplified to {scans} scans: {after}"
+        );
+        assert!(
+            after["index_refresh"]["coalesced_total"].as_u64().unwrap() >= 14,
+            "simultaneous requests did not coalesce: {after}"
+        );
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
