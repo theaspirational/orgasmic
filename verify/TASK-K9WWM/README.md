@@ -22,16 +22,21 @@ root-cause claim. Five production HTTP repetitions each landed 16 concurrent
 writes exactly once in 132-182 ms with 16 logical refresh requests, one physical
 scan, and 15 coalesced requests. An intentionally staggered 30-request stream
 measured four scans and 766 ms (`coalesced_total=27`, one stale generation
-discarded). Production does not coalesce every arrival shape into one scan; the
-bounded 200 ms maximum wait prevents a steady stream from deferring the first
-scan indefinitely. The 50 ms trailing window is also the uncontended
+superseded). Production does not coalesce every arrival shape into one scan;
+the bounded 200 ms maximum wait prevents a steady stream from deferring the
+first scan indefinitely. The 50 ms trailing window is also the uncontended
 acknowledgement floor: an idle target waits for that quiet window before its
 first scan so concurrent mutations can join the same authoritative batch.
 
-Five consecutive projections made stale by same-target mutations bound one
-captured batch's retry window. At that bound its covered committed callers get
-the existing structured committed-but-refresh-failed 503, while newer arrivals
-remain queued and the detached coordinator continues to convergence.
+Every successful publication acknowledges the waiter batch captured before its
+scan. Those mutations committed before the scan began and are immediately
+visible in the published projection. If a distinct mutation arrives while the
+scan is running, `discarded_total` records that the published generation was
+superseded and the detached coordinator immediately scans again; later tx,
+explicit, and watcher waiters remain queued for that follow-up. A later waiter
+for the same captured tx is acknowledged with the covered tx. Healthy
+supersession never produces a committed-but-refresh-failed 503; that structured
+error remains reserved for an actual build or publication failure.
 
 ## Timeout-classification decision
 
@@ -75,7 +80,9 @@ Compare deltas from the same `boot_id`; counters reset at boot. A same-project
 batch should increase `requests_total` once per logical request but
 `scans_total` by no more than two. It must not resemble the former approximately
 three full refreshes per mutation. Git metadata probes are intentionally absent
-from these counters.
+from these counters. `discarded_total` is the retained stale-generation metric:
+it counts successful publications superseded by a newer required generation,
+not failed or unpublished projections.
 
 The deterministic production-HTTP batch is:
 
@@ -94,6 +101,9 @@ and companion coordinator cases are selected with:
 cargo test -p orgasmic-daemon \
   staggered_arrivals_cannot_extend_coalescing_past_the_absolute_bound \
   -- --nocapture --test-threads=1
+cargo test -p orgasmic-daemon --lib \
+  index::tests::covered_batch_is_acknowledged_while_later_arrivals_converge \
+  -- --exact --nocapture
 cargo test -p orgasmic-daemon index::tests:: -- --test-threads=1
 ```
 
