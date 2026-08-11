@@ -191,7 +191,7 @@ export type ProjectIndex = {
   last_loaded_at?: string | null;
 };
 
-export type ProjectLoadState = 'unloaded' | 'loading' | 'ready' | 'failed';
+export type ProjectLoadState = 'unloaded' | 'loading' | 'ready' | 'failed' | 'delayed';
 
 export type ProjectCatalogEntry = {
   project_id: string;
@@ -204,6 +204,7 @@ export type ProjectCatalogEntry = {
     generation: number;
     last_attempt_at?: string | null;
     last_loaded_at?: string | null;
+    cooldown_until?: string | null;
     error?: string | null;
   };
   task_stats?: {
@@ -294,6 +295,7 @@ export type DaemonStatus = {
   unloaded_projects?: string[];
   loading_projects?: string[];
   ready_projects?: string[];
+  delayed_projects?: Record<string, string>;
   failed_projects?: Record<string, string>;
   parse_errors: number;
   tx_count: number;

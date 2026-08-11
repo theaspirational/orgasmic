@@ -240,6 +240,9 @@ pub enum ProjectLoadState {
     Loading,
     Ready,
     Failed,
+    /// The coordinator waiter elapsed before this caller observed a scan
+    /// result. This is capacity delay, not evidence of a defective path.
+    Delayed,
 }
 
 #[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
@@ -248,6 +251,8 @@ pub struct ProjectLoadStatus {
     pub generation: u64,
     pub last_attempt_at: Option<DateTime<Utc>>,
     pub last_loaded_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cooldown_until: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -433,6 +438,7 @@ const REFRESH_COALESCE_MAX_WAIT: Duration = Duration::from_millis(200);
 const PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PROJECT_REFRESH_SCAN_TIMEOUT: Duration = Duration::from_secs(300);
 const PROJECT_REFRESH_SCAN_TIMEOUT_ENV: &str = "ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS";
+const PROJECT_LOAD_FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 const FIRST_LOAD_COORDINATOR_MARGIN: Duration = Duration::from_secs(3);
 const CORE_PROJECT_SCAN_PERMITS: usize = 2;
 const OPTIONAL_PROJECT_SCAN_PERMITS: usize = 2;
@@ -525,6 +531,11 @@ fn first_load_coordinator_timeout(
         .saturating_add(FIRST_LOAD_COORDINATOR_MARGIN)
 }
 
+fn project_load_failure_cooldown_until(now: DateTime<Utc>) -> DateTime<Utc> {
+    now + chrono::Duration::from_std(PROJECT_LOAD_FAILURE_COOLDOWN)
+        .expect("project load failure cooldown fits chrono duration")
+}
+
 fn coordinator_queue_timeout_message(
     target: &RefreshTarget,
     coordinator_timeout: Duration,
@@ -534,6 +545,20 @@ fn coordinator_queue_timeout_message(
         target.label(),
         coordinator_timeout.as_secs_f64(),
     )
+}
+
+#[derive(Debug)]
+enum ProjectLoadRequestError {
+    Refresh(String),
+    CoordinatorTimeout(String),
+}
+
+impl ProjectLoadRequestError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Refresh(message) | Self::CoordinatorTimeout(message) => message,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -750,6 +775,30 @@ enum BuiltRefresh {
     },
 }
 
+/// Owned, bounded data captured under the index read guard. The blocking
+/// closure accepts only this enum, so it cannot carry an index guard across a
+/// filesystem syscall by construction.
+#[derive(Debug)]
+enum RefreshSeed {
+    Project {
+        project_id: String,
+        board_entry: BoardEntry,
+        prior_project: Option<Box<ProjectIndex>>,
+        prior_repo_url: Option<String>,
+        rebuilt_at: Option<DateTime<Utc>>,
+        repo_urls: BTreeMap<String, String>,
+    },
+    Markers {
+        board_entry: BoardEntry,
+    },
+    Artifacts {
+        board_entry: BoardEntry,
+    },
+    HomeTx {
+        rebuilt_at: Option<DateTime<Utc>>,
+    },
+}
+
 #[derive(Debug)]
 struct BuiltProjectRefresh {
     board_entry: BoardEntry,
@@ -951,8 +1000,10 @@ impl Index {
                         "project index scan task failed during explicit rebuild"
                     );
                     if let Some(load) = snap.project_loads.get_mut(&entry.id) {
+                        let now = Utc::now();
                         load.state = ProjectLoadState::Failed;
-                        load.last_attempt_at = Some(Utc::now());
+                        load.last_attempt_at = Some(now);
+                        load.cooldown_until = Some(project_load_failure_cooldown_until(now));
                         load.error = Some(format!("project index scan task failed: {error}"));
                     }
                 }
@@ -966,6 +1017,7 @@ impl Index {
                 load.generation = load.generation.saturating_add(1);
                 load.last_attempt_at = Some(Utc::now());
                 load.last_loaded_at = Some(Utc::now());
+                load.cooldown_until = None;
                 load.error = None;
             }
         }
@@ -1006,9 +1058,28 @@ impl Index {
 
     /// Ensure one registered project's operational projection is available.
     ///
-    /// First readers join the same coordinator-owned scan. A failed first load
-    /// remains visible in the catalog and the next access starts a retry.
+    /// First readers join the same coordinator-owned scan. This explicit path
+    /// always retries a failed first load; routine whole-board polling uses
+    /// [`Self::ensure_project_loaded_with_cooldown`] instead.
     pub async fn ensure_project_loaded(&self, project_id: &str) -> Result<u64, String> {
+        self.ensure_project_loaded_inner(project_id, false).await
+    }
+
+    /// Routine whole-board polling path. A recently failed project returns its
+    /// cached failure until the bounded cooldown expires, so notifications can
+    /// report partial coverage without rescanning every bad path on each event.
+    pub async fn ensure_project_loaded_with_cooldown(
+        &self,
+        project_id: &str,
+    ) -> Result<u64, String> {
+        self.ensure_project_loaded_inner(project_id, true).await
+    }
+
+    async fn ensure_project_loaded_inner(
+        &self,
+        project_id: &str,
+        honor_failure_cooldown: bool,
+    ) -> Result<u64, String> {
         let expected_entry = {
             let mut snap = self.inner.write().await;
             let expected_entry = snap
@@ -1029,6 +1100,27 @@ impl Index {
                     .map(|load| load.generation)
                     .unwrap_or_default());
             }
+            if honor_failure_cooldown {
+                let now = Utc::now();
+                if let Some(load) = snap.project_loads.get(project_id) {
+                    if load.state == ProjectLoadState::Failed
+                        && load
+                            .cooldown_until
+                            .as_ref()
+                            .is_some_and(|until| until > &now)
+                    {
+                        let until = load
+                            .cooldown_until
+                            .as_ref()
+                            .expect("checked project failure cooldown");
+                        let prior = load.error.as_deref().unwrap_or("project load failed");
+                        return Err(format!(
+                            "project {project_id} load retry is cooling down until {}; previous failure: {prior}",
+                            until.to_rfc3339()
+                        ));
+                    }
+                }
+            }
             let load = snap
                 .project_loads
                 .entry(project_id.to_string())
@@ -1036,6 +1128,7 @@ impl Index {
             if load.state != ProjectLoadState::Loading {
                 load.state = ProjectLoadState::Loading;
                 load.last_attempt_at = Some(Utc::now());
+                load.cooldown_until = None;
                 load.error = None;
             }
             expected_entry
@@ -1043,10 +1136,18 @@ impl Index {
         let target = RefreshTarget::Project(project_id.to_string());
         let result = self.request_project_load(target.clone()).await;
         if let Err(error) = &result {
-            self.record_project_load_failure(project_id, error, Some(&expected_entry))
-                .await;
+            match error {
+                ProjectLoadRequestError::Refresh(error) => {
+                    self.record_project_load_failure(project_id, error, Some(&expected_entry))
+                        .await;
+                }
+                ProjectLoadRequestError::CoordinatorTimeout(error) => {
+                    self.record_project_load_delay(project_id, error, Some(&expected_entry))
+                        .await;
+                }
+            }
         }
-        result?;
+        result.map_err(ProjectLoadRequestError::into_message)?;
         let snap = self.inner.read().await;
         let load = snap
             .project_loads
@@ -1082,6 +1183,7 @@ impl Index {
         }
         self.request_project_load(RefreshTarget::Markers(project_id.to_string()))
             .await
+            .map_err(ProjectLoadRequestError::into_message)
     }
 
     pub async fn ensure_all_project_markers_loaded(&self) -> Result<(), String> {
@@ -1112,9 +1214,13 @@ impl Index {
         }
         self.request_project_load(RefreshTarget::Artifacts(project_id.to_string()))
             .await
+            .map_err(ProjectLoadRequestError::into_message)
     }
 
-    async fn request_project_load(&self, target: RefreshTarget) -> Result<(), String> {
+    async fn request_project_load(
+        &self,
+        target: RefreshTarget,
+    ) -> Result<(), ProjectLoadRequestError> {
         self.refresh
             .metrics
             .requests_total
@@ -1146,12 +1252,11 @@ impl Index {
         );
         drop(coordinator);
         match tokio::time::timeout(coordinator_timeout, rx).await {
-            Ok(result) => {
-                result.unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
-            }
-            Err(_) => Err(coordinator_queue_timeout_message(
-                &target,
-                coordinator_timeout,
+            Ok(result) => result
+                .unwrap_or_else(|_| Err("index refresh coordinator stopped".to_string()))
+                .map_err(ProjectLoadRequestError::Refresh),
+            Err(_) => Err(ProjectLoadRequestError::CoordinatorTimeout(
+                coordinator_queue_timeout_message(&target, coordinator_timeout),
             )),
         }
     }
@@ -1178,6 +1283,7 @@ impl Index {
             return;
         }
         let has_last_good = snap.projects.contains_key(project_id);
+        let now = Utc::now();
         let load = snap
             .project_loads
             .entry(project_id.to_string())
@@ -1187,7 +1293,43 @@ impl Index {
         } else {
             ProjectLoadState::Failed
         };
+        load.last_attempt_at.get_or_insert(now);
+        load.cooldown_until = if has_last_good {
+            None
+        } else {
+            Some(project_load_failure_cooldown_until(now))
+        };
+        load.error = Some(error.to_string());
+    }
+
+    async fn record_project_load_delay(
+        &self,
+        project_id: &str,
+        error: &str,
+        expected_entry: Option<&BoardEntry>,
+    ) {
+        let mut snap = self.inner.write().await;
+        let current_entry = snap.board.iter().find(|entry| entry.id == project_id);
+        if expected_entry.is_some_and(|expected| current_entry != Some(expected))
+            || snap
+                .project_loads
+                .get(project_id)
+                .is_some_and(|load| load.state == ProjectLoadState::Unloaded)
+        {
+            return;
+        }
+        let has_last_good = snap.projects.contains_key(project_id);
+        let load = snap
+            .project_loads
+            .entry(project_id.to_string())
+            .or_default();
+        load.state = if has_last_good {
+            ProjectLoadState::Ready
+        } else {
+            ProjectLoadState::Delayed
+        };
         load.last_attempt_at.get_or_insert_with(Utc::now);
+        load.cooldown_until = None;
         load.error = Some(error.to_string());
     }
 
@@ -1214,6 +1356,7 @@ impl Index {
             ProjectLoadState::Loading
         };
         load.last_attempt_at = Some(Utc::now());
+        load.cooldown_until = None;
         load.error = None;
         Ok(())
     }
@@ -1761,12 +1904,70 @@ impl Index {
         target: RefreshTarget,
         blocking_token: u64,
     ) -> Result<BuiltRefresh, String> {
-        // Move the bounded seed clone to the blocking pool too. A project
-        // acknowledgement clones only that project's last-good value. The tx
-        // and parse-error partitions are private scan outputs, so seed them
-        // empty rather than cloning data that load_project immediately
-        // replaces.
-        let seed = self.inner.clone().read_owned().await;
+        // Capture every required value into owned data inside this lexical
+        // scope. The read guard is dropped before `RefreshSeed` can enter the
+        // blocking closure, so `.is_dir()` and every later OS operation are
+        // structurally unable to run under an index lock.
+        let scan_seed = {
+            let seed = self.inner.read().await;
+            match &target {
+                RefreshTarget::Project(project_id) => {
+                    let board_entry = seed
+                        .board
+                        .iter()
+                        .find(|entry| entry.id == *project_id)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown project {project_id}"))?;
+                    let prior_project = seed.projects.get(project_id).cloned().map(Box::new);
+                    let prior_repo_url = seed
+                        .repo_urls
+                        .get(project_id)
+                        .filter(|repo_url| !repo_url.is_empty())
+                        .cloned()
+                        .or_else(|| {
+                            prior_project
+                                .as_ref()
+                                .map(|project| project.repo_url.clone())
+                                .filter(|repo_url| !repo_url.is_empty())
+                        });
+                    RefreshSeed::Project {
+                        project_id: project_id.clone(),
+                        board_entry,
+                        prior_project,
+                        prior_repo_url,
+                        rebuilt_at: seed.rebuilt_at,
+                        repo_urls: seed.repo_urls.clone(),
+                    }
+                }
+                RefreshTarget::Markers(project_id) => {
+                    let board_entry = seed
+                        .board
+                        .iter()
+                        .find(|entry| entry.id == *project_id)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown project {project_id}"))?;
+                    if !seed.projects.contains_key(project_id) {
+                        return Err(format!("project {project_id} is not loaded"));
+                    }
+                    RefreshSeed::Markers { board_entry }
+                }
+                RefreshTarget::Artifacts(project_id) => {
+                    let board_entry = seed
+                        .board
+                        .iter()
+                        .find(|entry| entry.id == *project_id)
+                        .cloned()
+                        .ok_or_else(|| format!("unknown project {project_id}"))?;
+                    if !seed.projects.contains_key(project_id) {
+                        return Err(format!("project {project_id} is not loaded"));
+                    }
+                    RefreshSeed::Artifacts { board_entry }
+                }
+                RefreshTarget::HomeTx => RefreshSeed::HomeTx {
+                    rebuilt_at: seed.rebuilt_at,
+                },
+            }
+        };
         let scan_index = self.clone();
         #[cfg(test)]
         let target_label = target.label();
@@ -1777,46 +1978,32 @@ impl Index {
             target: target.clone(),
             token: blocking_token,
         };
-        let blocking_scan = move || match target {
-            RefreshTarget::Project(project_id) => {
-                let Some(board_entry) = seed
-                    .board
-                    .iter()
-                    .find(|entry| entry.id == project_id)
-                    .cloned()
-                else {
-                    return Err(format!("unknown project {project_id}"));
-                };
+        let blocking_scan = move || match scan_seed {
+            RefreshSeed::Project {
+                project_id,
+                board_entry,
+                prior_project,
+                prior_repo_url,
+                rebuilt_at,
+                repo_urls,
+            } => {
                 let orgasmic_dir = board_entry.path.join(".orgasmic");
                 if !orgasmic_dir.is_dir() {
                     return Err(format!(
                         "project {project_id} has no readable .orgasmic directory"
                     ));
                 }
-                let prior_project = seed.projects.get(&project_id).cloned();
-                let prior_repo_url = seed
-                    .repo_urls
-                    .get(&project_id)
-                    .filter(|repo_url| !repo_url.is_empty())
-                    .cloned()
-                    .or_else(|| {
-                        prior_project
-                            .as_ref()
-                            .map(|project| project.repo_url.clone())
-                            .filter(|repo_url| !repo_url.is_empty())
-                    });
                 let mut next = IndexSnapshot {
                     board: vec![board_entry.clone()],
                     projects: prior_project
-                        .map(|project| HashMap::from([(project_id.clone(), project)]))
+                        .map(|project| HashMap::from([(project_id.clone(), *project)]))
                         .unwrap_or_default(),
                     tx: Vec::new(),
                     parse_errors: Vec::new(),
-                    rebuilt_at: seed.rebuilt_at,
-                    repo_urls: seed.repo_urls.clone(),
+                    rebuilt_at,
+                    repo_urls,
                     ..IndexSnapshot::default()
                 };
-                drop(seed);
                 #[cfg(test)]
                 scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 scan_index.load_project(&board_entry, &mut next, prior_repo_url);
@@ -1838,19 +2025,7 @@ impl Index {
                     parse_errors,
                 })))
             }
-            RefreshTarget::Markers(project_id) => {
-                let Some(board_entry) = seed
-                    .board
-                    .iter()
-                    .find(|entry| entry.id == project_id)
-                    .cloned()
-                else {
-                    return Err(format!("unknown project {project_id}"));
-                };
-                if !seed.projects.contains_key(&project_id) {
-                    return Err(format!("project {project_id} is not loaded"));
-                }
-                drop(seed);
+            RefreshSeed::Markers { board_entry } => {
                 #[cfg(test)]
                 scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 let markers = scan_project_markers(&board_entry.path);
@@ -1862,19 +2037,7 @@ impl Index {
                     parse_errors: lint_snapshot.parse_errors,
                 })
             }
-            RefreshTarget::Artifacts(project_id) => {
-                let Some(board_entry) = seed
-                    .board
-                    .iter()
-                    .find(|entry| entry.id == project_id)
-                    .cloned()
-                else {
-                    return Err(format!("unknown project {project_id}"));
-                };
-                if !seed.projects.contains_key(&project_id) {
-                    return Err(format!("project {project_id} is not loaded"));
-                }
-                drop(seed);
+            RefreshSeed::Artifacts { board_entry } => {
                 #[cfg(test)]
                 scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 let artifacts = load_project_artifacts(&board_entry.path);
@@ -1883,14 +2046,13 @@ impl Index {
                     artifacts,
                 })
             }
-            RefreshTarget::HomeTx => {
+            RefreshSeed::HomeTx { rebuilt_at } => {
                 let mut next = IndexSnapshot {
                     tx: Vec::new(),
                     parse_errors: Vec::new(),
-                    rebuilt_at: seed.rebuilt_at,
+                    rebuilt_at,
                     ..IndexSnapshot::default()
                 };
-                drop(seed);
                 #[cfg(test)]
                 scan_index.apply_blocking_refresh_delay(&blocking_target_label);
                 scan_index.load_home_tx(&mut next);
@@ -2027,6 +2189,7 @@ impl Index {
                 load.generation = load.generation.saturating_add(1);
                 load.last_attempt_at.get_or_insert(loaded_at);
                 load.last_loaded_at = Some(loaded_at);
+                load.cooldown_until = None;
                 load.error = None;
             }
             BuiltRefresh::Markers {
@@ -3766,6 +3929,66 @@ mod tests {
         assert!(!message.contains("Files and Folders"));
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn late_waiter_after_batch_capture_joins_the_in_flight_scan() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.set_refresh_timeout(Duration::from_millis(800));
+        let first_gate = index.gate_next_refresh_for("project");
+
+        let first = {
+            let index = index.clone();
+            tokio::spawn(async move { index.ensure_project_loaded("project").await })
+        };
+        tokio::time::timeout(Duration::from_secs(2), first_gate.entered.notified())
+            .await
+            .expect("first captured scan never reached its test gate");
+
+        // This waiter arrives after the worker captured the first batch. It is
+        // still a first-load waiter for the same projection, so it joins the
+        // in-flight publication instead of forcing a second project scan.
+        let late = {
+            let index = index.clone();
+            tokio::spawn(async move { index.ensure_project_loaded("project").await })
+        };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while index.refresh_status().await.requests_total < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("late waiter never registered with the coordinator");
+
+        tokio::time::sleep(Duration::from_millis(550)).await;
+        first_gate.release.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), first)
+                .await
+                .expect("first captured waiter did not settle")
+                .unwrap()
+                .unwrap(),
+            1
+        );
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), late)
+                .await
+                .expect("late waiter did not settle from the in-flight scan")
+                .unwrap()
+                .unwrap(),
+            1
+        );
+
+        let status = index.refresh_status().await;
+        assert_eq!(status.requests_total, 2, "{status:?}");
+        assert_eq!(status.scans_total, 1, "{status:?}");
+        assert_eq!(status.coalesced_total, 1, "{status:?}");
+    }
+
     #[test]
     fn scan_timeout_override_accepts_only_bounded_non_zero_seconds() {
         assert_eq!(
@@ -3878,11 +4101,6 @@ mod tests {
             let index = index.clone();
             tokio::spawn(async move { index.ensure_project_loaded("project").await })
         };
-        gate.entered.notified().await;
-        assert_eq!(
-            index.snapshot().await.project_loads["project"].state,
-            ProjectLoadState::Loading
-        );
         let second = {
             let index = index.clone();
             tokio::spawn(async move { index.ensure_project_loaded("project").await })
@@ -3894,6 +4112,11 @@ mod tests {
         })
         .await
         .unwrap();
+        gate.entered.notified().await;
+        assert_eq!(
+            index.snapshot().await.project_loads["project"].state,
+            ProjectLoadState::Loading
+        );
         gate.release.notify_one();
 
         let first_generation = first.await.unwrap().unwrap();
@@ -3908,7 +4131,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_first_load_is_observable_and_next_access_retries() {
+    async fn failed_first_load_cools_routine_polling_and_explicit_access_retries() {
         let (tmp, home) = make_home();
         let project = tmp.path().join("project");
         seed_project(&project);
@@ -3922,14 +4145,101 @@ mod tests {
         assert_eq!(failed.load.state, ProjectLoadState::Failed);
         assert_eq!(failed.load.error.as_deref(), Some(first_error.as_str()));
         assert!(failed.load.last_attempt_at.is_some());
+        let cooldown_until = failed
+            .load
+            .cooldown_until
+            .expect("failed project exposes its cooldown deadline");
+        assert!(cooldown_until > Utc::now());
+        assert!(
+            cooldown_until
+                <= Utc::now()
+                    + chrono::Duration::from_std(PROJECT_LOAD_FAILURE_COOLDOWN).unwrap()
+                    + chrono::Duration::seconds(1)
+        );
 
+        let cached_error = index
+            .ensure_project_loaded_with_cooldown("project")
+            .await
+            .unwrap_err();
+        assert!(
+            cached_error.contains("load retry is cooling down"),
+            "{cached_error}"
+        );
+        assert!(cached_error.contains(&first_error), "{cached_error}");
+        assert_eq!(
+            index.refresh_status().await.scans_total,
+            1,
+            "routine polling must not start another filesystem scan during cooldown"
+        );
+
+        // Explicit access is the retry path and bypasses negative caching.
         let generation = index.ensure_project_loaded("project").await.unwrap();
         assert_eq!(generation, 1);
         let ready = index.catalog().await.remove(0);
         assert_eq!(ready.load.state, ProjectLoadState::Ready);
         assert_eq!(ready.load.error, None);
+        assert_eq!(ready.load.cooldown_until, None);
         assert!(ready.task_stats.is_some());
         assert_eq!(index.refresh_status().await.scans_total, 2);
+    }
+
+    #[tokio::test]
+    async fn coordinator_only_delay_is_not_recorded_as_a_path_failure() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        let expected_entry = index.snapshot().await.board.into_iter().next().unwrap();
+        index.mark_project_refresh_attempt("project").await.unwrap();
+        let message = coordinator_queue_timeout_message(
+            &RefreshTarget::Project("project".to_string()),
+            Duration::from_secs(13),
+        );
+
+        index
+            .record_project_load_delay("project", &message, Some(&expected_entry))
+            .await;
+        let delayed = index.catalog().await.remove(0);
+        assert_eq!(delayed.load.state, ProjectLoadState::Delayed);
+        assert_eq!(delayed.load.error.as_deref(), Some(message.as_str()));
+        assert_eq!(delayed.load.cooldown_until, None);
+        assert!(index.snapshot().await.projects.is_empty());
+
+        index.ensure_project_loaded("project").await.unwrap();
+        let ready = index.catalog().await.remove(0);
+        assert_eq!(ready.load.state, ProjectLoadState::Ready);
+        assert_eq!(ready.load.error, None);
+    }
+
+    #[tokio::test]
+    async fn expired_failure_cooldown_allows_routine_retry() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        let index = Index::new(home);
+        index.bootstrap_catalog().await;
+        index.fail_next_refresh();
+        index.ensure_project_loaded("project").await.unwrap_err();
+        {
+            let mut snap = index.inner.write().await;
+            snap.project_loads
+                .get_mut("project")
+                .unwrap()
+                .cooldown_until = Some(Utc::now() - chrono::Duration::seconds(1));
+        }
+
+        let generation = index
+            .ensure_project_loaded_with_cooldown("project")
+            .await
+            .expect("routine access retries once the bounded cooldown expires");
+        assert_eq!(generation, 1);
+        assert_eq!(index.refresh_status().await.scans_total, 2);
+        let ready = index.catalog().await.remove(0);
+        assert_eq!(ready.load.state, ProjectLoadState::Ready);
+        assert_eq!(ready.load.cooldown_until, None);
     }
 
     #[tokio::test]

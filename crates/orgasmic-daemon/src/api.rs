@@ -2560,7 +2560,15 @@ async fn get_tx(
     let mut covered_projects = BTreeSet::new();
     let mut failures = BTreeMap::new();
     for project_id in requested_projects {
-        match state.index.ensure_project_loaded(&project_id).await {
+        let loaded = if scoped {
+            state.index.ensure_project_loaded(&project_id).await
+        } else {
+            state
+                .index
+                .ensure_project_loaded_with_cooldown(&project_id)
+                .await
+        };
+        match loaded {
             Ok(_) => {
                 covered_projects.insert(project_id);
             }
@@ -8069,6 +8077,7 @@ pub struct StatusResponse {
     pub unloaded_projects: Vec<String>,
     pub loading_projects: Vec<String>,
     pub ready_projects: Vec<String>,
+    pub delayed_projects: BTreeMap<String, String>,
     pub failed_projects: BTreeMap<String, String>,
     pub parse_errors: usize,
     pub tx_count: usize,
@@ -8084,6 +8093,19 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let unloaded_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Unloaded);
     let loading_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Loading);
     let ready_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Ready);
+    let delayed_projects = snap
+        .project_loads
+        .iter()
+        .filter(|(_, load)| load.state == crate::index::ProjectLoadState::Delayed)
+        .map(|(id, load)| {
+            (
+                id.clone(),
+                load.error
+                    .clone()
+                    .unwrap_or_else(|| "project load delayed".to_string()),
+            )
+        })
+        .collect();
     let failed_projects = snap
         .project_loads
         .iter()
@@ -8115,6 +8137,7 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         unloaded_projects,
         loading_projects,
         ready_projects,
+        delayed_projects,
         failed_projects,
         parse_errors: snap.parse_errors.len(),
         tx_count: snap.tx.len(),
@@ -13435,9 +13458,18 @@ async fn get_parse_errors(State(state): State<ApiState>) -> Response {
         .collect::<Vec<_>>();
     let unloaded = snap.project_ids_in_state(ProjectLoadState::Unloaded);
     let loading = snap.project_ids_in_state(ProjectLoadState::Loading);
+    let delayed = snap.project_ids_in_state(ProjectLoadState::Delayed);
     let failed = snap.project_ids_in_state(ProjectLoadState::Failed);
+    // Preserve the established header shape unless there is an actual queue
+    // delay to report. The diagnostic remains additive without making empty
+    // delayed state a wire-visible compatibility change.
+    let delayed_segment = if delayed.is_empty() {
+        String::new()
+    } else {
+        format!("; delayed=[{}]", coverage_project_ids(&delayed))
+    };
     let coverage = format!(
-        "{}; ready={}/{}; markers={}/{}; unloaded=[{}]; marker_unloaded=[{}]; loading=[{}]; failed=[{}]",
+        "{}; ready={}/{}; markers={}/{}; unloaded=[{}]; marker_unloaded=[{}]; loading=[{}]{}; failed=[{}]",
         if ready.len() == snap.board.len() && marker_ready.len() == snap.board.len() {
             "complete"
         } else {
@@ -13450,6 +13482,7 @@ async fn get_parse_errors(State(state): State<ApiState>) -> Response {
         coverage_project_ids(&unloaded),
         coverage_project_ids(&marker_unloaded),
         coverage_project_ids(&loading),
+        delayed_segment,
         coverage_project_ids(&failed),
     );
     let mut response = Json(parse_error_views(&snap)).into_response();
@@ -29021,6 +29054,7 @@ pub(crate) mod tests {
             "status must name the registered unloaded project: {status}"
         );
         assert_eq!(status["ready_projects"], serde_json::json!([]));
+        assert_eq!(status["delayed_projects"], serde_json::json!({}));
         assert_eq!(status["failed_projects"], serde_json::json!({}));
     }
 
@@ -30010,7 +30044,7 @@ pub(crate) mod tests {
         state.index.fail_next_refresh();
 
         let response = get_tx(
-            State(state),
+            State(state.clone()),
             Extension(Identity::Admin),
             Query(TxQuery {
                 project: None,
@@ -30039,6 +30073,44 @@ pub(crate) mod tests {
             .filter_map(|row| row["entry"]["tx_id"].as_str())
             .collect::<BTreeSet<_>>();
         assert_eq!(tx_ids, BTreeSet::from(["tx-home", "tx-second"]));
+
+        let scans_after_failure = state.index.refresh_status().await.scans_total;
+        let second_response = get_tx(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(TxQuery {
+                project: None,
+                limit: None,
+            }),
+        )
+        .await
+        .expect("routine unscoped tx polling should reuse the failed-project cooldown");
+        assert_eq!(
+            second_response
+                .headers()
+                .get("x-orgasmic-project-coverage")
+                .unwrap(),
+            "partial; loaded=[second]; failed=[first]"
+        );
+        assert_eq!(
+            state.index.refresh_status().await.scans_total,
+            scans_after_failure,
+            "a routine notification refresh must not rescan the cooling project"
+        );
+
+        force_reindex_project(&state, "first")
+            .await
+            .expect("explicit reindex bypasses the failed-project cooldown");
+        let recovered = state.index.snapshot().await;
+        assert_eq!(
+            recovered.project_loads["first"].state,
+            ProjectLoadState::Ready
+        );
+        assert_eq!(recovered.project_loads["first"].cooldown_until, None);
+        assert!(
+            state.index.refresh_status().await.scans_total > scans_after_failure,
+            "explicit reindex must execute a real scan"
+        );
     }
 
     #[tokio::test]

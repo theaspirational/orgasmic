@@ -65,6 +65,14 @@ function parseErrorKey(error: ParseError): string {
   return `${error.path}:${error.line ?? ''}:${error.at}`;
 }
 
+function txCoverageDismissalKey(detail: string | null): string {
+  const failed = detail?.match(/(?:^|;\s*)failed=\[([^\]]*)\]/)?.[1];
+  const failedSet = failed == null
+    ? 'unknown'
+    : failed.split(',').map((projectId) => projectId.trim()).filter(Boolean).sort().join(',');
+  return `tx-coverage-partial:${failedSet}`;
+}
+
 function total(sections: NotificationSections): number {
   return sections.coverage.length + sections.questions.length + sections.parseErrors.length;
 }
@@ -130,16 +138,20 @@ export function NotificationBell({
   const sections = useMemo<NotificationSections>(() => {
     const coverage: NotificationRow[] = [];
     if (tx.data?.coverage.state === 'partial') {
-      coverage.push({
-        key: 'tx-coverage-partial',
-        title: 'Activity coverage is partial',
-        detail: tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
-        actionLabel: 'View status',
-        onAction: () => {
-          onNavigate('status');
-          setOpen(false);
-        },
-      });
+      const dismissalKey = txCoverageDismissalKey(tx.data.coverage.detail);
+      if (!dismissed.has(dismissalKey)) {
+        coverage.push({
+          key: dismissalKey,
+          title: 'Activity coverage is partial',
+          detail: tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
+          actionLabel: 'View status',
+          onAction: () => {
+            onNavigate('status');
+            setOpen(false);
+          },
+          onDismiss: () => dismiss(dismissalKey),
+        });
+      }
     }
 
     const questions: NotificationRow[] = openQuestions(tx.data?.records ?? [])

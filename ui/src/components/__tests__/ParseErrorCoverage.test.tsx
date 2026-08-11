@@ -92,6 +92,29 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('parse-error coverage', () => {
+  it('shows coordinator delay separately from failed project paths', async () => {
+    mocks.fetchDaemonStatus.mockResolvedValue({
+      name: 'orgasmic',
+      version: 'test',
+      boot_id: 'boot-test',
+      pid: 1,
+      started_at: '2026-08-11T00:00:00Z',
+      home: '/tmp/home',
+      projects: 0,
+      registered_projects: 1,
+      delayed_projects: { queued: 'coordinator wait timed out behind slow scans' },
+      failed_projects: {},
+      parse_errors: 0,
+      tx_count: 0,
+    });
+    mocks.fetchParseErrorsWithCoverage.mockResolvedValue(complete);
+
+    render(<StatusView />);
+    expect(await screen.findByText('Delayed')).toBeInTheDocument();
+    expect(screen.getByText('queued: coordinator wait timed out behind slow scans')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+  });
+
   it('does not present a partial zero as complete and offers an explicit full load', async () => {
     mocks.fetchParseErrorsWithCoverage
       .mockResolvedValueOnce(partial)
@@ -160,5 +183,47 @@ describe('parse-error coverage', () => {
     fireEvent.click(bell);
     expect(await screen.findByText('Activity coverage is partial')).toBeInTheDocument();
     expect(screen.getByText('partial; loaded=[healthy]; failed=[blocked]')).toBeInTheDocument();
+  });
+
+  it('dismisses partial activity coverage for one failed-project set and reopens for a changed set', async () => {
+    mocks.fetchParseErrorsWithCoverage.mockResolvedValue(complete);
+    mocks.fetchTxWithCoverage.mockResolvedValue({
+      records: [],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; loaded=[healthy]; failed=[blocked,offline]',
+        failures: {},
+      },
+    });
+
+    const first = render(
+      <NotificationBell projectId={null} onNavigate={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Notifications: 1 unread' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+    });
+    first.unmount();
+
+    const same = render(
+      <NotificationBell projectId={null} onNavigate={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    expect(await screen.findByRole('button', { name: 'Notifications' })).toBeInTheDocument();
+    expect(screen.queryByText('Activity coverage is partial')).not.toBeInTheDocument();
+    same.unmount();
+
+    mocks.fetchTxWithCoverage.mockResolvedValue({
+      records: [],
+      coverage: {
+        state: 'partial',
+        detail: 'partial; loaded=[healthy]; failed=[blocked,replacement]',
+        failures: {},
+      },
+    });
+    render(<NotificationBell projectId={null} onNavigate={vi.fn()} onOpenTask={vi.fn()} />);
+    const changed = await screen.findByRole('button', { name: 'Notifications: 1 unread' });
+    fireEvent.click(changed);
+    expect(await screen.findByText('Activity coverage is partial')).toBeInTheDocument();
   });
 });
