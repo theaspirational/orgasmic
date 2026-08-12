@@ -235,7 +235,8 @@ install_managed_binary() {
 # is available, validates the final designated requirement, and atomically
 # renames the fresh inode into place.
 publish_source_binary() {
-    local source="$1" dest="$2" publisher="$dest"
+    local source="$1" dest="$2"
+    local publisher="$dest"
     local staged_source="${dest}.source.$$"
     cp "$source" "$staged_source"
     chmod 755 "$staged_source"

@@ -30930,3 +30930,47 @@
 :TRIGGERS:     breadth
 :PREVIOUS_TIER: trivial
 :END:
+
+* TX 2026-08-12 Wed 08:43:04 task.state_transitioned TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5844
+:TIME:         [2026-08-12 Wed 08:43:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Source installation exposed a set -u initialization defect before publication; reopening for the shell fix and executable regression.
+:FROM_STATE:   done
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-12 Wed 08:57:14 task.edited TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5845
+:TIME:         [2026-08-12 Wed 08:57:14]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9JWS1
+:NODE_ID:      TASK-9JWS1
+:END:
+
+* TX 2026-08-12 Wed 08:57:14 task.state_transitioned TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5846
+:TIME:         [2026-08-12 Wed 08:57:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Installed successfully with the pinned code identity after fixing and testing the nounset bootstrap defect; final full suite and lint are green, and the live daemon was not restarted.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

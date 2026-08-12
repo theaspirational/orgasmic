@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::process::Command;
 
 #[path = "common/env_isolation.rs"]
 mod env_isolation;
@@ -57,5 +58,51 @@ fn contributor_installer_delegates_source_publication_to_the_rust_guard() {
     assert!(!script.contains("\"$source\" __install-managed-source \"$source\""));
     assert!(
         !script.contains("install_managed_binary \"$source_bin\" \"$ORGASMIC_HOME/bin/orgasmic\"")
+    );
+}
+
+#[test]
+fn contributor_source_publisher_executes_under_nounset_and_cleans_its_bootstrap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let source = tmp.path().join("source-publisher");
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    std::fs::write(
+        &source,
+        "#!/bin/bash\nset -euo pipefail\n[[ $1 == __install-managed-source ]]\ncp \"$2\" \"$ORGASMIC_HOME/bin/orgasmic\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let installer =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/install.sh");
+    let script = std::fs::read_to_string(installer).unwrap();
+    let function = script
+        .split_once("publish_source_binary() {")
+        .and_then(|(_, rest)| rest.split_once("\n}\n\n# Locate"))
+        .map(|(body, _)| format!("publish_source_binary() {{{body}\n}}"))
+        .expect("extract publish_source_binary");
+    let command = format!(
+        "set -euo pipefail\n{function}\nORGASMIC_HOME=\"$1\" publish_source_binary \"$2\" \"$1/bin/orgasmic\""
+    );
+    let output = Command::new("bash")
+        .args(["-c", &command, "publisher-test"])
+        .arg(&home)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(home.join("bin/orgasmic").is_file());
+    assert!(
+        std::fs::read_dir(home.join("bin"))
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".source.")),
+        "bootstrap source must be removed after publication"
     );
 }
