@@ -423,7 +423,12 @@ NESTED `.git` entry, of any type — which can KEEP a worktree over a vendored
 repository git itself would have let you delete. A worktree whose repository is
 gone cannot be salvaged, so unless something refuses it, it is removed with NO
 salvage, and the report says so. There is no `--force` on this verb, so a
-refusal names what to clear by hand instead of offering an override.")]
+refusal names what to clear by hand instead of offering an override. Before
+deletion begins, the anchored walk must completely traverse the worktree: an
+unreadable descendant or one deeper than 64 directory levels is SKIPPED and
+left untouched. During removal, KEPT means no content was deleted; a failure
+after any deletion is a failed, incomplete removal reported as PARTIAL with the
+affected worktree PATH, and is not counted as reclaimed.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -3708,6 +3713,10 @@ enum WorktreeDisposition {
     /// salvage and deletes, so a permission error destroyed a worker's
     /// uncommitted output with no salvage attempted.
     Undetermined { detail: String },
+    /// The preliminary anchored walk could not completely traverse the tree.
+    /// NEVER reclaimed: this is the fail-closed half of the same errors and
+    /// depth limit [`anchored_dir::remove_contents`] propagates during removal.
+    UnsafeTraversal { detail: String },
 }
 
 impl ManagedWorktree {
@@ -3724,6 +3733,9 @@ impl ManagedWorktree {
             WorktreeDisposition::Held { detail } => detail.clone(),
             WorktreeDisposition::Undetermined { detail } => {
                 format!("repository state undetermined ({detail}); kept until it can be proven")
+            }
+            WorktreeDisposition::UnsafeTraversal { detail } => {
+                format!("worktree traversal incomplete ({detail}); kept before deletion")
             }
         }
     }
@@ -3786,7 +3798,7 @@ fn scan_managed_worktrees(
                 None => normalize_path(candidate) == normalized,
             }
         };
-        let disposition = if cwd_is_inside(
+        let mut disposition = if cwd_is_inside(
             cwd.as_deref(),
             cwd_normalized.as_deref(),
             &child,
@@ -3823,7 +3835,19 @@ fn scan_managed_worktrees(
         // ONE walk, TWO answers, and it stays where it already was — see
         // [`walk_worktree`] and the ordering note in
         // [`worktree_submodule_refusal`].
-        let walk = disposition_is_reclaimable(&disposition).then(|| walk_worktree(&child.dir));
+        let walk = if disposition_is_reclaimable(&disposition) {
+            match walk_worktree(&child.dir) {
+                Ok(walk) => Some(walk),
+                Err(err) => {
+                    disposition = WorktreeDisposition::UnsafeTraversal {
+                        detail: err.to_string(),
+                    };
+                    None
+                }
+            }
+        } else {
+            None
+        };
         found.push(ManagedWorktree {
             path,
             name,
@@ -4051,43 +4075,60 @@ struct WorktreeWalk {
 /// `O_NOFOLLOW|O_DIRECTORY` handles from the worktree root, so no symlink can
 /// have pointed the name at something outside the tree.
 ///
-/// Unreadable entries are skipped rather than failing the whole report: an
-/// under-count is honest, a missing report is not. That skip is a fail-open for
-/// the `.git` signal too, and it is the reason this signal is only ever ADDED
-/// to the other refusals rather than replacing one.
-// orgasmic:TASK-RMA18,TASK-RMA18.1.1.1
+/// A traversal error makes the worktree unsafe to reclaim. The automatic report
+/// can still describe other worktrees, but this one is kept before deletion.
+/// This is deliberately the same fail-closed depth and I/O policy
+/// [`anchored_dir::remove_contents`] enforces if removal reaches the tree.
+// orgasmic:TASK-RMA18,TASK-RMA18.1.1.1,TASK-GRCWC
 #[cfg(unix)]
-fn walk_worktree(root: &std::fs::File) -> WorktreeWalk {
-    fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) {
+fn walk_worktree(root: &std::fs::File) -> Result<WorktreeWalk> {
+    fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) -> Result<()> {
         if depth > anchored_dir::MAX_DEPTH {
-            return;
+            bail!(
+                "refusing to descend deeper than {} directory levels while scanning {}",
+                anchored_dir::MAX_DEPTH,
+                if prefix.is_empty() { "." } else { prefix }
+            );
         }
-        let Ok(names) = anchored_dir::entry_names(dir) else {
-            return;
-        };
+        let names = anchored_dir::entry_names(dir).with_context(|| {
+            format!(
+                "could not list worktree descendant {}",
+                if prefix.is_empty() { "." } else { prefix }
+            )
+        })?;
         for name in names {
             if depth > 1 && found.nested_git.is_none() && name == std::ffi::OsStr::new(".git") {
                 found.nested_git = Some(format!("{prefix}.git"));
             }
             match anchored_dir::open_child_dir(dir, &name) {
-                Ok(anchored_dir::ChildOpen::Dir(child)) => walk(
-                    &child,
-                    depth + 1,
-                    &format!("{prefix}{}/", name.to_string_lossy()),
-                    found,
-                ),
+                Ok(anchored_dir::ChildOpen::Dir(child)) => {
+                    walk(
+                        &child,
+                        depth + 1,
+                        &format!("{prefix}{}/", name.to_string_lossy()),
+                        found,
+                    )?;
+                }
                 Ok(_) => {
                     if let Ok(kind) = anchored_dir::stat_at(dir, &name) {
                         found.bytes = found.bytes.saturating_add(kind.len());
                     }
                 }
-                Err(_) => continue,
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "could not open worktree descendant {prefix}{}",
+                            name.to_string_lossy()
+                        )
+                    });
+                }
             }
         }
+        Ok(())
     }
     let mut found = WorktreeWalk::default();
-    walk(root, 1, "", &mut found);
-    found
+    walk(root, 1, "", &mut found)?;
+    Ok(found)
 }
 
 /// Compact size for a `KEY=value` field, so it carries no space.
@@ -4151,7 +4192,8 @@ fn report_managed_worktrees(
             // Two different reasons not to reclaim, reported apart: somebody
             // owns it, versus nobody could tell (TASK-M47E5.2 finding 3).
             let line = match worktree.disposition {
-                WorktreeDisposition::Undetermined { .. } => "KEPT_WORKTREE",
+                WorktreeDisposition::Undetermined { .. }
+                | WorktreeDisposition::UnsafeTraversal { .. } => "KEPT_WORKTREE",
                 _ => "HELD_WORKTREE",
             };
             println!(
@@ -5425,7 +5467,8 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     let now_open = scan_open_dispatches(&project_root)?;
 
     let mut reclaimed = 0usize;
-    let mut failed = 0usize;
+    let mut kept = 0usize;
+    let mut partial = 0usize;
     let mut reclaimed_bytes: u64 = 0;
     for worktree in &reclaimable {
         let normalized = normalize_path(&worktree.path);
@@ -5529,10 +5572,14 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
                 format_bytes(bytes)
             );
         } else {
-            failed += 1;
             // KEPT MEANS UNTOUCHED (TASK-RMA18). A removal that failed after it
             // had already deleted something is a PARTIAL, and saying KEPT there
             // tells an operator the tree is intact when it is a ruin.
+            if outcome.touched {
+                partial += 1;
+            } else {
+                kept += 1;
+            }
             println!(
                 "{} PATH={} WHY={}",
                 if outcome.touched { "PARTIAL" } else { "KEPT" },
@@ -5549,7 +5596,7 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
             }
         }
         Err(err) => {
-            failed += 1;
+            kept += 1;
             // `git worktree prune` clears admin metadata and removes no
             // worktree, so a failure here has destroyed nothing.
             println!("KEPT PATH={} WHY={err}", project_root.display());
@@ -5557,7 +5604,7 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     }
 
     println!(
-        "PRUNE_SUMMARY RECLAIMED={reclaimed} BYTES={reclaimed_bytes} SIZE={} KEPT={failed} SKIPPED={skipped}",
+        "PRUNE_SUMMARY RECLAIMED={reclaimed} BYTES={reclaimed_bytes} SIZE={} PARTIAL={partial} KEPT={kept} SKIPPED={skipped}",
         format_bytes(reclaimed_bytes)
     );
     Ok(())
@@ -12844,6 +12891,136 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    struct PermissionRestore {
+        path: PathBuf,
+        mode: u32,
+    }
+
+    #[cfg(unix)]
+    impl PermissionRestore {
+        fn new(path: &Path, mode: u32) -> Self {
+            Self {
+                path: path.to_path_buf(),
+                mode,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PermissionRestore {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let _ =
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+        }
+    }
+
+    /// TASK-GRCWC: the cheap parity fixture. The preliminary walk and the
+    /// destructive traversal must reject the same unreadable descendant, and
+    /// the removal-side proof must show it rejected before touching anything.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_descendant_is_refused_by_both_walk_and_removal_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let blocked = worktree.join("blocked");
+        std::fs::create_dir_all(&blocked).unwrap();
+        let survivor = blocked.join("survivor.txt");
+        std::fs::write(&survivor, "must survive").unwrap();
+        let _restore = PermissionRestore::new(&blocked, 0o755);
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(
+            std::fs::File::open(&blocked).is_err(),
+            "mode 000 must actually make the directory unreadable; a privileged test process \
+             must fail this fixture rather than report a meaningless pass"
+        );
+
+        let worktree_handle = std::fs::File::open(&worktree).unwrap();
+        let walk_error = walk_worktree(&worktree_handle)
+            .expect_err("the preliminary walk must reject the unreadable descendant");
+        assert!(
+            walk_error.to_string().contains("blocked"),
+            "the walk refusal must name the descendant: {walk_error:#}"
+        );
+
+        let parent = std::fs::File::open(tmp.path()).unwrap();
+        let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        let failure =
+            anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
+                .expect_err("the removal traversal must reject the same unreadable descendant");
+        assert!(
+            !failure.touched,
+            "the pure unreadable fixture has no earlier sibling to remove, so refusal must be \
+             untouched: {:#}",
+            failure.error
+        );
+        assert!(
+            failure.error.to_string().contains("blocked"),
+            "the removal refusal must name the same unreadable descendant: {:#}",
+            failure.error
+        );
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            survivor.is_file(),
+            "the removal traversal must not report success or destroy the unreadable tree"
+        );
+    }
+
+    /// TASK-GRCWC: the expensive parity fixture is generated to stay coupled
+    /// to the production bound. A pure chain means reaching the depth error
+    /// cannot have removed a sibling on the way down.
+    #[cfg(unix)]
+    #[test]
+    fn over_depth_descendant_is_refused_by_both_walk_and_removal_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let mut deepest = worktree.clone();
+        for _ in 0..=anchored_dir::MAX_DEPTH {
+            deepest.push("d");
+            std::fs::create_dir(&deepest).unwrap();
+        }
+        let survivor = deepest.join("survivor.txt");
+        std::fs::write(&survivor, "must survive").unwrap();
+
+        let worktree_handle = std::fs::File::open(&worktree).unwrap();
+        let walk_error = walk_worktree(&worktree_handle)
+            .expect_err("the preliminary walk must reject a tree beyond MAX_DEPTH");
+        assert!(
+            walk_error
+                .to_string()
+                .contains(&anchored_dir::MAX_DEPTH.to_string()),
+            "the walk refusal must name the production bound: {walk_error:#}"
+        );
+
+        let parent = std::fs::File::open(tmp.path()).unwrap();
+        let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        let failure =
+            anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
+                .expect_err("the removal traversal must reject the same over-depth tree");
+        assert!(
+            !failure.touched,
+            "a pure chain cannot be partially removed before the depth refusal: {:#}",
+            failure.error
+        );
+        assert!(
+            failure
+                .error
+                .to_string()
+                .contains(&anchored_dir::MAX_DEPTH.to_string()),
+            "the removal refusal must name the same production bound: {:#}",
+            failure.error
+        );
+        assert!(
+            survivor.is_file(),
+            "the removal traversal must not report success or destroy the deep tree"
+        );
+    }
+
     /// TASK-RMA18.1.1.1 finding A, at the predicate: with NO REPOSITORY behind
     /// the worktree the disk is the only witness, and the witness is a nested
     /// `.git` OF ANY TYPE.
@@ -12875,7 +13052,7 @@ mod tests {
         std::fs::write(worktree.join("src/main.rs"), "fn main() {}").unwrap();
         let handle = std::fs::File::open(&worktree).unwrap();
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(
             walk.nested_git, None,
             "an empty placeholder and an ordinary tree hold no repository"
@@ -12901,7 +13078,7 @@ mod tests {
             "fixture premise: the nested `.git` must be a FILE, not a directory"
         );
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(
             walk.nested_git.as_deref(),
             Some("vendor/sub/.git"),
@@ -12945,7 +13122,7 @@ mod tests {
         std::fs::write(worktree.join("a.txt"), "ordinary file").unwrap();
         let handle = std::fs::File::open(&worktree).unwrap();
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(walk.nested_git, None, "depth 1 is the worktree's own link");
         assert!(walk.bytes > 0, "the size walk must still have counted");
         assert_eq!(
