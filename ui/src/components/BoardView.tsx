@@ -13,8 +13,9 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchProjects } from '@/lib/api';
-import type { ProjectIndex } from '@/lib/types';
+import type { ProjectCatalogEntry } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
+import { cn } from '@/lib/utils';
 
 import { ErrorPanel } from './Primitives';
 
@@ -40,28 +41,14 @@ function relativeTime(iso?: string | null): string {
   return `${d}d ago`;
 }
 
-type Stats = {
-  total: number;
-  done: number;
-  active: number;
-  blocked: number;
-};
-
-function hasBlockedBy(blockedBy: ProjectIndex['tasks'][number]['blocked_by']): boolean {
-  if (Array.isArray(blockedBy)) return blockedBy.some((item) => item.trim());
-  return typeof blockedBy === 'string' && Boolean(blockedBy.trim());
+function loadVariant(state: ProjectCatalogEntry['load']['state']): BadgeVariant {
+  if (state === 'failed') return 'destructive';
+  if (state === 'loading' || state === 'delayed') return 'secondary';
+  return 'outline';
 }
 
-function projectStats(p: ProjectIndex): Stats {
-  const s: Stats = { total: p.tasks.length, done: 0, active: 0, blocked: 0 };
-  for (const t of p.tasks) {
-    if (t.lifecycle_stage === 'done' || t.lifecycle_stage === 'cancelled') s.done++;
-    else {
-      s.active++;
-      if (hasBlockedBy(t.blocked_by)) s.blocked++;
-    }
-  }
-  return s;
+function loadDiagnosticClass(state: ProjectCatalogEntry['load']['state']): string {
+  return state === 'failed' ? 'text-destructive' : 'text-muted-foreground';
 }
 
 export function BoardView({
@@ -74,7 +61,7 @@ export function BoardView({
 
   if (error) return <ErrorPanel error={error} />;
 
-  const projects: ProjectIndex[] = data ?? [];
+  const projects: ProjectCatalogEntry[] = data ?? [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -110,7 +97,7 @@ export function BoardView({
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((p) => {
-            const s = projectStats(p);
+            const s = p.task_stats;
             return (
               <Card
                 key={p.project_id}
@@ -128,12 +115,17 @@ export function BoardView({
                 <CardHeader>
                   <CardTitle className="truncate font-mono text-base">{p.project_id}</CardTitle>
                   <CardDescription className="truncate font-mono text-xs">
-                    {p.repo_url}
+                    {p.repo_url || p.root}
                   </CardDescription>
                   <CardAction>
-                    <Badge variant={statusVariant(p.status)} className="capitalize">
-                      {p.status}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={loadVariant(p.load.state)} className="capitalize">
+                        {p.load.state}
+                      </Badge>
+                      <Badge variant={statusVariant(p.status)} className="capitalize">
+                        {p.status}
+                      </Badge>
+                    </div>
                   </CardAction>
                 </CardHeader>
                 <CardContent>
@@ -144,28 +136,33 @@ export function BoardView({
                     </span>
                     <span className="inline-flex items-center gap-1.5">
                       <ListChecks className="size-3.5" />
-                      {s.total} task{s.total === 1 ? '' : 's'}
+                      {s ? `${s.total} task${s.total === 1 ? '' : 's'}` : 'Tasks not loaded'}
                     </span>
                     <span className="inline-flex items-center gap-1.5">
                       <Activity className="size-3.5" />
-                      {relativeTime(p.last_loaded_at)}
+                      {relativeTime(p.load.last_loaded_at)}
                     </span>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {s.active > 0 ? (
+                    {s && s.active > 0 ? (
                       <Badge variant="default" className="font-mono text-[10px]">
                         {s.active} active
                       </Badge>
                     ) : null}
-                    {s.blocked > 0 ? (
+                    {s && s.blocked > 0 ? (
                       <Badge variant="destructive" className="font-mono text-[10px]">
                         {s.blocked} blocked
                       </Badge>
                     ) : null}
-                    {s.done > 0 ? (
+                    {s && s.done > 0 ? (
                       <Badge variant="secondary" className="font-mono text-[10px]">
                         {s.done} done
                       </Badge>
+                    ) : null}
+                    {p.load.error ? (
+                      <span className={cn('line-clamp-2 text-xs', loadDiagnosticClass(p.load.state))}>
+                        {p.load.error}
+                      </span>
                     ) : null}
                   </div>
                 </CardContent>

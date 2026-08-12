@@ -24,6 +24,7 @@ const SYSTEMD_UNIT_NAME: &str = "orgasmic-daemon.service";
 const WINDOWS_TASK_NAME: &str = r"\OrgasmicDaemon";
 const WINDOWS_TASK_XML: &str = "orgasmic-daemon-task.xml";
 const WINDOWS_WRAPPER: &str = "orgasmic-daemon.cmd";
+pub(crate) const PROJECT_SCAN_TIMEOUT_ENV: &str = "ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ServiceStart {
@@ -77,6 +78,10 @@ struct ServiceSpec {
     stdout: PathBuf,
     stderr: PathBuf,
     path: String,
+    /// Raw value captured from the installing/starting process. Validation
+    /// remains daemon-owned so invalid values produce the same bounded warning
+    /// as a hand-run `serve` process.
+    project_scan_timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,7 +377,15 @@ fn service_spec(home: &Home) -> Result<ServiceSpec> {
         stdout: home.logs().join("daemon.stdout.log"),
         stderr: home.logs().join("daemon.err.log"),
         path: daemon_service_path(),
+        project_scan_timeout: captured_project_scan_timeout(std::env::var_os(
+            PROJECT_SCAN_TIMEOUT_ENV,
+        )),
     })
+}
+
+fn captured_project_scan_timeout(raw: Option<std::ffi::OsString>) -> Option<String> {
+    raw.and_then(|value| value.into_string().ok())
+        .filter(|value| !value.chars().any(char::is_control))
 }
 
 /// Write the daemon LaunchAgent definition, replacing whatever is there.
@@ -836,6 +849,17 @@ pub(crate) fn launch_agent_throttle_interval() -> Duration {
 /// off exactly the work the drain exists to protect. The value written here is
 /// [`service_stop_timeout`], derived from the daemon's shutdown budgets.
 fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
+    let project_scan_timeout = spec
+        .project_scan_timeout
+        .as_deref()
+        .map(|value| {
+            format!(
+                "    <key>{}</key>\n    <string>{}</string>\n",
+                PROJECT_SCAN_TIMEOUT_ENV,
+                xml_escape(value),
+            )
+        })
+        .unwrap_or_default();
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
@@ -843,7 +867,7 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
 <dict>\n\
   <key>Label</key>\n  <string>{label}</string>\n\
   <key>ProgramArguments</key>\n  <array>\n    <string>{exe}</string>\n    <string>serve</string>\n  </array>\n\
-  <key>EnvironmentVariables</key>\n  <dict>\n    <key>ORGASMIC_HOME</key>\n    <string>{home}</string>\n    <key>PATH</key>\n    <string>{path}</string>\n    <key>{mirror_env}</key>\n    <string>off</string>\n  </dict>\n\
+  <key>EnvironmentVariables</key>\n  <dict>\n    <key>ORGASMIC_HOME</key>\n    <string>{home}</string>\n    <key>PATH</key>\n    <string>{path}</string>\n{project_scan_timeout}    <key>{mirror_env}</key>\n    <string>off</string>\n  </dict>\n\
   <key>WorkingDirectory</key>\n  <string>{cwd}</string>\n\
   <key>StandardOutPath</key>\n  <string>{stdout}</string>\n\
   <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
@@ -859,6 +883,7 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
         exe = xml_escape_path(&spec.exe),
         home = xml_escape_path(&spec.home),
         path = xml_escape(&spec.path),
+        project_scan_timeout = project_scan_timeout,
         mirror_env = orgasmic_daemon::LOG_MIRROR_ENV,
         cwd = xml_escape_path(&spec.cwd),
         stdout = xml_escape_path(&spec.stdout),
@@ -922,6 +947,16 @@ fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
     // path, so the unit is rejected as "path is not absolute" and never starts.
     // Emit those paths raw (the whole value is the path, so embedded spaces are
     // fine without quoting).
+    let project_scan_timeout = spec
+        .project_scan_timeout
+        .as_deref()
+        .map(|value| {
+            format!(
+                "Environment={}\n",
+                systemd_quote_env(PROJECT_SCAN_TIMEOUT_ENV, value)
+            )
+        })
+        .unwrap_or_default();
     format!(
         "[Unit]\n\
 Description=orgasmic daemon\n\
@@ -933,7 +968,7 @@ ExecStart={} serve\n\
 WorkingDirectory={}\n\
 Environment={}\n\
 Environment={}\n\
-Environment={}\n\
+{project_scan_timeout}Environment={}\n\
 StandardOutput=append:{}\n\
 StandardError=append:{}\n\
 Restart=on-failure\n\
@@ -950,6 +985,7 @@ WantedBy=default.target\n",
         systemd_quote_env(orgasmic_daemon::LOG_MIRROR_ENV, "off"),
         path_text(&spec.stdout),
         path_text(&spec.stderr),
+        project_scan_timeout = project_scan_timeout,
     )
 }
 
@@ -1073,6 +1109,7 @@ mod tests {
             stdout: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.stdout.log"),
             stderr: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.err.log"),
             path: "/opt/homebrew/bin:/Users/tester/.cargo/bin:/Users/tester/.local/bin:/Users/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
+            project_scan_timeout: Some("37".to_string()),
         }
     }
 
@@ -1167,6 +1204,8 @@ mod tests {
         assert!(plist.contains("<string>orgasmic.daemon</string>"));
         assert!(plist.contains("<key>ORGASMIC_HOME</key>"));
         assert!(plist.contains("<key>PATH</key>"));
+        assert!(plist.contains(&format!("<key>{PROJECT_SCAN_TIMEOUT_ENV}</key>")));
+        assert!(plist.contains("<string>37</string>"));
         assert!(plist.contains("/opt/homebrew/bin"));
         assert!(plist.contains("/Users/tester/.cargo/bin"));
         assert!(plist.contains("/Users/tester/.local/bin"));
@@ -1546,6 +1585,7 @@ mod tests {
             orgasmic_daemon::LOG_MIRROR_ENV
         )));
         assert!(unit.contains("Environment=\"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
+        assert!(unit.contains(&format!("Environment=\"{PROJECT_SCAN_TIMEOUT_ENV}=37\"")));
         assert!(unit.contains("WantedBy=default.target"));
         assert!(unit.contains("Restart=on-failure"));
         // Single-value path directives must be raw/unquoted — systemd rejects the
@@ -1559,6 +1599,22 @@ mod tests {
         );
         assert!(!unit.contains("WorkingDirectory=\""));
         assert!(!unit.contains("append:\""));
+    }
+
+    #[test]
+    fn service_renderers_omit_scan_timeout_rejected_at_common_capture_boundary() {
+        let captured = captured_project_scan_timeout(Some("37\nEnvironment=INJECTED=yes".into()));
+        assert_eq!(captured, None);
+        let mut unsafe_spec = spec();
+        unsafe_spec.project_scan_timeout = captured;
+
+        let plist = render_macos_launch_agent(&unsafe_spec);
+        let unit = render_linux_systemd_unit(&unsafe_spec);
+
+        assert!(!plist.contains(PROJECT_SCAN_TIMEOUT_ENV), "{plist}");
+        assert!(!plist.contains("INJECTED"), "{plist}");
+        assert!(!unit.contains(PROJECT_SCAN_TIMEOUT_ENV), "{unit}");
+        assert!(!unit.contains("INJECTED"), "{unit}");
     }
 
     #[test]
@@ -1639,6 +1695,40 @@ mod tests {
             }
             other => panic!("expected Serve, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn project_scan_timeout_is_captured_raw_and_rendered_only_when_present() {
+        use clap::CommandFactory;
+
+        assert_eq!(
+            captured_project_scan_timeout(Some("30".into())),
+            Some("30".to_string())
+        );
+        assert_eq!(
+            captured_project_scan_timeout(Some("301".into())),
+            Some("301".to_string()),
+            "capture preserves ordinary raw values for daemon-side 1..300 validation"
+        );
+        assert_eq!(
+            captured_project_scan_timeout(Some("invalid".into())),
+            Some("invalid".to_string()),
+            "capture does not duplicate daemon numeric validation"
+        );
+        assert_eq!(captured_project_scan_timeout(None), None);
+
+        let mut absent = spec();
+        absent.project_scan_timeout = None;
+        assert!(!render_macos_launch_agent(&absent).contains(PROJECT_SCAN_TIMEOUT_ENV));
+        assert!(!render_linux_systemd_unit(&absent).contains(PROJECT_SCAN_TIMEOUT_ENV));
+
+        let mut command = crate::Cli::command();
+        let serve = command
+            .find_subcommand_mut("serve")
+            .expect("serve subcommand");
+        let help = serve.render_long_help().to_string();
+        assert!(help.contains("capture it when daemon start"), "{help}");
+        assert!(help.contains("detached auto-start inherit"), "{help}");
     }
 
     #[test]

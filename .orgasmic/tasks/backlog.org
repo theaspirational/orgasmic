@@ -1290,14 +1290,6 @@ From TASK-FJCE9 (2026-07-29), same class as FJCE9/JGHNC, one line above JGHNC's 
 
 From TASK-FJCE9 (2026-07-29): the 0RCRY owned-server mechanism leaves the socket INODE behind after tmux tears the server down (24 present, none with a live server, oldest 01:39). Harmless but unbounded, and it makes 'did this run create a server?' harder to read from a listing. Options: the keepalive's exit path unlinks its own socket after the server dies (careful: only its own, by exact name, never a sweep of the directory — a sweep could race a live run); or a claim-time cleanup of sockets whose server is provably dead AND whose pid-embedded owner is gone. State the chosen rule and why it cannot remove a live run's socket. Small; verify artifact optional if covered by a direct test.
 
-* BACKLOG TASK-AJP4A Index rebuild drops a project whose scan exceeds the 5s bound and never retries — decide the convergence policy
-:PROPERTIES:
-:ID: TASK-AJP4A
-:PRIORITY: P2
-:END:
-
-From TASK-MRJRK (2026-07-29): rebuild_with_timeout (index.rs:495-514 at MRJRK's HEAD) is the one path that removes a key from snap.projects — on scan timeout or join error it warns and moves on, the project is omitted from the published snapshot, and nothing reschedules it. MRJRK made the condition VISIBLE (unindexed_projects in status, warn at publish, the 404 names the index) and deliberately shipped NO convergence, because the 2026-07-25 incident's cause is still open (scan give-up vs short board read — the new status field discriminates them on recurrence) and a silent heal would erase the evidence. This task decides the policy once evidence exists: carry the prior snapshot's ProjectIndex forward past a failed scan (the last-good pattern load_project already uses), or a bounded retry — either WITH a staleness signal so the fix does not re-hide what MRJRK surfaced. Blocked on nothing technically; prefer waiting for one captured recurrence. Also note the accidental convergence: watcher.rs:365-397 reloads missing projects on any board-file event (touch board.org fixes the state) — make that deliberate or remove it as part of the same decision. Injection per TCTTD standard.
-
 * BACKLOG TASK-1TY4M RuntimeOptionsRequest still carries alias=effort — the 4YC8E landmine one client change away
 :PROPERTIES:
 :ID: TASK-1TY4M
@@ -4424,129 +4416,6 @@ HTTP budget expiring under scheduler pressure AND to an instantaneous CPU spike.
 Whatever this task ships should say plainly what the word does and does not
 cover, because operators and workers alike read it as "was the host to blame".
 
-* BACKLOG TASK-K9WWM three dispatch-close tests time out on the 10s daemon budget under suite concurrency, and one now recurs on a calm host    :dispatch:testing:
-:PROPERTIES:
-:ID: TASK-K9WWM
-:PRIORITY: P2
-:WRITE_SCOPE: crates/orgasmic-cli/**,crates/orgasmic-daemon/**
-:END:
-
-** READ THIS FIRST — STATUS
-The 2026-08-07 handoff recorded two of these failing once, attributed them to an
-identified external CPU hog, and set an explicit trigger: *if they recur on a
-calm host that is a real finding about the 10s daemon budget and deserves a task,
-not a registry excuse.* [2026-08-08] they recurred, and the third run was on a
-host =run-tests.sh= itself classified CALM. So this is filed as the handoff
-instructed. *Do not register these in =flake-registry.toml= to green the gate.*
-
-** The failure
-All three are in =crates/orgasmic-cli/tests/dispatch.rs= and all three fail the
-same way — the CLI request to =/api/runs/<run_id>/release= exceeding the 10s
-client budget during =manager dispatch-close=:
-
-: Error: release recorded run before dispatch-close cleanup
-: Caused by: daemon request timed out after 10s (1m load average 26.72) — the
-: daemon may be healthy but the system is under load; a timed-out request can
-: still land server-side, so re-read state instead of assuming it failed
-
-- =reviewer_close_non_clean_verdict_flags_stay_in_progress=
-- =reviewer_close_refuses_verdict_flag_alongside_property_verdict=
-- =reviewer_close_verdict_has_issues_stays_in_progress=
-
-** Observations, dated
-- [2026-08-07] two of the three, once, at load 14, external Python at 96% CPU.
-- [2026-08-08] all three, at load 26.72, during a full =-p orgasmic-cli= run.
-- [2026-08-08] later, on a quieter host, ONE recurred
-  (=reviewer_close_non_clean_verdict_flags_stay_in_progress=) with the suite
-  reporting =host: calm=, =rate 0.0000=, load 5.38 before / 4.27 after.
-- Every occurrence passes in isolation. Five =reviewer_close_*= tests ran 3/3
-  green at =--test-threads=4= on the same binary.
-
-*NOT caused by TASK-RMA18*, ruled out by mechanism rather than by argument: that
-change adds filesystem work only to =admit_live_run= (acquire) and
-=blocking_run_for_close= (close reservation), and neither is on the
-=/api/runs/<id>/release= path these three time out on. Two of the three predate
-it.
-
-** The second finding, which may be the more useful one
-=run-tests.sh= called the third run =host: calm=. Its host word is derived from
-the syspolicyd CPU-seconds-per-wall-second rate (TASK-STWVB.1.1), which was
-=0.0000= — correctly, because syspolicyd was idle. *The classifier is blind to
-ordinary CPU load*, and ordinary CPU load is exactly what makes these three fail.
-Load is deliberately =corroborating display only= per the STWVB chain, and that
-was the right call for the syspolicyd question it was solving — but it means a
-load-induced red is reported as a calm-host REAL failure, which is the strongest
-possible verdict, on the weakest evidence the script has.
-
-Weigh carefully before changing it: the STWVB chain spent a whole round
-establishing that an ABSOLUTE load threshold was wrong. The answer is probably
-not a load threshold; it may be that a client-timeout failure signature deserves
-its own classification arm, since =daemon request timed out after 10s= is a
-self-describing host-state error the classifier could read directly.
-
-** Direction — decide, then implement
-1. Establish whether the 10s budget is simply too tight for a
-   =release=-then-cleanup sequence under parallel test load, or whether something
-   on the release path is slower than it should be. Measure it; do not reason
-   about it.
-2. If the budget is the problem, changing it is a PRODUCTION decision, not a test
-   one — the same 10s applies to an operator on a loaded machine. Whatever is
-   chosen must apply to both, or be explicitly justified as test-only.
-3. Consider the classification arm above, so a client timeout never again reports
-   as a calm-host REAL failure.
-
-** Acceptance
-- The three tests pass under full =-p orgasmic-cli= concurrency on a calm host,
-  repeatably, without being registered as flakes.
-- The root cause is stated as a measurement, naming whether the budget, the
-  release path, or test concurrency was at fault.
-- A =daemon request timed out= failure is no longer classified identically to a
-  genuine assertion failure, or the decision not to distinguish them is recorded
-  with its reason.
-** Occurrences
-THIRD OCCURRENCE, MEASURED [2026-08-08], on the merged tree at =1cdf25b= during
-the manager's TASK-RMA18.1.1 gate. =scripts/run-tests.sh -p orgasmic-cli=
-returned *RED — 2 real failure(s)*:
-=reviewer_close_non_clean_verdict_flags_stay_in_progress= and
-=reviewer_close_refuses_verdict_flag_alongside_property_verdict=, both at
-=crates/orgasmic-cli/tests/dispatch.rs:433=, both:
-
-: daemon request timed out after 10s (1m load average 13.64) ... url (http://127.0.0.1:51030/api/runs/<run>/release)
-: daemon request timed out after 10s (1m load average 15.03) ... url (http://127.0.0.1:51129/api/runs/<run>/release)
-
-=isolation: passed= — both green alone. The load was MANAGER-CAUSED: a
-=claude= implementer dispatch (TASK-2QK4P.1) was running cargo concurrently with
-the gate. That is normal operating load for this project, not an anomaly.
-
-*A SECOND FINDING, AND THE MORE INTERESTING ONE — THE HOST VERDICT IS BLIND TO
-THIS FAILURE MODE.* The same VERDICT block that reported these two failures also
-reported:
-
-: host : calm (threshold syspolicyd_rate>=1.50; load corroborating only)
-: rate 0.1123
-
-*=run-tests.sh= called the host CALM while the load average at the moment of
-failure was 13.64 and 15.03.* That is not a bug in the wrapper — TASK-STWVB
-round 3 deliberately derived the host word from the syspolicyd RATE and demoted
-load to "corroborating only", and the round-6 review upheld that reasoning
-explicitly: =HOST_DEGRADED= is measured from syspolicyd CPU CONTENTION, which is
-not evidence of an unrelated failure mode.
-
-But it means *the one word an operator reads to decide whether a red is
-attributable is derived from a signal that cannot see a 10s HTTP budget
-expiring under scheduler pressure.* The 08-07 handoff said these tests
-recurring "on a calm host" would be a real finding rather than a registry
-excuse. They recurred, the host word said calm, and the word was measuring
-something else entirely. *Whatever fixes the 10s budget should also decide
-whether a load-sensitive timeout deserves its own attributability signal, rather
-than inheriting a syspolicyd-derived one.*
-
-NOT REGISTERED AS A FLAKE. The registry's own guard says a green-alone failure
-is REAL until OWNED, and this task owns it — but registering these two would
-make the gate report green-modulo on a real product weakness that is now
-three-times measured. The decision to register belongs with the fix, not ahead
-of it.
-
 * BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
 :PROPERTIES:
 :DEPENDS_ON: TASK-A55J7
@@ -5319,4 +5188,164 @@ fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
 ** Why P1
 The verb deletes directories on the operator's machine, it is installed, and the
 only argument for its safety is one nobody has run.
+
+* BACKLOG TASK-79VKP Reduce measurable orgasmic framework overhead without weakening safety gates    :framework:performance:dispatch:process:
+:PROPERTIES:
+:ID: TASK-79VKP
+:PRIORITY: P2
+:DEPENDS_ON: TASK-79VKP.1 TASK-79VKP.2 TASK-79VKP.3 TASK-79VKP.4 TASK-79VKP.5 TASK-79VKP.6 TASK-79VKP.7 TASK-A1KJW
+:END:
+
+** Description
+Umbrella for the actionable orgasmic-framework overhead measured during TASK-K9WWM. The session took 279 minutes end to end; the visual audit estimated 50 to 75 minutes of framework overhead and directly observed repeated context boot, serialized handoffs, worktree and build-cache duplication, noisy status output, repeated verification, and interrupted-worker reconciliation.
+
+Existing tasks remain authoritative for issues they already own. This parent aggregates them through DEPENDS_ON because existing task IDs cannot be structurally reparented. New gaps are filed as numbered children.
+
+
+Coverage map from the friction inventory:
+- Entry and context boot: TASK-79VKP.1, with TASK-YBCYQ for compiled-prompt correctness.
+- Risky-task worker boundary for tiny final-gate corrections: TASK-79VKP.2.
+- Lifecycle ledger, exact closure, and serialized review handoff: TASK-79VKP.3 over TASK-P9T4N, TASK-3HR8R, and TASK-GCTMA.
+- Fresh worktree isolation, cache duplication, and safe pruning: TASK-79VKP.6 over TASK-3X5AQ and TASK-GRCWC.
+- Dynamic report paths and growing-session monitoring: TASK-A1KJW plus TASK-EKF7T, TASK-PAZQ2, and TASK-CQM2X through the relevant children.
+- Repeated dispatch-status noise: TASK-79VKP.4 over TASK-3R3EZ and TASK-SJA9W.
+- Duplicated verification and gate replay: TASK-79VKP.5 over TASK-DTCBP, TASK-8Q92K, TASK-4BBA6, and TASK-P4XKT.
+- Interrupted worker reconciliation: TASK-79VKP.7 over TASK-CQM2X, TASK-EKF7T, and TASK-SJA9W.
+- Old installed-daemon latency: TASK-K9WWM fixed the source; installation remains an explicit operator checkpoint, so no duplicate backlog task was filed.
+- Real defect rework, inherent cross-cutting task complexity, operator-selected independent review, and the decision to harden approved follow-ups are intentional or case-specific costs, not missing framework tasks.
+
+** Boundaries
+Do not weaken writer durability, read-after-write visibility, worktree isolation, independent review, destructive-operation guards, or final-tree verification merely to reduce elapsed time. Optimize by measuring, coalescing, caching with exact invalidation, automating recoverable transitions, and removing repeated work whose inputs are provably identical.
+
+The inventory rows for real defect discovery and rework, inherent cross-cutting implementation complexity, the operator-selected dual-model review, and the explicitly withheld live-daemon restart are not framework defects. They are recorded as exclusions rather than converted into fake optimization tasks.
+
+** Acceptance
+- Every actionable framework friction row maps to an existing dependency or a numbered child.
+- Each child names a measured baseline and preserves the safety invariant that created the original step.
+- The parent can be closed only after the dependency graph is reconciled and a comparable risky task demonstrates lower framework overhead without a weaker gate.
+
+* BACKLOG TASK-79VKP.1 Measure and eliminate repeated worker entry and context boot work    :framework:dispatch:performance:
+:PROPERTIES:
+:DEPENDS_ON: TASK-YBCYQ
+:ID: TASK-79VKP.1
+:PRIORITY: P2
+:END:
+
+** Description
+Nine dispatched workers in TASK-K9WWM repeatedly paid entry routing, task and project context reads, prompt-spec assembly, and harness boot before useful work. TASK-YBCYQ owns incorrect worktree wording inside the compiled prompt, but no task measures or reduces repeated context construction.
+
+Instrument dispatch preparation and worker startup so the time and bytes for entry routing, task materialization, prompt assembly, and harness readiness are visible separately. Then introduce only content-addressed reuse whose key includes the committed git ref, runtime and prompt-spec version, task node version, brief content, governance overlay, and harness inputs. A cache miss must preserve current source-of-truth behavior; stale project or task context must never be served.
+
+** Acceptance
+- Status or dispatch evidence reports context-build duration, prompt bytes, cache outcome, and harness-ready latency.
+- A nine-dispatch reproduction establishes the baseline and demonstrates a material reduction on identical committed context.
+- Changing any authority input invalidates reuse deterministically.
+- A regression proves a new task or decision edit is visible to the next worker rather than hidden behind the optimization.
+
+* BACKLOG TASK-79VKP.2 Design a safe trivial-correction lane after independent review    :framework:workflow:review:
+:PROPERTIES:
+:ID: TASK-79VKP.2
+:PRIORITY: P2
+:END:
+
+** Description
+After TASK-K9WWM production source passed independent review, the manager full gate found three stale integration assertions. Correcting one test file still required moving the risky parent task, creating a fresh worker and worktree, rebuilding 1.7 GiB of target state, reconciling an aborted dispatch, merging, and rerunning the gate.
+
+Design a narrowly bounded correction lane for changes that cannot alter a shipped production artifact, such as test expectations, verification metadata, or documentation discovered only by the final manager gate. The lane must be computed from the actual diff, require a declared trivial tier, preserve manager review, and refuse production source, generated runtime assets, safety fixtures, or scope growth. Do not turn a risky task into a general manager-direct escape hatch.
+
+** Acceptance
+- The eligible path and every refusal boundary are explicit and regression-tested.
+- Replaying the TASK-K9WWM final-gate correction avoids a new worker lifecycle while preserving commit history and a manager-owned final-tree gate.
+- A negative control that touches production behavior is refused and routed through an ordinary or risky worker.
+- The ledger records why the correction qualified and the exact diff reviewed.
+
+* BACKLOG TASK-79VKP.3 Make implementation-to-review handoff one recoverable workflow    :framework:dispatch:review:
+:PROPERTIES:
+:DEPENDS_ON: TASK-P9T4N TASK-3HR8R TASK-GCTMA
+:ID: TASK-79VKP.3
+:PRIORITY: P2
+:END:
+
+** Description
+Every TASK-K9WWM review round serialized the same manager ceremony: wait for report, verify the worker commit, merge or bind the reviewed ref, close the implementer dispatch, move lifecycle state, commit daemon-written ledger state, choose an independent harness, compile a reviewer brief, and start review. TASK-P9T4N owns multi-tx close atomicity, TASK-3HR8R owns invisible in-review tasks, and TASK-GCTMA owns dirty refs workers cannot see. None owns orchestration of the complete handoff.
+
+Add a recoverable manager workflow that advances from a reported implementation to a reviewer dispatch using one explicit command or durable state machine. It must verify that the reviewed commit is reachable, preserve the independent-harness rule, never review an uncommitted tree, and be idempotent across disconnects. Intermediate states remain inspectable and individually recoverable.
+
+** Acceptance
+- One invocation performs or resumes the complete handoff and returns the implementation SHA, reviewed ref, close tx, lifecycle transition, reviewer run, harness, model, and effort.
+- Disconnecting after each internal boundary converges without duplicate close or reviewer dispatch.
+- Refusal cases for dirty, unreachable, or already-reviewed refs remain loud.
+- A repeated four-round workflow demonstrates reduced handoff time without overlapping review against an unstable ref.
+
+* BACKLOG TASK-79VKP.4 Make dispatch status concise and change-driven by default    :framework:cli:observability:
+:PROPERTIES:
+:DEPENDS_ON: TASK-3R3EZ TASK-SJA9W TASK-PAZQ2
+:ID: TASK-79VKP.4
+:PRIORITY: P2
+:END:
+
+** Description
+During TASK-K9WWM every dispatch-status poll repeated a reclaimable 17 GiB worktree report; the late correction added another 1.7 GiB line. The output is produced automatically even when the operator is polling one live task, so stable cleanup inventory obscures the state change being monitored. TASK-3R3EZ owns repeated missing-path warnings, TASK-SJA9W owns false close advice, and TASK-PAZQ2 owns missing progress clocks. No task owns the default output contract.
+
+Make the default status view task-focused and change-driven. Stable reclaimable inventory should be summarized once, emitted only when it changes, or moved behind an explicit inventory or verbose flag. Machine-readable output must retain the complete information and destructive prune must remain a separate explicit command.
+
+** Acceptance
+- Repeated polling of one unchanged live dispatch emits no repeated per-worktree inventory block.
+- A newly reclaimable, newly held, or size-changed worktree is surfaced once with a stable identifier.
+- An explicit flag returns the full current inventory and exact byte totals.
+- Existing orphan, run-liveness, and prune-safety diagnostics remain visible and tested.
+
+* BACKLOG TASK-79VKP.5 Record exact verification attestations and reuse only identical gate inputs    :framework:testing:verification:
+:PROPERTIES:
+:DEPENDS_ON: TASK-DTCBP TASK-8Q92K TASK-4BBA6 TASK-P4XKT
+:ID: TASK-79VKP.5
+:PRIORITY: P2
+:END:
+
+** Description
+TASK-K9WWM repeatedly ran targeted gates in isolated workers and then repeated format, clippy, build, exact tests, and the complete manager suite. The final test-only correction compiled once in its worktree and again from the manager tree. Existing tasks improve artifact coverage, stale-artifact discovery, host safety, and intermittent-test detection; none defines when a prior gate result is safe to reuse.
+
+Design content-addressed local verification attestations. An attestation must bind the exact git tree, dirty-state proof, command and arguments, relevant environment and toolchain versions, test binary or artifact hashes, host classification, start and end times, exit status, and durable logs. Decide which gates always require independent rerun and which purely deterministic results can be accepted on identical inputs. Reuse must fail closed when any input is unknown or when a test is classified load-sensitive or intermittent.
+
+** Acceptance
+- Worker and manager gates emit one machine-readable attestation schema with durable log references.
+- Identical clean-tree deterministic gates can be reused with an explicit audit line; changing source, command, toolchain, environment contract, or classification forces execution.
+- Independent review and final-tree policies state which gates are never reusable and why.
+- A TASK-K9WWM-shaped reproduction measures time saved while negative controls prove no stale or wrong-worktree green can be accepted.
+
+* BACKLOG TASK-79VKP.6 Bound dispatch build caches without cross-worktree false greens    :framework:worktree:build:performance:
+:PROPERTIES:
+:DEPENDS_ON: TASK-3X5AQ TASK-GRCWC
+:ID: TASK-79VKP.6
+:PRIORITY: P1
+:END:
+
+** Description
+The TASK-K9WWM final test worker created a separate 1.7 GiB worktree cache and spent 50.71 seconds compiling before one exact assertion test; the warm manager target ran all three exact tests in 7 seconds. TASK-3X5AQ proves that sharing CARGO_TARGET_DIR across checkouts can silently execute another checkout binary, and TASK-GRCWC guards destructive pruning. The remaining build-cache duplication has no implementation owner.
+
+Measure and choose a sound cache strategy that keeps checkout-specific fingerprints and final binaries isolated. Candidate mechanisms must be proved rather than assumed: compiler-object caches such as sccache, immutable dependency seeding followed by private fingerprints, filesystem cloning or hardlinks with copy-on-write validation, bounded worktree slots for disk only, or explicit no-reuse with automatic quota pruning. Never share a mutable Cargo target directory across different checkout paths.
+
+** Acceptance
+- Baseline disk, cold build, warm build, and concurrent-build costs are recorded for manager plus at least two worktrees.
+- The selected design cannot make an edited worktree report Fresh or run a binary built from another checkout; reproduce the TASK-3X5AQ negative control.
+- Cache storage is bounded and attributable per project, and cleanup observes TASK-GRCWC safety.
+- A TASK-K9WWM-shaped one-file test correction materially reduces duplicate compile time and disk without weakening test identity.
+
+* BACKLOG TASK-79VKP.7 Resume missing verification after interrupted worker commands    :framework:dispatch:recovery:testing:
+:PROPERTIES:
+:DEPENDS_ON: TASK-CQM2X TASK-EKF7T TASK-SJA9W
+:ID: TASK-79VKP.7
+:PRIORITY: P2
+:END:
+
+** Description
+The TASK-K9WWM final correction worker preserved a clean commit and two passing exact-test logs, but two owned command attempts for the third test disappeared before emitting output. Policy correctly prevented an unbounded retry and finalized the dispatch as aborted; the manager then had to discover the commit, inspect the report, merge it, and manually run only the missing gate.
+
+Represent partial verification and recoverable worker output explicitly. A dispatch whose provider or command host ends must distinguish no work, dirty salvage, clean committed work with incomplete gates, and a fully reported result. The manager should be able to resume the exact missing gates against the recorded commit without inventing a new implementation round or falsely recording success. Underlying provider failure remains external; this task owns truthful classification and low-friction recovery.
+
+** Acceptance
+- Terminal state exposes commit reachability, clean or dirty worktree, completed gate attestations, missing gates, durable logs, and interruption cause.
+- A resume command verifies the recorded commit and executes only missing authorized gates, then produces a truthful terminal record.
+- Repeated resume is idempotent and cannot promote an unreviewed or dirty tree.
+- Reproduce the two-pass, one-interrupted TASK-K9WWM shape and show recovery without ad-hoc process inspection or a replacement implementation dispatch.
 

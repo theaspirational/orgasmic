@@ -7,8 +7,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEventStream } from '@/hooks/useEventStream';
 import {
-  fetchParseErrors,
+  fetchParseErrorsWithCoverage,
   fetchTx,
+  fetchTxWithCoverage,
+  loadFullParseErrorCoverage,
 } from '@/lib/api';
 import type { DaemonEvent, ParseError, QuestionEntry, TxRecord, ViewName } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
@@ -63,8 +65,30 @@ function parseErrorKey(error: ParseError): string {
   return `${error.path}:${error.line ?? ''}:${error.at}`;
 }
 
+function txCoverageProjectIds(detail: string | null, segment: 'delayed' | 'failed'): string[] {
+  const encoded = detail?.match(new RegExp(`(?:^|;\\s*)${segment}=\\[([^\\]]*)\\]`))?.[1];
+  if (encoded == null) return [];
+  return encoded
+    .split(',')
+    .map((projectId) => projectId.trim())
+    .filter(Boolean)
+    .map((projectId) => {
+      try {
+        return decodeURIComponent(projectId);
+      } catch {
+        return projectId;
+      }
+    });
+}
+
+function txCoverageDismissalKey(detail: string | null): string {
+  const failed = txCoverageProjectIds(detail, 'failed');
+  const failedSet = failed.length === 0 ? 'unknown' : failed.sort().join(',');
+  return `tx-coverage-partial:${failedSet}`;
+}
+
 function total(sections: NotificationSections): number {
-  return sections.questions.length + sections.parseErrors.length;
+  return sections.coverage.length + sections.questions.length + sections.parseErrors.length;
 }
 
 export function NotificationBell({
@@ -81,8 +105,16 @@ export function NotificationBell({
   const mobileSheetTitleId = useId();
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed(projectId));
-  const tx = useResource(`notifications-tx:${projectId ?? 'all'}`, () => fetchTx(projectId, 200));
-  const parseErrors = useResource('notifications-parse-errors', fetchParseErrors);
+  const tx = useResource(`notifications-tx:${projectId ?? 'all'}`, async () => {
+    if (projectId) {
+      return {
+        records: await fetchTx(projectId, 200),
+        coverage: { state: 'complete' as const, detail: null, failures: {} },
+      };
+    }
+    return fetchTxWithCoverage(200);
+  });
+  const parseErrors = useResource('notifications-parse-errors', fetchParseErrorsWithCoverage);
 
   useEffect(() => {
     setDismissed(loadDismissed(projectId));
@@ -118,7 +150,42 @@ export function NotificationBell({
   );
 
   const sections = useMemo<NotificationSections>(() => {
-    const questions: NotificationRow[] = openQuestions(tx.data ?? [])
+    const coverage: NotificationRow[] = [];
+    if (tx.data?.coverage.state === 'partial') {
+      const delayedProjects = txCoverageProjectIds(tx.data.coverage.detail, 'delayed');
+      const failedProjects = txCoverageProjectIds(tx.data.coverage.detail, 'failed');
+      if (delayedProjects.length > 0) {
+        coverage.push({
+          key: `tx-coverage-delayed:${delayedProjects.slice().sort().join(',')}`,
+          title: 'Activity loading is delayed',
+          detail: `Coordinator capacity delayed: ${delayedProjects.join(', ')}. This does not diagnose project paths.`,
+          actionLabel: 'View status',
+          onAction: () => {
+            onNavigate('status');
+            setOpen(false);
+          },
+        });
+      }
+      const hasLegacyPartial = delayedProjects.length === 0 && failedProjects.length === 0;
+      const dismissalKey = txCoverageDismissalKey(tx.data.coverage.detail);
+      if ((failedProjects.length > 0 || hasLegacyPartial) && !dismissed.has(dismissalKey)) {
+        coverage.push({
+          key: dismissalKey,
+          title: 'Activity coverage is partial',
+          detail: failedProjects.length > 0
+            ? `Failed project ledgers: ${failedProjects.join(', ')}.`
+            : tx.data.coverage.detail ?? 'One or more project ledgers could not be loaded.',
+          actionLabel: 'View status',
+          onAction: () => {
+            onNavigate('status');
+            setOpen(false);
+          },
+          onDismiss: () => dismiss(dismissalKey),
+        });
+      }
+    }
+
+    const questions: NotificationRow[] = openQuestions(tx.data?.records ?? [])
       .filter((question) => !dismissed.has(`question:${question.tx_id}`))
       .map((question) => ({
         key: `question:${question.tx_id}`,
@@ -133,7 +200,7 @@ export function NotificationBell({
         onDismiss: () => dismiss(`question:${question.tx_id}`),
       }));
 
-    const parseErrorRows: NotificationRow[] = (parseErrors.data ?? [])
+    const parseErrorRows: NotificationRow[] = (parseErrors.data?.errors ?? [])
       .filter((error) => !dismissed.has(`parse:${parseErrorKey(error)}`))
       .map((error) => ({
         key: `parse:${parseErrorKey(error)}`,
@@ -144,8 +211,8 @@ export function NotificationBell({
         onAction: () => {
           void (async () => {
             try {
-              const errors = await fetchParseErrors();
-              toast.success(`Reloaded parse errors: ${errors.length}`);
+              const result = await fetchParseErrorsWithCoverage();
+              toast.success(`Reloaded parse errors: ${result.errors.length}`);
               await parseErrors.refresh();
             } catch (err) {
               toast.error('Reload failed', {
@@ -157,7 +224,38 @@ export function NotificationBell({
         onDismiss: () => dismiss(`parse:${parseErrorKey(error)}`),
       }));
 
-    return { questions, parseErrors: parseErrorRows };
+    if (parseErrors.data && parseErrors.data.coverage.state !== 'complete') {
+      parseErrorRows.unshift({
+        key: 'parse-coverage-partial',
+        title: 'Parse-error coverage is partial',
+        detail: parseErrors.data?.coverage.detail
+          ?? 'Identity diagnostics remain unloaded for one or more projects.',
+        actionLabel: 'Load full coverage',
+        actionIcon: 'reload',
+        onAction: () => {
+          void (async () => {
+            try {
+              const result = await loadFullParseErrorCoverage();
+              const skipped = Object.keys(result.coverage.failures);
+              if (skipped.length > 0) {
+                toast.warning(`Parse-error coverage loaded partially: ${result.errors.length}`, {
+                  description: `Skipped projects: ${skipped.join(', ')}`,
+                });
+              } else {
+                toast.success(`Full parse-error coverage loaded: ${result.errors.length}`);
+              }
+              await parseErrors.refresh();
+            } catch (err) {
+              toast.error('Full coverage failed', {
+                description: err instanceof Error ? err.message : String(err),
+              });
+            }
+          })();
+        },
+      });
+    }
+
+    return { coverage, questions, parseErrors: parseErrorRows };
   }, [
     dismiss,
     dismissed,

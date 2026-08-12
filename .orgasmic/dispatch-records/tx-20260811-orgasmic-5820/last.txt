@@ -1,0 +1,106 @@
+# TASK-AJP4A.1.1.1.1 (blocking-scan lease + delayed-state truthfulness) — independent review
+
+Reviewer: Claude Opus 5 (medium). Source diff `05d9f25..198954f`, landed via merge `2c598d6`.
+Review worktree `/Users/aspirational/.orgasmic/worktrees/orgasmic/task-ajp4a.1.1.1.1-review` @ `0cd2c7b`, clean, contains `198954f`.
+
+## Verdict
+
+**approve-with-follow-ups**
+
+The prior permanent registry-leak bug is genuinely fixed at the structural level, not just papered over by a test: `begin_blocking_scan` now returns the RAII `BlockingScanCompletion` itself, and that guard is a by-value parameter of `build_refresh`, so *every* seed-capture early return drops it. All six acceptance items are met as written, and all focused gates I reran are green.
+
+Two MEDIUM follow-ups remain. Neither is a regression — both are places where the new delay/failure split is incomplete rather than wrong-versus-before — so they do not block the land.
+
+## Findings
+
+### P2 (MEDIUM, correctness) — a coordinator-only delay is still reported as `failed` whenever the project has a published projection
+
+`crates/orgasmic-daemon/src/api.rs:2621` classifies by reading the *post-hoc snapshot state* and only treats `ProjectLoadState::Delayed` as delayed. But `record_project_load_delay` (`crates/orgasmic-daemon/src/index.rs:1312-1340`) sets the state to **`Ready`, not `Delayed`**, whenever `has_last_good` is true:
+
+```rust
+load.state = if has_last_good { ProjectLoadState::Ready } else { ProjectLoadState::Delayed };
+```
+
+Reachable production sequence (no test covers it):
+
+1. Unscoped `/tx` calls `ensure_project_loaded_with_cooldown(P)`; `P` is unloaded, so it is marked `Loading` (`index.rs:1131-1139`) and a scan is requested.
+2. The coordinator wait budget expires → `ProjectLoadRequestError::CoordinatorTimeout`. The scan is detached and keeps running.
+3. That detached scan publishes successfully a moment later; `publish_refresh` sets `load.state = Ready` (`index.rs:2190-2191`).
+4. The waiter now runs `record_project_load_delay` (`index.rs:1152`), sees `has_last_good == true`, and writes `state = Ready, error = Some("… queued behind slow scans …")`.
+5. `ensure_project_loaded_inner` still returns `Err(CoordinatorTimeout)` — the `result.map_err(…)?` at `index.rs:1156` fires before the readiness re-check.
+6. `record_tx_coverage_error` sees `state == Ready`, not `Delayed`, and pushes `P` into `failures`.
+
+Symptom: header reads `partial; loaded=[…]; failed=[P]` for a project that is loaded and Ready, and `NotificationBell` renders the destructive, dismissible **"Failed project ledgers: P"** row while `BoardView` simultaneously shows `P` as Ready with a muted diagnostic. That is exactly the UI/backend contract drift AC2/AC3 set out to remove.
+
+The implementer's own `ProjectCatalogViews` test encodes `{ state: 'ready', error: 'last refresh was delayed' }` as a legitimate state, which confirms the Ready-with-delay-diagnostic combination is expected — the `/tx` classifier just does not account for it.
+
+Fix direction: classify on the **error kind**, not on a re-read snapshot state. `ensure_project_loaded*` currently flattens `ProjectLoadRequestError` to `String` (`index.rs:1156`); expose a variant that returns the typed error (or a `bool delayed`) so `get_tx` can route `CoordinatorTimeout` to `delayed_projects` unconditionally. This also removes finding P3 entirely.
+
+### P3 (MEDIUM, perf) — `/tx` deep-clones the whole index once per failing project
+
+`crates/orgasmic-daemon/src/api.rs:2582` takes `state.index.snapshot().await` **inside** the per-project loop, and `Index::snapshot` is a full deep clone (`crates/orgasmic-daemon/src/index.rs:854-856`: `self.inner.read().await.clone()` over board + projects + tx + parse_errors + repo_urls). A second full snapshot follows at `api.rs:2593`.
+
+An unscoped `/tx` with N unloadable projects therefore performs N+1 full index clones under the read lock. That is precisely the coordinator-saturation scenario this feature exists to describe: the more projects are delayed, the more expensive the request that reports the delay becomes.
+
+Fix direction: hoist the classification below the loop and reuse the single `api.rs:2593` snapshot, or (preferred) adopt the P2 fix and drop the snapshot dependency altogether.
+
+### P3 (LOW, design) — systemd silently drops a control-character scan timeout; macOS does not
+
+`crates/orgasmic-cli/src/daemon_service.rs:952` filters the value out of the unit. Safe, and the renderer test proves no injection. But:
+
+- The daemon then starts at the default scan timeout with **no diagnostic** — the operator's configured value silently disappears.
+- `render_macos_launch_agent` (`daemon_service.rs:851-860`) applies no such filter; it `xml_escape`s the value. A newline is harmless there, but a `\x00` or other XML-illegal control character produces a plist launchd rejects outright.
+
+Fix direction: validate once at capture — `captured_project_scan_timeout` (`daemon_service.rs:386`) — so both platforms agree and the rejection is visible to the user, rather than filtering per-renderer.
+
+## Acceptance verification
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Registration owned by completion guard before seed capture | **Met.** `begin_blocking_scan` returns `BlockingScanCompletion` (`index.rs:659-694`); it is a by-value param of `build_refresh` (`index.rs:1913`), so all five seed-capture early returns (`index.rs:1928, 1956, 1958, 1968, 1970`) drop it via `Drop` (`index.rs:745-751`). Moved into the `spawn_blocking` closure at `index.rs:2077-2080`, so the timeout path correctly keeps the lease until the OS thread exits — matching the in-code comment. New deterministic test `production_refresh_seed_failures_release_same_target_registration` asserts `scans_total == 10` across 5 targets × 2 immediate retries; a leak would yield 5. |
+| 2 | Unscoped `/tx` separates delay from failure, additive segment | **Met as specified, partially incomplete** — see P2. Bare JSON array preserved (`Json(items).into_response()`). Empty shape asserted identical: `complete; loaded=[]; failed=[]`. Delayed segment is conditional and percent-encoded through the existing `coverage_project_ids` (`api.rs:13540`). |
+| 3 | Non-destructive delayed/non-path diagnostics; delay cannot hide failures | **Met.** Delayed row has no `onDismiss`, so `NotificationPopover.tsx:151` renders no Dismiss button. `hasLegacyPartial` (`NotificationBell.tsx:169-171`) keeps the failed row independent — the mixed case shows 2 unread. `BoardView.loadDiagnosticClass` reserves `text-destructive` for `state === 'failed'`. |
+| 4 | Robust late-waiter timing; dismissal normalization across reordering | **Met.** `set_refresh_timeout` 800 ms → 5 s against a 550 ms sleep (~9× margin); the test still asserts `requests_total == 2, scans_total == 1, coalesced_total == 1`. Reorder normalization tested: dismiss on `failed=[blocked,offline]`, stays dismissed for `failed=[offline,blocked]`, reopens for `failed=[blocked,replacement]`. |
+| 5 | systemd rejects/handles control characters, with renderer test | **Met** (with the LOW caveat above). |
+| 6 | Focused gates only; no redundant broad suite; no live daemon/service mutation | **Met.** See below. |
+
+## Verification notes
+
+All commands run from the review worktree. Read-only throughout — no source edits, no `.orgasmic` writes, no service commands.
+
+| Command | Result |
+|---|---|
+| `cargo test -p orgasmic-daemon --lib index::` | **72 passed, 0 failed** (incl. `production_refresh_seed_failures_release_same_target_registration`, `late_waiter_after_batch_capture_joins_the_in_flight_scan`, `timed_out_blocking_scan_guards_retries_until_os_work_exits`) |
+| `cargo test -p orgasmic-daemon --lib tx_coverage` | 1 passed (`tx_coverage_separates_delay_from_failure_and_preserves_empty_shape`) |
+| `cargo test -p orgasmic-daemon --lib parse_error_coverage_header_sanitizes` | 1 passed |
+| `cargo test -p orgasmic-cli --bins daemon_service::tests` | **27 passed, 0 failed** (incl. `linux_systemd_unit_omits_scan_timeout_with_control_characters`) |
+| `npm ci && npm test -- --run` (ui/) | **42 files, 285 tests passed, 0 failed** |
+| `npm run typecheck` (ui/) | clean (`tsc --noEmit`, exit 0) |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy -p orgasmic-daemon -p orgasmic-cli --all-targets -- -D warnings` | clean |
+
+Note: `cargo test -p orgasmic-cli --lib` fails with *"no library targets found"* — the CLI has bin targets only; `--bins` is the correct invocation. Not a defect, recorded so the next verifier does not misread it as a break.
+
+Per the brief I did **not** rerun the broad daemon aggregate; the parent classification (1,897 passed, 3 known unrelated timing failures) stands unchallenged — nothing in this diff touches those paths.
+
+**No live daemon/service mutation.** The diff touches only the pure `render_*` functions; `git diff 05d9f25..198954f | grep -E '^\+.*(launchctl|systemctl|install|restart|reload)'` returns nothing. `~/Library/LaunchAgents/orgasmic.daemon.plist` and `orgasmic.rmux.plist` both carry mtime **Aug 11 17:42**, before the task's implementation window (22:15–22:33) — untouched.
+
+**Scope.** Exactly the 8 files in the declared write scope; one commit, no drift. No eager per-project boot or full-board discovery was introduced — the lazy catalog-plus-on-demand projection architecture is intact. No supervisor/tmux/unrelated edits.
+
+## Open questions
+
+1. Is the Ready-with-delay-diagnostic state (P2 step 4) intended to be surfaced in `/tx` coverage at all, or should such a project simply be retried once inline before the header is composed? The current code returns `Err` even though the projection is by then available, so its tx records are also excluded from the payload.
+2. Should the delayed notification row auto-expire? It is deliberately non-dismissible, so a persistently saturated coordinator leaves a permanent unread badge with no user action available beyond "View status".
+
+## Fix directions
+
+1. **P2** — plumb `ProjectLoadRequestError` (or a `delayed: bool`) out of `ensure_project_loaded_with_cooldown` and classify `get_tx` failures on the error kind rather than a snapshot re-read. Add a daemon test that publishes a projection between the coordinator timeout and the delay record, asserting the header reads `delayed=[P]`, not `failed=[P]`.
+2. **P3 (perf)** — falls out of fix 1; otherwise hoist classification to reuse the single post-loop snapshot at `api.rs:2593`.
+3. **P3 (LOW)** — move control-character validation into `captured_project_scan_timeout` (`daemon_service.rs:386`) so macOS and Linux behave identically and the operator sees the rejection.
+
+## Residual risks / test gaps
+
+- **No coverage of the P2 race.** Every delayed-path test drives the `has_last_good == false` branch, so the `Ready`-state delay is invisible to the suite.
+- **Reverse version skew untested.** A stale browser tab on the old UI bundle against a new daemon parses `delayed=[queued]; failed=[]` as a legacy partial and shows the delayed condition as a dismissible "Activity coverage is partial" row. Transient and self-correcting on reload; noted, not filed.
+- **Dismissal key shape changed** for the empty-failed legacy case: `tx-coverage-partial:` → `tx-coverage-partial:unknown` (`NotificationBell.tsx:86`). Persisted localStorage dismissals under the old key would re-show once. Unreachable against any daemon that ever shipped (old daemons never emit `partial` with `failed=[]`), so cosmetic only.
+- **Guard release relies on `spawn_blocking` semantics.** If the blocking pool is starved, the lease legitimately persists — that is the designed behavior, but nothing tests the recovery path after a genuinely wedged OS-level scan finally exits under load.

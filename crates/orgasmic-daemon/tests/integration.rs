@@ -330,8 +330,43 @@ async fn get_runs_json(
         .unwrap()
 }
 
+async fn wait_for_project_repo_url(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+    project_id: &str,
+    expected_repo_url: &str,
+) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let resp = client
+                .get(format!("http://{addr}/api/projects"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                resp.status().is_success(),
+                "get /projects: {}",
+                resp.status()
+            );
+            let projects: serde_json::Value = resp.json().await.unwrap();
+            if let Some(project) = projects.as_array().unwrap().iter().find(|project| {
+                project["project_id"] == project_id && project["repo_url"] == expected_repo_url
+            }) {
+                return project.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("project {project_id} did not expose repo_url {expected_repo_url:?} within 5s")
+    })
+}
+
 #[tokio::test]
-async fn post_projects_registers_existing_orgasmic_project_and_refreshes_index() {
+async fn post_projects_registers_existing_project_unloaded_until_first_access() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -354,28 +389,38 @@ async fn post_projects_registers_existing_orgasmic_project_and_refreshes_index()
     assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "proj-existing");
-    assert_eq!(project["repo_url"], "git@example.com:org/existing.git");
+    assert_eq!(project["repo_url"], "");
     assert_eq!(project["branch"], "");
+    assert_eq!(project["load"]["state"], "unloaded");
+    assert!(project["task_stats"].is_null());
 
-    let resp = client
-        .get(format!("http://{}/api/projects", running.addr))
+    let project = wait_for_project_repo_url(
+        &client,
+        running.addr,
+        &token,
+        "proj-existing",
+        "git@example.com:org/existing.git",
+    )
+    .await;
+    assert_eq!(project["load"]["state"], "unloaded");
+    assert!(project["task_stats"].is_null());
+
+    let loaded: serde_json::Value = client
+        .get(format!(
+            "http://{}/api/projects/proj-existing",
+            running.addr
+        ))
         .bearer_auth(&token)
         .send()
         .await
+        .unwrap()
+        .json()
+        .await
         .unwrap();
-    assert!(
-        resp.status().is_success(),
-        "get /projects: {}",
-        resp.status()
-    );
-    let projects: serde_json::Value = resp.json().await.unwrap();
-    assert!(projects.as_array().unwrap().iter().any(|project| {
-        project["project_id"] == "proj-existing"
-            && project["tasks"]
-                .as_array()
-                .map(|tasks| tasks.iter().any(|task| task["id"] == "TASK-NEW"))
-                .unwrap_or(false)
-    }));
+    assert!(loaded["tasks"]
+        .as_array()
+        .map(|tasks| tasks.iter().any(|task| task["id"] == "TASK-NEW"))
+        .unwrap_or(false));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -434,13 +479,22 @@ async fn post_projects_scaffolds_and_registers_uninitialized_project() {
     assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "fresh");
-    assert_eq!(project["repo_url"], "git@example.com:org/fresh.git");
+    assert_eq!(project["repo_url"], "");
     assert_eq!(project["branch"], "");
+    assert_eq!(project["load"]["state"], "unloaded");
     let project_org = project_root.join(".orgasmic/project.org");
     assert!(project_org.exists());
     let raw = std::fs::read_to_string(project_org).unwrap();
     assert!(raw.contains(":ID:               fresh"));
     assert!(!raw.contains(":REPO_URL:"));
+    wait_for_project_repo_url(
+        &client,
+        running.addr,
+        &token,
+        "fresh",
+        "git@example.com:org/fresh.git",
+    )
+    .await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1170,6 +1224,16 @@ async fn corrupted_working_file_does_not_block_start() {
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let client = reqwest::Client::new();
+    let project_response = client
+        .get(format!(
+            "http://{}/api/projects/proj-working/tasks",
+            running.addr
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert!(project_response.status().is_success());
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)
@@ -1414,9 +1478,9 @@ async fn project_tx_record_errors_when_project_root_invalid() {
         .await
         .unwrap();
 
-    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
     let body = resp.text().await.unwrap();
-    assert_path_free_error(&body, "project could not be resolved", &[tmp.path()]);
+    assert_path_free_error(&body, "failed to load", &[tmp.path()]);
     assert!(
         !body.contains("tx_id"),
         "error response must not return a tx_id: {body}"
@@ -1564,6 +1628,16 @@ async fn orphan_parent_task_surfaces_via_parse_errors_endpoint() {
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let client = reqwest::Client::new();
+    let project_response = client
+        .get(format!(
+            "http://{}/api/projects/orgasmic/tasks",
+            running.addr
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert!(project_response.status().is_success());
     let resp = client
         .get(format!("http://{}/api/graph/parse-errors", running.addr))
         .bearer_auth(&token)
@@ -1575,8 +1649,8 @@ async fn orphan_parent_task_surfaces_via_parse_errors_endpoint() {
         "parse errors: {}",
         resp.status()
     );
-    let errors: serde_json::Value = resp.json().await.unwrap();
-    assert!(errors.as_array().unwrap().iter().any(|error| {
+    let response: serde_json::Value = resp.json().await.unwrap();
+    assert!(response.as_array().unwrap().iter().any(|error| {
         error["message"]
             .as_str()
             .unwrap_or("")
@@ -1611,7 +1685,7 @@ async fn release_inactive_run_returns_not_found() {
 }
 
 #[tokio::test]
-async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
+async fn commit_to_project_false_keeps_home_tx_and_uses_daemon_actor_without_git_lookup() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1621,18 +1695,16 @@ async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
     );
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
-    Command::new("git")
-        .arg("init")
-        .current_dir(&project_root)
-        .output()
-        .expect("git init");
-    Command::new("git")
-        .args(["config", "user.email", "git@example.com"])
-        .current_dir(&project_root)
-        .output()
-        .expect("git config user.email");
 
-    let running = boot(home.clone()).await;
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            actor: "daemon-test-actor".to_string(),
+            ..test_options()
+        },
+    )
+    .await
+    .expect("boot daemon");
     let token = read_token(&home);
     let client = reqwest::Client::new();
     let resp = client
@@ -1655,7 +1727,7 @@ async fn commit_to_project_false_keeps_home_tx_and_uses_git_actor() {
     assert!(tx_path.starts_with(home.tx()));
     assert!(!tx_id.contains("-proj-"));
     let raw = std::fs::read_to_string(&tx_path).unwrap();
-    assert!(raw.contains(":ACTOR:        git@example.com"));
+    assert!(raw.contains(":ACTOR:        daemon-test-actor"));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1763,7 +1835,7 @@ async fn end_to_end_ws_emits_event_after_tx_post() {
 }
 
 #[tokio::test]
-async fn rebuilt_index_serves_board_before_normal_reads() {
+async fn catalog_is_served_unloaded_before_first_project_read() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1790,8 +1862,8 @@ async fn rebuilt_index_serves_board_before_normal_reads() {
     let token = read_token(&home);
     let client = reqwest::Client::new();
 
-    // The very first GET /board after boot should reflect the seeded entry,
-    // proving AC #1 (rebuild before serving normal reads).
+    // The first catalog reads reflect registration without materializing the
+    // project's operational state.
     let resp = client
         .get(format!("http://{}/api/board", running.addr))
         .bearer_auth(&token)
@@ -1803,6 +1875,35 @@ async fn rebuilt_index_serves_board_before_normal_reads() {
     let arr = board.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["id"], "proj-pre");
+
+    let projects: serde_json::Value = client
+        .get(format!("http://{}/api/projects", running.addr))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(projects[0]["project_id"], "proj-pre");
+    assert_eq!(projects[0]["load"]["state"], "unloaded");
+    assert!(projects[0]["task_stats"].is_null());
+
+    let parse_errors = client
+        .get(format!("http://{}/api/graph/parse-errors", running.addr))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        parse_errors
+            .headers()
+            .get("x-orgasmic-project-coverage")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "partial; ready=0/1; markers=0/1; unloaded=[proj-pre]; marker_unloaded=[proj-pre]; loading=[]; failed=[]"
+    );
 
     let resp = client
         .get(format!(
@@ -1819,6 +1920,43 @@ async fn rebuilt_index_serves_board_before_normal_reads() {
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn daemon_binds_with_blocked_registered_project_still_unloaded() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("blocked-project");
+    seed_project(&home, &project_root, "blocked-project");
+    let task_file = project_root.join(".orgasmic/tasks/backlog.org");
+    std::fs::remove_file(&task_file).unwrap();
+    let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
+    let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
+    assert_eq!(rc, 0, "create blocking task fifo");
+
+    let running = tokio::time::timeout(Duration::from_secs(2), boot(home.clone()))
+        .await
+        .expect("blocked project delayed listener bind");
+    let token = read_token(&home);
+    let projects: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{}/api/projects", running.addr))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(projects[0]["project_id"], "blocked-project");
+    assert_eq!(projects[0]["load"]["state"], "unloaded");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    std::fs::remove_file(task_file).unwrap();
 }
 
 #[tokio::test]
@@ -2516,7 +2654,7 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
         &sessions_dir.join("run-old.jsonl"),
         format!(
             r#"{{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"acquire","task_id":"TASK-OLD","kind":"implementer","worker_id":"implementer-claude-stream-json"}}}}
-{{"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"run_meta","transport":"tmux","harness":"claude","project_id":"orgasmic","worktree":{},"role":"implementer","requires_worker_finalize":true,"driver_config":{{}}}}}}
+{{"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"run_meta","transport":"stdio","harness":"claude","project_id":"orgasmic","worktree":{},"role":"implementer","requires_worker_finalize":true,"driver_config":{{}}}}}}
 "#,
             serde_json::to_string(&project_root).unwrap()
         ),
@@ -2542,8 +2680,9 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
     assert_eq!(recovery["interrupted_runs"][0]["run_id"], "run-old");
     assert_eq!(recovery["terminal_noop_runs"][0]["run_id"], "run-done");
 
-    // run-old has no live tmux and no native metadata, so its only recovery
-    // action is start_recovery_run (no best-effort discovery, dec_052).
+    // run-old has no reattachable transport session or native metadata, so its
+    // only recovery action is start_recovery_run (no best-effort discovery,
+    // dec_052).
     let actions = recovery["interrupted_runs"][0]["recovery_actions"]
         .as_array()
         .unwrap();
@@ -2562,8 +2701,10 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "recover: {}", resp.status());
-    let continued: serde_json::Value = resp.json().await.unwrap();
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    assert!(status.is_success(), "recover: {status} {text}");
+    let continued: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert!(continued["run_id"].as_str().unwrap().starts_with("run-"));
     assert_eq!(continued["action"], "start_recovery_run");
     // The recovery prompt is staged for manual send, not auto-sent.
@@ -2603,6 +2744,8 @@ async fn task_007_content_routes_are_real() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     symlink_repo_source(&home);
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "orgasmic");
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let client = reqwest::Client::new();

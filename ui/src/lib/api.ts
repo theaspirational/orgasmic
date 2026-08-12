@@ -1,4 +1,4 @@
-import { get, HttpError, post } from './transport';
+import { get, getWithHeader, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
 import type {
   ActivityEntry,
@@ -22,10 +22,12 @@ import type {
   ManagerState,
   OrgFileResponse,
   ParseError,
+  ParseErrorsResult,
   CompiledPrompt,
   ContextPackSummary,
   PromptPartSummary,
   PromptSpecSummary,
+  ProjectCatalogEntry,
   ProjectIndex,
   RecoveryStatus,
   RunRecoverRequest,
@@ -43,6 +45,7 @@ import type {
   TaskSubtaskRequest,
   TaskSummary,
   TxRecord,
+  TxResult,
 } from './types';
 
 function q(project?: string | null, extra?: Record<string, string | number | undefined>): string {
@@ -65,8 +68,8 @@ export function fetchBoard(): Promise<BoardEntry[]> {
   return get<BoardEntry[]>('/board');
 }
 
-export function fetchProjects(): Promise<ProjectIndex[]> {
-  return get<ProjectIndex[]>('/projects');
+export function fetchProjects(): Promise<ProjectCatalogEntry[]> {
+  return get<ProjectCatalogEntry[]>('/projects');
 }
 
 export function fetchSkills(): Promise<SkillSummary[]> {
@@ -121,8 +124,8 @@ export type AddProjectRequest = {
   scaffold?: boolean;
 };
 
-export function addProject(req: AddProjectRequest): Promise<ProjectIndex> {
-  return post<ProjectIndex>('/projects', {
+export function addProject(req: AddProjectRequest): Promise<ProjectCatalogEntry> {
+  return post<ProjectCatalogEntry>('/projects', {
     path: req.path,
     scaffold: req.scaffold ?? false,
   });
@@ -138,8 +141,10 @@ export function fetchTask(projectId: string, taskId: string): Promise<TaskDetail
   );
 }
 
-export function fetchTaskActivity(taskId: string): Promise<ActivityEntry[]> {
-  return get<ActivityEntry[]>(`/tasks/${encodeURIComponent(taskId)}/activity`);
+export function fetchTaskActivity(projectId: string, taskId: string): Promise<ActivityEntry[]> {
+  return get<ActivityEntry[]>(
+    `/tasks/${encodeURIComponent(taskId)}/activity${q(projectId)}`,
+  );
 }
 
 export function postTaskComment(
@@ -248,12 +253,71 @@ export function fetchParseErrors(): Promise<ParseError[]> {
   return get<ParseError[]>('/graph/parse-errors');
 }
 
+export async function fetchParseErrorsWithCoverage(): Promise<ParseErrorsResult> {
+  const { data, header } = await getWithHeader<ParseError[]>(
+    '/graph/parse-errors',
+    'x-orgasmic-project-coverage',
+  );
+  return {
+    errors: data,
+    coverage: {
+      state: header?.startsWith('complete;')
+        ? 'complete'
+        : header?.startsWith('partial;')
+          ? 'partial'
+          : 'unknown',
+      detail: header,
+      failures: {},
+    },
+  };
+}
+
+export async function loadFullParseErrorCoverage(): Promise<ParseErrorsResult> {
+  const markerCoverage = await get<{
+    node_id: string;
+    files: string[];
+    projects: Record<string, number>;
+    failures: Record<string, string>;
+  }>('/graph/markers/__coverage__');
+  const result = await fetchParseErrorsWithCoverage();
+  const failures = markerCoverage.failures ?? {};
+  if (Object.keys(failures).length === 0) return result;
+  const skipped = Object.keys(failures).join(',');
+  return {
+    ...result,
+    coverage: {
+      state: 'partial',
+      detail: `${result.coverage.detail ?? 'partial'}; skipped=[${skipped}]`,
+      failures,
+    },
+  };
+}
+
 export function fetchWhoami(): Promise<{ authenticated: boolean; boot_id: string }> {
   return get('/auth/whoami');
 }
 
 export function fetchTx(project?: string | null, limit = 50): Promise<TxRecord[]> {
   return get<TxRecord[]>(`/tx${q(project, { limit })}`);
+}
+
+export async function fetchTxWithCoverage(limit = 50): Promise<TxResult> {
+  const { data, header } = await getWithHeader<TxRecord[]>(
+    `/tx${q(null, { limit })}`,
+    'x-orgasmic-project-coverage',
+  );
+  return {
+    records: data,
+    coverage: {
+      state: header?.startsWith('complete;')
+        ? 'complete'
+        : header?.startsWith('partial;')
+          ? 'partial'
+          : 'unknown',
+      detail: header,
+      failures: {},
+    },
+  };
 }
 
 export function fetchDecisions(project?: string | null): Promise<DecisionSummary[]> {

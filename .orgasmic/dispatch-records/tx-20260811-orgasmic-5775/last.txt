@@ -1,0 +1,37 @@
+# TASK-AJP4A.1 (harden lazy project loading)
+
+## Changed
+
+- Bounded core, marker, and artifact filesystem scans and first-load coordinator waits; split optional recursive scans from the core project lane; retained safe late-work publication boundaries; restored actionable macOS Files and Folders guidance.
+- Preserved last-good ready projections across failed refreshes with accurate attempt/error state, and prevented stale old-root refresh failures from overwriting path-change invalidation.
+- Added blocked-task catalog statistics, exact scoped transaction filtering, panic-safe encoded parse-error coverage headers, and whole-board reindex failure aggregation.
+- Added deliberate 300-second CLI request budgets only for full marker coverage and reindex operations; the ordinary request timeout remains 10 seconds.
+- Carried parse-error coverage through the UI transport/API, exposed the response header through CORS, rendered partial coverage in status and notifications, and added an explicit full-coverage action without recursive notification polling.
+- Corrected the stale `Index::rebuild` documentation. No live daemon or LaunchAgent was installed or restarted, and no manager-owned lifecycle/transaction file was hand-edited.
+
+## Verification Gates
+
+- `cargo fmt --all -- --check`: PASS.
+- Focused index tests: PASS, 64 passed / 0 failed.
+- Focused API tests: PASS, reindex 3/3, scoped tx 1/1, malformed coverage ID 1/1, production HTTP parse-error/CORS route 1/1.
+- Focused CLI timeout test: PASS, 1 passed / 0 failed.
+- UI typecheck: PASS.
+- Focused UI Vitest: PASS, 3 files and 7 tests passed.
+- Full UI Vitest: RED, 41/42 files and 275/276 tests passed. The sole failure was the unrelated Mermaid SVG render test timing out at its 5-second budget; that exact test passed 1/1 in isolation. A second full run reproduced the same load-sensitive timeout.
+- `cargo build`: PASS on the final tree.
+- `cargo clippy --workspace --all-targets`: PASS on the final tree with no warnings.
+- `git diff --check`: PASS.
+- `scripts/run-tests.sh`: RED on the final tree, exit 1. Main suite totals were 1,885 passed / 3 failed / 15 ignored; no crashed targets, required tooling complete, cfg-off leg passed, billed test withheld by the required skip, host classified calm (syspolicyd rate 1.0720). All three failures passed in isolation. One was the registered TASK-X0PV1 tmux reattach flake with a matching signature. Two were unregistered supervisor process-probe failures and therefore classified REAL by the repository gate:
+  - `supervisor::tests::a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed` — `the stub recorded its sleep pid`.
+  - `supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline` — `the stub recorded its sleep pid`.
+- The TASK-QCG6J close-guard premise did not reproduce: both rmux and tmux explicit-reattach close-guard tests passed in the final aggregate run. No flake-registry change was made; the registry and supervisor source are outside this task's declared write scope.
+
+## Unmet Criteria
+
+- No implementation acceptance criterion is known to be unmet.
+- The aggregate repository gate and full UI suite are not green for the exact blockers recorded above; neither failure surface is within this task's declared write scope.
+
+## Residual Risk
+
+- Independent verification should rerun the aggregate suite and full Vitest suite; implementer results are evidence, not independent proof.
+- The final commit SHA is produced and recorded atomically by `orgasmic dispatch finalize --commit`; it cannot be embedded into this verbatim pre-commit summary without breaking that required completion contract.

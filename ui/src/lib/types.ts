@@ -191,6 +191,30 @@ export type ProjectIndex = {
   last_loaded_at?: string | null;
 };
 
+export type ProjectLoadState = 'unloaded' | 'loading' | 'ready' | 'failed' | 'delayed';
+
+export type ProjectCatalogEntry = {
+  project_id: string;
+  root: string;
+  repo_url: string;
+  branch: string;
+  status: string;
+  load: {
+    state: ProjectLoadState;
+    generation: number;
+    last_attempt_at?: string | null;
+    last_loaded_at?: string | null;
+    cooldown_until?: string | null;
+    error?: string | null;
+  };
+  task_stats?: {
+    total: number;
+    active: number;
+    blocked: number;
+    done: number;
+  } | null;
+};
+
 export type DecisionSummary = {
   id: string;
   title: string;
@@ -230,10 +254,27 @@ export type GraphIndex = {
 };
 
 export type ParseError = {
+  project_id?: string | null;
   path: string;
   message: string;
   line?: number | null;
   at: string;
+};
+
+export type ParseErrorCoverage = {
+  state: 'complete' | 'partial' | 'unknown';
+  detail: string | null;
+  failures: Record<string, string>;
+};
+
+export type ParseErrorsResult = {
+  errors: ParseError[];
+  coverage: ParseErrorCoverage;
+};
+
+export type TxResult = {
+  records: TxRecord[];
+  coverage: ParseErrorCoverage;
 };
 
 export type DaemonStatus = {
@@ -251,11 +292,26 @@ export type DaemonStatus = {
   ui_asset_hash?: string;
   projects: number;
   registered_projects?: number;
-  /** Board-registered ids the index snapshot is missing (TASK-MRJRK). */
-  unindexed_projects?: string[];
+  unloaded_projects?: string[];
+  loading_projects?: string[];
+  ready_projects?: string[];
+  delayed_projects?: Record<string, string>;
+  failed_projects?: Record<string, string>;
   parse_errors: number;
   tx_count: number;
   rebuilt_at?: string | null;
+  index_refresh?: {
+    pending_targets: number;
+    in_flight_targets: number;
+    stale_blocking_scans: number;
+    scan_timeout_ms: number;
+    requests_total: number;
+    scans_total: number;
+    coalesced_total: number;
+    discarded_total: number;
+    last_scan_duration_ms: number;
+    max_scan_duration_ms: number;
+  };
 };
 
 export type FilesystemRoot = {

@@ -17,16 +17,17 @@ export type NotificationRow = {
   actionLabel: string;
   actionIcon?: 'reload';
   onAction: () => void;
-  onDismiss: () => void;
+  onDismiss?: () => void;
 };
 
 export type NotificationSections = {
+  coverage: NotificationRow[];
   questions: NotificationRow[];
   parseErrors: NotificationRow[];
 };
 
 function sectionTotal(sections: NotificationSections): number {
-  return sections.questions.length + sections.parseErrors.length;
+  return sections.coverage.length + sections.questions.length + sections.parseErrors.length;
 }
 
 export function NotificationPopover({
@@ -108,6 +109,7 @@ function NotificationContent({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 p-3 md:p-4">
+          <Section title="Coverage" rows={sections.coverage} empty="Coverage is complete." />
           <Section title="Questions" rows={sections.questions} empty="No questions." />
           <Section title="Parse Errors" rows={sections.parseErrors} empty="No parse errors." />
         </div>
@@ -146,16 +148,18 @@ function Section({ title, rows, empty }: { title: string; rows: NotificationRow[
                     {row.detail}
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0"
-                  aria-label="Dismiss"
-                  onClick={row.onDismiss}
-                >
-                  <X className="size-3.5" />
-                </Button>
+                {row.onDismiss ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0"
+                    aria-label="Dismiss"
+                    onClick={row.onDismiss}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                ) : null}
               </div>
               <Button type="button" size="sm" className="mt-3" onClick={row.onAction}>
                 {row.actionIcon === 'reload' ? <RotateCw className="size-3.5" /> : null}

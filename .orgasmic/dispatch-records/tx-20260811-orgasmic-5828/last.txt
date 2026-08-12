@@ -1,0 +1,26 @@
+# Changed
+
+- TASK-AJP4A.1.1.1.1.1 (coordinator-delay classification): preserved `ProjectLoadRequestError::CoordinatorTimeout` through the cooldown load path and made unscoped `/tx` classify that typed result directly as delayed.
+- Removed the unsuccessful-project `IndexSnapshot` clone from the `/tx` loop; the handler now takes only its existing catalog snapshot and one post-loop response snapshot.
+- Added deterministic production-path coverage for a timed-out coordinator waiter whose detached scan publishes `Ready` before the delay diagnostic is recorded. The test asserts `delayed=[project]`, `failed=[]`, a bare JSON array body, and `Ready` with the coordinator-delay diagnostic.
+- Moved scan-timeout control-character rejection into `captured_project_scan_timeout`, shared by macOS and systemd service rendering. Ordinary raw values remain unchanged for the daemon's existing 1..300 validation.
+- Changed only `crates/orgasmic-daemon/src/index.rs`, `crates/orgasmic-daemon/src/api.rs`, and `crates/orgasmic-cli/src/daemon_service.rs`.
+
+# Verification Gates
+
+- `cargo test -p orgasmic-daemon --lib tx_coverage` — PASS: 2 passed, 0 failed, 824 filtered out.
+- `cargo test -p orgasmic-daemon --lib index::` — PASS: 72 passed, 0 failed, 754 filtered out.
+- `cargo test -p orgasmic-cli --bins daemon_service::tests` — PASS: 27 passed, 0 failed, 216 filtered out.
+- `cargo fmt --all -- --check` — PASS.
+- `cargo clippy --workspace --all-targets` — PASS.
+- `cargo build` — PASS.
+- `git diff --check` — PASS.
+- Per brief, the classified broad daemon aggregate was not run. No service install/reload/restart, LaunchAgent mutation, or live daemon mutation was performed.
+
+# Unmet Criteria
+
+- None.
+
+# Residual Risk
+
+- The exact race is made deterministic with test-only coordinator timing and barriers while exercising the production `/tx` and index load/publication path. Independent verification should rerun the focused commands above; no independent reviewer was part of this implementer dispatch.

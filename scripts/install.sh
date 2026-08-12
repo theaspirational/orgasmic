@@ -228,6 +228,32 @@ install_managed_binary() {
     mv -f "$tmp" "$dest"
 }
 
+# Source builds carry a linker/ad-hoc signature, so a shell copy would replace
+# the stable installed identity before the Rust guard can compare or re-sign it.
+# Run the freshly built CLI only as the bootstrap publisher; it stages beside
+# the canonical destination, reuses the incumbent signing identity when its key
+# is available, validates the final designated requirement, and atomically
+# renames the fresh inode into place.
+publish_source_binary() {
+    local source="$1" dest="$2"
+    local publisher="$dest"
+    local staged_source="${dest}.source.$$"
+    cp "$source" "$staged_source"
+    chmod 755 "$staged_source"
+    # Once this boundary is installed, keep executing the already-authorized
+    # stable binary during future upgrades. The source artifact is a fallback
+    # only for first install and migration from a runtime predating the verb.
+    # In either case the input and executable stay outside a TCC-guarded source
+    # checkout: the invoking shell performs this one copy from Documents.
+    if [[ ! -x "$dest" ]] || ! "$dest" __install-managed-source --help >/dev/null 2>&1; then
+        publisher="$staged_source"
+    fi
+    local status=0
+    ORGASMIC_HOME="$ORGASMIC_HOME" "$publisher" __install-managed-source "$staged_source" || status=$?
+    rm -f "$staged_source"
+    return "$status"
+}
+
 # Locate the freshly built binary, accounting for `--target`-qualified builds
 # that land in target/<triple>/release/ instead of target/release/. Picks the
 # newest candidate so plain and target-qualified builds both resolve.
@@ -547,7 +573,7 @@ install_source_mode() {
             echo "error: built orgasmic binary not found under $INSTALL_DIR/target (release or <triple>/release)" >&2
             exit 1
         fi
-        install_managed_binary "$source_bin" "$ORGASMIC_HOME/bin/orgasmic"
+        publish_source_binary "$source_bin" "$ORGASMIC_HOME/bin/orgasmic"
         "$ORGASMIC_HOME/bin/orgasmic" init
         ensure_path_on_shell
     else

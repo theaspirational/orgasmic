@@ -75,6 +75,9 @@ enum Cmd {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<OsString>,
     },
+    /// Internal source-installer boundary for identity-checked publication.
+    #[command(name = "__install-managed-source", hide = true)]
+    InstallManagedSource { source: PathBuf },
     /// Scaffold `$ORGASMIC_HOME` (config, dirs, secrets, sessions).
     #[command(after_help = "\
 Examples:
@@ -154,6 +157,14 @@ Examples:
     #[command(after_help = "\
 Examples:
   orgasmic serve --port 4848
+  ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS=30 orgasmic serve
+
+Filesystem project scans default to 5 seconds. ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS
+accepts whole seconds from 1 through 300; invalid or zero values use the default.
+Hand-run serve and detached auto-start inherit the value at process launch.
+Persistent launchd/systemd services capture it when daemon start, daemon restart,
+install, or update writes the service definition; rerun one of those commands
+after changing the value.
 
 Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/token")]
     Serve {
@@ -1106,7 +1117,8 @@ enum RecoveryCmd {
 enum DaemonCmd {
     /// Show local daemon process state without starting it.
     Status,
-    /// Start the local daemon in the background if it is not running.
+    /// Start the local daemon in the background if it is not running. Persistent
+    /// services capture ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS from this process.
     Start,
     /// Stop the local daemon process.
     Stop {
@@ -1114,7 +1126,8 @@ enum DaemonCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Stop and start the local daemon process.
+    /// Stop and start the local daemon process, recapturing the supported
+    /// project-scan timeout override for persistent services.
     Restart(DaemonRestartArgs),
 }
 
@@ -1470,6 +1483,21 @@ fn main() -> Result<()> {
             governance_json,
         ),
         Cmd::ExecPinned { .. } => unreachable!("handled before home/tracing initialization"),
+        Cmd::InstallManagedSource { source } => {
+            let installed = managed_binary::install_source(
+                &home,
+                &source,
+                managed_binary::IdentityGuard::Enforce,
+            )?;
+            println!("→ installed {} from source", installed.path.display());
+            if installed.resigned {
+                println!("  re-signed before publication");
+            }
+            if installed.preserves_grants() {
+                println!("  macOS permission grants preserved");
+            }
+            Ok(())
+        }
     }
 }
 
@@ -2363,6 +2391,12 @@ struct ParseErrorView {
     message: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct MarkerCoverageResponse {
+    #[serde(default)]
+    failures: std::collections::BTreeMap<String, String>,
+}
+
 /// Best-effort node/property attribution parsed out of a parse-error
 /// message. Covers the two dangling-reference detectors the daemon emits
 /// today (`identity_lint::lint_dangling_references` and
@@ -2395,7 +2429,21 @@ fn cmd_status_errors(home: &Home) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        let errors: Vec<ParseErrorView> = client.get("/graph/parse-errors").await?;
+        // `status --errors` is an explicit full-coverage request. Marker
+        // discovery is intentionally not part of core project loading, so use
+        // the marker route to ensure that lazy projection before reading the
+        // parse-error view it contributes to.
+        let marker_coverage: MarkerCoverageResponse =
+            client.get_full_board("/graph/markers/__coverage__").await?;
+        for (project_id, error) in &marker_coverage.failures {
+            eprintln!("[warn] skipped project {project_id}: {error}");
+        }
+        let (errors, coverage): (Vec<ParseErrorView>, Option<String>) = client
+            .get_with_header("/graph/parse-errors", "x-orgasmic-project-coverage")
+            .await?;
+        if let Some(coverage) = coverage.filter(|coverage| coverage.starts_with("partial;")) {
+            eprintln!("[warn] parse-error coverage is {coverage}");
+        }
         if errors.is_empty() {
             println!("0 parse errors");
             return Ok(());
@@ -2428,8 +2476,18 @@ fn cmd_reindex(home: &Home, project: Option<&str>) -> Result<()> {
             Some(id) => format!("/reindex/{}", daemon_client::path_segment(id)),
             None => "/reindex".to_string(),
         };
-        let value: serde_json::Value = client.post_json(&path, &serde_json::json!({})).await?;
+        let value: serde_json::Value = client
+            .post_full_board_json(&path, &serde_json::json!({}))
+            .await?;
         println!("{}", serde_json::to_string_pretty(&value)?);
+        if project.is_none()
+            && value
+                .get("failures")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|failures| !failures.is_empty())
+        {
+            anyhow::bail!("whole-board reindex completed with project failures");
+        }
         Ok::<(), anyhow::Error>(())
     })
 }
@@ -3645,12 +3703,19 @@ fn cmd_tx(home: &Home, cmd: TxCmd) -> Result<()> {
             TxCmd::List { project, limit } => {
                 let mut path = "/tx?limit=".to_string();
                 path.push_str(&limit.to_string());
-                if let Some(p) = project {
+                if let Some(ref p) = project {
                     path.push_str("&project=");
-                    path.push_str(&p);
+                    path.push_str(p);
                 }
-                let value: serde_json::Value = client.get(&path).await?;
+                let (value, coverage): (serde_json::Value, Option<String>) = client
+                    .get_with_header(&path, "x-orgasmic-project-coverage")
+                    .await?;
                 println!("{}", serde_json::to_string_pretty(&value)?);
+                if project.is_none() {
+                    if let Some(coverage) = coverage.filter(|value| value.starts_with("partial;")) {
+                        eprintln!("[warn] tx coverage is {coverage}");
+                    }
+                }
             }
         }
         Ok::<(), anyhow::Error>(())

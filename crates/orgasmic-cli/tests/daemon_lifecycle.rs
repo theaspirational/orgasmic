@@ -463,6 +463,44 @@ mod stalled_writer {
         body["boot_id"].as_str().map(|id| id.to_string())
     }
 
+    #[test]
+    fn detached_autostart_inherits_project_scan_timeout_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let port = reserved_port();
+        let home = seed_home(tmp.path(), port);
+        let _daemon = DetachedDaemonGuard(home.state().join("daemon.pid"));
+
+        let output = orgasmic_command()
+            .arg("status")
+            .env("ORGASMIC_HOME", &home.root)
+            .env("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")
+            .env("ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS", "37")
+            .output()
+            .expect("autostart daemon through status");
+        assert!(
+            output.status.success(),
+            "status autostart failed\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let token = read_token(&home);
+        let status = Command::new("curl")
+            .args([
+                "-s",
+                "--max-time",
+                "5",
+                "-H",
+                &format!("Authorization: Bearer {token}"),
+                &format!("http://127.0.0.1:{port}/api/daemon/status"),
+            ])
+            .output()
+            .expect("curl daemon status");
+        let body: serde_json::Value =
+            serde_json::from_slice(&status.stdout).expect("parse daemon status");
+        assert_eq!(body["index_refresh"]["scan_timeout_ms"], 37_000, "{body}");
+    }
+
     /// TASK-Q07Y5 finding 1: SIGTERM with a terminal-tx-shaped append stuck in
     /// the writer.
     ///
