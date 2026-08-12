@@ -424,11 +424,12 @@ repository git itself would have let you delete. A worktree whose repository is
 gone cannot be salvaged, so unless something refuses it, it is removed with NO
 salvage, and the report says so. There is no `--force` on this verb, so a
 refusal names what to clear by hand instead of offering an override. Before
-deletion begins, the anchored walk must completely traverse the worktree: an
-unreadable descendant or one deeper than 64 directory levels is SKIPPED and
-left untouched. During removal, KEPT means no content was deleted; a failure
-after any deletion is a failed, incomplete removal reported as PARTIAL with the
-affected worktree PATH, and is not counted as reclaimed.")]
+deletion begins, the anchored walk must completely traverse the worktree. A
+worktree containing an unreadable descendant or exceeding the 64-directory-level
+depth bound is SKIPPED whole, and nothing within it is deleted. During removal,
+KEPT means no content was deleted; a failure after any deletion is a failed,
+incomplete removal reported as PARTIAL with the affected worktree PATH, and is
+not counted as reclaimed.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -3735,7 +3736,12 @@ impl ManagedWorktree {
                 format!("repository state undetermined ({detail}); kept until it can be proven")
             }
             WorktreeDisposition::UnsafeTraversal { detail } => {
-                format!("worktree traversal incomplete ({detail}); kept before deletion")
+                format!(
+                    "worktree traversal incomplete ({detail}); the whole worktree was skipped and \
+                     nothing within it was deleted; make the offending descendant readable (for \
+                     example with chmod) or remove it by hand, then re-run — this verb has no \
+                     `--force` override"
+                )
             }
         }
     }
@@ -3840,7 +3846,7 @@ fn scan_managed_worktrees(
                 Ok(walk) => Some(walk),
                 Err(err) => {
                     disposition = WorktreeDisposition::UnsafeTraversal {
-                        detail: err.to_string(),
+                        detail: format!("{err:#}"),
                     };
                     None
                 }

@@ -179,10 +179,11 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
         // offer is something the operator does by hand. The help must say so
         // rather than leave the operator hunting for a flag that is not there.
         "no `--force` on this verb",
-        "unreadable descendant",
-        "deeper than 64 directory levels",
-        "skipped",
-        "left untouched",
+        // Phrase-sensitive on purpose: the subject must be the WORKTREE, not
+        // the unreadable or over-depth descendant. The whole tree is the unit
+        // this verb either authorizes or refuses before deletion begins.
+        "a worktree containing an unreadable descendant or exceeding the 64-directory-level \
+         depth bound is skipped whole, and nothing within it is deleted",
         "kept means no content was deleted",
         "reported as partial",
         "affected worktree path",

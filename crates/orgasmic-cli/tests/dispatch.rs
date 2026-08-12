@@ -10666,8 +10666,21 @@ async fn worktree_prune_refuses_an_unreadable_descendant_before_deletion() {
     assert!(
         all.contains(&format!("SKIP PATH={}", worktree.display()))
             && all.contains("worktree traversal incomplete")
-            && all.contains("z-unreadable"),
-        "the refusal must name both the worktree and unreadable descendant\n{all}"
+            && all.contains("z-unreadable")
+            && all.contains("Permission denied"),
+        "the refusal must name the worktree, unreadable descendant, and full OS error chain\n{all}"
+    );
+    assert!(
+        all.contains("the whole worktree was skipped and nothing within it was deleted"),
+        "the refusal must guarantee that classification authorized no deletion anywhere in the \
+         worktree\n{all}"
+    );
+    assert!(
+        all.contains("make the offending descendant readable")
+            && all.contains("chmod")
+            && all.contains("remove it by hand, then re-run")
+            && all.contains("no `--force` override"),
+        "the refusal must give the safe remedies and say that no force escape exists\n{all}"
     );
     assert!(
         !all.contains(&format!("RECLAIMED PATH={}", worktree.display()))
@@ -10799,12 +10812,13 @@ async fn a_removal_that_stops_part_way_reports_partial_and_never_kept() {
     write(&worktree.join("a-first.txt"), "removed before the failure");
     let blocked = worktree.join("zz-blocked");
     write(&blocked.join("inner.txt"), "cannot be unlinked");
+    let _restore = PermissionRestore::new(&blocked, 0o755);
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500)).unwrap();
-    if std::fs::remove_file(blocked.join("inner.txt")).is_ok() {
-        // Running as root: the failure this test needs cannot be produced.
-        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
+    assert!(
+        std::fs::remove_file(blocked.join("inner.txt")).is_err(),
+        "mode 0500 must actually prevent removal from this directory; a privileged test process \
+         must fail this fixture rather than report a meaningless PARTIAL/KEPT pass"
+    );
 
     let running = boot(home.clone()).await;
     let output = run_orgasmic_output(
