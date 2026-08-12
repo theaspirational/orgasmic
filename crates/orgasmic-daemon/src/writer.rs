@@ -45,6 +45,17 @@ pub mod test_hooks {
     static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
 
+    #[cfg(test)]
+    #[derive(Debug)]
+    struct RenameBeforeSync {
+        source: PathBuf,
+        destination: PathBuf,
+    }
+
+    #[cfg(test)]
+    static RENAME_BEFORE_SYNC: std::sync::Mutex<Vec<RenameBeforeSync>> =
+        std::sync::Mutex::new(Vec::new());
+
     /// Per-`WriterHandle` failure observation for lifecycle persistence tests.
     /// It deliberately has no process-global registry: two writers may append
     /// the same run/path concurrently, and only the handle that armed this
@@ -96,7 +107,25 @@ pub mod test_hooks {
         FAIL_NEXT_SYNC.store(count, Ordering::SeqCst);
     }
 
-    pub(crate) fn before_sync() -> Result<()> {
+    #[cfg(test)]
+    pub(crate) fn rename_tx_path_before_next_sync(source: &Path, destination: &Path) {
+        let mut armed = RENAME_BEFORE_SYNC
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(
+            !armed.iter().any(|rename| rename.source == source),
+            "a tx path rename before sync is already armed for {}",
+            source.display()
+        );
+        armed.push(RenameBeforeSync {
+            source: source.to_path_buf(),
+            destination: destination.to_path_buf(),
+        });
+    }
+
+    pub(crate) fn before_sync(path: &Path) -> Result<()> {
+        #[cfg(not(test))]
+        let _ = path;
         SYNC_ATTEMPT_COUNT.fetch_add(1, Ordering::SeqCst);
         if FAIL_NEXT_SYNC
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
@@ -105,6 +134,27 @@ pub mod test_hooks {
             .is_ok()
         {
             bail!("injected tx append fsync failure");
+        }
+        #[cfg(test)]
+        {
+            let rename = {
+                let mut armed = RENAME_BEFORE_SYNC
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                armed
+                    .iter()
+                    .position(|rename| rename.source == path)
+                    .map(|position| armed.remove(position))
+            };
+            if let Some(rename) = rename {
+                std::fs::rename(&rename.source, &rename.destination).with_context(|| {
+                    format!(
+                        "rename tx path before sync {} -> {}",
+                        rename.source.display(),
+                        rename.destination.display()
+                    )
+                })?;
+            }
         }
         Ok(())
     }
@@ -1267,7 +1317,7 @@ async fn writer_loop(
                                 },
                             )
                         }
-                        None => unreachable!("all writer transactions carry an identity"),
+                        None => Err(anyhow!("writer transaction lacks a mutation identity")),
                     }
                 };
                 let mut reply = Some(reply);
@@ -1729,7 +1779,7 @@ fn write_tx_append(
 }
 
 fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Result<()> {
-    test_hooks::before_sync()?;
+    test_hooks::before_sync(path)?;
     let writer = handles
         .get(path)
         .ok_or_else(|| anyhow!("no cached tx writer for {}", path.display()))?;
@@ -2415,6 +2465,125 @@ mod tests {
         let source = std::fs::read_to_string(&tx_path).unwrap();
         let count = source.matches("tx-test-2").count();
         assert_eq!(count, 1, "duplicate request_id must not double-append");
+    }
+
+    #[tokio::test]
+    async fn tx_append_syncs_retained_descriptor_after_path_rename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        let renamed_path = tmp.path().join("tx").join("2026-08-renamed.org");
+        let handle = spawn(EventBus::new());
+
+        test_hooks::rename_tx_path_before_next_sync(&tx_path, &renamed_path);
+        handle
+            .append_tx(
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-retained-descriptor"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: None,
+                },
+                Some("req-retained-descriptor".into()),
+            )
+            .await
+            .expect("daemon writer append must acknowledge through its retained descriptor");
+
+        assert!(
+            !tx_path.exists(),
+            "the hook must rename the pathname before sync"
+        );
+        let source = std::fs::read_to_string(&renamed_path).unwrap();
+        assert!(source.contains("tx-retained-descriptor"));
+    }
+
+    #[tokio::test]
+    async fn rewrite_transaction_syncs_retained_descriptor_after_path_rename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("tasks.org");
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        let renamed_path = tmp.path().join("tx").join("2026-08-renamed.org");
+        std::fs::write(&target, "before\n").unwrap();
+        let handle = spawn(EventBus::new());
+
+        test_hooks::rename_tx_path_before_next_sync(&tx_path, &renamed_path);
+        handle
+            .transaction(
+                vec![FileRewrite {
+                    path: target.clone(),
+                    new_contents: b"after\n".to_vec(),
+                }],
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-rewrite-retained-descriptor"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-rewrite-retained-descriptor".into()),
+                },
+            )
+            .await
+            .expect("rewrite transaction must acknowledge through its retained descriptor");
+
+        assert!(
+            !tx_path.exists(),
+            "the hook must rename the pathname before sync"
+        );
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "after\n");
+        let source = std::fs::read_to_string(&renamed_path).unwrap();
+        assert!(source.contains("tx-rewrite-retained-descriptor"));
+    }
+
+    #[tokio::test]
+    async fn malformed_transaction_is_request_local_and_writer_stays_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        let handle = spawn(EventBus::new());
+        let (reply, rx) = oneshot::channel();
+
+        handle
+            .tx
+            .send(WriterCommand::Transaction {
+                req: TransactionRequest {
+                    rewrites: Vec::new(),
+                    tx: TxAppend {
+                        tx_path: tx_path.clone(),
+                        entry: sample_entry("tx-missing-mutation-identity"),
+                        project_id: Some("orgasmic".into()),
+                        tx_id_policy: TxIdPolicy::Preserve,
+                        request_id: Some("req-missing-mutation-identity".into()),
+                    },
+                    request_id: "req-missing-mutation-identity".into(),
+                    mutation: None,
+                    mutation_id: None,
+                },
+                reply,
+            })
+            .await
+            .expect("queue malformed private writer command");
+        let error = rx
+            .await
+            .expect("malformed transaction receives a reply")
+            .expect_err("missing mutation identity must be rejected");
+        assert_eq!(
+            error.to_string(),
+            "writer transaction lacks a mutation identity"
+        );
+
+        handle
+            .append_tx(
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-after-malformed-transaction"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: None,
+                },
+                Some("req-after-malformed-transaction".into()),
+            )
+            .await
+            .expect("writer accepts the next command");
+        let source = std::fs::read_to_string(tx_path).unwrap();
+        assert!(source.contains("tx-after-malformed-transaction"));
     }
 
     #[tokio::test]
