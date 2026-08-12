@@ -138,4 +138,3 @@ Fix the deterministic rejection from the final Opus review without changing the 
 - [ ] The late-waiter test has a robust timeout margin and dismissal normalization is tested across reordered project ids.
 - [ ] systemd service environment rendering rejects or safely handles control characters in the captured scan-timeout value, with a renderer test.
 - [ ] Run focused Rust/CLI/UI gates plus format, clippy, build, and report the existing aggregate classification; do not run a redundant broad daemon suite and do not install or restart any live daemon/service.
-
