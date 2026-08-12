@@ -30843,3 +30843,90 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-12 Wed 08:10:41 task.created TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5838
+:TIME:         [2026-08-12 Wed 08:10:41]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Regression observed after installing the current local branch from source; operator requested a direct local implementation without dispatches.
+:END:
+
+* TX 2026-08-12 Wed 08:10:53 manager.tier TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5839
+:TIME:         [2026-08-12 Wed 08:10:53]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:REASON:       P2; no dependency or parent; scoped to contributor installer publication in one crate plus scripts/install.sh; estimated under ten files and 300 net lines; no daemon boot/recovery/project-auth code changes.
+:TIER:         trivial
+:TRIGGERS:     none
+:END:
+
+* TX 2026-08-12 Wed 08:35:24 task.state_transitioned TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5840
+:TIME:         [2026-08-12 Wed 08:35:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Direct implementation began in the current checkout at operator request; no worker dispatch used.
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-12 Wed 08:35:34 task.edited TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5841
+:TIME:         [2026-08-12 Wed 08:35:34]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9JWS1
+:NODE_ID:      TASK-9JWS1
+:END:
+
+* TX 2026-08-12 Wed 08:35:34 task.state_transitioned TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5842
+:TIME:         [2026-08-12 Wed 08:35:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Acceptance met: source publication is centralized, final identity is enforced, TCC-stable identity was preserved in a live temporary-home probe, and all required gates are green.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-12 Wed 08:36:00 manager.tier TASK-9JWS1
+:PROPERTIES:
+:TX_ID:        tx-20260812-orgasmic-5843
+:TIME:         [2026-08-12 Wed 08:36:00]
+:TYPE:         manager.tier
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9JWS1
+:REASON:       Final tracked diff exceeds 300 net lines after task and tx evidence. Operator explicitly required direct implementation here with no orgasmic dispatches, so the ordinary-tier delegation step is intentionally omitted; implementation, review, and gates stayed local.
+:TIER:         ordinary
+:TRIGGERS:     breadth
+:PREVIOUS_TIER: trivial
+:END:

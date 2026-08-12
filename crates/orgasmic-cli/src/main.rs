@@ -75,6 +75,9 @@ enum Cmd {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<OsString>,
     },
+    /// Internal source-installer boundary for identity-checked publication.
+    #[command(name = "__install-managed-source", hide = true)]
+    InstallManagedSource { source: PathBuf },
     /// Scaffold `$ORGASMIC_HOME` (config, dirs, secrets, sessions).
     #[command(after_help = "\
 Examples:
@@ -1480,6 +1483,21 @@ fn main() -> Result<()> {
             governance_json,
         ),
         Cmd::ExecPinned { .. } => unreachable!("handled before home/tracing initialization"),
+        Cmd::InstallManagedSource { source } => {
+            let installed = managed_binary::install_source(
+                &home,
+                &source,
+                managed_binary::IdentityGuard::Enforce,
+            )?;
+            println!("→ installed {} from source", installed.path.display());
+            if installed.resigned {
+                println!("  re-signed before publication");
+            }
+            if installed.preserves_grants() {
+                println!("  macOS permission grants preserved");
+            }
+            Ok(())
+        }
     }
 }
 

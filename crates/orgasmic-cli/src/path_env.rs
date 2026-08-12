@@ -407,7 +407,11 @@ pub fn relink_source_binary(home: &Home, source: &Path) -> Result<PathBuf> {
             source.join("target").display()
         )
     })?;
-    crate::managed_binary::install(home, &bin, crate::managed_binary::IdentityGuard::Enforce)?;
+    crate::managed_binary::install_source(
+        home,
+        &bin,
+        crate::managed_binary::IdentityGuard::Enforce,
+    )?;
     Ok(bin)
 }
 

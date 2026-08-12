@@ -31727,3 +31727,31 @@ Close the two correctness/performance follow-ups from Claude Opus review tx-2026
 - [ ] Unscoped /tx avoids one full Index snapshot clone per failed/delayed project; use one post-loop snapshot or eliminate the snapshot classification dependency.
 - [ ] Captured scan-timeout control-character validation is common to macOS and systemd render paths, preserving ordinary raw values and daemon 1..300 validation.
 - [ ] Run focused Rust/CLI tests, formatting, clippy, and build; do not run the classified broad daemon aggregate or mutate any live service/daemon.
+
+* DONE TASK-9JWS1 Preserve the signed TCC identity during contributor source installs :install:macos:regression:
+:PROPERTIES:
+:ID: TASK-9JWS1
+:PRIORITY: P2
+:TEST_CMD: cargo test -p orgasmic-cli managed_binary && cargo build --release
+:WRITE_SCOPE: scripts/install.sh,crates/orgasmic-cli/src/managed_binary.rs,crates/orgasmic-cli/src/main.rs,crates/orgasmic-cli/tests/**
+:END:
+
+** Description
+Contributor =scripts/install.sh --from-source= publishes the linker/ad-hoc-signed build with a shell copy before the central managed-binary guard can compare or re-sign it. This breaks the stable signing identity from TASK-9P810 and makes macOS TCC request Documents access again.
+
+
+=== Implementation evidence
+- Contributor =install.sh= stages source bytes outside the Documents checkout and invokes the stable installed publisher when available.
+- The hidden publisher routes through =managed_binary::install_source=, re-signs the staged build with the matching incumbent keychain identity, enforces the final designated requirement, and publishes by fresh-inode rename.
+- A temporary-home live probe preserved =identifier "com.theaspirational.orgasmic" and certificate root = H"a705...d86d"=. A forced wrong-identity probe was refused and left the incumbent SHA-256 unchanged.
+- Targeted tests: 15 passed, 1 environment-dependent test ignored; installer integration: 2 passed.
+- =cargo clippy --workspace --all-targets -- -D warnings=: green.
+- =scripts/run-tests.sh=: GREEN, zero failures/crashes/waivers, host calm.
+- =cargo build --release=: green.
+
+** Acceptance
+- source installation publishes through the central managed-binary path
+- =ORGASMIC_CODESIGN_IDENTITY= can re-sign a linker-signed build before identity enforcement
+- a different final designated requirement is refused before replacement
+- stable path and fresh-inode replacement remain intact
+- regression tests cover re-sign-before-enforce and installer delegation
