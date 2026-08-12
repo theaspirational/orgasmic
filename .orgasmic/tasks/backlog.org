@@ -4755,6 +4755,7 @@ Represent partial verification and recoverable worker output explicitly. A dispa
 :ID: TASK-BX5SR.2
 :PRIORITY: P1
 :WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:LIVE_DAEMON_PROBE: retained-sync-live-20260813T013019
 :END:
 
 ** Description
