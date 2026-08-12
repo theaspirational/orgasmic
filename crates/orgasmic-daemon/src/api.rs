@@ -32933,27 +32933,13 @@ pub(crate) mod tests {
     // orgasmic:task_K4G1D
     #[tokio::test]
     async fn recovery_reattaches_rmux_session_when_handle_exists() {
-        let live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        #[cfg(unix)]
-        let server = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests();
-        #[cfg(unix)]
-        live_guard.owns_runs_on(server);
-        let session_name = assert_recovery_reattaches_mux_session(
-            MuxMode::Rmux,
-            "recovery_reattaches_rmux_session_when_handle_exists",
-            &live_guard,
-        )
-        .await;
-        #[cfg(unix)]
-        if let Some(session_name) = session_name {
-            assert!(
-                server.session_names().contains(&session_name),
-                "the recovery fixture must be live on the test-owned rmux server"
-            );
+        const TEST_NAME: &str = "recovery_reattaches_rmux_session_when_handle_exists";
+        if skip_mux_mode_if_unavailable(TEST_NAME, MuxMode::Rmux) {
+            return;
         }
-        #[cfg(not(unix))]
-        let _ = session_name;
+        let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
+        assert_recovery_reattaches_mux_session(MuxMode::Rmux, TEST_NAME, &live_guard).await;
     }
 
     #[tokio::test]

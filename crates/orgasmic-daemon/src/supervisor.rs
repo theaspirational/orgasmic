@@ -1598,9 +1598,17 @@ impl Supervisor {
         )
     }
 
-    /// Ask the probe what is running under a run, bounded by
-    /// [`WORK_PROBE_TIMEOUT`]. The probe shells out, so it runs on the blocking
-    /// pool and never under the supervisor lock.
+    /// Ask the probe what is running under a run, waiting at most
+    /// [`WORK_PROBE_TIMEOUT`] for its answer. The probe shells out, so it runs
+    /// on the blocking pool and never under the supervisor lock.
+    ///
+    /// This timeout bounds the supervisor sweep, not the blocking task:
+    /// `spawn_blocking` cannot cancel a synchronous [`Command::spawn`]. If the
+    /// await expires, the sweep fails closed with [`WorkEvidence::Unknown`]
+    /// while the task continues to own, kill, and reap any child it spawned.
+    /// One observation can make up to three sequential subprocess calls; each
+    /// has the `spawn + child deadline + cleanup` contract documented on
+    /// [`probe_command_stdout`].
     async fn observe_work_evidence(&self, target: WorkProbeTarget) -> WorkEvidence {
         let probe = self.work_probe();
         let observation = tokio::time::timeout(
@@ -5448,8 +5456,9 @@ fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<
 /// actually ends both.
 ///
 /// Two seconds is an order of magnitude above what these calls take when the
-/// mux is healthy (a local `display-message` or `capture-pane` round trip) and
-/// well inside the 5 s the supervisor is prepared to wait for the whole probe.
+/// mux is healthy (a local `display-message` or `capture-pane` round trip).
+/// It is a POST-SPAWN child budget, not a whole-probe wall budget; see
+/// [`probe_command_stdout`] and [`Supervisor::observe_work_evidence`].
 // orgasmic:TASK-JQ8AV.1
 const PROBE_CHILD_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -5486,14 +5495,35 @@ const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// funnel exists to close: the blocking task, the helper thread and the
 /// descendant all outlive [`WORK_PROBE_TIMEOUT`], once per sweep, for as long
 /// as the condition lasts.
+///
+/// `Command::spawn` is synchronous and Rust provides no way to forcibly cancel
+/// it. Therefore this function deliberately has a whole-call contract of
+/// `spawn + child deadline + synchronous cleanup`: after `spawn` returns, the
+/// child receives the COMPLETE supplied deadline, then any required group
+/// kill, reap, and reader join run before return. There is no finite whole-call
+/// bound independent of spawn latency or OS scheduling. Callers that need a
+/// shorter decision bound must time out their WAIT, as
+/// [`Supervisor::observe_work_evidence`] does; that does not detach this owned
+/// cleanup.
 // orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+    probe_command_stdout_with_spawner(&mut cmd, deadline, Command::spawn)
+}
+
+/// Implementation seam for deterministically exercising synchronous spawn
+/// latency. The spawner owns all blocking work up to returning the tracked
+/// child; production passes [`Command::spawn`] directly.
+fn probe_command_stdout_with_spawner(
+    cmd: &mut Command,
+    deadline: Duration,
+    spawn: impl FnOnce(&mut Command) -> std::io::Result<std::process::Child>,
+) -> Option<Vec<u8>> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
         cmd.process_group(0);
     }
-    let mut child = cmd.spawn().ok()?;
+    let mut child = spawn(cmd).ok()?;
     // `Command::spawn` is synchronous and cannot be interrupted by this
     // function's polling loop. Start the enforceable runtime budget only once
     // the child exists; otherwise warm-host spawn latency can consume the
@@ -10965,7 +10995,11 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        let deadline = Duration::from_millis(400);
+        // Test-local setup budget: after `/bin/sh` has spawned it still has to
+        // fork `sleep` and write the pidfile before the behavioral deadline.
+        // Keep that warm-host setup out of the assertion while still requiring
+        // deadline kill + reap below.
+        let deadline = Duration::from_secs(2);
         let started = Instant::now();
         let (out, child_pids) = tokio::task::spawn_blocking(move || {
             // The pids are read back out of the probe's own child, so the
@@ -11028,7 +11062,11 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        let deadline = Duration::from_millis(400);
+        // Test-local setup budget: after `/bin/sh` has spawned it still has to
+        // fork `sleep` and write the pidfile before the behavioral deadline.
+        // Keep that warm-host setup out of the assertion while still requiring
+        // deadline kill + reap below.
+        let deadline = Duration::from_secs(2);
         let started = Instant::now();
         let (out, grandchild) = tokio::task::spawn_blocking(move || {
             let out = probe_command_stdout(cmd, deadline);
@@ -11055,6 +11093,78 @@ mod tests {
             wait_for_pid_to_disappear(grandchild, Duration::from_secs(5)).await,
             "the descendant holding the pipe must be killed with the group; pid \
              {grandchild} survived"
+        );
+    }
+
+    /// TASK-GPY3H: synchronous spawn latency is additive to, and must never
+    /// consume, the post-spawn child deadline.
+    ///
+    /// The injected spawner blocks longer than the child budget before it
+    /// creates a child that cannot exit by itself. A deadline measured before
+    /// spawn would return almost immediately afterward; the production
+    /// contract instead grants the tracked child its full budget and returns
+    /// within measured spawn time + that budget + bounded test tolerance.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_spawn_latency_is_additive_to_the_full_post_spawn_deadline() {
+        let mut cmd = Command::new("/bin/sleep");
+        cmd.arg("120")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let child_deadline = Duration::from_millis(200);
+        let injected_spawn_latency = child_deadline + Duration::from_millis(150);
+        let spawn_returned_at = Arc::new(std::sync::Mutex::new(None));
+        let child_pid = Arc::new(std::sync::Mutex::new(None));
+        let started = Instant::now();
+        let out = {
+            let spawn_returned_at = Arc::clone(&spawn_returned_at);
+            let child_pid = Arc::clone(&child_pid);
+            tokio::task::spawn_blocking(move || {
+                probe_command_stdout_with_spawner(&mut cmd, child_deadline, move |cmd| {
+                    std::thread::sleep(injected_spawn_latency);
+                    let child = cmd.spawn()?;
+                    *child_pid.lock().expect("child pid slot") = Some(child.id());
+                    *spawn_returned_at.lock().expect("spawn time slot") = Some(Instant::now());
+                    Ok(child)
+                })
+            })
+            .await
+            .expect("probe task")
+        };
+        let finished_at = Instant::now();
+        let spawn_returned_at = spawn_returned_at
+            .lock()
+            .expect("spawn time slot")
+            .expect("the injected spawner returned a child");
+        let child_pid = child_pid
+            .lock()
+            .expect("child pid slot")
+            .expect("the injected spawner recorded its child");
+        let spawn_wall = spawn_returned_at.duration_since(started);
+        let post_spawn_wall = finished_at.duration_since(spawn_returned_at);
+        let total_wall = finished_at.duration_since(started);
+
+        assert!(out.is_none(), "the deadlined child must not report success");
+        assert!(
+            spawn_wall >= injected_spawn_latency,
+            "the seam must delay spawn past the child budget: spawn={spawn_wall:?}, \
+             injected={injected_spawn_latency:?}"
+        );
+        assert!(
+            post_spawn_wall >= child_deadline,
+            "spawn latency must not consume the child's budget: post-spawn={post_spawn_wall:?}, \
+             budget={child_deadline:?}"
+        );
+        assert!(
+            total_wall < spawn_wall + child_deadline + Duration::from_secs(2),
+            "whole-call wall time must be measured spawn + child deadline + cleanup: \
+             total={total_wall:?}, spawn={spawn_wall:?}, budget={child_deadline:?}"
+        );
+        assert!(
+            wait_for_pid_to_disappear(child_pid, Duration::from_secs(2)).await,
+            "the tracked child must be killed and reaped; pid {child_pid} survived"
         );
     }
 
