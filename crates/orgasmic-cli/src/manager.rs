@@ -923,12 +923,11 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     )?;
 
     // TASK-79VKP.6: a dispatch must keep Cargo's target directory private to
-    // its checkout.  Seed only registry-package artifacts: cloning the whole
-    // manager target and then cleaning workspace output charged every dispatch
-    // for tens of GiB of needless copy traversal.  Worker binaries and
-    // fingerprints remain private, while reusable third-party artifacts are
-    // copied copy-on-write.  Any ordinary seed failure falls back to an empty
-    // private target rather than delaying or weakening dispatch.
+    // its checkout.  When APFS can clone the manager target cheaply, seed that
+    // private target and remove every workspace artifact before the worker
+    // starts.  The remaining third-party objects are reusable; the worker's
+    // binary and fingerprints are not.  Any ordinary seed failure falls back
+    // to an empty private target rather than delaying or weakening dispatch.
     let cache_seed = match seed_private_worktree_target(&plan.project_root, &plan.worktree_path) {
         Ok(outcome) => outcome,
         Err(err) => {
@@ -6829,7 +6828,6 @@ fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
 enum WorktreeTargetSeed {
     Seeded {
         elapsed: Duration,
-        entries: usize,
     },
     Skipped {
         elapsed: Duration,
@@ -6852,7 +6850,7 @@ impl WorktreeTargetSeed {
 
     fn elapsed(&self) -> Duration {
         match self {
-            Self::Seeded { elapsed, .. }
+            Self::Seeded { elapsed }
             | Self::Skipped { elapsed, .. }
             | Self::Fallback { elapsed, .. } => *elapsed,
         }
@@ -6860,9 +6858,7 @@ impl WorktreeTargetSeed {
 
     fn detail(&self) -> String {
         match self {
-            Self::Seeded { entries, .. } => {
-                format!(" source=registry-artifacts entries={entries}")
-            }
+            Self::Seeded { .. } => " source=manager-target".to_string(),
             Self::Skipped { reason, .. } => format!(" reason={reason}"),
             Self::Fallback { reason, .. } => format!(" reason={reason}"),
         }
@@ -6870,10 +6866,10 @@ impl WorktreeTargetSeed {
 }
 
 /// Seed `worktree/target` without ever making it share mutable state with the
-/// manager checkout.  The seed contains only artifacts for registry packages;
-/// workspace packages, integration-test binaries, fingerprints and build
-/// scripts are excluded before any copy takes place.  A worker therefore
-/// rebuilds its own package and test artifacts from its own source path.
+/// manager checkout.  APFS clones make the initial copy copy-on-write; Cargo
+/// then removes all workspace outputs from the *clone*.  Registry dependency
+/// artifacts may survive, but the worker will rebuild its own package,
+/// fingerprints and executable from its own source path.
 // orgasmic:TASK-79VKP.6
 fn seed_private_worktree_target(
     project_root: &Path,
@@ -6912,34 +6908,41 @@ fn seed_private_worktree_target(
 
     #[cfg(target_os = "macos")]
     {
-        let registry_prefixes = match registry_artifact_prefixes(project_root) {
-            Ok(prefixes) => prefixes,
-            Err(err) => {
-                remove_incomplete_private_target(&target)?;
-                return Ok(WorktreeTargetSeed::Fallback {
-                    elapsed: started.elapsed(),
-                    reason: format!("metadata-error-{}", compact_error(&err)),
-                });
-            }
-        };
-
-        // Skip incremental objects and every workspace-owned output.  They
-        // account for most of a hot target and are not reusable across linked
-        // checkouts.  Selecting before cloning avoids the prior clone-then-
-        // clean path, which walked the whole target only to discard it.
+        // Skip incremental objects: they are tied to one workspace crate and
+        // account for most of a hot target's disk use.  Cargo can recreate
+        // them privately.  The three copied directories contain dependency
+        // objects and their fingerprints; the cleanup below strips every
+        // workspace-owned entry before a worker can see it.
         let target_debug = target.join("debug");
         std::fs::create_dir_all(&target_debug)
             .with_context(|| format!("create private target {}", target_debug.display()))?;
-        let mut entries = 0;
         for component in ["deps", ".fingerprint", "build"] {
             let component_source = source.join(component);
             if !component_source.is_dir() {
                 continue;
             }
             let component_target = target_debug.join(component);
-            match clone_registry_component(&component_source, &component_target, &registry_prefixes)
-            {
-                Ok(copied) => entries += copied,
+            let clone = Command::new("/bin/cp")
+                .args(["-cR"])
+                .arg(&component_source)
+                .arg(&component_target)
+                .output()
+                .with_context(|| {
+                    format!(
+                        "copy-on-write clone manager target component {} into {}",
+                        component_source.display(),
+                        component_target.display()
+                    )
+                });
+            match clone {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    remove_incomplete_private_target(&target)?;
+                    return Ok(WorktreeTargetSeed::Fallback {
+                        elapsed: started.elapsed(),
+                        reason: format!("clone-{component}-exit-{}", output.status),
+                    });
+                }
                 Err(err) => {
                     remove_incomplete_private_target(&target)?;
                     return Ok(WorktreeTargetSeed::Fallback {
@@ -6950,116 +6953,36 @@ fn seed_private_worktree_target(
             }
         }
 
-        Ok(WorktreeTargetSeed::Seeded {
-            elapsed: started.elapsed(),
-            entries,
-        })
-    }
-}
-
-#[derive(Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoMetadataPackage>,
-}
-
-#[derive(Deserialize)]
-struct CargoMetadataPackage {
-    name: String,
-    source: Option<String>,
-}
-
-/// Return every possible file-name prefix Cargo uses for a registry package.
-/// Cargo translates `-` to `_` for Rust crate output, retains `-` for several
-/// build/fingerprint directories, and prepends `lib` to library artifacts.
-fn registry_artifact_prefixes(project_root: &Path) -> Result<BTreeSet<String>> {
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked"])
-        .current_dir(project_root)
-        .output()
-        .context("read Cargo registry package metadata for private target seed")?;
-    if !output.status.success() {
-        bail!(
-            "cargo metadata for private target seed failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)
-        .context("parse Cargo registry package metadata for private target seed")?;
-    let mut prefixes = BTreeSet::new();
-    for package in metadata.packages {
-        if package.source.is_none() {
-            continue;
-        }
-        let normalized = package.name.replace('-', "_");
-        for name in [package.name, normalized] {
-            prefixes.insert(name.clone());
-            prefixes.insert(format!("lib{name}"));
-        }
-    }
-    Ok(prefixes)
-}
-
-fn is_registry_artifact(entry_name: &str, prefixes: &BTreeSet<String>) -> bool {
-    prefixes.iter().any(|prefix| {
-        entry_name
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.starts_with('-') || suffix.starts_with('.'))
-    })
-}
-
-/// Clone only selected direct children.  Batching avoids one `cp` process per
-/// artifact while keeping argv below macOS's conservative limit.
-fn clone_registry_component(
-    source: &Path,
-    target: &Path,
-    prefixes: &BTreeSet<String>,
-) -> Result<usize> {
-    let mut selected = Vec::new();
-    for entry in std::fs::read_dir(source)
-        .with_context(|| format!("read manager target component {}", source.display()))?
-    {
-        let entry = entry.with_context(|| {
-            format!(
-                "read entry in manager target component {}",
-                source.display()
-            )
-        })?;
-        if entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| is_registry_artifact(name, prefixes))
-        {
-            selected.push(entry.path());
-        }
-    }
-    selected.sort();
-    if selected.is_empty() {
-        return Ok(0);
-    }
-    std::fs::create_dir_all(target)
-        .with_context(|| format!("create private target component {}", target.display()))?;
-    for batch in selected.chunks(256) {
-        let output = Command::new("/bin/cp")
-            .arg("-cR")
-            .args(batch)
-            .arg(target)
+        // `--workspace` removes every package belonging to this repository
+        // from the clone.  It MUST run with the worker's Cargo.toml and an
+        // explicit private target, otherwise copied dep-info may make Cargo
+        // judge another checkout's source as Fresh.
+        let clean = Command::new("cargo")
+            .args(["clean", "--workspace", "--target-dir"])
+            .arg(&target)
+            .current_dir(worktree)
             .output()
-            .with_context(|| {
-                format!(
-                    "copy-on-write clone selected manager target entries from {} into {}",
-                    source.display(),
-                    target.display()
-                )
-            })?;
-        if !output.status.success() {
-            bail!(
-                "copy-on-write clone selected entries failed: {}{}",
-                String::from_utf8_lossy(&output.stderr),
-                String::from_utf8_lossy(&output.stdout)
-            );
+            .with_context(|| format!("clean copied target {}", target.display()));
+        match clean {
+            Ok(output) if output.status.success() => Ok(WorktreeTargetSeed::Seeded {
+                elapsed: started.elapsed(),
+            }),
+            Ok(output) => {
+                remove_incomplete_private_target(&target)?;
+                Ok(WorktreeTargetSeed::Fallback {
+                    elapsed: started.elapsed(),
+                    reason: format!("cargo-clean-exit-{}", output.status),
+                })
+            }
+            Err(err) => {
+                remove_incomplete_private_target(&target)?;
+                Ok(WorktreeTargetSeed::Fallback {
+                    elapsed: started.elapsed(),
+                    reason: format!("cargo-clean-error-{}", compact_error(&err)),
+                })
+            }
         }
     }
-    Ok(selected.len())
 }
 
 /// Delete only a target just created inside a brand-new dispatch worktree.
@@ -10328,20 +10251,6 @@ mod tests {
         };
         assert_eq!(run(&first), "FIRST\n");
         assert_eq!(run(&second), "SECOND\n");
-    }
-
-    #[test]
-    fn private_target_seed_selects_only_registry_artifacts() {
-        let prefixes = BTreeSet::from([
-            "anyhow".to_string(),
-            "libanyhow".to_string(),
-            "serde_json".to_string(),
-        ]);
-        assert!(is_registry_artifact("libanyhow-abc.rlib", &prefixes));
-        assert!(is_registry_artifact("anyhow-abc.d", &prefixes));
-        assert!(is_registry_artifact("serde_json-abc", &prefixes));
-        assert!(!is_registry_artifact("orgasmic_daemon-abc.rlib", &prefixes));
-        assert!(!is_registry_artifact("writer_durability-abc", &prefixes));
     }
 
     /// A project id is a path segment in the managed root, so anything that
