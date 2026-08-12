@@ -5493,8 +5493,12 @@ fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>>
         use std::os::unix::process::CommandExt as _;
         cmd.process_group(0);
     }
-    let expires_at = std::time::Instant::now() + deadline;
     let mut child = cmd.spawn().ok()?;
+    // `Command::spawn` is synchronous and cannot be interrupted by this
+    // function's polling loop. Start the enforceable runtime budget only once
+    // the child exists; otherwise warm-host spawn latency can consume the
+    // whole budget before there is a process the deadline can kill.
+    let expires_at = std::time::Instant::now() + deadline;
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -11065,9 +11069,10 @@ mod tests {
     /// `ProcessSubtreeCpuProbe::observe` → `work_probe_root_pid` → `pane_pid` →
     /// `probe_command_stdout`.
     ///
-    /// Bounded latency is asserted BELOW [`WORK_PROBE_TIMEOUT`] on purpose: at
-    /// or above it the assertion would pass on the outer timeout alone and
-    /// prove nothing about the child deadline.
+    /// The child deadline itself is proven at [`probe_command_stdout`]'s two
+    /// focused tests above. This supervisor-level test asserts the safety
+    /// behavior instead of a wall-clock threshold that also charges unrelated
+    /// fixture setup and host scheduling delay.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport() {
@@ -11129,6 +11134,7 @@ mod tests {
                 Some(1),
                 None,
             );
+            let session_path = req.session_path.clone();
             let resp = sup.acquire(&driver, req).await.unwrap();
             // A pane transport carries no wrapper pid, so the probe's FIRST act
             // is the mux call that is about to hang.
@@ -11140,9 +11146,7 @@ mod tests {
             }
             age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
 
-            let started = Instant::now();
             sup.release_first_timed_out_run().await;
-            let elapsed = started.elapsed();
 
             let hung_child = std::fs::read_to_string(&pidfile)
                 .ok()
@@ -11160,9 +11164,14 @@ mod tests {
                 panic!("{transport}: the probe never reached the hanging mux binary")
             });
             assert!(
-                elapsed < WORK_PROBE_TIMEOUT,
-                "{transport}: the sweep must be bounded by the CHILD deadline, not by \
-                 WORK_PROBE_TIMEOUT; took {elapsed:?}"
+                !run_is_live(&sup, &resp.run_id).await,
+                "{transport}: an unanswerable probe must release the stalled run"
+            );
+            assert_eq!(
+                release_reason(&session_path).as_deref(),
+                Some(STALL_TIMEOUT_REASON),
+                "{transport}: a hung probe must remain Unknown, add no work credit, and \
+                 preserve the bare stall reason"
             );
             assert!(
                 wait_for_pid_to_disappear(hung_child, Duration::from_secs(5)).await,

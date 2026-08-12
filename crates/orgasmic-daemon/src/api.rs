@@ -32844,10 +32844,13 @@ pub(crate) mod tests {
     /// binary starts the session and which transport the session file records,
     /// which is precisely what makes a divergence between the two arms a
     /// statement about the multiplexer rather than about the test.
-    async fn assert_recovery_reattaches_mux_session(mode: MuxMode, test_name: &str) {
-        let live_guard = live_session_guard();
+    async fn assert_recovery_reattaches_mux_session(
+        mode: MuxMode,
+        test_name: &str,
+        live_guard: &LiveSessionGuard,
+    ) -> Option<String> {
         if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
+            return None;
         }
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -32859,7 +32862,7 @@ pub(crate) mod tests {
             boot_id: "boot-test".into(),
         };
         let session_name = mode.session_name(&identity);
-        let _guard = mode.start_detached_session(&session_name, &live_guard);
+        let _guard = mode.start_detached_session(&session_name, live_guard);
         let project_root = tmp.path().join("proj");
         write_nonterminal_session(
             &project_root,
@@ -32913,13 +32916,16 @@ pub(crate) mod tests {
             run.recovery_actions,
             mode.diagnostic()
         );
+        Some(session_name)
     }
 
     #[tokio::test]
     async fn recovery_reattaches_tmux_session_when_handle_exists() {
+        let live_guard = live_session_guard();
         assert_recovery_reattaches_mux_session(
             MuxMode::Tmux,
             "recovery_reattaches_tmux_session_when_handle_exists",
+            &live_guard,
         )
         .await;
     }
@@ -32927,11 +32933,27 @@ pub(crate) mod tests {
     // orgasmic:task_K4G1D
     #[tokio::test]
     async fn recovery_reattaches_rmux_session_when_handle_exists() {
-        assert_recovery_reattaches_mux_session(
+        let live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        #[cfg(unix)]
+        let server = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests();
+        #[cfg(unix)]
+        live_guard.owns_runs_on(server);
+        let session_name = assert_recovery_reattaches_mux_session(
             MuxMode::Rmux,
             "recovery_reattaches_rmux_session_when_handle_exists",
+            &live_guard,
         )
         .await;
+        #[cfg(unix)]
+        if let Some(session_name) = session_name {
+            assert!(
+                server.session_names().contains(&session_name),
+                "the recovery fixture must be live on the test-owned rmux server"
+            );
+        }
+        #[cfg(not(unix))]
+        let _ = session_name;
     }
 
     #[tokio::test]
