@@ -16,6 +16,29 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+#[cfg(unix)]
+struct PermissionRestore {
+    path: PathBuf,
+    mode: u32,
+}
+
+#[cfg(unix)]
+impl PermissionRestore {
+    fn new(path: &Path, mode: u32) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            mode,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PermissionRestore {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+    }
+}
+
 // orgasmic:task_K5NDR
 #[path = "common/env_isolation.rs"]
 mod env_isolation;
@@ -10576,6 +10599,180 @@ async fn worktree_prune_refuses_a_live_run_in_a_nonconforming_worktree_name() {
     let _ = running.join.await;
 }
 
+/// TASK-GRCWC: a mode-000 descendant used to make the preliminary walk silently
+/// under-count the tree and then authorize deletion. The real verb must now
+/// refuse during classification, before either an earlier or blocked sentinel
+/// can be removed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_an_unreadable_descendant_before_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-unreadable-walk",
+        "task-unreadable-walk-impl",
+        &head,
+    );
+    std::fs::remove_dir_all(project_root.join(".git/worktrees/task-unreadable-walk")).unwrap();
+    let earlier = worktree.join("a-earlier-sentinel.txt");
+    write(&earlier, "must survive because removal never starts");
+    let blocked = worktree.join("z-unreadable");
+    let nested = blocked.join("nested-sentinel.txt");
+    write(&nested, "must survive");
+    let _restore = PermissionRestore::new(&blocked, 0o755);
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert!(
+        std::fs::File::open(&blocked).is_err(),
+        "mode 000 must actually make the directory unreadable; a privileged test process \
+         must fail this fixture rather than report a meaningless pass"
+    );
+
+    let running = boot(home.clone()).await;
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        output.status.success(),
+        "a per-worktree safety refusal remains a reported skip, not a command crash\n{all}"
+    );
+    assert!(
+        earlier.is_file() && nested.is_file(),
+        "classification must refuse before deleting any content\n{all}"
+    );
+    assert!(
+        all.contains(&format!("SKIP PATH={}", worktree.display()))
+            && all.contains("worktree traversal incomplete")
+            && all.contains("z-unreadable")
+            && all.contains("Permission denied"),
+        "the refusal must name the worktree, unreadable descendant, and full OS error chain\n{all}"
+    );
+    assert!(
+        all.contains("the whole worktree was skipped and nothing within it was deleted"),
+        "the refusal must guarantee that classification authorized no deletion anywhere in the \
+         worktree\n{all}"
+    );
+    assert!(
+        all.contains("make the offending descendant readable")
+            && all.contains("chmod")
+            && all.contains("remove it by hand, then re-run")
+            && all.contains("no `--force` override"),
+        "the refusal must give the safe remedies and say that no force escape exists\n{all}"
+    );
+    assert!(
+        !all.contains(&format!("RECLAIMED PATH={}", worktree.display()))
+            && !all.contains(&format!("PARTIAL PATH={}", worktree.display())),
+        "an unsafe preliminary walk must authorize no deletion at all\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0") && all.contains("SKIPPED=1"),
+        "the refusal must remain visible in the summary\n{all}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-GRCWC: generate a real tree beyond the production bound. The sentinel
+/// at the bottom and the one sorted before the chain prove the preliminary
+/// refusal does not become destructive partial success.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_an_over_depth_tree_before_deletion() {
+    const MAX_DEPTH_UNDER_TEST: usize = 64;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-deep-walk",
+        "task-deep-walk-impl",
+        &head,
+    );
+    std::fs::remove_dir_all(project_root.join(".git/worktrees/task-deep-walk")).unwrap();
+    let earlier = worktree.join("a-earlier-sentinel.txt");
+    write(&earlier, "must survive because removal never starts");
+    let mut deepest = worktree.join("z-deep");
+    std::fs::create_dir(&deepest).unwrap();
+    for _ in 0..=MAX_DEPTH_UNDER_TEST {
+        deepest.push("d");
+        std::fs::create_dir(&deepest).unwrap();
+    }
+    let nested = deepest.join("nested-sentinel.txt");
+    write(&nested, "must survive");
+
+    let running = boot(home.clone()).await;
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        output.status.success(),
+        "a per-worktree safety refusal remains a reported skip, not a command crash\n{all}"
+    );
+    assert!(
+        earlier.is_file() && nested.is_file(),
+        "classification must refuse before deleting any content\n{all}"
+    );
+    assert!(
+        all.contains(&format!("SKIP PATH={}", worktree.display()))
+            && all.contains("refusing to descend deeper than 64 directory levels"),
+        "the refusal must name the production depth bound\n{all}"
+    );
+    assert!(
+        !all.contains(&format!("RECLAIMED PATH={}", worktree.display()))
+            && !all.contains(&format!("PARTIAL PATH={}", worktree.display())),
+        "an unsafe preliminary walk must authorize no deletion at all\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0") && all.contains("SKIPPED=1"),
+        "the refusal must remain visible in the summary\n{all}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-RMA18: KEPT MEANS UNTOUCHED.
 ///
 /// A removal that stops part-way has already destroyed files. Reporting that as
@@ -10613,12 +10810,13 @@ async fn a_removal_that_stops_part_way_reports_partial_and_never_kept() {
     write(&worktree.join("a-first.txt"), "removed before the failure");
     let blocked = worktree.join("zz-blocked");
     write(&blocked.join("inner.txt"), "cannot be unlinked");
+    let _restore = PermissionRestore::new(&blocked, 0o755);
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500)).unwrap();
-    if std::fs::remove_file(blocked.join("inner.txt")).is_ok() {
-        // Running as root: the failure this test needs cannot be produced.
-        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
+    assert!(
+        std::fs::remove_file(blocked.join("inner.txt")).is_err(),
+        "mode 0500 must actually prevent removal from this directory; a privileged test process \
+         must fail this fixture rather than report a meaningless PARTIAL/KEPT pass"
+    );
 
     let running = boot(home.clone()).await;
     let output = run_orgasmic_output(
@@ -10645,6 +10843,13 @@ async fn a_removal_that_stops_part_way_reports_partial_and_never_kept() {
     assert!(
         !all.contains(&format!("KEPT PATH={}", worktree.display())),
         "KEPT must mean untouched, and this worktree was touched\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0")
+            && all.contains("PARTIAL=1")
+            && all.contains("KEPT=0"),
+        "a partial removal remains a failed, incomplete removal and must not be collapsed into \
+         RECLAIMED or KEPT in the summary\n{all}"
     );
 
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();

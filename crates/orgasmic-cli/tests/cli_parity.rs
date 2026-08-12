@@ -129,10 +129,10 @@ fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
 /// example: an OVER-CLAIM inside the repo-gone sentence itself ("… of any type,
 /// at any depth and through unreadable directories") satisfies every clause
 /// here and is false, because the walk stops at `anchored_dir::MAX_DEPTH` and
-/// skips a child it cannot open. The literal `"at any depth"` is now refused
-/// above, and that closes THAT WORDING, not the class — any other phrasing of
-/// the same over-claim still passes. Only a fixture can decide it, and none
-/// exists for either fail-open yet.
+/// used to skip a child it could not open. The literal `"at any depth"` is now
+/// refused above, and that closes THAT WORDING, not the class — any other
+/// phrasing of the same over-claim still passes. TASK-GRCWC's chmod-000 and
+/// generated over-depth fixtures now pin the truth in the production path.
 ///
 /// The truth is pinned in `tests/dispatch.rs`, by four regressions that run the
 /// real verb over real fixtures git itself refuses —
@@ -157,16 +157,16 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
              the removal goes through this verb's own anchored handle:\n{help}"
         );
     }
-    // The walk that finds a nested `.git` stops at `anchored_dir::MAX_DEPTH` and
-    // skips a child it cannot open, so an unqualified "at any depth" is an
-    // OVER-claim — the dangerous direction, and the one the reviewer named as
-    // still reachable (TASK-RMA18.1.1.1.1 finding 5, shape 2). See the note at
-    // the top: banning this WORDING is not banning the claim.
+    // The walk that finds a nested `.git` refuses the whole worktree at
+    // `anchored_dir::MAX_DEPTH` or an unreadable child, so an unqualified "at
+    // any depth" remains an OVER-claim — the protection is fail-closed, not
+    // unbounded. See the note at the top: banning this WORDING is not banning
+    // the claim.
     assert!(
         !lower.contains("at any depth"),
         "worktree-prune help promises the nested-`.git` walk reaches ANY depth. It does not: \
-         it returns at `anchored_dir::MAX_DEPTH` and skips a directory it cannot open, so an \
-         operator reading this is told they have protection they do not have:\n{help}"
+         it refuses the worktree at `anchored_dir::MAX_DEPTH` or an unreadable child instead, \
+         before deletion begins:\n{help}"
     );
     for required in [
         "anchored",
@@ -179,6 +179,15 @@ fn worktree_prune_help_describes_the_mechanism_it_actually_uses() {
         // offer is something the operator does by hand. The help must say so
         // rather than leave the operator hunting for a flag that is not there.
         "no `--force` on this verb",
+        // Phrase-sensitive on purpose: the subject must be the WORKTREE, not
+        // the unreadable or over-depth descendant. The whole tree is the unit
+        // this verb either authorizes or refuses before deletion begins.
+        "a worktree containing an unreadable descendant or exceeding the 64-directory-level \
+         depth bound is skipped whole, and nothing within it is deleted",
+        "kept means no content was deleted",
+        "reported as partial",
+        "affected worktree path",
+        "not counted as reclaimed",
     ] {
         assert!(
             lower.contains(required),
