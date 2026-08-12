@@ -1587,7 +1587,7 @@ fn process_tx_batch(
 
     let mut sync_failed_paths = HashSet::new();
     for path in &paths_to_sync {
-        if let Err(e) = sync_tx_path(path) {
+        if let Err(e) = sync_tx_writer(handles, path) {
             sync_failed_paths.insert(path.clone());
             warn!(path = %path.display(), error = %e, "tx append fsync failed");
         }
@@ -1728,13 +1728,14 @@ fn write_tx_append(
     })
 }
 
-fn sync_tx_path(path: &Path) -> Result<()> {
+fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Result<()> {
     test_hooks::before_sync()?;
-    let file = OpenOptions::new()
-        .read(true)
-        .open(path)
-        .with_context(|| format!("open {} for fsync", path.display()))?;
-    file.sync_data()
+    let writer = handles
+        .get(path)
+        .ok_or_else(|| anyhow!("no cached tx writer for {}", path.display()))?;
+    writer
+        .writer
+        .sync_data()
         .with_context(|| format!("fsync {}", path.display()))?;
     test_hooks::after_sync();
     Ok(())
@@ -2072,7 +2073,7 @@ where
             return appended;
         }
         let appended = appended?;
-        if let Err(e) = sync_tx_path(&appended.tx_path) {
+        if let Err(e) = sync_tx_writer(handles, &appended.tx_path) {
             rollback_renamed_rewrites(&staged, &renamed);
             return Err(e);
         }
@@ -2492,6 +2493,72 @@ mod tests {
                 .count(),
             1,
             "cached replay must not append the transaction twice"
+        );
+    }
+
+    #[tokio::test]
+    async fn writer_accepts_a_command_after_cached_mutation_identity_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("tasks.org");
+        let tx_path = tmp.path().join("tx").join("2026-08.org");
+        std::fs::write(&target, "before\n").unwrap();
+        let handle = spawn(EventBus::new());
+        let request_id = "req-cached-without-mutation-id".to_string();
+        let rewrites = vec![FileRewrite {
+            path: target.clone(),
+            new_contents: b"committed\n".to_vec(),
+        }];
+        let tx = TxAppend {
+            tx_path,
+            entry: sample_entry("tx-cached-without-mutation-id"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some(request_id.clone()),
+        };
+        let mutation = transaction_identity(&tx, &rewrites);
+
+        handle
+            .transaction(rewrites.clone(), tx.clone())
+            .await
+            .expect("initial transaction without a mutation id");
+
+        let (reply, rx) = oneshot::channel();
+        handle
+            .tx
+            .send(WriterCommand::Transaction {
+                req: TransactionRequest {
+                    rewrites,
+                    tx,
+                    request_id,
+                    mutation: Some(mutation),
+                    mutation_id: Some("TASK-IDENTITY".into()),
+                },
+                reply,
+            })
+            .await
+            .expect("queue the conflicting mutation replay");
+        let error = rx
+            .await
+            .expect("writer replies to the conflicting replay")
+            .expect_err("cached entry without a mutation id must be rejected");
+        assert_eq!(
+            error.to_string(),
+            "cached mutation lacks its recorded identity"
+        );
+
+        handle
+            .rewrite_file(
+                FileRewrite {
+                    path: target.clone(),
+                    new_contents: b"writer-still-live-after-error\n".to_vec(),
+                },
+                None,
+            )
+            .await
+            .expect("writer accepts a command after the per-request error");
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "writer-still-live-after-error\n"
         );
     }
 

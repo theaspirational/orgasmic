@@ -13,7 +13,9 @@ fn hook_test_lock() -> std::sync::MutexGuard<'static, ()> {
 
 use orgasmic_core::tx::TxEntry;
 use orgasmic_daemon::events::EventBus;
-use orgasmic_daemon::writer::{spawn as spawn_writer, test_hooks, TxAppend, TxIdPolicy};
+use orgasmic_daemon::writer::{
+    spawn as spawn_writer, test_hooks, FileRewrite, TxAppend, TxIdPolicy,
+};
 use tokio::task::JoinSet;
 
 fn sample_entry(tx_id: &str) -> TxEntry {
@@ -97,6 +99,41 @@ async fn tx_append_acks_only_after_fsync() {
     assert_eq!(test_hooks::sync_count(), 1);
     let source = std::fs::read_to_string(&tx_path).unwrap();
     assert!(source.contains("tx-fsync-ok"));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn rewrite_transaction_rolls_back_when_tx_sync_fails() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+
+    test_hooks::fail_next_sync(1);
+    let err = handle
+        .transaction(
+            vec![FileRewrite {
+                path: target.clone(),
+                new_contents: b"after\n".to_vec(),
+            }],
+            TxAppend {
+                tx_path,
+                entry: sample_entry("tx-rewrite-sync-fail"),
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-rewrite-sync-fail".into()),
+            },
+        )
+        .await
+        .expect_err("injected tx sync failure must reject the transaction");
+
+    assert!(err.to_string().contains("fsync"), "unexpected error: {err}");
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "before\n");
+    assert_eq!(test_hooks::sync_attempt_count(), 1);
+    assert_eq!(test_hooks::sync_count(), 0);
 }
 
 #[tokio::test]
