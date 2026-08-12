@@ -1,0 +1,152 @@
+# Independent review — TASK-BX5SR.1 (daemon-level retained-sync regression + writer-loop panic removal)
+
+Commit under review: `6ebd4f6` (parent `6fdae3f`). Diff: `crates/orgasmic-daemon/src/writer.rs` only,
++172/-3. Write scope `crates/orgasmic-daemon/**` respected; no scope drift.
+
+## Verdict
+
+**PASS.** All four acceptance criteria are met and independently verified, including the one the task
+exists for: the new regressions fail if the pre-fix pathname reopen is restored, and the pre-existing
+durability suite does *not*. Three LOW findings, none blocking.
+
+## Findings
+
+### LOW (test) — `test_hooks::reset()` does not clear the new armed-rename list
+
+`crates/orgasmic-daemon/src/writer.rs:87` resets `SYNC_COUNT`, `SYNC_ATTEMPT_COUNT`, `SCAN_COUNT`, and
+`FAIL_NEXT_SYNC`, but not `RENAME_BEFORE_SYNC` (`writer.rs:56`). Every other injectable hook is cleared
+there; this one is not, and nothing else consumes an entry that never reaches a sync.
+
+Nothing breaks today: no unit test in the lib-test binary calls `reset()`, and armed entries are keyed by
+absolute `tempfile` paths, so they cannot be matched or clobbered by another test. The concrete future
+symptom is a stale entry surviving a test that arms a rename and then fails before `sync_tx_writer` runs
+— e.g. a test that also arms `fail_next_sync(1)` for the same path, since the injected-failure `bail!`
+at `writer.rs:130-134` returns *before* the rename block at `writer.rs:137-157`. The leaked entry then
+makes the `assert!` at `writer.rs:113` panic with "a tx path rename before sync is already armed" in
+whatever later test reuses that path, pointing at the wrong test.
+
+Fix direction: clear `RENAME_BEFORE_SYNC` in `reset()` under `#[cfg(test)]`, or have
+`rename_tx_path_before_next_sync` return a drop guard that disarms.
+
+Not a data race: the list is a `std::sync::Mutex<Vec<_>>` (not a `static mut`), the guard is dropped
+before `std::fs::rename` runs (`writer.rs:139-147`), and poisoning is absorbed via `into_inner`.
+Parallel-test isolation is sound because arming and matching both key on the full tempdir path.
+
+### LOW (test) — the malformed-transaction regression cannot distinguish "rejected" from "executed with nothing to write"
+
+`writer.rs:2537` (`malformed_transaction_is_request_local_and_writer_stays_live`) sends
+`rewrites: Vec::new()`. It proves the reply arrives, the message text, and that the writer accepts the
+next command — the stated acceptance criterion — but with an empty rewrite set it would pass equally if
+the branch had executed the transaction. Reading `writer.rs:1330-1341` confirms the branch sets
+`execute = false`, so no write can occur; this is a coverage nit, not a bug. One non-empty `FileRewrite`
+plus an assertion that the target file is byte-identical afterwards would close it.
+
+### LOW (test/design note) — the seam expresses rename-away only, not unlink or atomic replacement
+
+The task text asks for a seam that "renames/unlinks/replaces the ledger pathname". The hook matches on
+`rename.source == path` (`writer.rs:143`), i.e. the pathname being synced is always the rename *source*,
+so a decoy renamed *onto* `tx_path` (atomic replacement) is structurally not expressible.
+
+This is a fair trade rather than a defect, and worth recording so a future reader does not "fix" it:
+* Unlink is behaviorally identical to rename-away for the negative control — a restored reopen gets
+  `ENOENT` either way.
+* Atomic replacement is precisely the variant a reopen-based ack gets **silently** wrong: the reopen
+  succeeds and fsyncs the wrong inode, returning `Ok`. No error-propagating test can catch it, so adding
+  that variant would weaken, not strengthen, the guard. The retained-descriptor fix satisfies the
+  "invariant under atomic replacement" constraint by construction, since the ack path never touches the
+  pathname again.
+
+### Observation (not attributable to this change) — unrelated flaky test under parallel load
+
+`api::tests::post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record`
+(`crates/orgasmic-daemon/src/api.rs:37904`) failed once in a full `--lib` run (828 passed / 1 failed),
+asserting `model: Some("old-model"), effort: Some("high")` where `model: Some("new-model"), effort: None`
+was expected. It passes in isolation (`1 passed`, 0.87s). Classified **flaky, pre-existing**: the commit
+touches `writer.rs` only, the failure is in the artifact launch-record path, and the observed
+old-vs-new-record content is a state/ordering symptom, not a durability one. Worth a separate task; it
+should not gate this one.
+
+## Verification against the brief's five questions
+
+1. **Seam placement / production behavior.** `before_sync(path)` is called at the top of
+   `sync_tx_writer` (`writer.rs:1782`), which runs after every append in `process_tx_batch`
+   (`writer.rs:1633`) and after `append_tx_inner` in `transaction_inner` (`writer.rs:1796`) — so the seam
+   is exactly between append and the real fsync. Under `cfg(not(test))` the body is byte-for-byte the
+   prior logic plus `let _ = path;` (`writer.rs:126-136`); the rename block is `#[cfg(test)]`-only.
+   Existing hook order is preserved: attempt-counter increment, then `FAIL_NEXT_SYNC`, then (test-only)
+   rename — the injected-failure path is unchanged and still wins.
+2. **Negative-control claim: CONFIRMED, twice.** See Verification Notes; both new tests fail under a
+   restored reopen, and also fail if the seam itself is disarmed.
+3. **Hook isolation.** Sound as written; see LOW finding 1 for the one missing symmetry.
+4. **`unreachable!` → request-local error.** `writer.rs:1320`. The `Err` arm (`writer.rs:1330-1336`)
+   takes the reply exactly once, sends the error, sets `execute = false`, and never reaches
+   `transaction_inner`, the idempotency-cache insert, or the `TxAppended` publish — so no duplicate
+   write, no missing reply, no writer death. `command_failed = true` only increments
+   `metrics.failed_total` (`writer.rs:1500-1503`); there is no sticky degraded state.
+   The branch remains unreachable from production: the only two `WriterCommand::Transaction`
+   constructors (`writer.rs:707`, `writer.rs:739`) both pass `mutation: Some(..)`. I checked the two
+   `mutation: None` sites in `api.rs` (`14575`, `14721`) — those are `GraphWriteRequest.mutation`, which
+   routes to `WriterHandle::transaction()` at `api.rs:15671`, which itself sets `Some(mutation)`. No
+   remaining `unreachable!`/`panic!`/`todo!` exists in `writer.rs` outside `mod tests` (starts line 2244).
+5. **Existing durability behavior.** Unchanged and still proven — all 6 `writer_durability` integration
+   tests pass, covering fsync-before-ack, one-sync-per-batch, sync-failure denial, and rewrite rollback.
+
+## Verification Notes
+
+All commands run in the review worktree at `6ebd4f6`. No source file was edited and no daemon action
+was taken; the two negative controls were run against an APFS clone at `/tmp/bx5sr1/neg`, never the repo.
+Logs preserved under `/tmp/bx5sr1/`.
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Focused writer unit tests | `cargo test -p orgasmic-daemon --lib writer::` | **17 passed, 0 failed** — includes all 3 new tests |
+| Durability integration | `cargo test -p orgasmic-daemon --test writer_durability` | **6 passed, 0 failed** |
+| Core tx (parent-commit fix) | `cargo test -p orgasmic-core tx::` | **17 passed** — includes `retained_descriptor_syncs_after_path_is_renamed_away` |
+| fmt | `cargo fmt --all -- --check` | exit 0 |
+| clippy | `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings` | exit 0, 39.5s |
+| Full daemon lib suite | `cargo test -p orgasmic-daemon --lib` | 828 passed / 1 failed — the unrelated flake above; passes in isolation |
+
+**Negative control A — restore the pre-fix pathname reopen, keep the seam.** Patched the clone's
+`sync_tx_writer` back to `OpenOptions::new().read(true).open(path)` + `file.sync_data()`, leaving
+`before_sync(path)` intact.
+
+* `cargo test -p orgasmic-daemon --lib writer::` → **FAILED, 15 passed / 2 failed.** Exactly and only the
+  two new tests:
+  * `tx_append_syncs_retained_descriptor_after_path_rename` — *"daemon writer append must acknowledge
+    through its retained descriptor: tx append fsync failed for …/tx/2026-08.org"*
+  * `rewrite_transaction_syncs_retained_descriptor_after_path_rename` — *"rewrite transaction must
+    acknowledge through its retained descriptor: open …/tx/2026-08.org for fsync"*
+* `cargo test -p orgasmic-daemon --test writer_durability` on the same patched tree → **6 passed, 0
+  failed.** This is the decisive evidence that TASK-BX5SR.1's premise was true: the pre-existing suite is
+  blind to the reopen, and these two unit tests are the only thing that catches it.
+
+**Negative control B — disarm the seam, keep the retained-descriptor sync.** Simulates a literal full
+revert (where `before_sync()` loses its `path` argument and the rename never fires). Both new tests
+still fail, on `the hook must rename the pathname before sync` (`writer.rs:2492`, `writer.rs:2527`) —
+so the guard cannot be silently neutered by deleting the seam rather than the fix.
+
+**Not verified.** No crash-consistency test (power-loss durability of the synced bytes) — out of scope
+and not claimed. No production daemon probe: install/restart was prohibited by the brief, and the
+regressions already run the real serialized writer task via `spawn()` + `WriterHandle`, which is the
+daemon's actual routing rather than a direct `TxWriter` call. Both negative controls compile and run
+the same daemon routing, so the production path is exercised in test configuration only.
+
+## Open Questions
+
+1. The new hook is `#[cfg(test)]`, so the guard lives in the lib-test binary and cannot be reused from
+   `tests/writer_durability.rs`. Intentional? It works, but the other durability seams
+   (`fail_next_sync`, the counters) are integration-visible, so a future author may look for it in the
+   wrong binary.
+2. Should the unrelated `post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record`
+   flake be filed as its own task before it costs someone a gate run?
+
+## Fix Directions
+
+None required to land. If the LOW findings are addressed:
+
+1. `writer.rs:87` — clear `RENAME_BEFORE_SYNC` inside `reset()` under `#[cfg(test)]`, or return a
+   disarming drop guard from `rename_tx_path_before_next_sync` (`writer.rs:111`).
+2. `writer.rs:2537` — give the malformed-transaction test one real `FileRewrite` and assert the target
+   is untouched, so it proves non-execution and not just non-death.
+3. Optionally record in a comment near `writer.rs:143` why the seam is rename-source-only, so the
+   "replaces" variant is not added later under the mistaken belief it strengthens the guard.
