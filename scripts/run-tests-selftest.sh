@@ -604,6 +604,87 @@ EOF
     chmod +x "$TMP/bin/cargo"
 }
 
+# TASK-4BBA6: a deliberately quiet cargo command that cannot finish before the
+# watchdog gets two injected high samples.  The trap makes the test assert the
+# same cancellation path a real cargo process takes, without compiling code or
+# sampling the real machine.
+install_stub_cargo_watchdog_target() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<'EOF'
+#!/bin/sh
+trap 'exit 143' TERM INT
+while :; do
+    sleep 1
+done
+EOF
+    cat > "$TMP/bin/pgrep" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-x" ] && [ "$2" = "syspolicyd" ]; then
+    echo 4242
+    exit 0
+fi
+# The watchdog's tree walk asks `pgrep -P`; this synthetic scanner has no
+# descendants, and returning 1 means no pids rather than a probe failure.
+exit 1
+EOF
+    cat > "$TMP/bin/ps" <<'EOF'
+#!/bin/sh
+case " $* " in
+    *" %cpu= "*) echo '450.0' ;;
+    *) echo '0:00.00' ;;
+esac
+EOF
+    chmod +x "$TMP/bin/cargo" "$TMP/bin/pgrep" "$TMP/bin/ps"
+}
+
+# The first cargo invocation is the ordinary suite and finishes green.  The
+# second is run-tests.sh's debug_assertions=off leg; only then does pgrep expose
+# the synthetic scanner, proving that the special extra cargo command goes
+# through the same watchdog rather than escaping it.
+install_stub_cargo_no_debug_watchdog_target() {
+    mkdir -p "$TMP/bin"
+    cat > "$TMP/bin/cargo" <<EOF
+#!/bin/sh
+count_file="$TMP/watchdog-cargo-count"
+count=0
+[ -f "\$count_file" ] && count=\$(cat "\$count_file")
+count=\$((count + 1))
+printf '%s' "\$count" > "\$count_file"
+if [ "\$count" -eq 1 ]; then
+    cat <<'LOG'
+     Running unittests src/lib.rs (stub)
+running 1 test
+test tests::x ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+LOG
+    exit 0
+fi
+trap 'exit 143' TERM INT
+while :; do
+    sleep 1
+done
+EOF
+    cat > "$TMP/bin/pgrep" <<EOF
+#!/bin/sh
+count_file="$TMP/watchdog-cargo-count"
+count=0
+[ -f "\$count_file" ] && count=\$(cat "\$count_file")
+if [ "\$1" = "-x" ] && [ "\$2" = "syspolicyd" ] && [ "\$count" -ge 2 ]; then
+    echo 4242
+    exit 0
+fi
+exit 1
+EOF
+    cat > "$TMP/bin/ps" <<'EOF'
+#!/bin/sh
+case " $* " in
+    *" %cpu= "*) echo '450.0' ;;
+    *) echo '0:00.00' ;;
+esac
+EOF
+    chmod +x "$TMP/bin/cargo" "$TMP/bin/pgrep" "$TMP/bin/ps"
+}
+
 install_stub_cargo_abort() {
     # No per-test failure list — just a crashed binary (B2). The classifier
     # must name the non-zero cargo exit, not claim the suite looked green.
@@ -768,6 +849,37 @@ else
     printf -- '----------------\n'
     FAILED=$((FAILED + 1))
 fi
+
+# TASK-4BBA6: the guard lives inside the runner, not around a particular
+# invocation.  A sustained instantaneous scanner burst terminates cargo and
+# reports the run as host-state INCONCLUSIVE before the ordinary classifier can
+# turn a truncated log into a false product red.
+start "watchdog stops sustained syspolicyd burst and returns INCONCLUSIVE"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_watchdog_target
+PATH="$TMP/bin:$PATH" \
+    ORGASMIC_HOST_STATE_SAMPLE='load=0.5,syspolicyd_cpu=5.0,wall_s=100' \
+    ORGASMIC_RUN_TESTS_WATCHDOG_TEST_FAST=1 \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "watchdog : TRIPPED — syspolicyd percent=450.0 threshold=400 samples=2 interval_s=0; cargo was truncated before a test verdict" \
+    "verdict: INCONCLUSIVE — host safety watchdog stopped the suite"
+
+start "watchdog covers the debug_assertions=off cargo leg too"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+install_stub_cargo_no_debug_watchdog_target
+PATH="$TMP/bin:$PATH" \
+    ORGASMIC_RUN_TESTS_WATCHDOG_TEST_FAST=1 \
+    "$RUNNER" --registry "$TMP/registry.toml" --work-dir "$TMP/work" \
+    > "$TMP/out.txt" 2>&1
+RUN_EXIT=$?
+rm -rf "$TMP/work"
+check 4 "$RUN_EXIT" "$TMP/out.txt" \
+    "suite    : cargo test -p orgasmic-cli --bin orgasmic the_pause_rendezvous_hooks_park_only_in_debug_builds (debug_assertions=off)" \
+    "watchdog : TRIPPED — syspolicyd percent=450.0 threshold=400 samples=2 interval_s=0; cargo was truncated before a test verdict"
 
 # F-D: live sampler + write_host_stamp + --classify round-trip on the log
 # that same run wrote. Format is not hand-copied here. Host word may be

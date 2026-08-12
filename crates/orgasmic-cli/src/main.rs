@@ -64,6 +64,38 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[derive(Args, Debug)]
+struct EntryArgs {
+    /// Print the complete router and resolved default workflow.
+    #[arg(long)]
+    full: bool,
+    /// Print only an unchanged acknowledgement when this fingerprint is still current.
+    #[arg(long, value_name = "SHA256")]
+    ack: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct IntegrateArgs {
+    /// Git remote that owns the protected branch.
+    #[arg(long, default_value = "origin")]
+    remote: String,
+    /// Protected branch to integrate into.
+    #[arg(long, default_value = "main")]
+    base: String,
+    /// GitHub repository in owner/name form; inferred from the checkout when omitted.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Pull request title; defaults to the short commit id.
+    #[arg(long)]
+    title: Option<String>,
+    /// Markdown file used as the pull request body.
+    #[arg(long = "body-file")]
+    body_file: Option<PathBuf>,
+    /// Show the integration sequence without changing local or remote state.
+    #[arg(long)]
+    dry_run: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Internal retained-handle executable boundary for daemon-pinned native recovery.
@@ -86,7 +118,9 @@ Examples:
   orgasmic project init --path ~/myrepo --name myrepo")]
     Init,
     /// Print the runtime-provided project entry router.
-    Entry,
+    Entry(EntryArgs),
+    /// Certify and merge the current clean HEAD through the protected branch.
+    Integrate(IntegrateArgs),
     /// Diagnose this install (home layout, shipped files, daemon liveness).
     #[command(after_help = "\
 Examples:
@@ -455,6 +489,19 @@ enum TasksCmd {
         /// Print only task ids, one per line, nothing else.
         #[arg(long)]
         ids: bool,
+        /// Keep only tasks in this lifecycle stage; repeatable.
+        #[arg(long = "stage", action = clap::ArgAction::Append, value_parser = parse_task_stage)]
+        stage: Vec<String>,
+    },
+    /// Count tasks with an explicit lifecycle breakdown.
+    Count {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
+        #[arg(long)]
+        project: Option<String>,
+        /// Count only these lifecycle stages; repeatable.
+        #[arg(long = "stage", action = clap::ArgAction::Append, value_parser = parse_task_stage)]
+        stage: Vec<String>,
     },
 }
 
@@ -1373,7 +1420,8 @@ fn main() -> Result<()> {
     }
     match cli.cmd {
         Cmd::Init => cmd_init(&home),
-        Cmd::Entry => cmd_entry(&home),
+        Cmd::Entry(args) => cmd_entry(&home, args),
+        Cmd::Integrate(args) => cmd_integrate(&home, args),
         Cmd::Doctor {
             fix_id_collisions,
             project,
@@ -1706,18 +1754,88 @@ fn cmd_exec_pinned(
     anyhow::bail!("pinned executable handles are unsupported on this platform")
 }
 
-fn cmd_entry(home: &Home) -> Result<()> {
+fn cmd_entry(home: &Home, args: EntryArgs) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
     let project_root = find_project_root_optional()?;
     let router = render_runtime_entry_router(home, project_root.as_deref())?;
-    if let Some(project_root) = project_root {
-        if let Some(notice) = entry_version_notice(&project_root) {
+    let fingerprint = format!("{:x}", Sha256::digest(router.as_bytes()));
+    if let Some(project_root) = project_root.as_deref() {
+        if let Some(notice) = entry_version_notice(project_root) {
             println!("{notice}");
             println!();
         }
     }
-    print!("{router}");
-    if !router.ends_with('\n') {
-        println!();
+
+    if args
+        .ack
+        .as_deref()
+        .is_some_and(|ack| ack.eq_ignore_ascii_case(&fingerprint))
+    {
+        println!("ORGASMIC_ENTRY_UNCHANGED {fingerprint}");
+        return Ok(());
+    }
+
+    if args.full {
+        println!("ORGASMIC_ENTRY_FINGERPRINT {fingerprint}");
+        print!("{router}");
+        if !router.ends_with('\n') {
+            println!();
+        }
+    } else {
+        print_entry_fast_route(project_root.as_deref(), &fingerprint);
+    }
+    Ok(())
+}
+
+fn print_entry_fast_route(project_root: Option<&Path>, fingerprint: &str) {
+    println!("ORGASMIC_ENTRY_FAST_V1 {fingerprint}");
+    println!(
+        "PROJECT {}",
+        project_root
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!("ROUTE strict dispatched-worker brief => worker; every other prompt => manager");
+    println!("STATE use orgasmic CLI/daemon writes; never hand-edit .orgasmic state");
+    println!("DIRECT source edits require a declared trivial tier; ordinary/risky work dispatches");
+    println!("SAFETY ask only before hard-to-reverse, external, or someone-else-funded actions");
+    println!("VISIBILITY workers see committed refs, not manager or daemon uncommitted state");
+    println!("WORKER finish with `orgasmic dispatch finalize`; manager closes by started_tx");
+    println!("FULL orgasmic entry --full");
+    println!("RECHECK orgasmic entry --ack {fingerprint}");
+}
+
+fn cmd_integrate(home: &Home, args: IntegrateArgs) -> Result<()> {
+    let script = home.source().join("scripts/integrate-main.sh");
+    if !script.is_file() {
+        anyhow::bail!(
+            "integration helper is missing at {}; update the orgasmic runtime",
+            script.display()
+        );
+    }
+
+    let mut command = Command::new("bash");
+    command
+        .arg(&script)
+        .args(["--remote", &args.remote, "--base", &args.base]);
+    if let Some(repo) = args.repo {
+        command.args(["--repo", &repo]);
+    }
+    if let Some(title) = args.title {
+        command.args(["--title", &title]);
+    }
+    if let Some(body_file) = args.body_file {
+        command.arg("--body-file").arg(body_file);
+    }
+    if args.dry_run {
+        command.arg("--dry-run");
+    }
+    let status = command
+        .status()
+        .context("run protected-branch integration")?;
+    if !status.success() {
+        anyhow::bail!("protected-branch integration failed with {status}");
     }
     Ok(())
 }
@@ -2706,20 +2824,111 @@ fn open_url(url: &str) -> Result<()> {
     }
 }
 
+const TASK_LIFECYCLE_STAGES: &[&str] = &[
+    "backlog",
+    "todo",
+    "in_progress",
+    "in_review",
+    "done",
+    "cancelled",
+];
+
+fn parse_task_stage(value: &str) -> std::result::Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase().replace('-', "_");
+    if TASK_LIFECYCLE_STAGES.contains(&normalized.as_str()) {
+        Ok(normalized)
+    } else {
+        Err(format!(
+            "unknown task lifecycle stage {value:?}; expected one of {}",
+            TASK_LIFECYCLE_STAGES.join(", ")
+        ))
+    }
+}
+
+fn filter_tasks_by_stage(
+    value: &serde_json::Value,
+    stages: &[String],
+) -> Result<serde_json::Value> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("daemon returned non-list tasks response"))?;
+    if stages.is_empty() {
+        return Ok(value.clone());
+    }
+    Ok(serde_json::Value::Array(
+        rows.iter()
+            .filter(|row| {
+                row.get("lifecycle_stage")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|stage| stages.iter().any(|selected| selected == stage))
+            })
+            .cloned()
+            .collect(),
+    ))
+}
+
+fn task_count_summary(value: &serde_json::Value, stages: &[String]) -> Result<serde_json::Value> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("daemon returned non-list tasks response"))?;
+    let mut by_stage = std::collections::BTreeMap::new();
+    for stage in TASK_LIFECYCLE_STAGES {
+        by_stage.insert(
+            *stage,
+            rows.iter()
+                .filter(|row| {
+                    row.get("lifecycle_stage")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(*stage)
+                })
+                .count(),
+        );
+    }
+    let selected_stages = stages
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let selected_total = if selected_stages.is_empty() {
+        rows.len()
+    } else {
+        selected_stages
+            .iter()
+            .map(|stage| by_stage.get(*stage).copied().unwrap_or_default())
+            .sum()
+    };
+    Ok(serde_json::json!({
+        "all_total": rows.len(),
+        "selected_total": selected_total,
+        "selected_stages": selected_stages,
+        "by_stage": by_stage,
+    }))
+}
+
 fn cmd_tasks(home: &Home, cmd: TasksCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         match cmd {
-            TasksCmd::List { project, ids } => {
+            TasksCmd::List {
+                project,
+                ids,
+                stage,
+            } => {
                 let project = manager::resolve_project(project)?;
                 let value: serde_json::Value =
                     client.get(&format!("/projects/{project}/tasks")).await?;
+                let value = filter_tasks_by_stage(&value, &stage)?;
                 if ids {
                     print_ids_only(&value, "tasks")
                 } else {
                     print_list_or_empty(&value, "tasks", "run `orgasmic task create` to file one")
                 }
+            }
+            TasksCmd::Count { project, stage } => {
+                let project = manager::resolve_project(project)?;
+                let value: serde_json::Value =
+                    client.get(&format!("/projects/{project}/tasks")).await?;
+                print_json(&task_count_summary(&value, &stage)?)
             }
         }
     })
@@ -3732,6 +3941,74 @@ fn parse_key_values(items: Vec<String>) -> Result<Vec<(String, String)>> {
             Ok((k.to_string(), v.to_string()))
         })
         .collect::<Result<_>>()
+}
+
+#[cfg(test)]
+mod task_inventory_tests {
+    use super::{
+        filter_tasks_by_stage, parse_task_stage, task_count_summary, Cli, Cmd, ManagerCmd,
+    };
+    use clap::Parser;
+
+    fn tasks() -> serde_json::Value {
+        serde_json::json!([
+            {"id": "TASK-A", "lifecycle_stage": "backlog"},
+            {"id": "TASK-B", "lifecycle_stage": "backlog"},
+            {"id": "TASK-C", "lifecycle_stage": "done"}
+        ])
+    }
+
+    #[test]
+    fn lifecycle_filter_accepts_hyphen_alias_and_keeps_only_selected_rows() {
+        assert_eq!(parse_task_stage("in-review").unwrap(), "in_review");
+        assert!(parse_task_stage("goal").is_err());
+        let filtered = filter_tasks_by_stage(&tasks(), &["backlog".into()]).unwrap();
+        assert_eq!(filtered.as_array().unwrap().len(), 2);
+        assert_eq!(filtered[0]["id"], "TASK-A");
+    }
+
+    #[test]
+    fn count_reports_all_total_selected_total_and_stage_breakdown() {
+        let summary = task_count_summary(&tasks(), &["backlog".into()]).unwrap();
+        assert_eq!(summary["all_total"], 3);
+        assert_eq!(summary["selected_total"], 2);
+        assert_eq!(summary["by_stage"]["backlog"], 2);
+        assert_eq!(summary["by_stage"]["done"], 1);
+    }
+
+    #[test]
+    fn dispatch_close_branch_flags_parse_with_explicit_opt_out() {
+        let parse = |status: &str, extra: &[&str]| {
+            let mut argv = vec![
+                "orgasmic",
+                "manager",
+                "dispatch-close",
+                "--task",
+                "TASK-A",
+                "--status",
+                status,
+                "--reason",
+                "test",
+            ];
+            argv.extend_from_slice(extra);
+            match Cli::try_parse_from(argv).unwrap().cmd {
+                Cmd::Manager {
+                    cmd: ManagerCmd::DispatchClose(args),
+                } => args,
+                other => panic!("unexpected command: {other:?}"),
+            }
+        };
+
+        let default = parse("done", &[]);
+        assert!(!default.branch_delete);
+        assert!(!default.no_branch_delete);
+        let opted_out = parse("done", &["--no-branch-delete"]);
+        assert!(!opted_out.branch_delete);
+        assert!(opted_out.no_branch_delete);
+        let explicit = parse("aborted", &["--branch-delete"]);
+        assert!(explicit.branch_delete);
+        assert!(!explicit.no_branch_delete);
+    }
 }
 
 // orgasmic:task_HQ970

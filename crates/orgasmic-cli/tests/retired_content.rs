@@ -88,6 +88,7 @@ fn entry_output_carries_the_retired_content_section() {
 
     let output = orgasmic_command()
         .arg("entry")
+        .arg("--full")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(tmp.path())
         .output()

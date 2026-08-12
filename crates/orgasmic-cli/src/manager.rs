@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
@@ -326,10 +326,22 @@ pub struct DispatchCloseArgs {
     /// Keep the worker's worktree on disk, overriding the default removal.
     #[arg(long = "no-worktree-remove")]
     pub no_worktree_remove: bool,
-    /// Also delete the worker's branch. Defaults to FALSE: the branch survives
-    /// the close unless this is passed.
-    #[arg(long = "branch-delete", default_value_t = false)]
+    /// Delete the worker's branch after its worktree is safely removed.
+    /// Successful closes do this by default; aborted closes require this flag.
+    /// Deletion is fenced to the recorded branch tip.
+    #[arg(long = "branch-delete", conflicts_with = "no_branch_delete")]
     pub branch_delete: bool,
+    /// Keep the worker's branch after a successful close.
+    #[arg(long = "no-branch-delete", conflicts_with = "branch_delete")]
+    pub no_branch_delete: bool,
+}
+
+fn dispatch_close_deletes_branch(args: &DispatchCloseArgs) -> bool {
+    args.branch_delete
+        || (args.status == DispatchCloseStatus::Done
+            && args.worktree_remove
+            && !args.no_worktree_remove
+            && !args.no_branch_delete)
 }
 
 /// Read-only dispatch inventory. Deliberately has NO `--project`: it reads
@@ -904,6 +916,38 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         &plan.from_sha,
     )?;
 
+    // TASK-79VKP.6: a dispatch must keep Cargo's target directory private to
+    // its checkout.  When APFS can clone the manager target cheaply, seed that
+    // private target and remove every workspace artifact before the worker
+    // starts.  The remaining third-party objects are reusable; the worker's
+    // binary and fingerprints are not.  Any ordinary seed failure falls back
+    // to an empty private target rather than delaying or weakening dispatch.
+    let cache_seed = match seed_private_worktree_target(&plan.project_root, &plan.worktree_path) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            let cleanup = cleanup_created_resources(
+                &plan.project_root,
+                &plan.worktree_path,
+                &plan.branch,
+                &plan.dispatch_task(),
+                &plan.last_path,
+                &plan.stdout_path,
+            );
+            bail!(
+                "cache seed left an unsafe private target: {err}; cleanup status={} error={}",
+                cleanup.status.as_str(),
+                cleanup.error.as_deref().unwrap_or("-")
+            );
+        }
+    };
+    eprintln!(
+        "dispatch cache-seed: status={} target={} duration_ms={}{}",
+        cache_seed.status(),
+        plan.worktree_path.join("target").display(),
+        cache_seed.elapsed().as_millis(),
+        cache_seed.detail(),
+    );
+
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
 
@@ -1195,6 +1239,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
     let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
+    let delete_branch = dispatch_close_deletes_branch(&args);
     // TASK-1T3FZ: a destructive close takes a DAEMON-OWNED reservation on the
     // worktree before it releases — or fails to find — any run, and holds it
     // until cleanup is done. The competing recovery runs in another process
@@ -1270,7 +1315,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
             report_path: None,
         }
     } else {
-        cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
+        cleanup_dispatch(&project_root, &open, remove_worktree, delete_branch)
     };
     finish_close_guard(&runtime, &client, &project_id, &open, close_guard.as_mut());
     if cleanup_status_reports_warning(cleanup.status) {
@@ -6720,6 +6765,188 @@ fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
     }
 }
 
+/// Outcome of attempting to prime one dispatch's *private* Cargo target.
+///
+/// This is intentionally diagnostic only: a seed is an optimization, never a
+/// prerequisite for dispatch.  The one exceptional error is an incomplete
+/// target that cannot be removed; letting Cargo consume unknown copied
+/// fingerprints would reintroduce TASK-3X5AQ's cross-checkout false green.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WorktreeTargetSeed {
+    Seeded {
+        elapsed: Duration,
+    },
+    Skipped {
+        elapsed: Duration,
+        reason: &'static str,
+    },
+    Fallback {
+        elapsed: Duration,
+        reason: String,
+    },
+}
+
+impl WorktreeTargetSeed {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::Seeded { .. } => "hit",
+            Self::Skipped { .. } => "skipped",
+            Self::Fallback { .. } => "miss",
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        match self {
+            Self::Seeded { elapsed }
+            | Self::Skipped { elapsed, .. }
+            | Self::Fallback { elapsed, .. } => *elapsed,
+        }
+    }
+
+    fn detail(&self) -> String {
+        match self {
+            Self::Seeded { .. } => " source=manager-target".to_string(),
+            Self::Skipped { reason, .. } => format!(" reason={reason}"),
+            Self::Fallback { reason, .. } => format!(" reason={reason}"),
+        }
+    }
+}
+
+/// Seed `worktree/target` without ever making it share mutable state with the
+/// manager checkout.  APFS clones make the initial copy copy-on-write; Cargo
+/// then removes all workspace outputs from the *clone*.  Registry dependency
+/// artifacts may survive, but the worker will rebuild its own package,
+/// fingerprints and executable from its own source path.
+// orgasmic:TASK-79VKP.6
+fn seed_private_worktree_target(
+    project_root: &Path,
+    worktree: &Path,
+) -> Result<WorktreeTargetSeed> {
+    let started = Instant::now();
+    if !project_root.join("Cargo.toml").is_file() {
+        return Ok(WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "not-cargo",
+        });
+    }
+    let source = project_root.join("target").join("debug");
+    if !source.is_dir() {
+        return Ok(WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "manager-target-missing",
+        });
+    }
+    let target = worktree.join("target");
+    if target.exists() {
+        return Ok(WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "private-target-present",
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (source, target);
+        return Ok(WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "cow-clone-unavailable",
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Skip incremental objects: they are tied to one workspace crate and
+        // account for most of a hot target's disk use.  Cargo can recreate
+        // them privately.  The three copied directories contain dependency
+        // objects and their fingerprints; the cleanup below strips every
+        // workspace-owned entry before a worker can see it.
+        let target_debug = target.join("debug");
+        std::fs::create_dir_all(&target_debug)
+            .with_context(|| format!("create private target {}", target_debug.display()))?;
+        for component in ["deps", ".fingerprint", "build"] {
+            let component_source = source.join(component);
+            if !component_source.is_dir() {
+                continue;
+            }
+            let component_target = target_debug.join(component);
+            let clone = Command::new("/bin/cp")
+                .args(["-cR"])
+                .arg(&component_source)
+                .arg(&component_target)
+                .output()
+                .with_context(|| {
+                    format!(
+                        "copy-on-write clone manager target component {} into {}",
+                        component_source.display(),
+                        component_target.display()
+                    )
+                });
+            match clone {
+                Ok(output) if output.status.success() => {}
+                Ok(output) => {
+                    remove_incomplete_private_target(&target)?;
+                    return Ok(WorktreeTargetSeed::Fallback {
+                        elapsed: started.elapsed(),
+                        reason: format!("clone-{component}-exit-{}", output.status),
+                    });
+                }
+                Err(err) => {
+                    remove_incomplete_private_target(&target)?;
+                    return Ok(WorktreeTargetSeed::Fallback {
+                        elapsed: started.elapsed(),
+                        reason: format!("clone-{component}-error-{}", compact_error(&err)),
+                    });
+                }
+            }
+        }
+
+        // `--workspace` removes every package belonging to this repository
+        // from the clone.  It MUST run with the worker's Cargo.toml and an
+        // explicit private target, otherwise copied dep-info may make Cargo
+        // judge another checkout's source as Fresh.
+        let clean = Command::new("cargo")
+            .args(["clean", "--workspace", "--target-dir"])
+            .arg(&target)
+            .current_dir(worktree)
+            .output()
+            .with_context(|| format!("clean copied target {}", target.display()));
+        match clean {
+            Ok(output) if output.status.success() => Ok(WorktreeTargetSeed::Seeded {
+                elapsed: started.elapsed(),
+            }),
+            Ok(output) => {
+                remove_incomplete_private_target(&target)?;
+                Ok(WorktreeTargetSeed::Fallback {
+                    elapsed: started.elapsed(),
+                    reason: format!("cargo-clean-exit-{}", output.status),
+                })
+            }
+            Err(err) => {
+                remove_incomplete_private_target(&target)?;
+                Ok(WorktreeTargetSeed::Fallback {
+                    elapsed: started.elapsed(),
+                    reason: format!("cargo-clean-error-{}", compact_error(&err)),
+                })
+            }
+        }
+    }
+}
+
+/// Delete only a target just created inside a brand-new dispatch worktree.
+/// Callers perform the `exists` check before cloning, so this is never a
+/// cleanup path for a worker-owned or user-preexisting target directory.
+fn remove_incomplete_private_target(target: &Path) -> Result<()> {
+    if !target.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(target)
+        .with_context(|| format!("remove incomplete private target {}", target.display()))
+}
+
+fn compact_error(err: &anyhow::Error) -> String {
+    sanitize_tx_value(&err.to_string()).replace(' ', "_")
+}
+
 fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &str) -> Result<()> {
     if path.exists() {
         bail!("worktree path already exists: {}", path.display());
@@ -9850,6 +10077,129 @@ mod tests {
         );
     }
 
+    /// TASK-79VKP.6's negative control in the production shape: two linked
+    /// Cargo worktrees start from the manager target, each changes the same
+    /// binary, then build concurrently.  A shared target makes at least one
+    /// branch report Fresh and execute the other branch's binary; a seeded
+    /// private target must compile and run both branch identities.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn seeded_private_targets_never_run_another_worktrees_binary() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("manager");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"private-target-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nanyhow = \"1\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"BASE\"); }\n",
+        )
+        .unwrap();
+
+        let base_build = Command::new("cargo")
+            .args(["build", "--quiet"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            base_build.status.success(),
+            "base build: {}",
+            String::from_utf8_lossy(&base_build.stderr)
+        );
+
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "tests@example.com"]);
+        git(&["config", "user.name", "Tests"]);
+        git(&["add", "Cargo.toml", "Cargo.lock", "src/main.rs"]);
+        git(&["commit", "-qm", "base"]);
+
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        create_worktree(&root, &first, "first-branch", "HEAD").unwrap();
+        create_worktree(&root, &second, "second-branch", "HEAD").unwrap();
+        std::fs::write(
+            first.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"FIRST\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"SECOND\"); }\n",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            seed_private_worktree_target(&root, &first).unwrap(),
+            WorktreeTargetSeed::Seeded { .. }
+        ));
+        assert!(matches!(
+            seed_private_worktree_target(&root, &second).unwrap(),
+            WorktreeTargetSeed::Seeded { .. }
+        ));
+
+        let first_for_build = first.clone();
+        let second_for_build = second.clone();
+        let (first_build, second_build) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                Command::new("cargo")
+                    .arg("build")
+                    .current_dir(&first_for_build)
+                    .output()
+                    .unwrap()
+            });
+            let second = scope.spawn(|| {
+                Command::new("cargo")
+                    .arg("build")
+                    .current_dir(&second_for_build)
+                    .output()
+                    .unwrap()
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert!(
+            first_build.status.success(),
+            "first build: {}",
+            String::from_utf8_lossy(&first_build.stderr)
+        );
+        assert!(
+            second_build.status.success(),
+            "second build: {}",
+            String::from_utf8_lossy(&second_build.stderr)
+        );
+        for (name, build) in [("first", &first_build), ("second", &second_build)] {
+            assert!(
+                !String::from_utf8_lossy(&build.stderr).contains("Compiling anyhow v"),
+                "{name} rebuilt a registry dependency instead of reusing the private seed: {}",
+                String::from_utf8_lossy(&build.stderr)
+            );
+        }
+
+        let run = |worktree: &Path| {
+            let output = Command::new(worktree.join("target/debug/private-target-probe"))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert_eq!(run(&first), "FIRST\n");
+        assert_eq!(run(&second), "SECOND\n");
+    }
+
     /// A project id is a path segment in the managed root, so anything that
     /// could escape it is refused rather than joined.
     // orgasmic:TASK-M47E5
@@ -10434,6 +10784,46 @@ mod tests {
     }
 
     #[test]
+    fn successful_close_deletes_branch_by_default_but_aborted_close_retains_it() {
+        let args_for = |status| DispatchCloseArgs {
+            task: vec!["TASK-086".to_string()],
+            started_tx: Some("tx-start".to_string()),
+            status,
+            merge_sha: None,
+            worker_commit: None,
+            worker_session: None,
+            reviewed_diff: None,
+            properties: Vec::new(),
+            verdict: None,
+            tokens: None,
+            wall: None,
+            reason: Some("test".to_string()),
+            no_review_required: false,
+            fix_round_final: false,
+            worktree_remove: true,
+            no_worktree_remove: false,
+            branch_delete: false,
+            no_branch_delete: false,
+        };
+
+        assert!(dispatch_close_deletes_branch(&args_for(
+            DispatchCloseStatus::Done
+        )));
+        assert!(!dispatch_close_deletes_branch(&args_for(
+            DispatchCloseStatus::Aborted
+        )));
+        let mut opted_out = args_for(DispatchCloseStatus::Done);
+        opted_out.no_branch_delete = true;
+        assert!(!dispatch_close_deletes_branch(&opted_out));
+        let mut retained_worktree = args_for(DispatchCloseStatus::Done);
+        retained_worktree.no_worktree_remove = true;
+        assert!(!dispatch_close_deletes_branch(&retained_worktree));
+        let mut explicit_abort = args_for(DispatchCloseStatus::Aborted);
+        explicit_abort.branch_delete = true;
+        assert!(dispatch_close_deletes_branch(&explicit_abort));
+    }
+
+    #[test]
     fn closes_architector_lifecycle_to_done() {
         let tmp = tempfile::tempdir().unwrap();
         let in_progress = tmp.path().join(".orgasmic/tasks/in_progress.org");
@@ -10462,6 +10852,7 @@ mod tests {
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
+            no_branch_delete: false,
         };
 
         assert_eq!(
@@ -10495,6 +10886,7 @@ mod tests {
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
+            no_branch_delete: false,
         };
         let tasks = vec!["TASK-086".to_string()];
         let expected =

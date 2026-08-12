@@ -5766,7 +5766,6 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "--merge-sha",
             &merge_sha,
             "--worktree-remove",
-            "--branch-delete",
             "--reason",
             "merged",
         ],
@@ -5799,7 +5798,6 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "--merge-sha",
             &merge_sha,
             "--worktree-remove",
-            "--branch-delete",
             "--reason",
             "merged",
         ],
@@ -5818,7 +5816,7 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
     );
     assert!(
         branches.trim().is_empty(),
-        "close must delete the dispatch branch: {branches}"
+        "successful close must delete the dispatch branch by default: {branches}"
     );
 
     let tx_raw = tx_log(&project_root);

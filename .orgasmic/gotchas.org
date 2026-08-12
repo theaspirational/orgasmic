@@ -799,10 +799,12 @@ on a machine you have just decided not to hammer. Never attribute a red to a
 diff without it. See TASK-STWVB, which has now been confounded by three
 different environment axes (89%-full disk, worktree identity, and this).
 
-*IF YOU MUST RUN THE SUITE WHILE UNATTENDED, GUARD IT.* =syspolicyd= is pid-stable
-per boot; sample =ps -o pcpu= -p <pid>= every 10s and kill the cargo run if it
-holds above ~400% for a minute. The wedge is not instantaneous — there is a
-sustained-load precursor, and one minute of it is ample warning.
+*The guard is now structural.* =scripts/run-tests.sh= samples the pid-stable
+=syspolicyd= process every 10s for every live cargo suite. Six consecutive
+samples at or above 400% terminate the cargo process tree and return exit 4
+=INCONCLUSIVE= with the measured rate and threshold; the interrupted run is
+host state, never a code verdict. Do not wrap the command in a second ad-hoc
+watchdog. =--classify= executes no cargo and is intentionally inert.
 
 ** The evidence stall clock kills provider-bound turns: dispatch high-effort workers with a governance stall override
 Measured 2026-07-29 (TASK-JQ8AV): a claude-opus-5 high-effort turn thinking

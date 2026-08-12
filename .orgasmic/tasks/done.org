@@ -31764,3 +31764,646 @@ Contributor =scripts/install.sh --from-source= publishes the linker/ad-hoc-signe
 - a different final designated requirement is refused before replacement
 - stable path and fresh-inode replacement remain intact
 - regression tests cover re-sign-before-enforce and installer delegation
+
+* DONE TASK-5CCZM Empty-git-remote-under-load flake class: three observers of refresh_repo_url's give-up path, no owner
+:PROPERTIES:
+:ID: TASK-5CCZM
+:PRIORITY: P2
+:END:
+
+The empty-git-remote-under-load flake class: three test names, one shape, no
+owner. An unowned flake cannot be registered (registry rule), so the class
+stays invisible and any recurrence classifies REAL in a loaded gate.
+
+Sightings, all green in isolation:
+
+1. `post_projects_registers_existing_orgasmic_project_and_refreshes_index`
+   (crates/orgasmic-daemon/tests/integration.rs:357) — `assertion left == right
+   failed, left: String(""), right: "git@example.com:org/existing.git"` —
+   TASK-0RCRY full-workspace run, 2026-07-29.
+2. `post_projects_scaffolds_and_registers_uninitialized_project`
+   (integration.rs:437) — same shape, right: "git@example.com:org/fresh.git" —
+   same run.
+3. `index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh`
+   — the already-documented candidate in verify/flake-registry.toml's notes;
+   TASK-5FEN5 fixed its test-side wait (drive the probe until the URL lands),
+   so THIS sighting class is about the remaining callers of the same
+   under-load-git-probe behaviour, not that fixed test.
+
+Shape: `refresh_repo_url` bounds its `git config --get remote.origin.url`
+probe (3s) and returns WITHOUT WRITING when the bound is spent — deliberate
+production behaviour with its own test. Under load the probe loses the race and
+observers see "". 5FEN5 measured a passing probe at 2.24s against the 3s bound
+on a loaded machine — the failures are that distribution's tail.
+
+=== Ask
+
+Per the 5FEN5 standard: reproduce under load, then fix each observer at the
+synchronization (wait on the probe's completion, or drive until present with a
+hang-guard bound), not the budget size. integration.rs tests are out-of-process
+observers — check what completion signal they CAN see before designing.
+Registering with this task as owner is the fallback; fixing is the goal.
+
+=== Acceptance
+
+- Either the named tests survive >=5 consecutive loaded runs post-fix (pre-fix
+  counts pinned), or they are registered with measured signatures and the
+  diagnosis documented.
+- Injection per TCTTD standard where patch-expressible (the 5FEN5 artifact's
+  first-probe-returns-empty injection is the template).
+
+* DONE TASK-3X5AQ Dispatch worktree builds prompt for Documents and leave dead TCC rows — chosen shared-target-dir fix is measurably unsound, needs a new decision :dispatch:runtime:macos:
+:PROPERTIES:
+:ID: TASK-3X5AQ
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**, crates/orgasmic-cli/**, shipped/**
+:END:
+
+=== READ THIS FIRST — STATUS ===
+The DECISION recorded below (option 2, shared =CARGO_TARGET_DIR=) was DISPROVED
+by measurement later the same day. DO NOT IMPLEMENT IT. See the section
+"Disproof of the shared target dir (2026-08-03)" at the end of this task: a
+shared target dir makes a worker's =cargo build= a silent no-op and greens its
+integration suite against another checkout's binary. This task needs a NEW
+decision; option 5 (stable worktree slots) is the recommendation.
+=== END STATUS ===
+
+DECISION [2026-08-03]: take option 2, the shared =CARGO_TARGET_DIR=. The
+operator chose it after the cost of option 1 was measured (it disables the whole
+orgasmic-cli integration suite, including the =cli_parity= false-verb guard).
+
+CONCURRENCY IS HANDLED BY CARGO, PROVEN NOT ASSUMED. Two =cargo build= runs
+against one target dir were started 2s apart; the second printed:
+
+: Blocking waiting for file lock on artifact directory
+: Finished `dev` profile ... in 0.13s
+
+So workers need no coordination protocol and cannot corrupt each other — the
+second simply waits. That answers the "how does a worker know" question: it does
+not have to.
+
+THREE THINGS THE LOCK DOES NOT COVER, and they are the real design work:
+
+1. *The lock covers BUILDING, not TESTING.* Once artifacts exist, =cargo test=
+   just runs binaries, and two workers can run suites concurrently against the
+   same target dir with no lock at all. That is exactly the load condition
+   measured FIVE times this session to redden the live-mux and process-probe
+   tests spuriously. A shared target dir does not cause that, but it removes the
+   incidental staggering that per-worktree builds provided.
+
+2. *Flag divergence causes rebuild thrashing.* =cargo clippy --all-targets=,
+   =cargo test -p orgasmic-daemon --lib= and =cargo build --release= select
+   different artifact sets; workers alternating between them invalidate each
+   other and each waits for a rebuild of what the other just discarded. With a
+   25 GB target and multi-minute daemon builds this is the dominant cost, and it
+   is worse than the lock wait. MITIGATION: briefs should name ONE gate command
+   set and workers should not improvise flags — largely already true, and now
+   load-bearing rather than stylistic.
+
+3. *Shared blast radius.* One worker running =cargo clean=, or a disk-pressure
+   cleanup, destroys every concurrent workers artifacts mid-run. Worth an
+   explicit "never cargo clean in a dispatch" line alongside the other
+   prohibitions.
+
+ONE CLEAR WIN, measured: each worktree currently carries its own target —
+=task-8ed6v= alone is 3.0 GB against the shared 25 GB. Sharing removes that
+duplication per concurrent worker, which also reduces the =syspolicyd= scan
+surface, since the gotcha attributes the bursts to executing freshly written
+binaries.
+
+IMPLEMENTATION NOTE: the daemon composes the worker environment, so
+=CARGO_TARGET_DIR= belongs there rather than in a per-brief instruction — a
+prose instruction is skippable and this needs to hold for every dispatch. Point
+it at the repo-root =target/=, which already holds the TCC grant; that is what
+makes the prompts stop.
+
+macOS TCC keys Documents-folder access by BINARY PATH. Every dispatch worktree
+lives at a fresh path under
+=~/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/<task>/worktree/=, so a
+worker that builds =target/debug/orgasmic= there produces a program macOS has
+never seen. It prompts the operator, and the grant it earns dies with the
+worktree.
+
+*Measured 2026-08-03.* The user TCC db has five
+=kTCCServiceSystemPolicyDocumentsFolder= rows under =dispatch/*/worktree=, and
+ALL FIVE point at worktrees that no longer exist:
+
+: .../dispatch/task-vegrv/worktree/target/debug/orgasmic    granted 03:41:23, worktree GONE
+: .../dispatch/task-2dftx/worktree/target/release/orgasmic  GONE
+: .../dispatch/task-CZTWD/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-Y2ZQJ/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-jj9rd/worktree/target/debug/orgasmic    GONE
+
+So the prompt is not a grant that failed to stick. It is a NEW grant request per
+dispatch, for a path created and destroyed within the hour, and approving it does
+nothing for the next worker.
+
+*NOT the runtime reinstall.* Checked at the same time and stated here because the
+coincidence is misleading: =~/.orgasmic/bin/orgasmic= holds
+=kTCCServiceSystemPolicyAllFiles= = 2, last modified 2026-08-02 18:35:46 — BEFORE
+the 2026-08-03 reinstall — with zero permission errors and all 6 projects
+indexed. The codesign preserved TCC exactly as intended.
+
+** Description
+
+macOS TCC keys Documents-folder access by BINARY PATH. Every dispatch worktree
+lives at a fresh path under
+=~/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/<task>/worktree/=, so a
+worker that builds =target/debug/orgasmic= there produces a program macOS has
+never seen. It prompts the operator, and the grant it earns dies with the
+worktree.
+
+*Measured 2026-08-03.* The user TCC db has five
+=kTCCServiceSystemPolicyDocumentsFolder= rows under =dispatch/*/worktree=, and
+ALL FIVE point at worktrees that no longer exist:
+
+: .../dispatch/task-vegrv/worktree/target/debug/orgasmic    granted 03:41:23, worktree GONE
+: .../dispatch/task-2dftx/worktree/target/release/orgasmic  GONE
+: .../dispatch/task-CZTWD/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-Y2ZQJ/worktree/target/debug/orgasmic    GONE
+: .../dispatch/task-jj9rd/worktree/target/debug/orgasmic    GONE
+
+So the prompt is not a grant that failed to stick. It is a NEW grant request per
+dispatch, for a path created and destroyed within the hour, and approving it does
+nothing for the next worker.
+
+*NOT the runtime reinstall.* Checked at the same time and stated here because the
+coincidence is misleading: =~/.orgasmic/bin/orgasmic= holds
+=kTCCServiceSystemPolicyAllFiles= = 2, last modified 2026-08-02 18:35:46 — BEFORE
+the 2026-08-03 reinstall — with zero permission errors and all 6 projects
+indexed. The codesign preserved TCC exactly as intended.
+
+** Why it has not broken anything yet
+
+A worker denied Documents access still reaches =.orgasmic/= state through the
+daemon over HTTP, so no run has failed on this. The costs are operator
+interruption, a TCC db slowly filling with dead paths, and the risk that an
+operator conditioned to dismiss orgasmic prompts dismisses one that matters.
+
+** Same family as TASK-48SFW
+
+Per-user OS state that per-dispatch isolation does not scope. There it was the
+LaunchAgent plist; here it is the TCC path grant. Worth fixing with that in mind
+rather than as a one-off.
+
+** Options, and the trade is real
+
+1. *Tell workers never to build the CLI.* Simplest, and the operator asked for
+   this first. COST, measured: =cargo test -p orgasmic-cli= builds the binary
+   automatically for integration tests (=CARGO_BIN_EXE_orgasmic=), so this
+   disables essentially the whole CLI integration suite —
+   =cli_parity= (the TASK-TKR0H false-verb guard, load-bearing for every shipped
+   prose change), =entry=, =doctor=, =status=, =reindex=, =list_output=,
+   =node_body_roundtrip_cli=, =task_property_silent_drop_cli=, =bootstrap_smoke=,
+   =pinned_exec=, =manager_tier_cli=, =manager_register=. Several of those caught
+   real defects in the 2026-08-02/03 session.
+2. *Shared =CARGO_TARGET_DIR=.* Point worktree builds at one stable path that
+   already holds the grant. Every test keeps working and no new prompt is ever
+   raised. Cost: concurrent workers serialize on the cargo lock, and a shared
+   target dir is a known contention source.
+3. *Move dispatch worktrees outside =~/Documents=.* Removes the whole class —
+   Documents is the only guarded ancestor — but changes a path a lot of tooling
+   and several gotchas assume, and the daemons own Documents grant exists
+   precisely because the project lives there.
+4. *Prompt-free by construction:* have the dispatch env set =CARGO_TARGET_DIR=
+   only for the CLI crate, or have workers run the INSTALLED
+   =~/.orgasmic/bin/orgasmic= (already granted) for anything that just needs a
+   working CLI rather than the one they are changing.
+
+Options 2 and 4 keep the suite; 1 and 3 change what workers can verify. Pick
+deliberately.
+
+** Acceptance
+
+- A dispatch that builds and runs the CLI raises no new Documents prompt.
+- Whatever is chosen, the CLI integration suite still runs for a worker that is
+  CHANGING the CLI — that is the case where the tests matter most.
+- Existing dead worktree rows in the TCC db are documented as safe to remove (it
+  is SIP-protected, so removal is operator-only through Settings).
+** Disproof of the shared target dir (2026-08-03)
+STOP — THE 2026-08-03 DECISION IS DISPROVED. Do NOT implement the shared
+=CARGO_TARGET_DIR=. It is not merely contended, it is UNSOUND: a dispatch
+worker's =cargo build= becomes a silent no-op and its integration suite greens
+against a DIFFERENT checkout's binary.
+
+*Reproduced 2026-08-03 in the exact production shape* — a git worktree of a
+cargo workspace, both pointed at the repo-root target dir (cargo 1.94.1):
+
+: repo root:        main.rs prints MAIN_BRANCH   -> cargo build -> target/debug/probe-cli = MAIN_BRANCH
+: git worktree A:   main.rs prints TASK_A_BRANCH -> cargo build -> "Fresh probe-cli", NO compile
+:                   target/debug/probe-cli still = MAIN_BRANCH
+:                   cargo test in worktree A: 1 passed, BIN_SAYS=MAIN_BRANCH
+
+The worker edited a source file, built, and tested. Nothing errored. The suite
+was green. It ran the MANAGER's binary.
+
+*Mechanism, and why the earlier lock measurement missed it.* The file lock is
+real and does serialize concurrent builds — that measurement was correct and is
+not what fails. What fails is freshness. Cargo's =-C metadata= hash for a path
+package does not include the checkout path, so BOTH checkouts share ONE
+fingerprint directory (=target/debug/.fingerprint/probe-cli-<hash>=, verified: a
+single dir, not one per worktree). Freshness is then decided by comparing the
+mtimes of the files recorded in the OTHER checkout's dep-info. The worker's own
+edited file is not in that list, so nothing looks stale and cargo reports
+=Fresh=. The stale uplifted binary at =target/<profile>/<name>= is what
+=CARGO_BIN_EXE_*= resolves to, so every integration test inherits it.
+
+It is also NOT ordering-dependent: after making worktree B's file genuinely
+dirty and rebuilding, rebuilding worktree A reported =Fresh= and left B's binary
+in place. Either checkout can silently receive the other's program.
+
+*Why this outweighs the problem it was chosen to solve.* The TCC prompt costs
+the operator a click and leaves a dead db row; no run has ever failed on it.
+This trades that for a class of false green — and this session already lost real
+work to two of those (a re-cut =orgasmic verify= artifact that never reached its
+assertions, and a shipped artifact that became a false green when a fix made its
+defect unreproducible). The whole point of the gate is that green means
+something. Sharing a target dir across checkouts makes green mean nothing, in a
+way no test on this repo would detect.
+
+*Option 5, which satisfies BOTH constraints — the recommendation.* The tension
+is: TCC needs the EXECUTED BINARY PATH to be stable across dispatches, while
+cargo needs ONE checkout path per target dir. A fixed pool of stable worktree
+slots gives both:
+
+: .orgasmic/tmp/dispatch/slot-1/worktree  (own target/)
+: .orgasmic/tmp/dispatch/slot-2/worktree  (own target/)   ... N slots
+
+A slot's binary path never changes, so the operator grants it ONCE and the grant
+survives — the prompt stops for good and the TCC db stops filling with dead
+rows. Each slot keeps its own target dir with exactly one checkout path in it,
+so cargo's freshness logic is the ordinary, sound, single-checkout case. Two
+concurrent workers never share a slot, so there is no lock contention and no
+flag thrashing either. Disk is bounded at N targets instead of unbounded, which
+is strictly better than today.
+
+Cost: the dispatch directory is named by slot rather than by task, so the
+task->worktree mapping has to be read from the dispatch record instead of the
+path. Several gotchas and briefs name task-shaped worktree paths and would need
+updating, and slot release has to be part of worktree teardown.
+
+*Reopened for a decision.* The operator picked option 2 on 2026-08-03 with the
+lock measurement in hand and without this one; that choice should not be
+executed as recorded. Options 1 and 3 stand as previously described. Option 5 is
+the recommendation.
+** The cdhash measurement: option 5 withdrawn, and the general-vs-specific split
+OPTION 5 (STABLE WORKTREE SLOTS) IS WITHDRAWN AS THE TCC FIX. The manager
+recommended it on 2026-08-03 on the assumption that a STABLE BINARY PATH keeps a
+TCC grant. Measured 2026-08-05: it does not. The premise was wrong.
+
+*The measurement.* Decoding the =csreq= blob stored on each grant in the user
+TCC db:
+
+: worktree-built binary   -> cdhash H"b081c98ab06c6ab3611c357bdb900420b3e66d54"
+: installed runtime binary -> identifier "com.theaspirational.orgasmic" and
+:                            certificate root = H"a70531007cd128ff081597cb27bee0816613d86d"
+
+A grant for a linker/ad-hoc-signed binary is pinned to that binary's exact
+CONTENT HASH, not to its path. Rebuild the same file at the same path and the
+cdhash changes, so the grant no longer matches and macOS prompts again.
+
+*Consequence, and it inverts the recommendation.* Slots would make the prompt
+fire ONCE PER BUILD instead of once per dispatch — strictly WORSE than today,
+since a worker builds many times per dispatch. Any scheme whose mechanism is "a
+stable path earns a durable grant" fails for the same reason.
+
+*What actually makes a grant durable* is the second row: a stable SIGNING
+IDENTITY. =identifier ... and certificate root= survives rebuilds, which is
+exactly why the 2026-08-03 runtime reinstall kept its Documents access while
+the gotcha warns that a linker-signed binary is "a stranger to TCC". That is a
+real fix but not one orgasmic can apply generally — it cannot codesign arbitrary
+projects' build outputs, and requiring a signing identity to run a dispatch is a
+much heavier ask than the problem justifies.
+
+=== The remaining general fix is option 3, and the framework owns it
+Get dispatch worktrees OUT of TCC-guarded directories, rather than trying to
+make grants survive. macOS guards =~/Documents=, =~/Desktop=, =~/Downloads= and
+iCloud Drive; nothing outside them needs a grant at all, so there is no cdhash
+to invalidate and no prompt to answer.
+
+This is the right layer because ORGASMIC CREATES THE PROBLEM: it chooses to put
+worktrees at =<project>/.orgasmic/tmp/dispatch/<task>/worktree=, which inherits
+whatever guarded ancestor the project root has. A project rooted in
+=~/Documents= gets it for free and cannot opt out.
+
+*To verify before building* (do not assume, this task has already burned one
+assumption): a worktree outside Documents still has a =.git= file pointing at
+=<project>/.git/worktrees/<name>= INSIDE Documents. Confirm whether git
+operations from the worker trip a prompt, and if so whether a separate git dir
+or a shared clone avoids it.
+
+=== Is this orgasmic-specific or general? — general, with a specific accent
+GENERAL: any orgasmic project that (a) runs on macOS, (b) COMPILES BINARIES it
+then executes, and (c) is rooted under a guarded folder. Interpreted projects
+mostly escape it because the executed binary is the interpreter
+(=/usr/bin/python3=, =node=), which is already known to TCC; it is freshly
+COMPILED output that is a stranger. So Rust, Go, C/C++, CGo, Tauri and Electron
+projects hit it; plain Python/Node/Ruby ones typically do not.
+
+SPECIFIC to this repo: only the vocabulary of the disproved fix
+(=CARGO_TARGET_DIR=) and the fact that this project happens to live in
+=~/Documents=. Neither belongs in the framework.
+
+=== So: bundle the behaviour, do not write a convention
+- The FIX belongs in the daemon's worktree placement — one code path, applies to
+  every dispatch in every project, nothing to remember.
+- A repo-wide convention is the wrong instrument for the reason already recorded
+  here ("a prose instruction is skippable and this needs to hold for every
+  dispatch") and for a reason this session demonstrated three times: prohibitions
+  in prose get missed. The ORGASMIC_HOME outages happened WITH a written
+  prohibition in force.
+- Do NOT bundle toolchain knowledge. Orgasmic should not know what cargo is. If
+  a per-project environment is ever needed, it should be a generic
+  project-declared env map, not a =CARGO_TARGET_DIR= special case.
+
+=== What slots are still worth
+Bounded disk (N targets instead of one per concurrent worktree, measured at
+3.0 GB for a single worktree) and, if anyone ever revisits sharing a target dir,
+they are the only shape that keeps cargo sound. Keep them on the table as a
+disk/scale change; just not as the TCC answer.
+** Verification and recommended placement (2026-08-05)
+VERIFIED 2026-08-05, before building anything. Four measurements, one of which
+closes the option-5 question for good and one of which corrects an earlier
+assumption in this task.
+
+1. *A rebuild at a STABLE PATH changes the cdhash.* Built a tiny ad-hoc-signed
+   binary twice at one path:
+
+   : build 1: CDHash=16237ab166c90df05f15b3f29b0f25c03d7616c9
+   : build 2: CDHash=6cdc20d7c7e6574d879e6b72648f0c1922a79120
+
+   The TCC grant is pinned to the cdhash, so it cannot survive a rebuild. Option
+   5 (stable worktree slots) is CONFIRMED DEAD as the TCC fix — it would move
+   the prompt from once-per-dispatch to once-per-BUILD.
+
+2. *git is NOT exempt, but it is already satisfied and path-stable.* Earlier
+   reasoning here assumed git would be covered as an Apple binary. Wrong:
+   =/opt/homebrew/Cellar/git/2.52.0_1/bin/git= holds its own
+   =kTCCServiceSystemPolicyDocumentsFolder= grant, as do =tmux= and =rustup=.
+   They prompted once historically and stuck, because their paths are stable.
+   Crucially, across the FIVE recorded dispatch prompts, every grant was for a
+   freshly built =.../worktree/target/{debug,release}/orgasmic= — NEVER for git.
+   So git reaching into a Documents-hosted =.git= was already a solved case
+   during real dispatches. (A Homebrew git upgrade moves the path and re-prompts
+   once; that is pre-existing and unrelated to worktree placement.)
+
+3. *A worktree outside the repo works normally.* Created one at
+   =~/.orgasmic/worktrees/orgasmic/tcc-probe=: its =.git= file resolves back to
+   =<repo>/.git/worktrees/tcc-probe= inside Documents, =git status= and
+   =git log= work, =.orgasmic/project.org= is present so project resolution
+   still works from the worktree, and =git worktree remove= works from outside
+   the repo. Same filesystem (=/dev/disk3s5=), so no cross-volume concerns.
+
+4. *The toolchain builds and runs there.* cargo built and ran a fresh binary
+   under =~/.orgasmic/worktrees/...= with no issue.
+
+*LIMIT OF TEST 4, STATED SO NOBODY OVER-READS IT.* The probe binary also read
+the Documents-hosted repo successfully and RAISED NO PROMPT — but that proves
+nothing about dispatches. It ran under this shell, whose responsible process
+already holds Documents access; TCC attributes to the responsible process, and a
+dispatch's chain (daemon -> tmux -> harness -> cargo -> test binary) is
+different. The argument for the fix does NOT rest on that result. It rests on
+the fact that a worker whose worktree is outside Documents HAS NO REASON to read
+Documents at all: its cwd, sources, target dir and =.orgasmic= snapshot are all
+inside the worktree, and the only link back is the =.git= file, which git — a
+separately granted, path-stable binary — follows.
+
+=== Recommended placement
+: ~/.orgasmic/worktrees/<project-id>/<task-id>/
+
+Keyed on PROJECT ID, not display name: the id is what the CLI and daemon already
+use everywhere (=--project <id>=), and names can collide or change.
+
+Why a TOP-LEVEL =worktrees/= rather than the proposed
+=~/.orgasmic/user/projects/<name>/worktrees=:
+- =user/= currently means user-level CONFIG — it holds =auth/= and =board.org=,
+  both small. Worktrees are multi-GB regenerable scratch; mixing them buries the
+  largest thing on disk inside a config namespace.
+- =user/= also carries a bad association: =user/workers/= was the retired
+  residue that TASK-8ED6V was filed about. A new =user/projects/= invites the
+  same "is this live or dead?" question that incident was about.
+- Top-level makes the cost visible: =du -sh ~/.orgasmic/*= shows it at a glance.
+
+Why NOT =~/Library/Caches/orgasmic/...=, the otherwise idiomatic macOS choice:
+it is unguarded (confirmed: zero TCC rows for Cache services), but macOS may
+PURGE it under disk pressure, which would destroy a worktree mid-dispatch.
+Rejected on that alone.
+
+=== What moves and what stays
+Move only the SCRATCH. The dispatch RECORD — brief, report =last.txt=, stdout
+log under =.orgasmic/tmp/dispatch/<task>/= — stays in the project, because it is
+part of the durable record, it is small, and it is written by the daemon, which
+is identity-signed and already granted. Splitting on "record stays, scratch
+leaves" keeps every existing brief-path reference valid.
+
+=== Already has an escape hatch
+=orgasmic manager dispatch --worktree <PATH>= already exists ("omitted -> a
+managed path under =.orgasmic/tmp/dispatch/="). So this change is to the MANAGED
+DEFAULT only, and the override is precedent, not new surface.
+
+=== Make it universal, not macOS-gated
+Linux has no TCC, but the move is still correct there: the repo stops
+accumulating multi-GB build trees, =git status= in the repo stays clean, and
+disk is attributable per project. One code path beats a platform branch.
+
+=== Known follow-on work
+=.orgasmic/tmp/dispatch/<task>/worktree= is named in gotchas, briefs and
+memories; those need updating with the change. =dispatch-close
+--worktree-remove= must remove from the new root, and the salvage ref
+=refs/orgasmic/salvage/<sha>= is git-level so it is unaffected.
+** Implementation task
+FILED [2026-08-05] as TASK-M47E5 — "Move dispatch worktrees out of TCC-guarded
+directories, and give them a prune" (P1).
+
+It carries both halves deliberately. Part 1 is the relocation to
+=~/.orgasmic/worktrees/<project-id>/<task-id>/=. Part 2 is pruning, and it is a
+REQUIREMENT of the move rather than a follow-up: today a stray worktree sits
+inside the repo where =git status= and =git worktree list= surface it, so after
+the move the same leak becomes SILENT multi-GB accumulation. Shipping the
+relocation alone would trade visible garbage for invisible garbage.
+
+This task (TASK-3X5AQ) stays open only as the measurement record — the cdhash
+proof, the disproved shared target dir, and the disproved stable slots. The work
+lives on TASK-M47E5.
+
+* DONE TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
+:PROPERTIES:
+:ID: TASK-BX5SR
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**,crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+MEASURED DURING A LIVE OUTAGE, 2026-08-02, daemon boot =f8f67c0c=.
+
+Timeline from =~/.orgasmic/logs/daemon.out.log=:
+
+: 22:20:22.139  ERROR api: writer transaction failed
+:                     error=cached mutation lacks its recorded identity
+: 22:20:22.770  WARN  supervisor: session append failed
+:                     error=writer task is gone  run_id=run-20260802T215608-...
+: 22:21:45.489  ERROR api: writer transaction failed error=writer task is gone
+: 22:21:52.686  ERROR api: writer transaction failed error=writer task is gone
+
+One transaction failed on a cache-identity check, and 0.63s later the WRITER
+TASK ITSELF WAS GONE. From that moment every write in the daemon failed:
+=task update --state= returned 500 =failed to apply changes=, =manager
+dispatch-close= appended its tx but could not update the lifecycle, and the live
+TASK-FZB6T.2 workers session appends were dropped on the floor.
+
+Reads stayed healthy throughout — =orgasmic status=, =task get= and
+=dispatch-status= all answered normally — so from the outside the daemon looked
+FINE. That is the worst property of this failure: a manager can keep issuing
+commands and reading plausible state while nothing is being persisted.
+
+** What it cost
+
+The in-flight implementer for TASK-FZB6T.2 was guaranteed to lose its report,
+because =orgasmic dispatch finalize= is a WRITE. Recovering the writer required a
+daemon restart; the restart released the run and the rmux pane died with it, so
+the worker was killed mid-task with 2,452 insertions uncommitted. The manager
+preserved them as =d982af1= on =task-fzb6t.2-impl=.
+
+Note the shape: this is the SECOND report lost on this task in one session, by
+two completely different mechanisms (the first was the tmux stall ceiling). The
+=dispatch finalize= contract has no durable fallback when the daemon cannot
+write.
+
+** Two defects, and they should probably be separated
+
+1. *A failing transaction must not kill the writer.* Whatever
+   "cached mutation lacks its recorded identity" is, it is a per-request error
+   and belongs in a 500 for THAT request. Taking the writer down converts one
+   bad request into a total write outage. Same class as TASK-KKGKM, where one
+   unreadable project killed the whole runtime.
+2. *A dead writer must be loud and must be recoverable without a restart.*
+   =orgasmic status= reported =parse_errors: 0= and looked healthy while every
+   write was failing. At minimum status should report writer liveness; better,
+   the writer should be supervised and restarted in place.
+
+Note =orgasmic restart= itself degraded: it reported
+=daemon pre-stop drain returned 500: failed to drain writer before restart=
+and warned that mid-flight releases may be unreported — correct behaviour given
+the state, but it means the recovery path is also compromised by the same fault.
+
+** Acceptance
+
+- A writer transaction that fails for any reason returns an error for that
+  request and leaves the writer task running. A regression injects a failing
+  mutation and proves the NEXT write succeeds.
+- =orgasmic status= (and =doctor=) report writer liveness, so a dead writer is
+  visible without reading daemon logs.
+- The writer is supervised: if the task does exit, it is restarted in place, or
+  the daemon fails loudly rather than serving reads as if healthy.
+- Root-cause =cached mutation lacks its recorded identity= specifically: what
+  produces a cached mutation with no recorded identity, and why is it reachable
+  from =manager dispatch-close=? The outage began on that exact call.
+- Consider a durable fallback for =dispatch finalize= so a worker report is not
+  lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
+  transaction so dispatch-close is one commit).
+
+* DONE TASK-GRCWC neither walk_worktree fail-open has a fixture, and worktree-prune is a destructive verb on the operator binary
+:PROPERTIES:
+:ID: TASK-GRCWC
+:PRIORITY: P1
+:END:
+
+** Description
+Opened so the =TASK-RMA18= chain could close. *This residual was recorded on the
+round-seven close =tx-20260808-orgasmic-5480= and accepted knowingly by the
+operator* — it is not new, and it is not a review finding. It is the one thing
+that chain never closed.
+
+=orgasmic manager worktree-prune= is *DESTRUCTIVE* and has been on the operator
+binary since =ed0ebbc= (2026-08-08); it is still there in =2cf6ea7=.
+
+*** The two fail-opens
+=crates/orgasmic-cli/src/manager.rs=, =walk_worktree=:
+
+: :3833  if depth > anchored_dir::MAX_DEPTH { return; }
+: :3836  let Ok(names) = anchored_dir::entry_names(dir) else { return; };
+: :3855  Err(_) => continue,
+
+All three *fail OPEN* — the walk gives up quietly and the tree looks smaller and
+safer than it is. What makes that acceptable is that =remove_contents=
+(=:3179-3195=) propagates the SAME limits instead of swallowing them:
+
+: :3180  if depth > MAX_DEPTH { bail!(..) }
+: :3183  for name in entry_names(dir)?
+: :3184  match open_child_dir(dir, &name)?
+
+*** The problem
+*That symmetry has now been derived from source THREE times and executed ZERO
+times.* Round five's reviewer, round six's reviewer, and the manager on
+2026-08-08 — who checked the likeliest crack, the depth bases, and confirmed they
+match, because the =child= passed to =remove_contents(&child, 1, ..)= at =:3243=
+is the worktree root itself, so both enter it at depth 1.
+
+Three readings of the same code are not a test. *No fixture exercises either
+fail-open.*
+
+*** Second, unchanged and NOT data loss
+=RemovalFailure= carries =touched= and =remove_contents= is readdir-ordered, so a
+fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
+*The help does not say so.*
+
+** Acceptance
+1. *The cheap fixture first: =chmod 000=.* A directory the walk cannot list,
+   inside a worktree the verb is asked to prune. Prove the refusal, and prove
+   =remove_contents= would have refused too rather than partially removing.
+2. Then the depth one: a tree deeper than =MAX_DEPTH=. It is the expensive
+   fixture and it is why it has never been written; write it anyway or state the
+   bound it is being traded for.
+3. *Decide and state what a partial removal means to the operator*, and make the
+   help true about it. Today it is silent.
+4. *This should land before any further destructive change to this verb.* That
+   sentence has been in the handoff for two days; make it an acceptance instead.
+
+** Why P1
+The verb deletes directories on the operator's machine, it is installed, and the
+only argument for its safety is one nobody has run.
+
+* DONE TASK-BX5SR.1 Add a daemon-level retained-descriptor writer-sync regression and remove the transaction-loop panic :daemon:writer:
+:PROPERTIES:
+:ID: TASK-BX5SR.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+Claude’s independent review of 6fdae3f found that the retained-descriptor sync correction is sound but its daemon-level routing is unguarded: current regressions either call TxWriter directly or fail before sync. Add a deterministic seam between append and sync that renames/unlinks/replaces the ledger pathname, then prove the daemon append still acknowledges through the retained writer descriptor. The test must fail if writer.rs reintroduces an OpenOptions reopen on the acknowledgement path.
+
+Also replace the latent `unreachable!("all writer transactions carry an identity")` inside the serialized writer task with a request-local error, so an unforeseen malformed internal command cannot kill all writes.
+
+Keep the retained-descriptor invariant under rename/atomic replacement. Do not add a post-sync stat/open or attempt to solve the separate external-unlink loss tradeoff.
+
+** Acceptance
+- A daemon-level append completes when the tx pathname is removed or renamed specifically between append and sync; the regression fails if the pre-fix pathname reopen is restored.
+- Fsync-before-ack, one-sync-per-batch, failure injection, and rewrite rollback remain proven.
+- No reachable writer transaction branch panics on absent mutation identity; it returns an error and the next command succeeds.
+- Focused writer/durability tests, fmt, clippy, and an independent review pass.
+
+* DONE TASK-GRCWC.1 Make unsafe worktree-prune traversal refusals fully actionable and unambiguous :cli:safety:
+:PROPERTIES:
+:ID: TASK-GRCWC.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:END:
+
+** Description
+Claude’s independent review of TASK-GRCWC approved the fail-closed traversal mechanics but found the new `UnsafeTraversal` operator surface incomplete. `anyhow::Error::to_string()` drops the underlying errno; help grammatically says an unreadable descendant is skipped rather than the whole worktree; and the refusal gives no remedy despite a no-force command.
+
+Correct only this operator-facing safety contract and its direct coverage:
+- Preserve the full error cause chain (including Permission denied) in the SKIP refusal.
+- Say unambiguously that the WHOLE worktree is skipped and no content within it is deleted when traversal is incomplete; pin that wording in help parity.
+- Name the safe remedy: make the descendant readable or remove it by hand, then rerun; there is no force override.
+- Make the PARTIAL/KEPT summary regression fail rather than silently return under privilege, so that new accounting cannot false-green.
+
+Do not redesign traversal mechanics or add a force flag.
+
+** Acceptance
+- A chmod-000 production prune refusal includes the underlying permission error, the whole-worktree no-delete guarantee, and an actionable no-force remedy.
+- Help’s subject is the worktree and is pinned by a phrase-sensitive test.
+- Privileged execution cannot report a green PARTIAL/KEPT test without exercising the refusal.
+- Existing anchored traversal and all focused manager tests remain green; independent review passes.

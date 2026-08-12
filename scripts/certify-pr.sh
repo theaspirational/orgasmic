@@ -7,10 +7,13 @@ set -euo pipefail
 MODE="certify-and-publish"
 REPO=""
 CONTEXT="local/release-certified"
+REMOTE="origin"
+BASE="main"
 
 usage() {
     cat <<'EOF'
-Usage: bash scripts/certify-pr.sh [--repo <owner/name>] [--no-publish | --publish-only]
+Usage: bash scripts/certify-pr.sh [--repo <owner/name>] [--remote <name>] [--base <branch>]
+                                  [--no-publish | --publish-only]
 
 The default certifies (or reuses an exact receipt) and publishes the commit
 status. Use --no-publish before pushing, then --publish-only after pushing.
@@ -20,6 +23,8 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) REPO="$2"; shift 2 ;;
+        --remote) REMOTE="$2"; shift 2 ;;
+        --base) BASE="$2"; shift 2 ;;
         --no-publish) MODE="no-publish"; shift ;;
         --publish-only) MODE="publish-only"; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -39,17 +44,17 @@ if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
     exit 1
 fi
 
-git fetch --quiet origin main
+git fetch --quiet "$REMOTE" "$BASE"
 HEAD_SHA="$(git rev-parse HEAD)"
-ORIGIN_MAIN="$(git rev-parse origin/main)"
-if [[ "$HEAD_SHA" == "$ORIGIN_MAIN" ]]; then
+REMOTE_BASE="$(git rev-parse "$REMOTE/$BASE")"
+if [[ "$HEAD_SHA" == "$REMOTE_BASE" ]]; then
     BASE_SHA="$(git rev-parse HEAD^1 2>/dev/null || printf '%s' "$HEAD_SHA")"
 else
-    git merge-base --is-ancestor "$ORIGIN_MAIN" "$HEAD_SHA" || {
-        echo "certify-pr: HEAD is not current with origin/main; update the branch first" >&2
+    git merge-base --is-ancestor "$REMOTE_BASE" "$HEAD_SHA" || {
+        echo "certify-pr: HEAD is not current with $REMOTE/$BASE; update the branch first" >&2
         exit 1
     }
-    BASE_SHA="$ORIGIN_MAIN"
+    BASE_SHA="$REMOTE_BASE"
 fi
 
 TREE_SHA="$(git rev-parse "${HEAD_SHA}^{tree}")"

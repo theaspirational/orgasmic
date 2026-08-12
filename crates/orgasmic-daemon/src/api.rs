@@ -90,7 +90,9 @@ use crate::supervisor::{
     DispatchCloseGuardOutcome, DispatchCloseGuardParams, RecoveryReattachPlan, Supervisor,
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
-use crate::writer::{FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle};
+use crate::writer::{
+    FileMutate, FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle,
+};
 use crate::ws;
 
 static UI_DIST: Dir<'_> = include_dir!("$ORGASMIC_UI_DIST_DIR");
@@ -16297,14 +16299,6 @@ async fn post_task_create(
     let task_id = resolve_task_create_id(&req)?;
     let stage = task_create_lifecycle_stage(&req)?;
     let path = task_create_target_path(&project.root);
-    let mut source = if path.exists() {
-        read_artifact(&path, "task file")?
-    } else {
-        format!(
-            "#+title: orgasmic {}\n#+orgasmic_version: 1\n",
-            task_create_target_file_name().trim_end_matches(".org")
-        )
-    };
     let project_defaults = project_prompt_defaults(project);
     let properties = filter_default_dispatch_properties(
         &req.properties,
@@ -16319,15 +16313,9 @@ async fn post_task_create(
         &properties,
         req.body.as_deref(),
     );
-    if !source.ends_with('\n') {
-        source.push('\n');
-    }
-    if !source.ends_with("\n\n") {
-        source.push('\n');
-    }
-    source.push_str(&heading);
-    OrgFile::parse(source.clone(), path.to_string_lossy())
-        .map_err(|e| org_parse_bad_request(&path, "task file", e))?;
+    let transform_heading = heading.clone();
+    let transform_path = path.to_string_lossy().to_string();
+    let empty_header = empty_task_file_header(task_create_target_file_name());
     let target = task_file_rel(task_create_target_file_name());
     let reason = req
         .reason
@@ -16349,11 +16337,21 @@ async fn post_task_create(
     .await?;
     let cached = state
         .writer
-        .transaction_mutation(
-            vec![FileRewrite {
+        .transaction_mutate_file_mutation(
+            FileMutate {
                 path: path.clone(),
-                new_contents: source.into_bytes(),
-            }],
+                transform: Box::new(move |source| {
+                    let source = if source.is_empty() {
+                        empty_header
+                    } else {
+                        source.to_string()
+                    };
+                    let updated = append_heading_to_task_file(&source, &transform_heading);
+                    OrgFile::parse(updated.clone(), transform_path)
+                        .map_err(|error| anyhow::anyhow!("task file parse failed: {error}"))?;
+                    Ok(updated.into_bytes())
+                }),
+            },
             prepared.tx,
             mutation,
             task_id.clone(),
@@ -17177,7 +17175,6 @@ struct TaskPropertyWriteRequest<'a> {
     project_root: &'a FsPath,
     task_id: &'a str,
     path: PathBuf,
-    source: String,
     reason: String,
     request_id: Option<String>,
     changed: Vec<(String, String)>,
@@ -17186,14 +17183,25 @@ struct TaskPropertyWriteRequest<'a> {
 async fn write_task_property_and_record(
     req: TaskPropertyWriteRequest<'_>,
 ) -> Result<String, ApiError> {
-    OrgFile::parse(req.source.clone(), req.path.to_string_lossy())
-        .map_err(|e| org_parse_bad_request(&req.path, "task file", e))?;
     let target = req
         .path
         .strip_prefix(req.project_root)
         .unwrap_or(req.path.as_path())
         .to_string_lossy()
         .to_string();
+    let mutation = MutationIdentity::new(
+        "task.property_updated",
+        req.project_id,
+        json!({
+            "task": req.task_id,
+            "target": &target,
+            "changed": &req.changed,
+        })
+        .to_string(),
+    );
+    let transform_task_id = req.task_id.to_string();
+    let transform_path = req.path.to_string_lossy().to_string();
+    let transform_changed = req.changed.clone();
     let prepared_tx = prepare_api_tx(
         req.state,
         ApiTxRequest {
@@ -17211,12 +17219,26 @@ async fn write_task_property_and_record(
     let tx_id = req
         .state
         .writer
-        .transaction(
-            vec![FileRewrite {
+        .transaction_mutate_file(
+            FileMutate {
                 path: req.path.clone(),
-                new_contents: req.source.into_bytes(),
-            }],
+                transform: Box::new(move |source| {
+                    let file = OrgFile::parse(source.to_string(), transform_path.clone())
+                        .map_err(|error| anyhow::anyhow!("task file parse failed: {error}"))?;
+                    let mut rw = OrgRewriter::new(&file, transform_path);
+                    for (key, value) in transform_changed {
+                        rw.upsert_property(&transform_task_id, &key, &value)
+                            .map_err(|error| {
+                                anyhow::anyhow!(
+                                    "set task property {key} on {transform_task_id}: {error}"
+                                )
+                            })?;
+                    }
+                    Ok(rw.finish().into_bytes())
+                }),
+            },
             prepared_tx.tx,
+            mutation,
         )
         .await
         .map_err(writer_transaction_error)?;
@@ -17248,10 +17270,6 @@ async fn update_task_properties(
     // a task that need not exist yet, and both say so instead of dropping.
     validate_task_property_keys(&req.properties, &[])?;
     let path = task.source_file.clone();
-    let source = read_artifact(&path, "task file")?;
-    let file = OrgFile::parse(source, path.to_string_lossy())
-        .map_err(|e| org_parse_bad_request(&path, "task file", e))?;
-    let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
     let mut changed = Vec::new();
     if let Some(priority) = req
         .priority
@@ -17259,8 +17277,6 @@ async fn update_task_properties(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        rw.upsert_property(task_id, "PRIORITY", priority)
-            .map_err(|e| org_rewriter_error("set task priority", task_id, e))?;
         changed.push(("PRIORITY".to_string(), priority.to_string()));
     }
     for (key, value) in req.properties {
@@ -17276,8 +17292,6 @@ async fn update_task_properties(
         if key.eq_ignore_ascii_case("ID") {
             return Err(ApiError::bad_request("task identity is immutable"));
         }
-        rw.upsert_property(task_id, key, &value)
-            .map_err(|e| org_rewriter_error("set task property", task_id, e))?;
         changed.push((key.to_string(), value));
     }
     if changed.is_empty() {
@@ -17285,7 +17299,6 @@ async fn update_task_properties(
             "task update requires at least one property",
         ));
     }
-    let updated = rw.finish();
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
@@ -17297,7 +17310,6 @@ async fn update_task_properties(
         project_root: &project.root,
         task_id,
         path,
-        source: updated,
         reason,
         request_id: req.request_id,
         changed,
@@ -31728,6 +31740,136 @@ pub(crate) mod tests {
         let _ = running.join.await;
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_task_creates_preserve_every_heading() {
+        const N: usize = 16;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let base = format!("http://{}", running.addr);
+
+        let mut writes = tokio::task::JoinSet::new();
+        for number in 0..N {
+            let client = client.clone();
+            let token = token.clone();
+            let base = base.clone();
+            writes.spawn(async move {
+                let response = client
+                    .post(format!("{base}/api/projects/orgasmic/tasks"))
+                    .bearer_auth(token)
+                    .json(&json!({
+                        "title": format!("Concurrent task {number:02}"),
+                        "request_id": format!("task-create-concurrent-{number:02}"),
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap();
+                assert!(status.is_success(), "task create: {status} {body}");
+                (
+                    number,
+                    body["id"].as_str().unwrap().to_string(),
+                    body["tx_id"].as_str().unwrap().to_string(),
+                )
+            });
+        }
+
+        let created = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut created = BTreeMap::new();
+            while let Some(result) = writes.join_next().await {
+                let (number, id, tx_id) = result.unwrap();
+                assert!(
+                    created.insert(number, (id, tx_id)).is_none(),
+                    "each create number should return once"
+                );
+            }
+            created
+        })
+        .await
+        .expect("concurrent task creates exceeded the client budget");
+        assert_eq!(created.len(), N);
+        assert_eq!(
+            created
+                .values()
+                .map(|(id, _)| id)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            N,
+            "every create must mint a distinct task id"
+        );
+        assert_eq!(
+            created
+                .values()
+                .map(|(_, tx_id)| tx_id)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            N,
+            "every create must append a distinct tx"
+        );
+
+        let on_disk =
+            std::fs::read_to_string(task_file_path(&project_root, "backlog.org")).unwrap();
+        for number in 0..N {
+            let (id, _) = &created[&number];
+            assert!(
+                on_disk.contains(&format!("* BACKLOG {id} Concurrent task {number:02}")),
+                "concurrent task {number:02} was lost\n{on_disk}"
+            );
+        }
+
+        let replay = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&json!({
+                "title": "Concurrent task 00",
+                "request_id": "task-create-concurrent-00",
+            }))
+            .send()
+            .await
+            .unwrap();
+        let replay_status = replay.status();
+        let replay_body: Value = replay.json().await.unwrap();
+        assert!(
+            replay_status.is_success(),
+            "idempotent create replay: {replay_status} {replay_body}"
+        );
+        assert_eq!(replay_body["id"], created[&0].0);
+        assert_eq!(replay_body["tx_id"], created[&0].1);
+
+        let tx: Value = client
+            .get(format!("{base}/api/tx?project=orgasmic"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let landed = tx
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["entry"]["ty"] == "task.created")
+            .count();
+        assert_eq!(landed, N, "every accepted task create needs one tx");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
     #[tokio::test]
     async fn task_property_update_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -31768,6 +31910,116 @@ pub(crate) mod tests {
             line.starts_with(":PRIORITY:") && line.split_whitespace().last() == Some("P1")
         }));
         assert!(on_disk.contains(":WORKER:           implementer-cursor"));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_task_property_updates_preserve_every_write() {
+        const N: usize = 16;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let base = format!("http://{}", running.addr);
+
+        let mut writes = tokio::task::JoinSet::new();
+        for number in 0..N {
+            let client = client.clone();
+            let token = token.clone();
+            let base = base.clone();
+            writes.spawn(async move {
+                let key = format!("CONCURRENT_{number:02}");
+                let value = number.to_string();
+                let response = client
+                    .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+                    .bearer_auth(token)
+                    .json(&json!({
+                        "properties": { key: value },
+                        "request_id": format!("task-property-concurrent-{number:02}"),
+                    }))
+                    .send()
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let body: Value = response.json().await.unwrap();
+                assert!(status.is_success(), "property update: {status} {body}");
+                body["tx_id"].as_str().unwrap().to_string()
+            });
+        }
+
+        let tx_ids = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut tx_ids = BTreeSet::new();
+            while let Some(result) = writes.join_next().await {
+                assert!(
+                    tx_ids.insert(result.unwrap()),
+                    "each mutation must have a unique tx acknowledgement"
+                );
+            }
+            tx_ids
+        })
+        .await
+        .expect("concurrent task property writes exceeded the client budget");
+        assert_eq!(tx_ids.len(), N);
+
+        let on_disk =
+            std::fs::read_to_string(task_file_path(&project_root, "backlog.org")).unwrap();
+        for number in 0..N {
+            let key = format!(":CONCURRENT_{number:02}:");
+            let expected = number.to_string();
+            let line = on_disk
+                .lines()
+                .find(|line| line.starts_with(&key))
+                .unwrap_or_else(|| panic!("concurrent property {key} was lost\n{on_disk}"));
+            assert_eq!(line.split_whitespace().last(), Some(expected.as_str()));
+        }
+
+        let replay = client
+            .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+            .bearer_auth(&token)
+            .json(&json!({
+                "properties": { "CONCURRENT_00": "0" },
+                "request_id": "task-property-concurrent-00",
+            }))
+            .send()
+            .await
+            .unwrap();
+        let replay_status = replay.status();
+        let replay_body: Value = replay.json().await.unwrap();
+        assert!(
+            replay_status.is_success(),
+            "idempotent replay: {replay_status} {replay_body}"
+        );
+        assert!(tx_ids.contains(replay_body["tx_id"].as_str().unwrap()));
+
+        let tx: Value = client
+            .get(format!("{base}/api/tx?project=orgasmic"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let landed = tx
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["entry"]["ty"] == "task.property_updated")
+            .count();
+        assert_eq!(landed, N, "every accepted property update needs one tx");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;

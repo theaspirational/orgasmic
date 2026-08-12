@@ -133,6 +133,17 @@ HOST_STATE_STAMP_PREFIX="# orgasmic-host-state:"
 SUITE_EXIT_STAMP_PREFIX="# orgasmic-suite-exit:"
 SAMPLE_HOST_ONLY=0
 
+# orgasmic:TASK-4BBA6
+# The verdict-rate sample above says whether the host was degraded across a
+# completed run.  It intentionally averages short spikes away, so it cannot
+# protect the Mac from the separate `syspolicyd -> tccd -> WindowServer`
+# failure mode.  This guard uses the instantaneous process percentage instead:
+# six ten-second samples at 400% means the suite is stopped before the machine
+# is made unusable.  A trip is host-state, never a test verdict.
+SYSPOLICYD_WATCHDOG_PERCENT=400
+SYSPOLICYD_WATCHDOG_INTERVAL_S=10
+SYSPOLICYD_WATCHDOG_SUSTAINED_SAMPLES=6
+
 die() {
     printf 'run-tests: %s\n' "$1" >&2
     exit "${2:-$EXIT_MISUSE}"
@@ -450,6 +461,143 @@ sample_syspolicyd_time_live() {
     fi
 }
 
+# Instantaneous `%CPU` for the pid-stable macOS scanner, or `?` when it cannot
+# be sampled.  This deliberately does not reuse cumulative CPU time: the guard
+# has to see the violent short burst that the normal verdict rate averages out.
+sample_syspolicyd_percent_live() {
+    local pid="" percent=""
+    if ! command -v pgrep >/dev/null 2>&1 || ! command -v ps >/dev/null 2>&1; then
+        printf '?'
+        return
+    fi
+    pid=$(pgrep -x syspolicyd 2>/dev/null | head -n1) || pid=""
+    if [ -z "$pid" ]; then
+        printf '?'
+        return
+    fi
+    percent=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d '[:space:]') || percent=""
+    if awk -v value="$percent" 'BEGIN { exit !(value != "" && value + 0 == value) }'; then
+        printf '%s' "$percent"
+    else
+        printf '?'
+    fi
+}
+
+# Send a signal from leaves to root. Cargo normally reaps its children after a
+# TERM, but the guard is precisely for a host under pathological pressure; a
+# recursive fallback means a rustc/linker descendant cannot keep scanning after
+# cargo itself has gone away. All pids came from the cargo process just started
+# by this script.
+watchdog_signal_process_tree() {
+    local pid="$1" signal="$2" children="" child
+    children=$(pgrep -P "$pid" 2>/dev/null) || children=""
+    for child in $children; do
+        watchdog_signal_process_tree "$child" "$signal"
+    done
+    kill "-$signal" "$pid" 2>/dev/null || true
+}
+
+# Starts the independent guard for one cargo command.  The result crosses the
+# subshell boundary through a private work-file so the parent can classify the
+# terminated command as INCONCLUSIVE.  The fast mode is test-only: production
+# constants above remain fixed and have no user-facing escape hatch.
+start_syspolicyd_watchdog() {
+    local cargo_pid="$1" trip_file="$2"
+    WATCHDOG_PID=""
+    [ "$(uname -s 2>/dev/null)" = "Darwin" ] || return 0
+    command -v pgrep >/dev/null 2>&1 || return 0
+    command -v ps >/dev/null 2>&1 || return 0
+    pgrep -x syspolicyd >/dev/null 2>&1 || return 0
+    # The host-state injector makes ordinary self-test cargo stubs finish in a
+    # few milliseconds.  Do not attach a real-machine watchdog to those
+    # synthetic runs; the one dedicated guard self-test opts back in below.
+    if [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ] \
+        && [ "${ORGASMIC_RUN_TESTS_WATCHDOG_TEST_FAST-}" != "1" ]; then
+        return 0
+    fi
+
+    local interval="$SYSPOLICYD_WATCHDOG_INTERVAL_S"
+    local samples_needed="$SYSPOLICYD_WATCHDOG_SUSTAINED_SAMPLES"
+    if [ "${ORGASMIC_RUN_TESTS_WATCHDOG_TEST_FAST-}" = "1" ]; then
+        interval=0
+        samples_needed=2
+    fi
+    (
+        local high_samples=0 percent="?" slept_ticks=0 ticks_per_sample=0
+        ticks_per_sample=$((interval * 5))
+        while kill -0 "$cargo_pid" 2>/dev/null; do
+            # Do not make a completed fast suite wait behind a ten-second
+            # sleep when its parent stops this guard.  Sampling remains every
+            # ten seconds; these short wakeups only observe cancellation.
+            slept_ticks=0
+            while [ "$slept_ticks" -lt "$ticks_per_sample" ] && kill -0 "$cargo_pid" 2>/dev/null; do
+                sleep 0.2
+                slept_ticks=$((slept_ticks + 1))
+            done
+            kill -0 "$cargo_pid" 2>/dev/null || exit 0
+            percent=$(sample_syspolicyd_percent_live)
+            if awk -v value="$percent" -v threshold="$SYSPOLICYD_WATCHDOG_PERCENT" \
+                'BEGIN { exit !(value != "?" && value + 0 == value && value + 0 >= threshold + 0) }'; then
+                high_samples=$((high_samples + 1))
+            else
+                high_samples=0
+            fi
+            if [ "$high_samples" -ge "$samples_needed" ]; then
+                printf 'percent=%s threshold=%s samples=%s interval_s=%s\n' \
+                    "$percent" "$SYSPOLICYD_WATCHDOG_PERCENT" "$high_samples" "$interval" > "$trip_file"
+                watchdog_signal_process_tree "$cargo_pid" TERM
+                # This is a host-safety stop, not cleanup: do not leave a
+                # scanner-heavy child running while cargo attempts a graceful
+                # shutdown under the condition that triggered the guard.
+                watchdog_signal_process_tree "$cargo_pid" KILL
+                exit 0
+            fi
+        done
+    ) &
+    WATCHDOG_PID=$!
+}
+
+run_cargo_command_with_watchdog() {
+    local log="$1" cargo_pid trip_file
+    shift
+    trip_file="$WORK/syspolicyd-watchdog-trip"
+    WATCHDOG_TRIPPED=0
+    WATCHDOG_DETAIL=""
+    WATCHDOG_PID=""
+    rm -f "$trip_file"
+
+    "$@" > "$log" 2>&1 &
+    cargo_pid=$!
+    start_syspolicyd_watchdog "$cargo_pid" "$trip_file"
+    wait "$cargo_pid"
+    SUITE_EXIT=$?
+
+    if [ -n "$WATCHDOG_PID" ]; then
+        # A normal suite must not wait for the guard's next ten-second sample.
+        watchdog_signal_process_tree "$WATCHDOG_PID" TERM
+        wait "$WATCHDOG_PID" 2>/dev/null || true
+    fi
+    if [ -f "$trip_file" ]; then
+        WATCHDOG_TRIPPED=1
+        WATCHDOG_DETAIL=$(tr '\n' ' ' < "$trip_file" | sed 's/[[:space:]]*$//')
+    fi
+}
+
+watchdog_inconclusive() {
+    local command="$1" log="$2"
+    RULE="======================================================================"
+    printf '\n%s\n' "$RULE"
+    printf 'VERDICT\n'
+    printf '%s\n' "$RULE"
+    printf '  suite    : %s\n' "$command"
+    printf '  log      : %s\n' "$log"
+    printf '  watchdog : TRIPPED — syspolicyd %s; cargo was truncated before a test verdict\n' \
+        "${WATCHDOG_DETAIL:-measurement unavailable}"
+    printf '  action   : wait for syspolicyd to settle, then rerun the same command\n'
+    printf 'verdict: INCONCLUSIVE — host safety watchdog stopped the suite\n'
+    exit "$EXIT_INCONCLUSIVE"
+}
+
 # Snapshot: `load=<f|?> syspolicyd_time=<t|?>`
 sample_host_snapshot_live() {
     printf 'load=%s syspolicyd_time=%s' "$(sample_load_live)" "$(sample_syspolicyd_time_live)"
@@ -637,6 +785,8 @@ HOST_AFTER=""
 HOST_JUDGMENT=""
 HOST_DEGRADED=0
 HOST_UNKNOWN=0
+WATCHDOG_TRIPPED=0
+WATCHDOG_DETAIL=""
 
 # ---------------------------------------------------------------------------
 # run
@@ -681,9 +831,8 @@ elif [ -n "${ORGASMIC_HOST_STATE_SAMPLE-}" ]; then
     printf 'run-tests: %s\n' "$SUITE_CMD"
     printf 'run-tests: log %s\n' "$SUITE_LOG"
     printf 'run-tests: host sample injected via %s\n' "$HOST_STATE_ENV"
-    "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
-        -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
-    SUITE_EXIT=$?
+    run_cargo_command_with_watchdog "$SUITE_LOG" \
+        "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" --no-fail-fast -- --skip "$BILLED_TEST"
     write_suite_exit_stamp "$SUITE_LOG" "$SUITE_EXIT"
     write_host_stamp "$SUITE_LOG" "$HOST_BEFORE" "$HOST_AFTER" "$HOST_JUDGMENT"
     if host_is_degraded "$HOST_JUDGMENT"; then
@@ -700,9 +849,8 @@ else
     SUITE_CMD="cargo test ${CARGO_ARGS[*]} --no-fail-fast -- --skip $BILLED_TEST"
     printf 'run-tests: %s\n' "$SUITE_CMD"
     printf 'run-tests: log %s\n' "$SUITE_LOG"
-    "${SCRUB[@]}" cargo test ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} --no-fail-fast \
-        -- --skip "$BILLED_TEST" > "$SUITE_LOG" 2>&1
-    SUITE_EXIT=$?
+    run_cargo_command_with_watchdog "$SUITE_LOG" \
+        "${SCRUB[@]}" cargo test "${CARGO_ARGS[@]}" --no-fail-fast -- --skip "$BILLED_TEST"
     HOST_AFTER=$(sample_host_snapshot_live)
     local_wall1=$(date +%s)
     # Do not clamp sub-second windows up to 1: a 0.3 s delta divided by 1
@@ -714,6 +862,14 @@ else
     if host_is_degraded "$HOST_JUDGMENT"; then
         HOST_DEGRADED=1
     fi
+fi
+
+# The watchdog deliberately terminates an incomplete command before its log is
+# meaningful.  Do not parse, isolate, or classify fragments as product red:
+# the operator needs the exact host-safety reason and a clean rerun, not a
+# fabricated test verdict.
+if [ "$WATCHDOG_TRIPPED" -eq 1 ]; then
+    watchdog_inconclusive "$SUITE_CMD" "$SUITE_LOG"
 fi
 
 # The skip is a default, not a promise. Assert it held.
@@ -1238,14 +1394,17 @@ nda_in_scope() {
 # means "this is the self-test" here exactly as it does there.
 if [ -z "$CLASSIFY_LOG" ] && [ -z "${ORGASMIC_HOST_STATE_SAMPLE-}" ] && nda_in_scope; then
     NDA_RAN=1
-    printf 'run-tests: debug_assertions=off leg: cargo test -p orgasmic-cli --bin orgasmic %s\n' \
-        "$NDA_TEST"
+    NDA_SUITE_CMD="cargo test -p orgasmic-cli --bin orgasmic $NDA_TEST (debug_assertions=off)"
+    printf 'run-tests: debug_assertions=off leg: %s\n' "$NDA_SUITE_CMD"
     printf 'run-tests: log %s\n' "$NDA_LOG"
     CARGO_TARGET_DIR="$REPO/target/no-debug-assertions" \
         RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C debug-assertions=off" \
-        "${SCRUB[@]}" cargo test -p orgasmic-cli --bin orgasmic "$NDA_TEST" \
-        > "$NDA_LOG" 2>&1
-    NDA_STATUS=$?
+        run_cargo_command_with_watchdog "$NDA_LOG" \
+        "${SCRUB[@]}" cargo test -p orgasmic-cli --bin orgasmic "$NDA_TEST"
+    NDA_STATUS=$SUITE_EXIT
+    if [ "$WATCHDOG_TRIPPED" -eq 1 ]; then
+        watchdog_inconclusive "$NDA_SUITE_CMD" "$NDA_LOG"
+    fi
     # A leg that compiled and matched NOTHING is the failure this whole section
     # exists against: it reads as coverage and is none. Require the named test
     # to have actually run and passed.
