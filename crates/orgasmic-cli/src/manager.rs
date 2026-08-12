@@ -922,30 +922,11 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         &plan.from_sha,
     )?;
 
-    // TASK-79VKP.6: a dispatch must keep Cargo's target directory private to
-    // its checkout.  When APFS can clone the manager target cheaply, seed that
-    // private target and remove every workspace artifact before the worker
-    // starts.  The remaining third-party objects are reusable; the worker's
-    // binary and fingerprints are not.  Any ordinary seed failure falls back
-    // to an empty private target rather than delaying or weakening dispatch.
-    let cache_seed = match seed_private_worktree_target(&plan.project_root, &plan.worktree_path) {
-        Ok(outcome) => outcome,
-        Err(err) => {
-            let cleanup = cleanup_created_resources(
-                &plan.project_root,
-                &plan.worktree_path,
-                &plan.branch,
-                &plan.dispatch_task(),
-                &plan.last_path,
-                &plan.stdout_path,
-            );
-            bail!(
-                "cache seed left an unsafe private target: {err}; cleanup status={} error={}",
-                cleanup.status.as_str(),
-                cleanup.error.as_deref().unwrap_or("-")
-            );
-        }
-    };
+    // TASK-79VKP.6: each worker receives Cargo's default target directory
+    // inside its own checkout.  Do not seed it from the manager target: that
+    // would either copy tens of GiB before the worker starts, or risk stale
+    // workspace fingerprints and build-script paths from another checkout.
+    let cache_seed = private_worktree_target_policy(&plan.project_root, &plan.worktree_path);
     eprintln!(
         "dispatch cache-seed: status={} target={} duration_ms={}{}",
         cache_seed.status(),
@@ -6818,186 +6799,60 @@ fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
     }
 }
 
-/// Outcome of attempting to prime one dispatch's *private* Cargo target.
-///
-/// This is intentionally diagnostic only: a seed is an optimization, never a
-/// prerequisite for dispatch.  The one exceptional error is an incomplete
-/// target that cannot be removed; letting Cargo consume unknown copied
-/// fingerprints would reintroduce TASK-3X5AQ's cross-checkout false green.
+/// Outcome of applying the private target policy to one dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WorktreeTargetSeed {
-    Seeded {
-        elapsed: Duration,
-    },
     Skipped {
         elapsed: Duration,
         reason: &'static str,
-    },
-    Fallback {
-        elapsed: Duration,
-        reason: String,
     },
 }
 
 impl WorktreeTargetSeed {
     fn status(&self) -> &'static str {
         match self {
-            Self::Seeded { .. } => "hit",
             Self::Skipped { .. } => "skipped",
-            Self::Fallback { .. } => "miss",
         }
     }
 
     fn elapsed(&self) -> Duration {
         match self {
-            Self::Seeded { elapsed }
-            | Self::Skipped { elapsed, .. }
-            | Self::Fallback { elapsed, .. } => *elapsed,
+            Self::Skipped { elapsed, .. } => *elapsed,
         }
     }
 
     fn detail(&self) -> String {
         match self {
-            Self::Seeded { .. } => " source=manager-target".to_string(),
             Self::Skipped { reason, .. } => format!(" reason={reason}"),
-            Self::Fallback { reason, .. } => format!(" reason={reason}"),
         }
     }
 }
 
-/// Seed `worktree/target` without ever making it share mutable state with the
-/// manager checkout.  APFS clones make the initial copy copy-on-write; Cargo
-/// then removes all workspace outputs from the *clone*.  Registry dependency
-/// artifacts may survive, but the worker will rebuild its own package,
-/// fingerprints and executable from its own source path.
+/// Keep Cargo state private by deliberately leaving the new worktree target
+/// empty.  This is a bounded startup operation and the only universal cache
+/// policy that cannot expose a linked checkout's artifacts.  A future
+/// compiler-object cache may improve cold builds, but it must prove its own
+/// keying and process isolation rather than reuse Cargo target state.
 // orgasmic:TASK-79VKP.6
-fn seed_private_worktree_target(
-    project_root: &Path,
-    worktree: &Path,
-) -> Result<WorktreeTargetSeed> {
+fn private_worktree_target_policy(project_root: &Path, worktree: &Path) -> WorktreeTargetSeed {
     let started = Instant::now();
     if !project_root.join("Cargo.toml").is_file() {
-        return Ok(WorktreeTargetSeed::Skipped {
+        return WorktreeTargetSeed::Skipped {
             elapsed: started.elapsed(),
             reason: "not-cargo",
-        });
-    }
-    let source = project_root.join("target").join("debug");
-    if !source.is_dir() {
-        return Ok(WorktreeTargetSeed::Skipped {
-            elapsed: started.elapsed(),
-            reason: "manager-target-missing",
-        });
+        };
     }
     let target = worktree.join("target");
     if target.exists() {
-        return Ok(WorktreeTargetSeed::Skipped {
+        return WorktreeTargetSeed::Skipped {
             elapsed: started.elapsed(),
             reason: "private-target-present",
-        });
+        };
     }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (source, target);
-        return Ok(WorktreeTargetSeed::Skipped {
-            elapsed: started.elapsed(),
-            reason: "cow-clone-unavailable",
-        });
+    WorktreeTargetSeed::Skipped {
+        elapsed: started.elapsed(),
+        reason: "empty-private-target",
     }
-
-    #[cfg(target_os = "macos")]
-    {
-        // Skip incremental objects: they are tied to one workspace crate and
-        // account for most of a hot target's disk use.  Cargo can recreate
-        // them privately.  The three copied directories contain dependency
-        // objects and their fingerprints; the cleanup below strips every
-        // workspace-owned entry before a worker can see it.
-        let target_debug = target.join("debug");
-        std::fs::create_dir_all(&target_debug)
-            .with_context(|| format!("create private target {}", target_debug.display()))?;
-        for component in ["deps", ".fingerprint", "build"] {
-            let component_source = source.join(component);
-            if !component_source.is_dir() {
-                continue;
-            }
-            let component_target = target_debug.join(component);
-            let clone = Command::new("/bin/cp")
-                .args(["-cR"])
-                .arg(&component_source)
-                .arg(&component_target)
-                .output()
-                .with_context(|| {
-                    format!(
-                        "copy-on-write clone manager target component {} into {}",
-                        component_source.display(),
-                        component_target.display()
-                    )
-                });
-            match clone {
-                Ok(output) if output.status.success() => {}
-                Ok(output) => {
-                    remove_incomplete_private_target(&target)?;
-                    return Ok(WorktreeTargetSeed::Fallback {
-                        elapsed: started.elapsed(),
-                        reason: format!("clone-{component}-exit-{}", output.status),
-                    });
-                }
-                Err(err) => {
-                    remove_incomplete_private_target(&target)?;
-                    return Ok(WorktreeTargetSeed::Fallback {
-                        elapsed: started.elapsed(),
-                        reason: format!("clone-{component}-error-{}", compact_error(&err)),
-                    });
-                }
-            }
-        }
-
-        // `--workspace` removes every package belonging to this repository
-        // from the clone.  It MUST run with the worker's Cargo.toml and an
-        // explicit private target, otherwise copied dep-info may make Cargo
-        // judge another checkout's source as Fresh.
-        let clean = Command::new("cargo")
-            .args(["clean", "--workspace", "--target-dir"])
-            .arg(&target)
-            .current_dir(worktree)
-            .output()
-            .with_context(|| format!("clean copied target {}", target.display()));
-        match clean {
-            Ok(output) if output.status.success() => Ok(WorktreeTargetSeed::Seeded {
-                elapsed: started.elapsed(),
-            }),
-            Ok(output) => {
-                remove_incomplete_private_target(&target)?;
-                Ok(WorktreeTargetSeed::Fallback {
-                    elapsed: started.elapsed(),
-                    reason: format!("cargo-clean-exit-{}", output.status),
-                })
-            }
-            Err(err) => {
-                remove_incomplete_private_target(&target)?;
-                Ok(WorktreeTargetSeed::Fallback {
-                    elapsed: started.elapsed(),
-                    reason: format!("cargo-clean-error-{}", compact_error(&err)),
-                })
-            }
-        }
-    }
-}
-
-/// Delete only a target just created inside a brand-new dispatch worktree.
-/// Callers perform the `exists` check before cloning, so this is never a
-/// cleanup path for a worker-owned or user-preexisting target directory.
-fn remove_incomplete_private_target(target: &Path) -> Result<()> {
-    if !target.exists() {
-        return Ok(());
-    }
-    std::fs::remove_dir_all(target)
-        .with_context(|| format!("remove incomplete private target {}", target.display()))
-}
-
-fn compact_error(err: &anyhow::Error) -> String {
-    sanitize_tx_value(&err.to_string()).replace(' ', "_")
 }
 
 fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &str) -> Result<()> {
@@ -10131,13 +9986,10 @@ mod tests {
     }
 
     /// TASK-79VKP.6's negative control in the production shape: two linked
-    /// Cargo worktrees start from the manager target, each changes the same
-    /// binary, then build concurrently.  A shared target makes at least one
-    /// branch report Fresh and execute the other branch's binary; a seeded
-    /// private target must compile and run both branch identities.
-    #[cfg(target_os = "macos")]
+    /// Cargo worktrees must compile and run their own changed binary.  The
+    /// private policy leaves no manager-owned target artifacts to reuse.
     #[test]
-    fn seeded_private_targets_never_run_another_worktrees_binary() {
+    fn empty_private_targets_never_run_another_worktrees_binary() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("manager");
         std::fs::create_dir_all(root.join("src")).unwrap();
@@ -10197,12 +10049,18 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            seed_private_worktree_target(&root, &first).unwrap(),
-            WorktreeTargetSeed::Seeded { .. }
+            private_worktree_target_policy(&root, &first),
+            WorktreeTargetSeed::Skipped {
+                reason: "empty-private-target",
+                ..
+            }
         ));
         assert!(matches!(
-            seed_private_worktree_target(&root, &second).unwrap(),
-            WorktreeTargetSeed::Seeded { .. }
+            private_worktree_target_policy(&root, &second),
+            WorktreeTargetSeed::Skipped {
+                reason: "empty-private-target",
+                ..
+            }
         ));
 
         let first_for_build = first.clone();
@@ -10234,14 +10092,6 @@ mod tests {
             "second build: {}",
             String::from_utf8_lossy(&second_build.stderr)
         );
-        for (name, build) in [("first", &first_build), ("second", &second_build)] {
-            assert!(
-                !String::from_utf8_lossy(&build.stderr).contains("Compiling anyhow v"),
-                "{name} rebuilt a registry dependency instead of reusing the private seed: {}",
-                String::from_utf8_lossy(&build.stderr)
-            );
-        }
-
         let run = |worktree: &Path| {
             let output = Command::new(worktree.join("target/debug/private-target-probe"))
                 .output()
