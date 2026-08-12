@@ -463,6 +463,9 @@ fn spawn_detached(home: &Home) -> Result<u32> {
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    // Intentionally do not clear the environment: unlike launchd/systemd,
+    // detached auto-start is a child process and inherits the supported
+    // ORGASMIC_PROJECT_SCAN_TIMEOUT_SECS override at process launch.
     platform_detach(&mut command);
     let child = command.spawn().context("spawn daemon")?;
     let pid = child.id();

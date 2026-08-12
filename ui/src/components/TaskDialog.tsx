@@ -124,7 +124,7 @@ function TaskDialogBody({
   );
   const activity = useResource(
     `task-dialog-activity:${taskId}:${refresh}`,
-    () => fetchTaskActivity(taskId),
+    () => fetchTaskActivity(projectId, taskId),
   );
 
   const subtasks = useMemo(() => {

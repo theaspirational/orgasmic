@@ -155,6 +155,20 @@ export async function requestWithProfile<T>(
   return (await res.json()) as T;
 }
 
+async function requestWithHeader<T>(path: string, headerName: string): Promise<{ data: T; header: string | null }> {
+  const req = buildRequest(path, {}, activeProfile);
+  const res = await fetch(req.url, req.init);
+  if (!res.ok) {
+    const error = new HttpError(res.status, await res.text());
+    if (res.status === 401) unauthorizedHandler?.(error);
+    throw error;
+  }
+  return {
+    data: (await res.json()) as T,
+    header: res.headers.get(headerName),
+  };
+}
+
 async function browserRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return requestWithProfile<T>(activeProfile, path, init);
 }
@@ -191,6 +205,13 @@ export async function memberLogin(token: string): Promise<MemberLoginResult> {
 
 export function get<T>(path: string): Promise<T> {
   return transport.request<T>(path);
+}
+
+export function getWithHeader<T>(
+  path: string,
+  headerName: string,
+): Promise<{ data: T; header: string | null }> {
+  return requestWithHeader<T>(path, headerName);
 }
 
 export function post<T>(path: string, body?: unknown): Promise<T> {

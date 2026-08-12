@@ -51,6 +51,14 @@ const DEFAULT_BUNDLE_ID: &str = "com.theaspirational.orgasmic";
 /// guard. `/usr/bin/codesign` is part of the OS on every macOS install.
 #[cfg(target_os = "macos")]
 const CODESIGN: &str = "/usr/bin/codesign";
+#[cfg(target_os = "macos")]
+const SECURITY: &str = "/usr/bin/security";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceSigning {
+    ConfiguredOnly,
+    ReuseIncumbentIdentity,
+}
 
 /// What macOS would use to decide whether a binary at a given path is still
 /// "the same program" as the one an operator granted permission to.
@@ -120,6 +128,26 @@ impl Installed {
 /// Publish `source` as the managed binary at `$ORGASMIC_HOME/bin/orgasmic`.
 #[cfg(unix)]
 pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Installed> {
+    install_with_signing(home, source, guard, SourceSigning::ConfiguredOnly)
+}
+
+/// Publish a contributor source build while preserving the incumbent signing
+/// identity when its private key is available in the user's keychain.
+///
+/// This policy is deliberately source-only. An incorrectly signed release
+/// bundle must be refused, never blessed locally with the incumbent identity.
+#[cfg(unix)]
+pub fn install_source(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Installed> {
+    install_with_signing(home, source, guard, SourceSigning::ReuseIncumbentIdentity)
+}
+
+#[cfg(unix)]
+fn install_with_signing(
+    home: &Home,
+    source: &Path,
+    guard: IdentityGuard,
+    source_signing: SourceSigning,
+) -> Result<Installed> {
     use std::os::unix::fs::PermissionsExt;
 
     let dest = home.bin_orgasmic();
@@ -142,10 +170,6 @@ pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Insta
         .map(|meta| meta.file_type().is_symlink())
         .unwrap_or(false);
     let previous = read_identity(&dest);
-    let incoming = read_identity(&source);
-    if guard == IdentityGuard::Enforce {
-        enforce_identity(&previous, &incoming, &dest, &source)?;
-    }
 
     // Stage inside `bin/` so the publish is a same-filesystem rename, and use a
     // pid-scoped name so two concurrent installs cannot share a staging file.
@@ -157,20 +181,25 @@ pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Insta
         std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))
             .with_context(|| format!("chmod {}", staged.display()))?;
 
-        let resigned = resign_if_configured(&staged)?;
+        let staged_identity = read_identity(&staged);
+        let mut resigned = resign_if_configured(&staged)?;
+        if !resigned
+            && source_signing == SourceSigning::ReuseIncumbentIdentity
+            && guard == IdentityGuard::Enforce
+            && previous.requirement() != staged_identity.requirement()
+        {
+            resigned = resign_with_incumbent_identity(&staged, &dest)?;
+        }
         let current = read_identity(&staged);
-        if let Some(requirement) = current.requirement() {
+        if current.requirement().is_some() {
             verify_signature(&staged)?;
-            // Re-signing is the one step that can silently produce a different
-            // identity than intended, so re-run the guard against its result.
-            if resigned && guard == IdentityGuard::Enforce {
-                enforce_identity(
-                    &previous,
-                    &CodeIdentity::Requirement(requirement.to_string()),
-                    &dest,
-                    &staged,
-                )?;
-            }
+        }
+        // Enforce against the staged, final identity. Source builds may need to
+        // be re-signed before they can satisfy the incumbent requirement; an
+        // early comparison against their linker signature would make the
+        // configured source-signing path unreachable.
+        if guard == IdentityGuard::Enforce {
+            enforce_identity(&previous, &current, &dest, &source)?;
         }
 
         // Fresh inode by construction: `staged` is a new file, and rename moves
@@ -194,6 +223,11 @@ pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Insta
 
 #[cfg(not(unix))]
 pub fn install(_home: &Home, _source: &Path, _guard: IdentityGuard) -> Result<Installed> {
+    bail!("managed binary installation is only implemented for unix targets")
+}
+
+#[cfg(not(unix))]
+pub fn install_source(_home: &Home, _source: &Path, _guard: IdentityGuard) -> Result<Installed> {
     bail!("managed binary installation is only implemented for unix targets")
 }
 
@@ -317,12 +351,35 @@ fn resign_if_configured(path: &Path) -> Result<bool> {
     if identity.trim().is_empty() {
         return Ok(false);
     }
+    sign_with_identity(path, identity.trim())?;
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn resign_with_incumbent_identity(path: &Path, incumbent: &Path) -> Result<bool> {
+    let Some(authority) = signing_authority(incumbent) else {
+        return Ok(false);
+    };
+    let Some(identity) = available_codesign_identity(&authority) else {
+        return Ok(false);
+    };
+    sign_with_identity(path, &identity)?;
+    Ok(true)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn resign_with_incumbent_identity(_path: &Path, _incumbent: &Path) -> Result<bool> {
+    Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+fn sign_with_identity(path: &Path, identity: &str) -> Result<()> {
     let bundle_id =
         std::env::var(CODESIGN_BUNDLE_ID_ENV).unwrap_or_else(|_| DEFAULT_BUNDLE_ID.to_string());
     let output = std::process::Command::new(CODESIGN)
         .arg("--force")
         .args(["--identifier", &bundle_id])
-        .args(["--sign", identity.trim()])
+        .args(["--sign", identity])
         .arg(path)
         .output()
         .context("run codesign --sign")?;
@@ -333,12 +390,61 @@ fn resign_if_configured(path: &Path) -> Result<bool> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
 fn resign_if_configured(_path: &Path) -> Result<bool> {
     Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+fn signing_authority(path: &Path) -> Option<String> {
+    let output = std::process::Command::new(CODESIGN)
+        .args(["-d", "--verbose=4"])
+        .arg(path)
+        .output()
+        .ok()?;
+    let merged = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    merged
+        .lines()
+        .find_map(parse_signing_authority)
+        .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_signing_authority(line: &str) -> Option<&str> {
+    line.trim()
+        .strip_prefix("Authority=")
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn available_codesign_identity(authority: &str) -> Option<String> {
+    let output = std::process::Command::new(SECURITY)
+        .args(["find-identity", "-v", "-p", "codesigning"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| parse_available_identity(line, authority))
+        .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_available_identity<'a>(line: &'a str, authority: &str) -> Option<&'a str> {
+    let (_, rest) = line.trim().split_once(')')?;
+    let rest = rest.trim();
+    let (hash, quoted_name) = rest.split_once(char::is_whitespace)?;
+    let name = quoted_name.trim().strip_prefix('"')?.strip_suffix('"')?;
+    (name == authority).then_some(hash)
 }
 
 #[cfg(target_os = "macos")]
@@ -701,5 +807,30 @@ mod tests {
             ..stable
         }
         .preserves_grants());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parses_the_leaf_authority_used_to_re_sign_source_builds() {
+        assert_eq!(
+            parse_signing_authority("Authority=orgasmic dev codesign"),
+            Some("orgasmic dev codesign")
+        );
+        assert_eq!(parse_signing_authority("TeamIdentifier=not set"), None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn selects_only_the_codesigning_identity_matching_the_incumbent_authority() {
+        let line = "1) A70531007CD128FF081597CB27BEE0816613D86D \"orgasmic dev codesign\"";
+        assert_eq!(
+            parse_available_identity(line, "orgasmic dev codesign"),
+            Some("A70531007CD128FF081597CB27BEE0816613D86D")
+        );
+        assert_eq!(parse_available_identity(line, "some other identity"), None);
+        assert_eq!(
+            parse_available_identity("0 valid identities found", "x"),
+            None
+        );
     }
 }
