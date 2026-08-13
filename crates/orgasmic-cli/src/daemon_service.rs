@@ -363,15 +363,10 @@ fn service_spec(home: &Home) -> Result<ServiceSpec> {
     Ok(ServiceSpec {
         exe,
         home: home.root.clone(),
-        cwd: runtime_override
-            .map(|runtime| runtime.source_checkout)
-            .unwrap_or_else(|| {
-                if home.source().is_dir() {
-                    home.source()
-                } else {
-                    home.root.clone()
-                }
-            }),
+        // The daemon resolves runtime and project paths explicitly. Keeping its
+        // process cwd under ORGASMIC_HOME prevents launchd from traversing a
+        // contributor checkout in Documents before daemon code can start.
+        cwd: home.root.clone(),
         // orgasmic:TASK-ZBYH3 — keep launchd's capture file distinct from the
         // daemon's durable sink (`daemon.out.log`) so rotation owns one inode.
         stdout: home.logs().join("daemon.stdout.log"),
@@ -1757,7 +1752,7 @@ mod tests {
     }
 
     #[test]
-    fn service_spec_uses_temporary_local_source_runtime_override() {
+    fn service_spec_uses_managed_temporary_local_source_runtime_override() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         let checkout = tmp.path().join("checkout");
@@ -1776,9 +1771,21 @@ mod tests {
         crate::daemon_runtime::set_local_source(&home, &checkout, false).unwrap();
 
         let spec = service_spec(&home).unwrap();
-        assert_eq!(spec.exe, binary.canonicalize().unwrap());
-        assert_eq!(spec.cwd, checkout.canonicalize().unwrap());
-        assert!(render_macos_launch_agent(&spec).contains("target/release/orgasmic"));
-        assert!(render_linux_systemd_unit(&spec).contains("target/release/orgasmic"));
+        assert_eq!(
+            spec.exe,
+            crate::managed_binary::source_daemon_override_path(&home)
+                .canonicalize()
+                .unwrap()
+        );
+        assert_eq!(spec.cwd, home.root);
+        let plist = render_macos_launch_agent(&spec);
+        let unit = render_linux_systemd_unit(&spec);
+        assert!(plist.contains("orgasmic-daemon-source"));
+        assert!(unit.contains("orgasmic-daemon-source"));
+        assert!(!plist.contains("target/release/orgasmic"));
+        assert!(!unit.contains("target/release/orgasmic"));
+        assert!(!plist.contains(&checkout.display().to_string()));
+        assert!(!unit.contains(&checkout.display().to_string()));
+        assert_ne!(spec.exe, binary.canonicalize().unwrap());
     }
 }

@@ -1183,15 +1183,15 @@ struct DaemonRestartArgs {
     /// Retained for older scripts; controlled restarts are recovery-aware.
     #[arg(long)]
     force: bool,
-    /// Build a local orgasmic checkout and run the daemon from that binary
-    /// without changing the installed bundle/source mode.
+    /// Build a local orgasmic checkout and run a managed, identity-preserving
+    /// copy of that daemon without changing the installed bundle/source mode.
     #[arg(
         long = "from-source",
         value_name = "CHECKOUT",
         conflicts_with = "clear_runtime_override"
     )]
     from_source: Option<PathBuf>,
-    /// With --from-source, reuse the newest existing release binary instead of
+    /// With --from-source, stage the newest existing release binary instead of
     /// running cargo build --release first.
     #[arg(long = "no-build", requires = "from_source")]
     no_build: bool,
@@ -2740,17 +2740,83 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
 }
 
 fn cmd_daemon_restart(home: &Home, args: DaemonRestartArgs) -> Result<()> {
-    prepare_daemon_restart_runtime(home, &args)?;
-    match daemon_lifecycle::restart_with_force(home, args.force)? {
+    let changes_runtime = args.clear_runtime_override || args.from_source.is_some();
+    let runtime_snapshot = changes_runtime
+        .then(|| daemon_runtime::RuntimeSnapshot::capture(home))
+        .transpose()?;
+    if let Err(error) = prepare_daemon_restart_runtime(home, &args) {
+        if let Some(snapshot) = runtime_snapshot {
+            return match snapshot.restore(home) {
+                Ok(()) => Err(error.context(
+                    "daemon runtime preparation failed; previous runtime selection restored",
+                )),
+                Err(rollback_error) => Err(error.context(format!(
+                    "daemon runtime preparation failed and rollback also failed: {rollback_error:#}"
+                ))),
+            };
+        }
+        return Err(error);
+    }
+
+    let outcome = match daemon_lifecycle::restart_with_force(home, args.force) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if let Some(snapshot) = runtime_snapshot {
+                return Err(rollback_failed_runtime_change(home, snapshot, error));
+            }
+            return Err(error);
+        }
+    };
+    match outcome {
         outcome @ daemon_lifecycle::DaemonStartOutcome::Running(_) => {
+            if let Some(snapshot) = runtime_snapshot {
+                snapshot.discard();
+            }
             println!("✓ daemon restarted");
             print_start_outcome(home, &outcome);
         }
         outcome @ daemon_lifecycle::DaemonStartOutcome::StillBooting(_) => {
+            if let Some(snapshot) = runtime_snapshot {
+                let error = anyhow::anyhow!(
+                    "candidate daemon did not become ready within the restart budget"
+                );
+                return Err(rollback_failed_runtime_change(home, snapshot, error));
+            }
             print_start_outcome(home, &outcome);
         }
     }
     Ok(())
+}
+
+fn rollback_failed_runtime_change(
+    home: &Home,
+    snapshot: daemon_runtime::RuntimeSnapshot,
+    failure: anyhow::Error,
+) -> anyhow::Error {
+    if let Err(rollback_error) = snapshot.restore(home) {
+        return failure.context(format!(
+            "candidate daemon restart failed and restoring the previous runtime selection also failed: {rollback_error:#}"
+        ));
+    }
+    match daemon_lifecycle::restart_with_force(home, true) {
+        Ok(daemon_lifecycle::DaemonStartOutcome::Running(status)) => failure.context(format!(
+            "candidate daemon restart failed; previous runtime restored and is healthy (pid {})",
+            status.pid
+        )),
+        Ok(daemon_lifecycle::DaemonStartOutcome::StillBooting(starting)) => failure.context(
+            format!(
+                "candidate daemon restart failed; previous runtime selection restored but recovery is still booting (pid {}, phase {})",
+                starting
+                    .pid
+                    .map(|pid| pid.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                starting.phase.as_deref().unwrap_or("unknown")
+            ),
+        ),
+        Err(recovery_error) => failure.context(format!(
+            "candidate daemon restart failed; previous runtime selection restored but recovery restart failed: {recovery_error:#}"
+        )),
+    }
 }
 
 fn prepare_daemon_restart_runtime(home: &Home, args: &DaemonRestartArgs) -> Result<()> {

@@ -442,15 +442,6 @@ fn spawn_detached(home: &Home) -> Result<u32> {
         .append(true)
         .open(home.logs().join("daemon.err.log"))
         .context("open daemon stderr log")?;
-    let cwd = runtime_override
-        .map(|runtime| runtime.source_checkout)
-        .unwrap_or_else(|| {
-            if home.source().is_dir() {
-                home.source()
-            } else {
-                home.root.clone()
-            }
-        });
     let mut command = Command::new(exe);
     command
         .arg("serve")
@@ -459,7 +450,9 @@ fn spawn_detached(home: &Home) -> Result<u32> {
         // capture file here.
         .env(orgasmic_daemon::LOG_MIRROR_ENV, "off")
         .env("ORGASMIC_HOME", &home.root)
-        .current_dir(cwd)
+        // Match persistent services: never make process launch depend on
+        // traversing a contributor checkout in a TCC-protected folder.
+        .current_dir(&home.root)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
