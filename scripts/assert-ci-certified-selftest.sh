@@ -22,7 +22,7 @@ case "$1 $2" in
     "repo view") printf 'example/repo\n' ;;
     "api repos/example/repo/commits/0123456789abcdef0123456789abcdef01234567/status")
         case "${TEST_CASE:-success}" in
-            success) state=success; context=local/release-certified; sha=0123456789abcdef0123456789abcdef01234567 ;;
+            success) state=success; context=${TEST_CONTEXT:-local/release-certified}; sha=0123456789abcdef0123456789abcdef01234567 ;;
             failure) state=failure; context=local/release-certified; sha=0123456789abcdef0123456789abcdef01234567 ;;
             pending) state=pending; context=local/release-certified; sha=0123456789abcdef0123456789abcdef01234567 ;;
             missing) state=success; context=some/other-check; sha=0123456789abcdef0123456789abcdef01234567 ;;
@@ -60,6 +60,11 @@ run_case missing 1
 run_case wrong-sha 1
 run_case api-error 1
 run_case invalid 1
+
+PATH="$TMP/bin:$PATH" TEST_CASE=success TEST_CONTEXT=local/runtime-fast-certified \
+    bash "$ASSERT_SCRIPT" --repo example/repo --sha "$TEST_SHA" \
+    --context local/runtime-fast-certified >"$TMP/custom-context.log" 2>&1
+echo "ok: custom context"
 
 set +e
 PATH="$TMP/bin:$PATH" bash "$ASSERT_SCRIPT" --repo example/repo --sha ffffffffffffffffffffffffffffffffffffffff >"$TMP/mismatch.log" 2>&1

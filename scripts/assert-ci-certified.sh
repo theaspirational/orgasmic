@@ -11,10 +11,11 @@ CONTEXT="local/release-certified"
 usage() {
     cat <<'EOF'
 Usage: bash scripts/assert-ci-certified.sh [--repo <owner/name>] [--sha <commit>]
+                                             [--context <status-context>]
 
-Requires a successful local/release-certified status on the exact current
-commit. Defaults to the current repository and HEAD. There is no publication
-bypass.
+Requires a successful status in the selected context on the exact current
+commit. Defaults to local/release-certified, the current repository and HEAD.
+There is no publication bypass.
 EOF
 }
 
@@ -22,6 +23,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo) REPO="$2"; shift 2 ;;
         --sha) HEAD_SHA="$2"; shift 2 ;;
+        --context) CONTEXT="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac

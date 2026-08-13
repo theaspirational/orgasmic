@@ -214,4 +214,12 @@ git merge-base --is-ancestor "$HEAD_SHA" "$MERGED_BASE" || {
 }
 converge_local
 
+# `gh pr merge --merge` creates a new commit SHA even when its tree is exactly
+# the certified PR tree. Rebind the existing tree/base/toolchain receipt to that
+# merge SHA immediately, so the stable publisher does not discover a missing
+# exact-commit status after spending minutes building artifacts. The
+# --publish-only path fails closed if the merge tree or base does not match the
+# receipt; it never reruns or weakens certification here.
+bash "$ROOT/scripts/certify-pr.sh" --repo "$REPO" --remote "$REMOTE" --base "$BASE" --publish-only
+
 echo "integrate: merged PR #$PR_NUMBER; $BASE is current and the integrated branch is gone"

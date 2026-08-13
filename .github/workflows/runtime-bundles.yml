@@ -291,6 +291,7 @@ jobs:
               url: `https://github.com/${process.env.REPO}/releases/download/${process.env.TAG}/${f}`,
               sha256: sha,
               version: process.env.VERSION, // per-target version; lagging targets keep their own
+              commit: process.env.COMMIT,
             };
             built.push(key);
           }
