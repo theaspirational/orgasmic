@@ -947,42 +947,6 @@ standing instruction every agent reads.
   explicitly preserved or explicitly amended, with the dec_ node recorded.
 - Verify artifact per TCTTD standard.
 
-* BACKLOG TASK-P9T4N Multi-tx writer transaction so dispatch-close is one commit; reconciliation becomes backstop
-:PROPERTIES:
-:ID: TASK-P9T4N
-:PRIORITY: P2
-:END:
-
-From TASK-EP3H1 (2026-07-29): `WriterHandle::transaction(rewrites, tx)` takes
-exactly ONE tx, which is the only reason `dispatch-close` cannot be a single
-commit — a close needs two ledger entries (the terminal `implementer.done` and
-the `task.state_transitioned` from `write_task_lifecycle_and_record`), so the
-CLI issues N+1 requests and the pair can tear.
-
-EP3H1 shipped the backstop: close txs record LIFECYCLE_FROM/TO and
-`reconcile_torn_closes` finishes a torn close on the next manager command, and
-labelled idempotency (`already_applied` vs `already_in_state`) makes replays
-safe. What remains is making the tear impossible rather than repairable.
-
-=== Ask
-
-Add a multi-tx writer transaction — `transaction_multi(rewrites, Vec<TxAppend>)`
-or equivalent — so the close tx and `task.state_transitioned` land under one
-flock, then route dispatch-close through it. Reconciliation stays as the
-backstop for pre-existing ledgers and for client-side response loss (which no
-server-side atomicity can fix — EP3H1's measured loss was a client timeout on a
-request that SUCCEEDED server-side).
-
-=== Acceptance
-
-- A close is one commit: an injected crash between the two legs can no longer
-  produce a ledger with the close tx but not the transition.
-- Reconciler still passes its torn-close tests against old-format ledgers.
-- The writer core change is proven with its own tests (concurrent writers, one
-  flock, ordering) — this is the risky layer; EP3H1 deliberately did not touch
-  it.
-- Injection per TCTTD standard.
-
 * BACKLOG TASK-SJNNA Daemon should scrub TMUX from its environment before spawning tmux (latent: $TMUX selects the socket)
 :PROPERTIES:
 :ID: TASK-SJNNA
@@ -3762,122 +3726,6 @@ rather than lexically.
   the reviewer verified all seven are correct today. If building a state proves a
   row WRONG, stop and report rather than editing the array to match the test.
 
-* BACKLOG TASK-4BBA6 move the syspolicyd watchdog inside run-tests.sh: the guard that stops a Mac-wide reboot lives in prose and was skipped again    :testing:hardening:
-:PROPERTIES:
-:ID: TASK-4BBA6
-:PRIORITY: P1
-:WRITE_SCOPE: scripts/run-tests.sh,.orgasmic/gotchas.org
-:END:
-
-** READ THIS FIRST — STATUS
-Filed [2026-08-08] immediately after the manager rebooted this machine by running
-=scripts/run-tests.sh -p orgasmic-daemon= with no watchdog. Third occurrence of
-the chain: =WindowServer-2026-08-08-105749.ips=, after =2026-07-29-112228= and
-=2026-08-02-200136=.
-
-** What happened
-=.orgasmic/gotchas.org= carries the remedy already, and has since 2026-08-03:
-
-: IF YOU MUST RUN THE SUITE WHILE UNATTENDED, GUARD IT. syspolicyd is pid-stable
-: per boot; sample ps -o pcpu= -p <pid> every 10s and kill the cargo run if it
-: holds above ~400% for a minute.
-
-The manager READ that entry in full during bootstrap, then ran the suite without
-the guard, because the sentence is conditioned on =WHILE UNATTENDED= and the
-manager classified itself as attending. That classification is wrong, and the
-wrongness is the point: a manager fires a command and waits for a completion
-notification, so nobody is sampling the load curve — which is the only thing the
-guard does. The preceding paragraph of the same entry establishes that the burst
-comes from test EXECUTION, which does not care who is watching.
-
-*So the condition does not discriminate, and a reader who applies it faithfully
-still reboots the machine.* This is the project index case of a claim measured on
-some situations and written down as a universal.
-
-** Why this is not a docs fix
-TASK-M47E5.3 ruled, on a different destructive path, that *a protection that
-lives in a document is not a protection*. The same ruling applies here and has
-now been paid for three times. Rewording the gotcha produces a fourth reader who
-reasons their way around it.
-
-The watchdog is ~10 lines of shell, and =run-tests.sh= is already the single
-chokepoint every suite invocation goes through — CI (=ci.yml:191=), every
-dispatched worker, and every manager. Putting it inside the script makes the
-protection structural: unskippable, and applied identically by all three.
-
-MEASURED THE SAME DAY, and it is why the guard is cheap: the full daemon lib
-suite re-executed against the already-built binary on a calm host ran
-*738 passed / 0 failed in 49.37s* with syspolicyd flat at 0%. The run that
-rebooted the machine was the same suite through cargo under load. The guard costs
-nothing on the fast path.
-
-** Direction
-1. Sample =syspolicyd= CPU from inside =run-tests.sh= for the life of the cargo
-   run, on the interval and threshold the gotcha already names (~400% sustained
-   for ~60s), and kill the run when it trips.
-2. A trip is NOT a code verdict. It is the same class as the existing
-   =INCONCLUSIVE= exit 4 — the host, not the diff — and must classify that way
-   rather than as a failure. Do not let it read as green either.
-3. Say what it did, loudly, in the summary: the sampled rate, the threshold, and
-   that the run was truncated by the guard.
-4. Only then trim the gotcha entry to point at the mechanism instead of asking
-   the reader to implement it.
-
-** Acceptance
-- A =run-tests.sh= invocation that drives syspolicyd above the threshold for the
-  sustained window is killed BY THE SCRIPT, with no watchdog written by the
-  caller.
-- The guard trip classifies as host-state (exit 4 family), never as REAL and
-  never as green, and the summary names the measured rate.
-- The guard is active on every path into the script, including per-crate =-p=
-  runs; =--classify= runs execute nothing and are trivially inert.
-- A selftest case covers the trip, in the same style as the existing ladder cases.
-- =.orgasmic/gotchas.org= no longer asks the reader to build the sampler.
-** Evidence
-MEASURED BY A WORKER'S OWN WATCHDOG [2026-08-08], TASK-2QK4P.1's daemon gate.
-This is the strongest argument yet for putting the guard inside =run-tests.sh=,
-and it is not the argument the task was filed on.
-
-The worker ran =scripts/run-tests.sh -p orgasmic-daemon= under the mandated
-10s-sampling watchdog. The gate's own VERDICT said:
-
-: host : calm (threshold syspolicyd_rate>=1.50; load=8.21 elevated (>=8.0), corroborating only)
-: delta load=8.21 syspolicyd_cpu=117.8 wall_s=168
-: rate  0.7012
-
-*While the watchdog simultaneously recorded a genuine ~20-second syspolicyd burst
-PEAKING AT 796.3%*, decaying to 167% and then to single digits. The hot streak
-reached 2 of the 6 consecutive samples required to kill. *Only its DURATION kept
-it under the guard — its amplitude was twice the 400% line.*
-
-*THE MECHANISM: =rate= IS TOTAL CPU OVER WALL TIME, SO IT CANNOT DISTINGUISH A
-SHORT VIOLENT SPIKE FROM A LONG GENTLE SIMMER — AND IT IS THE SPIKE THAT WEDGES
-tccd.* Nearly all of the run's syspolicyd CPU was concentrated in ~20 seconds,
-and dividing by a 168-second wall spread it into a number that reads calm. Two
-instruments looked at the same 20 seconds: the instantaneous sampler saw 796.3%,
-the averaged gate saw 0.7012 against a 1.50 threshold.
-
-This is NOT an argument that TASK-STWVB's rate design was wrong. The rate answers
-"was this host degraded across the run", and the round-6 review upheld the
-reasoning that a verdict must not be routed through a measurement of something
-else. *It is an argument that the rate cannot serve as the REBOOT guard*, because
-the reboot chain (syspolicyd -> tccd -> WindowServer) is driven by sustained
-INSTANTANEOUS contention, which is exactly what an average destroys.
-
-So the guard =run-tests.sh= needs is not a stricter threshold on the number it
-already computes. It is a *second, instantaneous sampler running for the duration
-of the suite* — the thing every worker is currently told to hand-roll in prose,
-which is what this task exists to fix. A worker hand-rolling it is why this
-measurement exists at all; a worker forgetting to is why the machine rebooted on
-2026-08-08.
-
-*ONE WORD, TWO BLIND SPOTS.* TASK-K9WWM records the same =host: calm= verdict
-printed while the 1m load average at the moment of failure was 13.64-15.03. The
-host word is derived from syspolicyd rate and is structurally blind BOTH to a 10s
-HTTP budget expiring under scheduler pressure AND to an instantaneous CPU spike.
-Whatever this task ships should say plainly what the word does and does not
-cover, because operators and workers alike read it as "was the host to blame".
-
 * BACKLOG TASK-C7NVH tmux dispatches silently drop --effort for codex, cursor-agent and hermes, so the tx records an effort the process never ran    :drivers:dispatch:
 :PROPERTIES:
 :DEPENDS_ON: TASK-A55J7
@@ -4465,51 +4313,6 @@ considers normal.
 "Record the orphan close tx for dispatches whose worker died" — also wrong for
 this state, and it is a WRITE.
 
-* BACKLOG TASK-GPY3H supervisor probe-child family is unowned and turns any warm-host run RED
-:PROPERTIES:
-:ID: TASK-GPY3H
-:PRIORITY: P2
-:END:
-
-** Description
-=supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline=,
-=…a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed=,
-=…a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport=,
-and occasionally =api::tests::recovery_reattaches_rmux_session_when_handle_exists=
-fail on a warm host, pass in isolation every time, and are UNREGISTERED — so the
-wrapper reports them REAL and the run goes RED.
-
-Panics observed: =the stub recorded its `sleep` pid= and =the sweep must be
-bounded= — child spawn/reap latency.
-
-*Measured, with controls, during TASK-2QK4P.1.1.1.1.1* (round six): eleven runs,
-=syspolicyd= rate climbing 0.36 → 1.46 and not recovering after a five-minute
-idle; the author's own new API test under =#[ignore]= produced the SAME failures
-(so the change was not the cause), and the unmodified baseline in a sibling
-worktree was GREEN twice while interleaved. The manager then measured the same
-tree GREEN on a rested host at rate 0.1070, load 1.69
-(=tx-20260808-orgasmic-5536=).
-
-*This costs every future round an hour.* Three rounds in a row have burned time
-proving 'the host, not my change'.
-
-** Ruling from the round-six review
-=TASK-X0PV1= owns FOUR specifically enumerated TASK-STWVB parallelism modes and
-*should not silently absorb a different family.* Capture the exact panic
-signatures first, then decide between fixing the probe deadlines/coordination and
-adding SHORT-LIVED registry entries owned by this task. Do not add an unowned
-registry entry.
-
-** Acceptance
-1. Capture exact panic signatures and the load conditions that produce them.
-2. Decide: fix the deadline/coordination, or add time-boxed registry entries
-   owned by this task with a stated expiry.
-3. If fixing: the probe/sweep deadlines must not depend on child spawn latency
-   under load, or must state their bound and be tested at it.
-4. Related: =TASK-4BBA6= wants the syspolicyd watchdog inside =run-tests.sh=, and
-   =TASK-P4XKT= wants passing tests repeated. Both interact with this; say which
-   should land first.
-
 * BACKLOG TASK-TRAEM derive-observation-surface.py can green its own self-check after silently dropping valid Rust, and its cfg(test) exclusion is module-only
 :PROPERTIES:
 :ID: TASK-TRAEM
@@ -4714,24 +4517,6 @@ Design content-addressed local verification attestations. An attestation must bi
 - Independent review and final-tree policies state which gates are never reusable and why.
 - A TASK-K9WWM-shaped reproduction measures time saved while negative controls prove no stale or wrong-worktree green can be accepted.
 
-* BACKLOG TASK-79VKP.6 Bound dispatch build caches without cross-worktree false greens    :framework:worktree:build:performance:
-:PROPERTIES:
-:DEPENDS_ON: TASK-3X5AQ TASK-GRCWC
-:ID: TASK-79VKP.6
-:PRIORITY: P1
-:END:
-
-** Description
-The TASK-K9WWM final test worker created a separate 1.7 GiB worktree cache and spent 50.71 seconds compiling before one exact assertion test; the warm manager target ran all three exact tests in 7 seconds. TASK-3X5AQ proves that sharing CARGO_TARGET_DIR across checkouts can silently execute another checkout binary, and TASK-GRCWC guards destructive pruning. The remaining build-cache duplication has no implementation owner.
-
-Measure and choose a sound cache strategy that keeps checkout-specific fingerprints and final binaries isolated. Candidate mechanisms must be proved rather than assumed: compiler-object caches such as sccache, immutable dependency seeding followed by private fingerprints, filesystem cloning or hardlinks with copy-on-write validation, bounded worktree slots for disk only, or explicit no-reuse with automatic quota pruning. Never share a mutable Cargo target directory across different checkout paths.
-
-** Acceptance
-- Baseline disk, cold build, warm build, and concurrent-build costs are recorded for manager plus at least two worktrees.
-- The selected design cannot make an edited worktree report Fresh or run a binary built from another checkout; reproduce the TASK-3X5AQ negative control.
-- Cache storage is bounded and attributable per project, and cleanup observes TASK-GRCWC safety.
-- A TASK-K9WWM-shaped one-file test correction materially reduces duplicate compile time and disk without weakening test identity.
-
 * BACKLOG TASK-79VKP.7 Resume missing verification after interrupted worker commands    :framework:dispatch:recovery:testing:
 :PROPERTIES:
 :DEPENDS_ON: TASK-CQM2X TASK-EKF7T TASK-SJA9W
@@ -4789,3 +4574,22 @@ Carry a structured traversal cause rather than parsing the error string. Give un
 - Unreadable output retains errno and its permissions remedy.
 - dispatch-status does not claim a prune was run or tell the operator to rerun it.
 - Both causes remain no-delete and tests prove the messages; no traversal/removal mechanics change.
+
+* BACKLOG TASK-VT9FG harden supervisor probe deadline invariant and rmux recovery fixture proof    :supervisor:testing:
+:PROPERTIES:
+:ID: TASK-VT9FG
+:PRIORITY: P2
+:END:
+
+** Description
+Follow-up from independent review of TASK-GPY3H. Keep the approved spawn-bound repair intact while closing its test-only gaps:
+- mechanically assert =PROBE_CHILD_DEADLINE < WORK_PROBE_TIMEOUT=;
+- restore the rmux recovery test's proof that its fixture is attached to the owned endpoint before cleanup;
+- tighten the additive spawn test's intentionally broad upper tolerance if a stable threshold is measured.
+
+Do not fold TASK-T7KSH's unbounded =rmux -V= probe into this work. Treat a shared deadline budget across the three chained probes as a separately scoped design decision, not a quick patch.
+
+** Acceptance
+- A constant change that makes the child deadline exceed the outer timeout fails a deterministic test or compile-time assertion.
+- The recovery fixture proves session containment at its owned rmux endpoint.
+- Focused supervisor and API tests pass serially under load.

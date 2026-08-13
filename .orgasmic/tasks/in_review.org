@@ -182,3 +182,4 @@ Do not redesign traversal mechanics or add a force flag.
 - Help’s subject is the worktree and is pinned by a phrase-sensitive test.
 - Privileged execution cannot report a green PARTIAL/KEPT test without exercising the refusal.
 - Existing anchored traversal and all focused manager tests remain green; independent review passes.
+
