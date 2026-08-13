@@ -30,7 +30,7 @@ node scripts/runtime-candidate.mjs create \
     --channel stable --version 0.0.9 \
     --commit 1111111111111111111111111111111111111111 \
     --tree 2222222222222222222222222222222222222222 \
-    --toolchain rustc-1 --certification-context local/runtime-fast-certified \
+    --toolchain rustc-1 --certification-context local/release-certified \
     --codesign-requirement 'identifier "com.example" and anchor apple generic' >/dev/null
 node scripts/runtime-candidate.mjs verify --candidate-dir "$WORK/candidate" >/dev/null
 
@@ -89,7 +89,7 @@ if node scripts/runtime-candidate.mjs create \
     --channel stable --version 0.0.8 \
     --commit 1111111111111111111111111111111111111111 \
     --tree 2222222222222222222222222222222222222222 \
-    --toolchain rustc-1 --certification-context local/runtime-fast-certified \
+    --toolchain rustc-1 --certification-context local/release-certified \
     --codesign-requirement requirement >/dev/null 2>&1; then
     echo "selftest: same stable target version was accepted" >&2
     exit 1
@@ -105,4 +105,5 @@ fi
 bash -n scripts/publish-runtime.sh
 bash -n scripts/certify-runtime-fast.sh
 bash -n scripts/release-runtime-fast.sh 2>/dev/null || [[ ! -e scripts/release-runtime-fast.sh ]]
+rg -q 'reusing exact-commit full certification for runtime-fast' scripts/certify-runtime-fast.sh
 echo "publish-runtime selftest: PASS"

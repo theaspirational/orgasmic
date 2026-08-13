@@ -8,7 +8,7 @@ set -euo pipefail
 REPO=""
 BASE_SHA=""
 MODE="certify-and-publish"
-CONTEXT="local/runtime-fast-certified"
+CONTEXT="local/release-certified"
 CERTIFICATION_RUST="1.97.1"
 
 usage() {
@@ -79,9 +79,14 @@ if ! receipt_matches; then
 
     CHANGED="$(git diff --name-only "$BASE_SHA..$HEAD_SHA")"
     if printf '%s\n' "$CHANGED" | grep -Eq '^(Cargo\.(toml|lock)|rust-toolchain\.toml|scripts/(assert-ci-certified|certify-|integrate-main|package-runtime|publish-runtime|runtime-candidate|release-runtime-fast|sync-release|refresh-release|release-channel)|\.github/workflows/runtime-bundles\.yml)'; then
-        echo "→ release infrastructure changed; escalating runtime-fast to the full certification gate"
-        env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_ALLOW_BILLED_TESTS \
-            bash scripts/certify-release.sh
+        echo "→ release infrastructure changed; requiring the full certification gate"
+        if [[ "$MODE" != "no-publish" ]] && bash scripts/assert-ci-certified.sh \
+            --repo "$REPO" --sha "$HEAD_SHA" --context local/release-certified; then
+            echo "✓ reusing exact-commit full certification for runtime-fast"
+        else
+            env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_ALLOW_BILLED_TESTS \
+                bash scripts/certify-release.sh
+        fi
     else
         RUSTUP_PROXY_DIR="$(dirname "$(command -v rustup)")"; PATH="$RUSTUP_PROXY_DIR:$PATH"; export PATH
         rustup toolchain install "$CERTIFICATION_RUST" --profile minimal \

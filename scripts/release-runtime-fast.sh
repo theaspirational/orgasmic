@@ -101,7 +101,7 @@ if [[ -d "$CANDIDATE" ]]; then
 else
     bash scripts/publish-runtime.sh --channel stable --only darwin-aarch64 \
         --version "$VERSION" --repo "$REPO" --dry-run \
-        --certification-context local/runtime-fast-certified
+        --certification-context local/release-certified
 fi
 bash scripts/publish-runtime.sh --candidate "$CANDIDATE"
 bash scripts/sync-release-metadata.sh --repo "$REPO" --tag stable --notes-file "$NOTES_FILE"

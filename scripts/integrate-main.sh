@@ -64,7 +64,7 @@ if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
     exit 1
 fi
 
-CERTIFIER="$ROOT/scripts/certify-pr.sh"
+CERTIFIER="$ROOT/scripts/certify-runtime-fast.sh"
 if [[ ! -f "$CERTIFIER" ]]; then
     echo "integrate: missing exact-tree certifier $CERTIFIER" >&2
     exit 2
@@ -175,7 +175,7 @@ else
     echo "integrate: resuming PR #$PR_NUMBER"
 fi
 
-certify_args=(bash "$CERTIFIER" --repo "$REPO" --remote "$REMOTE" --base "$BASE")
+certify_args=(bash "$CERTIFIER" --repo "$REPO" --base "$REMOTE_BASE")
 run "${certify_args[@]}"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -220,6 +220,6 @@ converge_local
 # exact-commit status after spending minutes building artifacts. The
 # --publish-only path fails closed if the merge tree or base does not match the
 # receipt; it never reruns or weakens certification here.
-bash "$ROOT/scripts/certify-pr.sh" --repo "$REPO" --remote "$REMOTE" --base "$BASE" --publish-only
+bash "$CERTIFIER" --repo "$REPO" --base "$REMOTE_BASE" --publish-only
 
 echo "integrate: merged PR #$PR_NUMBER; $BASE is current and the integrated branch is gone"
