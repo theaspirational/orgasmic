@@ -74,6 +74,7 @@ pub enum CodeIdentity {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Unsigned,
     /// The designated requirement, verbatim from `codesign -d -r-`.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Requirement(String),
 }
 
