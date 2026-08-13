@@ -1715,6 +1715,21 @@ fn writer_transaction_error(error: impl std::fmt::Display) -> ApiError {
     ApiError::internal("failed to apply changes")
 }
 
+fn dispatch_close_writer_error(error: impl std::fmt::Display) -> ApiError {
+    let message = error.to_string();
+    if message.contains("multi transaction committed but durability is uncertain")
+        || message.contains("multi transaction committed but durability remains uncertain")
+    {
+        tracing::error!(error = %message, "dispatch close committed with uncertain durability");
+        return ApiError::service_unavailable(json!({
+            "error": message,
+            "committed": true,
+            "durability": "uncertain",
+        }));
+    }
+    writer_transaction_error(message)
+}
+
 // orgasmic:task_HQ970
 /// Validate a composed tx entry the way the writer will, and turn a refusal
 /// into a 400 the caller can act on. A rejected entry never reaches the writer
@@ -17057,6 +17072,15 @@ async fn post_task_dispatch_close_commit(
     }
     let to_state = LifecycleStage::from_str(&req.state)
         .map_err(|_| ApiError::bad_request("unknown task state"))?;
+    state
+        .index
+        .refresh_project(&project_id)
+        .await
+        .map_err(|error| {
+            ApiError::unavailable(format!(
+                "project {project_id} could not be refreshed before dispatch close: {error}"
+            ))
+        })?;
     let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
     let project = select_loaded_project(&snap, &project_id)?;
     let task = project
@@ -17064,7 +17088,7 @@ async fn post_task_dispatch_close_commit(
         .iter()
         .find(|task| task.id == task_id)
         .ok_or_else(|| ApiError::not_found("task not found"))?;
-    let from_state = task.lifecycle_stage;
+    let current_state = task.lifecycle_stage;
     let close_lifecycle = |key: &str| {
         req.close_tx
             .extra
@@ -17072,20 +17096,55 @@ async fn post_task_dispatch_close_commit(
             .find(|(candidate, _)| candidate == key)
             .map(|(_, value)| value.as_str())
     };
-    if close_lifecycle("LIFECYCLE_FROM") != Some(from_state.as_str())
-        || close_lifecycle("LIFECYCLE_TO") != Some(to_state.as_str())
-    {
+    let from_state = close_lifecycle("LIFECYCLE_FROM")
+        .ok_or_else(|| ApiError::bad_request("dispatch close is missing LIFECYCLE_FROM"))
+        .and_then(|stage| {
+            LifecycleStage::from_str(stage)
+                .map_err(|_| ApiError::bad_request("unknown dispatch close LIFECYCLE_FROM"))
+        })?;
+    if close_lifecycle("LIFECYCLE_TO") != Some(to_state.as_str()) {
         return Err(ApiError::bad_request(
-            "dispatch close lifecycle intent does not match current task state",
+            "dispatch close LIFECYCLE_TO does not match requested task state",
         ));
     }
-    let from_path = task.source_file.clone();
+    if current_state != from_state && current_state != to_state {
+        return Err(ApiError::bad_request(format!(
+            "dispatch close lifecycle intent starts at {}, but current task state is {}",
+            from_state.as_str(),
+            current_state.as_str()
+        )));
+    }
     let project_root = project.root.clone();
+    let from_path = if current_state == from_state {
+        task.source_file.clone()
+    } else {
+        task_file_path(&project_root, lifecycle_stage_file_name(from_state))
+    };
     let to_file_name = lifecycle_stage_file_name(to_state);
     let to_path = task_file_path(&project_root, to_file_name);
 
     let rewrites = if from_state == to_state {
         Vec::new()
+    } else if current_state == to_state {
+        // A prior attempt may have appended both txs and installed these
+        // rewrites before its fsync acknowledgement failed. Rebuild the same
+        // final rewrite set from disk so the writer can validate semantic
+        // identity and re-sync its retained descriptor without appending the
+        // pair again.
+        let paths = if from_path == to_path {
+            vec![from_path]
+        } else {
+            vec![from_path, to_path]
+        };
+        paths
+            .into_iter()
+            .map(|path| {
+                read_artifact(&path, "task file").map(|source| FileRewrite {
+                    path,
+                    new_contents: source.into_bytes(),
+                })
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?
     } else {
         let source_display = from_path.to_string_lossy().to_string();
         let source = read_artifact(&from_path, "task file")?;
@@ -17123,8 +17182,18 @@ async fn post_task_dispatch_close_commit(
             })
             .collect()
     };
+    for rewrite in &rewrites {
+        let source = String::from_utf8(rewrite.new_contents.clone()).map_err(|error| {
+            ApiError::bad_request(format!(
+                "task file rewrite {} is not UTF-8: {error}",
+                rewrite.path.display()
+            ))
+        })?;
+        OrgFile::parse(source, rewrite.path.to_string_lossy())
+            .map_err(|error| org_parse_bad_request(&rewrite.path, "task file", error))?;
+    }
 
-    let (close_tx, close_project_tx, close_destination, close_time) =
+    let (close_tx, close_project_tx, _close_destination, close_time) =
         prepare_tx_append_request(&state, req.close_tx).await?;
     let close_path = close_tx.tx_path.clone();
     let lifecycle = if from_state == to_state {
@@ -17158,10 +17227,10 @@ async fn post_task_dispatch_close_commit(
         .writer
         .transaction_multi(rewrites, txs)
         .await
-        .map_err(writer_transaction_error)?;
-    let close_result = results
-        .first()
-        .expect("dispatch close transaction always has a close tx");
+        .map_err(dispatch_close_writer_error)?;
+    let close_result = results.first().ok_or_else(|| {
+        ApiError::internal("dispatch close writer returned no terminal transaction")
+    })?;
     let transition_tx_id = results
         .get(1)
         .map(|result| result.tx_id.clone())
@@ -17171,7 +17240,7 @@ async fn post_task_dispatch_close_commit(
     } else {
         transition_tx_id.as_str()
     };
-    refresh_after_tx(&state, close_project_tx, close_destination, refresh_tx_id).await?;
+    refresh_after_project_mutation(&state, &project_id, close_project_tx, refresh_tx_id).await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
@@ -20734,6 +20803,143 @@ pub(crate) mod tests {
 
     async fn direct_catalog_test_state(home: Home) -> ApiState {
         direct_test_state(home, false).await
+    }
+
+    fn dispatch_close_request(from: LifecycleStage) -> DispatchCloseCommitRequest {
+        DispatchCloseCommitRequest {
+            close_tx: TxAppendRequest {
+                request_id: Some("dispatch-close-task-pre-started".to_string()),
+                r#type: "implementer.done".to_string(),
+                actor: Some("agent.implementer".to_string()),
+                machine: None,
+                project: Some("orgasmic".to_string()),
+                task: Some("TASK-PRE".to_string()),
+                target: None,
+                reason: Some("done".to_string()),
+                extra: vec![
+                    ("CLOSED_TX".to_string(), "tx-started".to_string()),
+                    ("LIFECYCLE_FROM".to_string(), from.as_str().to_string()),
+                    (
+                        "LIFECYCLE_TO".to_string(),
+                        LifecycleStage::InReview.as_str().to_string(),
+                    ),
+                ],
+                tx_path: None,
+            },
+            state: LifecycleStage::InReview.as_str().to_string(),
+            reason: "transition TASK-PRE to in_review".to_string(),
+            request_id: "dispatch-close-state-task-pre-started".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_close_home_ledger_refreshes_project_for_read_after_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let state = direct_stage_test_state(home.clone()).await;
+        assert!(!state.tx_commit_to_project);
+
+        let response = post_task_dispatch_close_commit(
+            State(state.clone()),
+            Path(("orgasmic".to_string(), "TASK-PRE".to_string())),
+            Json(dispatch_close_request(LifecycleStage::Backlog)),
+        )
+        .await
+        .expect("home-routed atomic close")
+        .0;
+
+        let task = state
+            .index
+            .snapshot()
+            .await
+            .task("orgasmic", "TASK-PRE")
+            .cloned()
+            .expect("task visible after close acknowledgement");
+        assert_eq!(task.lifecycle_stage, LifecycleStage::InReview);
+        let home_ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        assert!(home_ledger.contains(&response.close_tx.tx_id));
+        assert!(home_ledger.contains(&response.transition_tx_id));
+        assert!(home_ledger.contains("implementer.done"));
+        assert!(home_ledger.contains("task.state_transitioned"));
+        assert!(
+            !project_root.join(".orgasmic/tx").exists(),
+            "home-ledger routing must not create a project ledger"
+        );
+
+        let replay = post_task_dispatch_close_commit(
+            State(state.clone()),
+            Path(("orgasmic".to_string(), "TASK-PRE".to_string())),
+            Json(dispatch_close_request(LifecycleStage::Backlog)),
+        )
+        .await
+        .expect("lost-response retry must replay the atomic close")
+        .0;
+        assert_eq!(replay.close_tx.tx_id, response.close_tx.tx_id);
+        assert_eq!(replay.transition_tx_id, response.transition_tx_id);
+        let replayed_ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        let replayed_entries = orgasmic_core::tx::parse_tx_file(&replayed_ledger, "home tx")
+            .expect("replayed home ledger remains valid");
+        assert_eq!(
+            replayed_entries
+                .iter()
+                .filter(|entry| entry.ty == "implementer.done")
+                .count(),
+            1
+        );
+        assert_eq!(
+            replayed_entries
+                .iter()
+                .filter(|entry| entry.ty == "task.state_transitioned")
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_close_revalidates_a_ready_but_stale_task_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let state = direct_stage_test_state(home).await;
+        let task_path = task_file_path(&project_root, "backlog.org");
+        let on_disk = std::fs::read_to_string(&task_path)
+            .unwrap()
+            .replace("* BACKLOG TASK-PRE", "* IN_PROGRESS TASK-PRE");
+        std::fs::write(&task_path, on_disk).unwrap();
+        assert_eq!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("orgasmic", "TASK-PRE")
+                .unwrap()
+                .lifecycle_stage,
+            LifecycleStage::Backlog,
+            "fixture must leave the ready projection stale"
+        );
+
+        let _ = post_task_dispatch_close_commit(
+            State(state.clone()),
+            Path(("orgasmic".to_string(), "TASK-PRE".to_string())),
+            Json(dispatch_close_request(LifecycleStage::InProgress)),
+        )
+        .await
+        .expect("close must refresh and accept the on-disk lifecycle state");
+        assert_eq!(
+            state
+                .index
+                .snapshot()
+                .await
+                .task("orgasmic", "TASK-PRE")
+                .unwrap()
+                .lifecycle_stage,
+            LifecycleStage::InReview
+        );
     }
 
     #[tokio::test]

@@ -339,6 +339,7 @@ struct TransactionMultiRequest {
     rewrites: Vec<FileRewrite>,
     txs: Vec<TxAppend>,
     request_id: String,
+    mutation: MutationIdentity,
 }
 
 #[derive(Debug)]
@@ -606,8 +607,16 @@ enum CachedResponse {
     },
     Multi {
         results: Vec<TxAppendResult>,
+        mutation: MutationIdentity,
+        durability: MultiDurability,
     },
     Rewrite,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MultiDurability {
+    Durable,
+    SyncUncertain,
 }
 
 fn cached_mutation_from_map(
@@ -661,8 +670,74 @@ fn transaction_identity(tx: &TxAppend, rewrites: &[FileRewrite]) -> MutationIden
     )
 }
 
+fn multi_transaction_identity(txs: &[TxAppend], rewrites: &[FileRewrite]) -> MutationIdentity {
+    let payload = serde_json::json!({
+        "rewrites": rewrites
+            .iter()
+            .map(|rewrite| serde_json::json!({
+                "path": rewrite.path.display().to_string(),
+                "contents": rewrite.new_contents.as_slice(),
+            }))
+            .collect::<Vec<_>>(),
+        // Prepared tx ids and timestamps are server-generated, so they change
+        // when an HTTP retry rebuilds the same semantic request. Everything
+        // caller-controlled remains part of the collision identity.
+        "txs": txs
+            .iter()
+            .map(|tx| serde_json::json!({
+                "tx_path": tx.tx_path.display().to_string(),
+                "project_id": tx.project_id,
+                "tx_id_policy": tx.tx_id_policy,
+                "request_id": tx.request_id,
+                "type": tx.entry.ty,
+                "actor": tx.entry.actor,
+                "machine": tx.entry.machine,
+                "project": tx.entry.project,
+                "task": tx.entry.task,
+                "target": tx.entry.target,
+                "reason": tx.entry.reason,
+                "extra": tx.entry.extra,
+            }))
+            .collect::<Vec<_>>(),
+    })
+    .to_string();
+    MutationIdentity::new(
+        "transaction_multi",
+        txs.iter()
+            .filter_map(|tx| tx.project_id.as_deref())
+            .collect::<Vec<_>>()
+            .join("+"),
+        payload,
+    )
+}
+
 fn multi_cache_key(request_id: &str) -> String {
     format!("transaction-multi:{request_id}")
+}
+
+fn cached_multi_from_map(
+    cache: &HashMap<String, CachedResponse>,
+    cache_key: &str,
+    request_id: &str,
+    expected: &MutationIdentity,
+) -> Result<Option<(Vec<TxAppendResult>, MultiDurability)>> {
+    let Some(cached) = cache.get(cache_key) else {
+        return Ok(None);
+    };
+    let CachedResponse::Multi {
+        results,
+        mutation,
+        durability,
+    } = cached
+    else {
+        bail!("request_id `{request_id}` was already used by a different mutation type");
+    };
+    if mutation != expected {
+        bail!(
+            "request_id `{request_id}` was reused with different multi-transaction rewrites or txs"
+        );
+    }
+    Ok(Some((results.clone(), *durability)))
 }
 
 fn cached_transaction_from_map(
@@ -796,11 +871,14 @@ impl WriterHandle {
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let mutation = multi_transaction_identity(&txs, &rewrites);
         let cache_key = multi_cache_key(&request_id);
         {
             let cache = self.idempotency.lock().await;
-            if let Some(CachedResponse::Multi { results }) = cache.get(&cache_key) {
-                return Ok(results.clone());
+            if let Some((results, MultiDurability::Durable)) =
+                cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
+            {
+                return Ok(results);
             }
         }
         let (reply, rx) = oneshot::channel();
@@ -810,6 +888,7 @@ impl WriterHandle {
                     rewrites,
                     txs,
                     request_id,
+                    mutation,
                 },
                 reply,
             })
@@ -1567,12 +1646,11 @@ async fn writer_loop(
                 let cache_key = multi_cache_key(&req.request_id);
                 let cached = {
                     let cache = idempotency.lock().await;
-                    match cache.get(&cache_key) {
-                        Some(CachedResponse::Multi { results }) => Ok(Some(results.clone())),
-                        Some(_) => Err(anyhow!(
-                            "multi transaction cache key was used by a different mutation type"
-                        )),
-                        None => {
+                    match cached_multi_from_map(&cache, &cache_key, &req.request_id, &req.mutation)
+                    {
+                        Ok(Some(cached)) => Ok(Some(cached)),
+                        Err(error) => Err(error),
+                        Ok(None) => {
                             let collision = req.txs.iter().find_map(|tx| {
                                 tx.request_id
                                     .as_ref()
@@ -1588,8 +1666,27 @@ async fn writer_loop(
                     }
                 };
                 match cached {
-                    Ok(Some(results)) => {
+                    Ok(Some((results, MultiDurability::Durable))) => {
                         let _ = reply.send(Ok(results));
+                    }
+                    Ok(Some((results, MultiDurability::SyncUncertain))) => {
+                        let sync = results
+                            .first()
+                            .ok_or_else(|| anyhow!("cached multi transaction has no results"))
+                            .and_then(|result| sync_tx_writer(&tx_handles, &result.tx_path));
+                        match sync {
+                            Ok(()) => {
+                                cache_durable_multi(&idempotency, &cache_key, &req, &results).await;
+                                publish_multi_events(&events, &req.txs, &results);
+                                let _ = reply.send(Ok(results));
+                            }
+                            Err(error) => {
+                                command_failed = true;
+                                let _ = reply.send(Err(anyhow!(
+                                    "multi transaction committed but durability remains uncertain; retained ledger descriptor could not be synced: {error}"
+                                )));
+                            }
+                        }
                     }
                     Err(error) => {
                         command_failed = true;
@@ -1602,42 +1699,36 @@ async fn writer_loop(
                             &req.rewrites,
                             &req.txs,
                             &req.request_id,
+                            true,
                             test_hooks::before_multi_commit,
                         );
-                        command_failed = result.is_err();
-                        if let Ok(ref results) = result {
-                            let mut cache = idempotency.lock().await;
-                            for (tx, result) in req.txs.iter().zip(results) {
-                                if let Some(request_id) = tx.request_id.as_ref() {
-                                    cache.insert(
-                                        request_id.clone(),
-                                        CachedResponse::Tx {
-                                            result: result.clone(),
-                                            mutation: Some(transaction_identity(tx, &req.rewrites)),
-                                            mutation_id: None,
-                                        },
-                                    );
-                                }
+                        match result {
+                            Ok(MultiTransactionCommit::Durable(results)) => {
+                                cache_durable_multi(&idempotency, &cache_key, &req, &results).await;
+                                publish_multi_events(&events, &req.txs, &results);
+                                let _ = reply.send(Ok(results));
                             }
-                            cache.insert(
-                                cache_key,
-                                CachedResponse::Multi {
-                                    results: results.clone(),
-                                },
-                            );
-                            drop(cache);
-                            for (tx, result) in req.txs.iter().zip(results) {
-                                events.publish(
-                                    Topic::Daemon,
-                                    EventPayload::TxAppended {
-                                        project_id: tx.project_id.clone(),
-                                        tx_id: result.tx_id.clone(),
-                                        ty: tx.entry.ty.clone(),
+                            Ok(MultiTransactionCommit::SyncUncertain { results, error }) => {
+                                command_failed = true;
+                                let mut cache = idempotency.lock().await;
+                                cache.insert(
+                                    cache_key,
+                                    CachedResponse::Multi {
+                                        results,
+                                        mutation: req.mutation.clone(),
+                                        durability: MultiDurability::SyncUncertain,
                                     },
                                 );
+                                drop(cache);
+                                let _ = reply.send(Err(anyhow!(
+                                    "multi transaction committed but durability is uncertain; retry the same request_id to sync the retained ledger descriptor without appending again: {error}"
+                                )));
+                            }
+                            Err(error) => {
+                                command_failed = true;
+                                let _ = reply.send(Err(error));
                             }
                         }
-                        let _ = reply.send(result);
                     }
                 }
             }
@@ -1923,6 +2014,48 @@ struct PendingTxBatchItem {
     req: TxAppend,
     reply: oneshot::Sender<Result<TxAppendResult>>,
     result: Result<TxAppendResult>,
+}
+
+async fn cache_durable_multi(
+    idempotency: &Mutex<HashMap<String, CachedResponse>>,
+    cache_key: &str,
+    req: &TransactionMultiRequest,
+    results: &[TxAppendResult],
+) {
+    let mut cache = idempotency.lock().await;
+    for (tx, result) in req.txs.iter().zip(results) {
+        if let Some(request_id) = tx.request_id.as_ref() {
+            cache.insert(
+                request_id.clone(),
+                CachedResponse::Tx {
+                    result: result.clone(),
+                    mutation: Some(transaction_identity(tx, &req.rewrites)),
+                    mutation_id: None,
+                },
+            );
+        }
+    }
+    cache.insert(
+        cache_key.to_string(),
+        CachedResponse::Multi {
+            results: results.to_vec(),
+            mutation: req.mutation.clone(),
+            durability: MultiDurability::Durable,
+        },
+    );
+}
+
+fn publish_multi_events(events: &EventBus, txs: &[TxAppend], results: &[TxAppendResult]) {
+    for (tx, result) in txs.iter().zip(results) {
+        events.publish(
+            Topic::Daemon,
+            EventPayload::TxAppended {
+                project_id: tx.project_id.clone(),
+                tx_id: result.tx_id.clone(),
+                ty: tx.entry.ty.clone(),
+            },
+        );
+    }
 }
 
 fn process_tx_batch(
@@ -2389,6 +2522,14 @@ struct StagedRewrite {
     backup: Option<PathBuf>,
 }
 
+enum MultiTransactionCommit {
+    Durable(Vec<TxAppendResult>),
+    SyncUncertain {
+        results: Vec<TxAppendResult>,
+        error: anyhow::Error,
+    },
+}
+
 fn transaction_inner<F>(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
     seq_cache: &mut ProjectTxSeqCache,
@@ -2406,9 +2547,15 @@ where
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
+        false,
         verify_before_commit,
     )?;
-    Ok(results.remove(0))
+    match &mut results {
+        MultiTransactionCommit::Durable(results) => Ok(results.remove(0)),
+        MultiTransactionCommit::SyncUncertain { .. } => Err(anyhow!(
+            "single transaction unexpectedly retained after sync failure"
+        )),
+    }
 }
 
 fn transaction_multi_inner<F>(
@@ -2417,8 +2564,9 @@ fn transaction_multi_inner<F>(
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
+    retain_rewrites_after_append: bool,
     verify_before_commit: F,
-) -> Result<Vec<TxAppendResult>>
+) -> Result<MultiTransactionCommit>
 where
     F: FnOnce() -> Result<()>,
 {
@@ -2463,6 +2611,7 @@ where
             rewrites,
             txs,
             request_id,
+            retain_rewrites_after_append,
             verify_before_commit,
         )
     });
@@ -2533,9 +2682,15 @@ where
         rewrites,
         std::slice::from_ref(&tx),
         request_id,
+        false,
         verify_before_commit,
     )?;
-    Ok(results.remove(0))
+    match &mut results {
+        MultiTransactionCommit::Durable(results) => Ok(results.remove(0)),
+        MultiTransactionCommit::SyncUncertain { .. } => Err(anyhow!(
+            "single transaction unexpectedly retained after sync failure"
+        )),
+    }
 }
 
 fn transaction_multi_locked_inner<F>(
@@ -2544,13 +2699,14 @@ fn transaction_multi_locked_inner<F>(
     rewrites: &[FileRewrite],
     txs: &[TxAppend],
     request_id: &str,
+    retain_rewrites_after_append: bool,
     verify_before_commit: F,
-) -> Result<Vec<TxAppendResult>>
+) -> Result<MultiTransactionCommit>
 where
     F: FnOnce() -> Result<()>,
 {
     let mut staged = Vec::new();
-    let result = (|| -> Result<Vec<TxAppendResult>> {
+    let result = (|| -> Result<MultiTransactionCommit> {
         for rewrite in rewrites {
             if let Some(parent) = rewrite.path.parent() {
                 std::fs::create_dir_all(parent)
@@ -2608,17 +2764,24 @@ where
             }
             renamed.push(idx);
         }
-        let appended = append_txs_inner(handles, seq_cache, txs);
-        if appended.is_err() {
-            rollback_renamed_rewrites(&staged, &renamed);
-            return appended;
-        }
-        let appended = appended?;
+        let appended = match append_txs_inner(handles, seq_cache, txs) {
+            Ok(appended) => appended,
+            Err(error) => {
+                rollback_renamed_rewrites(&staged, &renamed);
+                return Err(error);
+            }
+        };
         if let Err(error) = sync_tx_writer(handles, &appended[0].tx_path) {
+            if retain_rewrites_after_append {
+                return Ok(MultiTransactionCommit::SyncUncertain {
+                    results: appended,
+                    error,
+                });
+            }
             rollback_renamed_rewrites(&staged, &renamed);
             return Err(error);
         }
-        Ok(appended)
+        Ok(MultiTransactionCommit::Durable(appended))
     })();
     if result.is_err() {
         cleanup_staged_rewrites(&staged);

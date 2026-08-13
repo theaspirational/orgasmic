@@ -1346,8 +1346,9 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
     let mut responses = Vec::new();
     for task in &missing_close_tasks {
-        let transition = transition_for(&transitions, task)
-            .expect("every readable close task has a lifecycle transition");
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("close task {task} has no prepared lifecycle transition")
+        })?;
         let close_tx = match args.status {
             DispatchCloseStatus::Done => close_done_request(
                 &project_id,
@@ -1391,6 +1392,29 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
             },
         ))?;
         responses.push(response.close_tx);
+    }
+
+    // A terminal tx written before close became atomic may carry no
+    // LIFECYCLE_FROM/TO metadata, so the ledger reconciler cannot infer its
+    // missing lifecycle leg. Replaying the labelled state request for tasks
+    // whose close tx already exists preserves that legacy recovery path. For
+    // an atomic close whose response was lost, this is an `already_in_state`
+    // no-op; for an old torn close it advances the task exactly once.
+    for task in tasks
+        .iter()
+        .filter(|task| open.closed_tasks.contains(*task))
+    {
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("already-closed task {task} has no prepared lifecycle transition")
+        })?;
+        runtime
+            .block_on(post_task_state(
+                &client,
+                &project_id,
+                transition,
+                &close_lifecycle_request_id(task, &open.tx_id),
+            ))
+            .with_context(|| format!("recover lifecycle transition for legacy close {task}"))?;
     }
 
     let tx_ids = if responses.is_empty() {
@@ -8266,12 +8290,10 @@ fn dispatch_lifecycle_transitions(
 /// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
 /// attempted.
 ///
-/// orgasmic:task_EP3H1 — the close is two daemon writes (close tx, then task
-/// transition) and cannot be one commit without either a multi-tx writer
-/// transaction or collapsing `task.state_transitioned` into the close tx. So
-/// the tx carries its own intent instead: a close whose second leg is lost
-/// leaves a ledger that still says where the task was going, and
-/// [`reconcile_torn_closes`] finishes it on the next manager command.
+/// orgasmic:task_EP3H1 — close now commits the terminal tx, rewrite, and
+/// `task.state_transitioned` under one writer lock. The tx still carries its
+/// own intent so [`reconcile_torn_closes`] can repair ledgers produced before
+/// that atomic path, as well as surviving client-side response loss.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CloseTransition {
     task: String,

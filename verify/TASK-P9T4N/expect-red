@@ -3,5 +3,5 @@
 # ledger shape: terminal dispatch tx present, task.state_transitioned absent.
 exit: 101
 contains: dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request
-contains: called `Option::unwrap()` on a `None` value
+contains: atomic close must include the lifecycle transition tx
 contains: test result: FAILED. 0 passed; 1 failed

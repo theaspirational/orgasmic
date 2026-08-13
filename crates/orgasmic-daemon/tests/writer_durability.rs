@@ -237,6 +237,149 @@ async fn injected_multi_commit_failure_lands_neither_leg() {
 
 #[tokio::test]
 #[allow(clippy::await_holding_lock)]
+async fn post_append_sync_failure_keeps_rewrites_and_retry_syncs_without_duplicate_pair() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+    let rewrites = vec![FileRewrite {
+        path: target.clone(),
+        new_contents: b"after\n".to_vec(),
+    }];
+    let txs = vec![
+        TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-close-sync-uncertain"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some("req-close-sync-uncertain".into()),
+        },
+        TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-transition-sync-uncertain"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some("req-transition-sync-uncertain".into()),
+        },
+    ];
+
+    test_hooks::fail_next_sync(1);
+    let error = handle
+        .transaction_multi(rewrites.clone(), txs.clone())
+        .await
+        .expect_err("failed durability acknowledgement must be explicit");
+    assert!(
+        error
+            .to_string()
+            .contains("committed but durability is uncertain"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "after\n");
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(
+        entries.len(),
+        2,
+        "both tx legs stay convergent with rewrites"
+    );
+
+    test_hooks::fail_next_sync(1);
+    let still_uncertain = handle
+        .transaction_multi(rewrites.clone(), txs.clone())
+        .await
+        .expect_err("a retained descriptor sync failure must remain explicit");
+    assert!(
+        still_uncertain
+            .to_string()
+            .contains("durability remains uncertain"),
+        "unexpected retained-descriptor error: {still_uncertain}"
+    );
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "failed re-sync must not append a pair");
+
+    let retried = handle
+        .transaction_multi(rewrites, txs)
+        .await
+        .expect("same semantic retry must sync, not append again");
+    assert_eq!(
+        retried
+            .iter()
+            .map(|result| result.tx_id.as_str())
+            .collect::<Vec<_>>(),
+        ["tx-close-sync-uncertain", "tx-transition-sync-uncertain"]
+    );
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "retry must not append a duplicate pair");
+    assert_eq!(test_hooks::sync_attempt_count(), 3);
+    assert_eq!(test_hooks::sync_count(), 1);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn multi_transaction_request_id_collisions_fail_closed_on_semantic_changes() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+    let make_txs = |transition_reason: &str| {
+        let mut transition = sample_entry("tx-collision-transition");
+        transition.reason = Some(transition_reason.to_string());
+        vec![
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry: sample_entry("tx-collision-close"),
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-collision-close".into()),
+            },
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry: transition,
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-collision-transition".into()),
+            },
+        ]
+    };
+    let original_rewrite = vec![FileRewrite {
+        path: target.clone(),
+        new_contents: b"after\n".to_vec(),
+    }];
+    handle
+        .transaction_multi(original_rewrite.clone(), make_txs("original"))
+        .await
+        .unwrap();
+
+    let rewrite_error = handle
+        .transaction_multi(
+            vec![FileRewrite {
+                path: target,
+                new_contents: b"different\n".to_vec(),
+            }],
+            make_txs("original"),
+        )
+        .await
+        .expect_err("rewrite collision must fail closed");
+    assert!(rewrite_error
+        .to_string()
+        .contains("different multi-transaction"));
+
+    let tx_error = handle
+        .transaction_multi(original_rewrite, make_txs("different"))
+        .await
+        .expect_err("tx semantic collision must fail closed");
+    assert!(tx_error.to_string().contains("different multi-transaction"));
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "collisions must not append anything");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
 async fn concurrent_multi_transactions_never_interleave_their_entries() {
     let _guard = hook_test_lock();
     test_hooks::reset();
