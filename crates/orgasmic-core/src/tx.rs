@@ -412,13 +412,26 @@ impl TxWriter {
     /// home ledger, and every daemon-internal caller — so a write the reader
     /// would choke on is refused instead of bricking the file.
     pub fn append(&mut self, entry: &TxEntry) -> Result<(), TxError> {
-        entry.validate()?;
-        entry.assert_round_trip()?;
-        if self.needs_leading_blank {
-            self.file.write_all(b"\n")?;
+        self.append_many(std::slice::from_ref(entry))
+    }
+
+    /// Append an ordered group of entries with one write and one flush.
+    /// Every entry is validated before any byte reaches the ledger.
+    pub fn append_many(&mut self, entries: &[TxEntry]) -> Result<(), TxError> {
+        if entries.is_empty() {
+            return Ok(());
         }
-        self.file.write_all(b"\n")?;
-        self.file.write_all(entry.render().as_bytes())?;
+        let mut rendered = String::new();
+        if self.needs_leading_blank {
+            rendered.push('\n');
+        }
+        for entry in entries {
+            entry.validate()?;
+            entry.assert_round_trip()?;
+            rendered.push('\n');
+            rendered.push_str(&entry.render());
+        }
+        self.file.write_all(rendered.as_bytes())?;
         self.file.flush()?;
         self.needs_leading_blank = false;
         Ok(())

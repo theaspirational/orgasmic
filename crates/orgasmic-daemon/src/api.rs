@@ -706,6 +706,10 @@ pub fn router(state: ApiState) -> Router {
             post(post_task_dispatch),
         )
         .route(
+            "/projects/:id/tasks/:task_id/dispatch/close",
+            post(post_task_dispatch_close_commit),
+        )
+        .route(
             "/projects/:id/tasks/:task_id/lease/release",
             post(post_task_lease_release),
         )
@@ -2688,6 +2692,20 @@ pub struct TxAppendResponse {
     pub time: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct DispatchCloseCommitRequest {
+    close_tx: TxAppendRequest,
+    state: String,
+    reason: String,
+    request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchCloseCommitResponse {
+    close_tx: TxAppendResponse,
+    transition_tx_id: String,
+}
+
 fn tx_time_string_utc(now: &chrono::DateTime<Utc>) -> String {
     now.format("[%Y-%m-%d %a %H:%M:%S]").to_string()
 }
@@ -2719,6 +2737,25 @@ async fn append_tx_request(
     state: &ApiState,
     req: TxAppendRequest,
 ) -> Result<TxAppendResponse, ApiError> {
+    let (tx, project_tx, destination_project_id, time) =
+        prepare_tx_append_request(state, req).await?;
+    let res = state
+        .writer
+        .append_tx(tx, None)
+        .await
+        .map_err(writer_append_error)?;
+    refresh_after_tx(state, project_tx, destination_project_id, &res.tx_id).await?;
+    Ok(TxAppendResponse {
+        tx_id: res.tx_id,
+        tx_path: res.tx_path,
+        time,
+    })
+}
+
+async fn prepare_tx_append_request(
+    state: &ApiState,
+    req: TxAppendRequest,
+) -> Result<(TxAppend, bool, Option<String>, String), ApiError> {
     let now = Utc::now();
     if let Some(project_id) = req.project.as_deref() {
         let registered = state
@@ -2774,28 +2811,18 @@ async fn append_tx_request(
     // repeats this check as its own last line of defence.
     tx_entry_write_error(&entry)?;
 
-    let project_tx = destination.project_tx;
-    let destination_project_id = destination.project_id.clone();
-    let res = state
-        .writer
-        .append_tx(
-            TxAppend {
-                tx_path: destination.tx_path.clone(),
-                entry,
-                project_id: destination.project_id.clone(),
-                tx_id_policy: destination.tx_id_policy.clone(),
-                request_id: None,
-            },
-            req.request_id,
-        )
-        .await
-        .map_err(writer_append_error)?;
-    refresh_after_tx(state, project_tx, destination_project_id, &res.tx_id).await?;
-    Ok(TxAppendResponse {
-        tx_id: res.tx_id,
-        tx_path: res.tx_path,
-        time: time_str,
-    })
+    Ok((
+        TxAppend {
+            tx_path: destination.tx_path,
+            entry,
+            project_id: destination.project_id.clone(),
+            tx_id_policy: destination.tx_id_policy,
+            request_id: req.request_id,
+        },
+        destination.project_tx,
+        destination.project_id,
+        time_str,
+    ))
 }
 
 async fn get_prompt_specs(
@@ -17001,6 +17028,165 @@ fn prepare_cross_file_lifecycle_move(
     rw.remove_heading(task_id)
         .map_err(|e| org_rewriter_error("remove task heading", task_id, e))?;
     Ok((rw.finish(), moved))
+}
+
+// orgasmic:task_P9T4N
+/// Commit a dispatch terminal tx together with the lifecycle rewrite and its
+/// `task.state_transitioned` tx. This is deliberately a dispatch-only surface:
+/// ordinary task updates keep their existing API, while close no longer has a
+/// client-visible boundary between its two ledger legs.
+async fn post_task_dispatch_close_commit(
+    State(state): State<ApiState>,
+    Path((project_id, task_id)): Path<(String, String)>,
+    Json(req): Json<DispatchCloseCommitRequest>,
+) -> Result<Json<DispatchCloseCommitResponse>, ApiError> {
+    if req.close_tx.project.as_deref() != Some(project_id.as_str())
+        || req.close_tx.task.as_deref() != Some(task_id.as_str())
+    {
+        return Err(ApiError::bad_request(
+            "dispatch close tx project/task must match the request path",
+        ));
+    }
+    if !matches!(
+        req.close_tx.r#type.as_str(),
+        "implementer.done" | "reviewer.done" | "architector.done" | "manager.dispatch_aborted"
+    ) {
+        return Err(ApiError::bad_request(
+            "dispatch close requires a terminal dispatch tx type",
+        ));
+    }
+    let to_state = LifecycleStage::from_str(&req.state)
+        .map_err(|_| ApiError::bad_request("unknown task state"))?;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&project_id)).await?;
+    let project = select_loaded_project(&snap, &project_id)?;
+    let task = project
+        .tasks
+        .iter()
+        .find(|task| task.id == task_id)
+        .ok_or_else(|| ApiError::not_found("task not found"))?;
+    let from_state = task.lifecycle_stage;
+    let close_lifecycle = |key: &str| {
+        req.close_tx
+            .extra
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.as_str())
+    };
+    if close_lifecycle("LIFECYCLE_FROM") != Some(from_state.as_str())
+        || close_lifecycle("LIFECYCLE_TO") != Some(to_state.as_str())
+    {
+        return Err(ApiError::bad_request(
+            "dispatch close lifecycle intent does not match current task state",
+        ));
+    }
+    let from_path = task.source_file.clone();
+    let project_root = project.root.clone();
+    let to_file_name = lifecycle_stage_file_name(to_state);
+    let to_path = task_file_path(&project_root, to_file_name);
+
+    let rewrites = if from_state == to_state {
+        Vec::new()
+    } else {
+        let source_display = from_path.to_string_lossy().to_string();
+        let source = read_artifact(&from_path, "task file")?;
+        let pairs = if from_path == to_path {
+            let file = OrgFile::parse(source.clone(), &source_display)
+                .map_err(|e| org_parse_bad_request(&from_path, "task file", e))?;
+            let mut rw = OrgRewriter::new(&file, &source_display);
+            let heading = file
+                .find_by_id(&task_id)
+                .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
+            rw.set_title_line(&task_id, &task_lifecycle_title_line(heading, to_state))
+                .map_err(|e| org_rewriter_error("set task lifecycle title", &task_id, e))?;
+            vec![(from_path, rw.finish())]
+        } else {
+            let (source_updated, moved_heading) =
+                prepare_cross_file_lifecycle_move(&source, &source_display, &task_id, to_state)?;
+            let dest_existing = if to_path.exists() {
+                read_artifact(&to_path, "task file")?
+            } else {
+                empty_task_file_header(to_file_name)
+            };
+            vec![
+                (from_path, source_updated),
+                (
+                    to_path,
+                    append_heading_to_task_file(&dest_existing, &moved_heading),
+                ),
+            ]
+        };
+        pairs
+            .into_iter()
+            .map(|(path, source)| FileRewrite {
+                path,
+                new_contents: source.into_bytes(),
+            })
+            .collect()
+    };
+
+    let (close_tx, close_project_tx, close_destination, close_time) =
+        prepare_tx_append_request(&state, req.close_tx).await?;
+    let close_path = close_tx.tx_path.clone();
+    let lifecycle = if from_state == to_state {
+        None
+    } else {
+        Some(
+            prepare_api_tx(
+                &state,
+                ApiTxRequest {
+                    ty: "task.state_transitioned".to_string(),
+                    actor: None,
+                    project: Some(project_id.clone()),
+                    task: Some(task_id.clone()),
+                    target: Some(task_file_rel(to_file_name)),
+                    reason: req.reason,
+                    request_id: Some(req.request_id),
+                    extra: vec![
+                        ("FROM_STATE".to_string(), from_state.as_str().to_string()),
+                        ("TO_STATE".to_string(), to_state.as_str().to_string()),
+                    ],
+                },
+            )
+            .await?,
+        )
+    };
+    let mut txs = vec![close_tx];
+    if let Some(prepared) = lifecycle.as_ref() {
+        txs.push(prepared.tx.clone());
+    }
+    let results = state
+        .writer
+        .transaction_multi(rewrites, txs)
+        .await
+        .map_err(writer_transaction_error)?;
+    let close_result = results
+        .first()
+        .expect("dispatch close transaction always has a close tx");
+    let transition_tx_id = results
+        .get(1)
+        .map(|result| result.tx_id.clone())
+        .unwrap_or_default();
+    let refresh_tx_id = if transition_tx_id.is_empty() {
+        close_result.tx_id.as_str()
+    } else {
+        transition_tx_id.as_str()
+    };
+    refresh_after_tx(&state, close_project_tx, close_destination, refresh_tx_id).await?;
+    state.events.publish(
+        Topic::Task,
+        EventPayload::TaskUpdated {
+            project_id,
+            task_id,
+        },
+    );
+    Ok(Json(DispatchCloseCommitResponse {
+        close_tx: TxAppendResponse {
+            tx_id: close_result.tx_id.clone(),
+            tx_path: close_path,
+            time: close_time,
+        },
+        transition_tx_id,
+    }))
 }
 
 async fn post_task_update(
