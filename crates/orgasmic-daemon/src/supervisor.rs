@@ -5282,8 +5282,14 @@ pub(crate) struct ProcessSubtreeCpuProbe {
     ///
     /// rmux only: a tmux probe inherits its `-L` from the drivers' own
     /// `tmux_command()`, the same selection the driver used to create the
-    /// session (see [`pane_probe_command`]).
+    /// session (see [`pane_probe_command_with_override`]).
     rmux_socket: Option<std::path::PathBuf>,
+
+    /// Test-only command override for mux probes. Production always leaves
+    /// this unset. Keeping the override on the probe instance avoids changing
+    /// process-global `PATH` or `RMUX_SDK_DAEMON_BINARY` while parallel daemon
+    /// tests are spawning their own mux clients.
+    probe_binary_override: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -5291,6 +5297,14 @@ impl ProcessSubtreeCpuProbe {
     fn with_rmux_socket(socket: &std::path::Path) -> Self {
         Self {
             rmux_socket: Some(socket.to_path_buf()),
+            ..Self::default()
+        }
+    }
+
+    fn with_probe_binary(binary: &std::path::Path) -> Self {
+        Self {
+            probe_binary_override: Some(binary.to_path_buf()),
+            ..Self::default()
         }
     }
 }
@@ -5298,7 +5312,8 @@ impl ProcessSubtreeCpuProbe {
 impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
     fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence {
         let socket = self.rmux_socket.as_deref();
-        let Some(root) = work_probe_root_pid(target, socket) else {
+        let probe_binary_override = self.probe_binary_override.as_deref();
+        let Some(root) = work_probe_root_pid(target, socket, probe_binary_override) else {
             return WorkEvidence::Unknown;
         };
         let Some(table) = process_cpu_table() else {
@@ -5324,7 +5339,7 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
         // rescues: a pane that cannot be read cannot save a run (JK66P's
         // fail-closed rule), it only gets named in the reason.
         if let Some(mux) = PaneMux::for_transport(&target.transport) {
-            match pane_content(mux, &target.identity, socket) {
+            match pane_content_with_override(mux, &target.identity, socket, probe_binary_override) {
                 Some(pane) => match pane_open_turn_marker(&pane) {
                     Some(marker) => {
                         return WorkEvidence::Working {
@@ -5357,12 +5372,17 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
 /// pid at acquire; a pane transport has none, so the pane's root process is
 /// resolved from the mux by the run-scoped session name the driver built from
 /// the same identity.
-fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path>) -> Option<u32> {
+fn work_probe_root_pid(
+    target: &WorkProbeTarget,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<u32> {
     if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
         return Some(pid);
     }
-    PaneMux::for_transport(&target.transport)
-        .and_then(|mux| pane_pid(mux, &target.identity, socket))
+    PaneMux::for_transport(&target.transport).and_then(|mux| {
+        pane_pid_with_override(mux, &target.identity, socket, probe_binary_override)
+    })
 }
 
 // orgasmic:TASK-4CSMY
@@ -5417,25 +5437,39 @@ impl PaneMux {
 /// binary that owns its server. Reusing it is what makes "the probe reads the
 /// server the pane is on" true by construction rather than by plumbing.
 // orgasmic:TASK-4CSMY
-fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<Command> {
-    let mut cmd = match mux {
-        PaneMux::Rmux => {
-            let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-            let rmux_bin = probe.path.filter(|_| probe.found)?;
-            let mut cmd = Command::new(rmux_bin);
+fn pane_probe_command_with_override(
+    mux: PaneMux,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<Command> {
+    let mut cmd = if let Some(binary) = probe_binary_override {
+        let mut cmd = Command::new(binary);
+        if mux == PaneMux::Rmux {
             if let Some(socket) = socket {
                 cmd.arg("-S").arg(socket);
             }
-            cmd
         }
-        // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
-        // to `rmux`, which answers `-V` with a lie and would point the probe at
-        // the rmux server hosting live dispatch panes.
-        PaneMux::Tmux => {
-            if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
-                return None;
+        cmd
+    } else {
+        match mux {
+            PaneMux::Rmux => {
+                let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+                let rmux_bin = probe.path.filter(|_| probe.found)?;
+                let mut cmd = Command::new(rmux_bin);
+                if let Some(socket) = socket {
+                    cmd.arg("-S").arg(socket);
+                }
+                cmd
             }
-            orgasmic_drivers::modes::tmux::tmux_command()
+            // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
+            // to `rmux`, which answers `-V` with a lie and would point the probe at
+            // the rmux server hosting live dispatch panes.
+            PaneMux::Tmux => {
+                if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
+                    return None;
+                }
+                orgasmic_drivers::modes::tmux::tmux_command()
+            }
         }
     };
     cmd.stdin(Stdio::null())
@@ -5624,13 +5658,23 @@ fn kill_probe_child(child: &mut std::process::Child) {
 /// `<mux> display-message -p -t <session> '#{pane_pid}'` — the pane's root
 /// process (the shell the harness runs in), whose descendants are the harness
 /// and everything the harness spawned.
+#[cfg(test)]
 fn pane_pid(
     mux: PaneMux,
     identity: &RuntimeIdentity,
     socket: Option<&std::path::Path>,
 ) -> Option<u32> {
+    pane_pid_with_override(mux, identity, socket, None)
+}
+
+fn pane_pid_with_override(
+    mux: PaneMux,
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<u32> {
     let session = mux.session_name(identity);
-    let mut cmd = pane_probe_command(mux, socket)?;
+    let mut cmd = pane_probe_command_with_override(mux, socket, probe_binary_override)?;
     cmd.args(["display-message", "-p", "-t", &session, "#{pane_pid}"]);
     let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
     String::from_utf8_lossy(&stdout).trim().parse().ok()
@@ -5640,13 +5684,23 @@ fn pane_pid(
 /// which survives exactly the state that starves the byte channels: a frozen
 /// TUI keeps its last frame, and that frame carries the open-turn statusline.
 // orgasmic:TASK-JQ8AV,TASK-4CSMY
+#[cfg(test)]
 fn pane_content(
     mux: PaneMux,
     identity: &RuntimeIdentity,
     socket: Option<&std::path::Path>,
 ) -> Option<String> {
+    pane_content_with_override(mux, identity, socket, None)
+}
+
+fn pane_content_with_override(
+    mux: PaneMux,
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<String> {
     let session = mux.session_name(identity);
-    let mut cmd = pane_probe_command(mux, socket)?;
+    let mut cmd = pane_probe_command_with_override(mux, socket, probe_binary_override)?;
     cmd.args(["capture-pane", "-p", "-t", &session]);
     let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
     Some(String::from_utf8_lossy(&stdout).into_owned())
@@ -11172,10 +11226,10 @@ mod tests {
     /// transports: a mux binary that never answers must not hold the stall
     /// sweep and must not leave a process behind.
     ///
-    /// Each arm points the production `pane_probe_command` at a binary that
-    /// hangs — `RMUX_SDK_DAEMON_BINARY` for rmux (the documented override
-    /// `probe_rmux_binary` already honors), a PATH shim for tmux (which resolves
-    /// `tmux` by name). Every other line of the path is the real one:
+    /// Each arm gives its probe instance a binary that hangs. The override is
+    /// instance-local so this parallel test cannot redirect unrelated rmux or
+    /// tmux commands through a process-global environment variable. Every
+    /// other line of the path is the real one:
     /// `ProcessSubtreeCpuProbe::observe` → `work_probe_root_pid` → `pane_pid` →
     /// `probe_command_stdout`.
     ///
@@ -11189,7 +11243,7 @@ mod tests {
         let _live_guard = live_session_guard();
         let _environment = test_environment_lock().lock().await;
 
-        for (transport, mux) in [("rmux", PaneMux::Rmux), ("tmux", PaneMux::Tmux)] {
+        for transport in ["rmux", "tmux"] {
             let dir = tempfile::TempDir::new().expect("tempdir");
             let shim = dir.path().join("tmux");
             let armed = dir.path().join("armed");
@@ -11220,23 +11274,10 @@ mod tests {
                 "the linked shim must answer before the timed section"
             );
 
-            // Install the override for this arm only, and restore it after.
-            let saved_rmux = std::env::var_os("RMUX_SDK_DAEMON_BINARY");
-            let saved_path = std::env::var_os("PATH").unwrap_or_default();
-            match mux {
-                PaneMux::Rmux => std::env::set_var("RMUX_SDK_DAEMON_BINARY", &shim),
-                // Keep the system dirs on the test PATH (`.orgasmic/gotchas.org`:
-                // a bare tempdir PATH breaks every concurrent test that spawns
-                // a tool).
-                PaneMux::Tmux => std::env::set_var(
-                    "PATH",
-                    format!("{}:{}", dir.path().display(), saved_path.to_string_lossy()),
-                ),
-            }
             std::fs::write(&armed, "").expect("arm the shim");
 
             let (sup, session_dir, _w) = make_unmonitored_supervisor();
-            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_probe_binary(&shim)));
             let driver = TmuxTuiDriver;
             let req = manual_req(
                 &format!("TASK-HUNG-{transport}"),
@@ -11261,14 +11302,6 @@ mod tests {
             let hung_child = std::fs::read_to_string(&pidfile)
                 .ok()
                 .and_then(|raw| raw.trim().parse::<u32>().ok());
-
-            match mux {
-                PaneMux::Rmux => match saved_rmux {
-                    Some(value) => std::env::set_var("RMUX_SDK_DAEMON_BINARY", value),
-                    None => std::env::remove_var("RMUX_SDK_DAEMON_BINARY"),
-                },
-                PaneMux::Tmux => std::env::set_var("PATH", &saved_path),
-            }
 
             let hung_child = hung_child.unwrap_or_else(|| {
                 panic!("{transport}: the probe never reached the hanging mux binary")
