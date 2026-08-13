@@ -3196,6 +3196,150 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_partial_close_retry_does_not_move_an_advanced_sibling_backwards() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("task-bundle-advanced-brief.md");
+    write(&brief, "bundle advanced sibling brief");
+    let worktree = tmp.path().join("worktrees/task-bundle-advanced");
+
+    let running = boot(home.clone()).await;
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-bundle-advanced-impl",
+        ],
+    );
+    let start_tx = tx_id_for(
+        &tx_log(&project_root),
+        "manager.dispatch_started",
+        "TASK-BUNDLE-A TASK-BUNDLE-B",
+    );
+    run_git(
+        &project_root,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    run_git(
+        &project_root,
+        &["branch", "-D", "task-bundle-advanced-impl"],
+    );
+    append_partial_close_tx(
+        &project_root,
+        &start_tx,
+        "TASK-BUNDLE-A",
+        &head,
+        "task-bundle-advanced-impl",
+    );
+
+    // Simulate workflow that legitimately continued after the old-format
+    // close. The original close retry must not treat that later state as its
+    // own `from` state and pull it back to IN_REVIEW.
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "in_review",
+            "--reason",
+            "advance after legacy close",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "done",
+            "--reason",
+            "finish after legacy close",
+        ],
+    );
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--started-tx",
+            &start_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--codex-session",
+            "session-bundle-advanced",
+            "--tokens",
+            "789",
+            "--wall",
+            "4s",
+            "--branch-delete",
+        ],
+    );
+    assert!(close_stdout.contains("closed: TASK-BUNDLE-A TASK-BUNDLE-B implementer.done tx="));
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+    assert_task_stage(&project_root, "TASK-BUNDLE-B", "IN_REVIEW", "in_review");
+    assert_eq!(
+        count_occurrences(&tx_log(&project_root), ":TYPE:         implementer.done"),
+        2,
+        "the missing sibling should close without duplicating the legacy close"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -8332,8 +8476,12 @@ async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
     );
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
     let ledger = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
-    let close = ledger.find("implementer.done TASK-CLEANUP").unwrap();
-    let transition = ledger.find("task.state_transitioned TASK-CLEANUP").unwrap();
+    let close = ledger
+        .find("implementer.done TASK-CLEANUP")
+        .expect("terminal close tx must be present");
+    let transition = ledger
+        .find("task.state_transitioned TASK-CLEANUP")
+        .expect("atomic close must include the lifecycle transition tx");
     assert!(
         close < transition,
         "terminal tx must immediately precede its lifecycle record"
@@ -11361,10 +11509,27 @@ async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() 
     let brief = tmp.path().join("codex/task-cleanup-brief.md");
     write(&brief, "cleanup brief");
     seed_open_dispatch_tx(&project_root, "tx-start-order", &worktree, &brief);
+    let tx_path = tx_file_path(&project_root);
+    let mut ledger = std::fs::read_to_string(&tx_path).unwrap();
+    ledger.push_str(
+        "\n* TX 2026-07-29 Wed 10:01:00 implementer.done TASK-CLEANUP\n\
+         :PROPERTIES:\n\
+         :TX_ID:        tx-close-order-torn\n\
+         :TIME:         [2026-07-29 Wed 10:01:00]\n\
+         :TYPE:         implementer.done\n\
+         :ACTOR:        agent.implementer\n\
+         :MACHINE:      host\n\
+         :PROJECT:      orgasmic\n\
+         :TASK:         TASK-CLEANUP\n\
+         :CLOSED_TX:    tx-start-order\n\
+         :LIFECYCLE_FROM: backlog\n\
+         :LIFECYCLE_TO: in_review\n\
+         :END:\n",
+    );
+    write(&tx_path, ledger);
     let outside_report = tmp.path().join("outside/last.txt");
 
     let running = boot(home.clone()).await;
-    let proxy = start_lifecycle_rejecting_proxy(running.addr).await;
     let close_args = [
         "manager".to_string(),
         "dispatch-close".to_string(),
@@ -11381,43 +11546,11 @@ async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() 
         format!("REPORT_PATH={}", outside_report.display()),
     ];
     let borrowed: Vec<&str> = close_args.iter().map(String::as_str).collect();
-    let torn = run_orgasmic_output_with_daemon_url(
-        &home,
-        &format!("http://{}", proxy.addr),
-        &project_root,
-        &path_env,
-        &borrowed,
-        &[],
-    );
-    let torn_stderr = String::from_utf8_lossy(&torn.stderr).to_string();
-    assert!(
-        !torn.status.success(),
-        "an absolute REPORT_PATH is refused, which is what makes the ordering matter\
-         \nstdout={}\nstderr={torn_stderr}",
-        String::from_utf8_lossy(&torn.stdout)
-    );
-    // Tear the close for real, with the property the manager can actually pass.
-    let torn_close_args: Vec<&str> = borrowed[..borrowed.len() - 2].to_vec();
-    let torn = run_orgasmic_output_with_daemon_url(
-        &home,
-        &format!("http://{}", proxy.addr),
-        &project_root,
-        &path_env,
-        &torn_close_args,
-        &[],
-    );
-    assert!(
-        String::from_utf8_lossy(&torn.stderr)
-            .contains("close tx appended but lifecycle update failed"),
-        "the fixture must really tear the close: {}",
-        String::from_utf8_lossy(&torn.stderr)
-    );
     assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
-    drop(proxy);
 
-    // The re-run carries the same absolute REPORT_PATH the torn command line
-    // had. It must still be refused — and the stranded transition must be
-    // finished first, not left behind by the refusal.
+    // The old-format torn ledger is already present when the command starts.
+    // The absolute REPORT_PATH must still be refused — and the stranded
+    // transition must be finished first, not left behind by the refusal.
     let rerun = run_orgasmic_output(&home, &running, &project_root, &path_env, &borrowed);
     let rerun_stdout = String::from_utf8_lossy(&rerun.stdout).to_string();
     let rerun_stderr = String::from_utf8_lossy(&rerun.stderr).to_string();

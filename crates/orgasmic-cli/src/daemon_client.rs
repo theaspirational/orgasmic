@@ -424,6 +424,7 @@ fn daemon_http_error_message(status: StatusCode, body: &str) -> String {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
             let committed = value.get("committed").and_then(|value| value.as_bool());
             let index_status = value.get("index_status").and_then(|value| value.as_str());
+            let durability = value.get("durability").and_then(|value| value.as_str());
             let tx_id = value.get("tx_id").and_then(|value| value.as_str());
             if committed == Some(true) && index_status == Some("refresh_failed") {
                 return format!(
@@ -433,6 +434,12 @@ fn daemon_http_error_message(status: StatusCode, body: &str) -> String {
                         .map(|tx_id| format!(" as {tx_id}"))
                         .unwrap_or_default()
                 );
+            }
+            if committed == Some(true) && durability == Some("uncertain") {
+                return "mutation committed, but durability confirmation is uncertain — re-read \
+                        the exact state before deciding whether to retry; do not report this as \
+                        success or blindly retry"
+                    .to_string();
             }
         }
     }
@@ -639,6 +646,25 @@ mod tests {
         assert!(message.contains("mutation committed as tx-42"), "{message}");
         assert!(message.contains("re-read the exact state"), "{message}");
         assert!(message.contains("do not blindly retry"), "{message}");
+    }
+
+    #[test]
+    fn committed_uncertain_durability_requires_reconciliation_not_success() {
+        let message = daemon_http_error_message(
+            StatusCode::SERVICE_UNAVAILABLE,
+            r#"{"error":"sync failed","committed":true,"durability":"uncertain"}"#,
+        );
+        assert!(message.contains("mutation committed"), "{message}");
+        assert!(
+            message.contains("durability confirmation is uncertain"),
+            "{message}"
+        );
+        assert!(message.contains("re-read the exact state"), "{message}");
+        assert!(message.contains("deciding whether to retry"), "{message}");
+        assert!(
+            message.contains("do not report this as success"),
+            "{message}"
+        );
     }
 
     #[test]

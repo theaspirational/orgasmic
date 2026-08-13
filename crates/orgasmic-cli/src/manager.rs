@@ -1346,8 +1346,9 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
     let mut responses = Vec::new();
     for task in &missing_close_tasks {
-        let transition = transition_for(&transitions, task)
-            .expect("every readable close task has a lifecycle transition");
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("close task {task} has no prepared lifecycle transition")
+        })?;
         let close_tx = match args.status {
             DispatchCloseStatus::Done => close_done_request(
                 &project_id,
@@ -1391,6 +1392,30 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
             },
         ))?;
         responses.push(response.close_tx);
+    }
+
+    // A terminal tx written before close became atomic may carry no
+    // LIFECYCLE_FROM/TO metadata, so the ledger reconciler cannot infer its
+    // missing lifecycle leg. Preserve that legacy recovery only while the task
+    // is still at the stage owned by the dispatch: a later deliberate move is
+    // stronger evidence than the old close. Atomic close records are never
+    // replayed here, even if their task was subsequently moved.
+    let legacy_replay_tasks = legacy_close_replay_tasks(&project_root, &open, &tasks)?;
+    for task in tasks
+        .iter()
+        .filter(|task| legacy_replay_tasks.contains(*task))
+    {
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("already-closed task {task} has no prepared lifecycle transition")
+        })?;
+        runtime
+            .block_on(post_task_state(
+                &client,
+                &project_id,
+                transition,
+                &close_lifecycle_request_id(task, &open.tx_id),
+            ))
+            .with_context(|| format!("recover lifecycle transition for legacy close {task}"))?;
     }
 
     let tx_ids = if responses.is_empty() {
@@ -8266,12 +8291,10 @@ fn dispatch_lifecycle_transitions(
 /// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
 /// attempted.
 ///
-/// orgasmic:task_EP3H1 — the close is two daemon writes (close tx, then task
-/// transition) and cannot be one commit without either a multi-tx writer
-/// transaction or collapsing `task.state_transitioned` into the close tx. So
-/// the tx carries its own intent instead: a close whose second leg is lost
-/// leaves a ledger that still says where the task was going, and
-/// [`reconcile_torn_closes`] finishes it on the next manager command.
+/// orgasmic:task_EP3H1 — close now commits the terminal tx, rewrite, and
+/// `task.state_transitioned` under one writer lock. The tx still carries its
+/// own intent so [`reconcile_torn_closes`] can repair ledgers produced before
+/// that atomic path, as well as surviving client-side response loss.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CloseTransition {
     task: String,
@@ -8656,6 +8679,63 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
         }
     }
     Ok(pending)
+}
+
+/// Already-closed tasks whose pre-atomic terminal tx still needs the legacy
+/// replay performed by `dispatch-close`.
+///
+/// The ledger match is deliberately exact on both generation (`CLOSED_TX`) and
+/// task. A close carrying lifecycle metadata belongs to the atomic/reconciler
+/// path and is never replayed here. An old-format close is eligible only while
+/// the task remains at the active stage established when that dispatch kind was
+/// opened; once an operator or later workflow moves it, the old close loses the
+/// right to mutate it.
+fn legacy_close_replay_tasks(
+    project_root: &Path,
+    open: &DispatchRecord,
+    tasks: &[String],
+) -> Result<BTreeSet<String>> {
+    let Some(active_stage) = legacy_close_active_stage(&open.kind) else {
+        return Ok(BTreeSet::new());
+    };
+    let entries = read_tx_entries(project_root)?;
+    let mut eligible = BTreeSet::new();
+    for task in tasks
+        .iter()
+        .filter(|task| open.closed_tasks.contains(*task))
+    {
+        let close = entries.iter().rev().find(|entry| {
+            matches!(
+                entry.ty.as_str(),
+                "implementer.done"
+                    | "reviewer.done"
+                    | "architector.done"
+                    | "manager.dispatch_aborted"
+            ) && extra(entry, "CLOSED_TX") == Some(open.tx_id.as_str())
+                && entry.task.as_deref() == Some(task.as_str())
+        });
+        let Some(close) = close else {
+            continue;
+        };
+        if extra(close, LIFECYCLE_FROM_KEY).is_some() || extra(close, LIFECYCLE_TO_KEY).is_some() {
+            continue;
+        }
+        if read_task_lifecycle(project_root, task)
+            .map(|info| info.stage == active_stage)
+            .unwrap_or(false)
+        {
+            eligible.insert(task.clone());
+        }
+    }
+    Ok(eligible)
+}
+
+fn legacy_close_active_stage(kind: &str) -> Option<LifecycleStage> {
+    match kind {
+        "implementer" | "architector" => Some(LifecycleStage::InProgress),
+        "reviewer" => Some(LifecycleStage::InReview),
+        _ => None,
+    }
 }
 
 fn dispatchable_stage(kind: DispatchKind, stage: LifecycleStage) -> bool {
