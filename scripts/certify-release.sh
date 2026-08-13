@@ -62,6 +62,9 @@ step "Strict Clippy"
 step "Exact-head certification guard self-test"
 bash scripts/assert-ci-certified-selftest.sh
 
+step "Runtime candidate/publisher self-test"
+bash scripts/publish-runtime-selftest.sh
+
 step "Test classifier self-test"
 bash scripts/run-tests-selftest.sh
 

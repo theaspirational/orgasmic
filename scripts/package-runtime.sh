@@ -127,11 +127,11 @@ case "$TARGET_TRIPLE" in
         fi
         echo "→ building orgasmic CLI for $TARGET_TRIPLE via cargo-zigbuild (glibc $GLIBC_FLOOR)"
         cargo zigbuild --profile "$PROFILE" --package orgasmic-cli \
-            --target "${TARGET_TRIPLE}.${GLIBC_FLOOR}"
+            --target "${TARGET_TRIPLE}.${GLIBC_FLOOR}" --locked
         ;;
     *)
         echo "→ building orgasmic CLI for $TARGET_TRIPLE ($PROFILE)"
-        cargo build --profile "$PROFILE" --package orgasmic-cli --target "$TARGET_TRIPLE"
+        cargo build --profile "$PROFILE" --package orgasmic-cli --target "$TARGET_TRIPLE" --locked
         ;;
 esac
 
