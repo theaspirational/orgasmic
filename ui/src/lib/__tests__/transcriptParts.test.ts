@@ -123,7 +123,7 @@ describe('normalizeTranscriptParts', () => {
     expect(parts[0]).toMatchObject({ type: 'reasoning', state: 'streaming' });
   });
 
-  it('renders nothing for a content-free rmux pane_activity signal', () => {
+  it('renders nothing for a content-free tmux pane_activity signal', () => {
     const parts = normalizeTranscriptParts(
       source(
         event(1, { type: 'text_chunk', stream: 'system', chunk: 'Still thinking' }),

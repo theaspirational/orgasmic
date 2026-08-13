@@ -38,7 +38,6 @@ pub struct RecoveryRunOptions {
     pub stall_timeout_secs: Option<u32>,
     pub max_run_duration_secs: Option<u32>,
     pub idle_timeout_secs: Option<u32>,
-    pub babysitter_target: Option<String>,
     pub cleanup_on_failure: bool,
 }
 
@@ -3661,7 +3660,6 @@ pub fn pending_session_prefix_matches_claim(
             Lifecycle::Release { .. }
             | Lifecycle::Attach
             | Lifecycle::Continuation { .. }
-            | Lifecycle::BabysitterSpawned { .. }
             | Lifecycle::Reattach { .. }
             // orgasmic:TASK-KPMFK — only `post_stage` writes a stage identity,
             // and a planned recovery replacement is never a stage launch, so a
@@ -3981,7 +3979,6 @@ mod tests {
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter_target: None,
                     cleanup_on_failure: false,
                 },
             },

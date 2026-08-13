@@ -77,10 +77,7 @@ pub async fn tmux_handler(
         .map(|value| value == "1")
         .unwrap_or(false);
 
-    // Resolve which multiplexer backs this run *and* the run's project, from a
-    // single supervisor snapshot. tmux is the default; runs whose driver
-    // transport is `rmux` (TASK-104) attach through the same PTY bridge with
-    // `rmux attach-session`, against the rmux session the driver created.
+    // Resolve the run's tmux session and project from one supervisor snapshot.
     let snapshot = state.supervisor.snapshot().await;
     let run_record = snapshot.runs.iter().find(|run| run.run_id == run_id);
     let run_project = run_record.and_then(|run| run.project_id.clone());
@@ -101,19 +98,11 @@ pub async fn tmux_handler(
     let target = if force_mock {
         None
     } else {
-        run_record.map(|run| match MuxKind::from_transport(&run.driver) {
-            MuxKind::Rmux => (
-                MuxKind::Rmux,
-                orgasmic_drivers::probe_rmux_binary()
-                    .path
-                    .unwrap_or_else(|| "rmux".to_string()),
-                orgasmic_drivers::modes::rmux::rmux_session_name(&run.identity),
-            ),
-            MuxKind::Tmux => (
-                MuxKind::Tmux,
+        run_record.map(|run| {
+            (
                 "tmux".to_string(),
                 orgasmic_drivers::modes::tmux::tmux_session_name(&run.identity),
-            ),
+            )
         })
     };
 
@@ -133,10 +122,9 @@ pub async fn tmux_handler(
     let supervisor = state.supervisor.clone();
     ws.on_upgrade(move |socket| async move {
         match (target, force_mock) {
-            (Some((kind, bin, session)), _) => {
+            (Some((bin, session)), _) => {
                 serve_mux_session_socket(
                     socket,
-                    kind,
                     bin,
                     session,
                     run_id,
@@ -297,34 +285,6 @@ async fn serve_mock_tmux_socket(
     }
 }
 
-/// Which multiplexer backs a run's live terminal. tmux is the default; rmux
-/// (TASK-104) drives runs whose driver transport is `rmux`. Both attach through
-/// the same PTY bridge — only the binary and the attach/refresh verbs differ.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum MuxKind {
-    Tmux,
-    Rmux,
-}
-
-impl MuxKind {
-    fn from_transport(transport: &str) -> Self {
-        if transport == "rmux" {
-            MuxKind::Rmux
-        } else {
-            MuxKind::Tmux
-        }
-    }
-
-    /// `<bin> <args…>` that joins the detached session interactively. rmux
-    /// spells the attach subcommand `attach-session`; tmux accepts `attach`.
-    fn attach_args(self, session: &str) -> [&str; 3] {
-        match self {
-            MuxKind::Tmux => ["attach", "-t", session],
-            MuxKind::Rmux => ["attach-session", "-t", session],
-        }
-    }
-}
-
 /// Initial PTY size before the browser reports its real dimensions via a
 /// `resize` frame. Matches the tmux driver's new-session geometry so the
 /// wrapped CLI's first paint is stable.
@@ -339,25 +299,11 @@ const COALESCE_MAX_BYTES: usize = 64 * 1024;
 
 /// Probe the live mux daemons for a session named `orgasmic-<run_id>-*` when
 /// the supervisor holds no record for `run_id`. Returns the kind/bin/session to
-/// attach to, or `None` if no surviving session matches. rmux is probed first
-/// (the system-wide manager case); tmux is the fallback.
-async fn find_orphan_mux_session(run_id: &str) -> Option<(MuxKind, String, String)> {
+/// attach to, or `None` if no surviving session matches.
+async fn find_orphan_mux_session(run_id: &str) -> Option<(String, String)> {
     // Session-name shapes per driver (runtime_id suffix unknown here):
-    // rmux:  `orgasmic-rmux-<run_id>-<runtime_id>` (rmux_session_name)
     // tmux:  `orgasmic-<run_id>-<runtime_id>`      (tmux_session_name)
-    let rmux_prefix = format!("orgasmic-rmux-{run_id}-");
     let tmux_prefix = format!("orgasmic-{run_id}-");
-
-    // rmux: enumerate via the SDK (connect, never start). A missing daemon or
-    // empty list simply yields no match.
-    if let Some(name) =
-        orgasmic_drivers::modes::rmux::find_live_session_with_prefix(&rmux_prefix).await
-    {
-        let bin = orgasmic_drivers::probe_rmux_binary()
-            .path
-            .unwrap_or_else(|| "rmux".to_string());
-        return Some((MuxKind::Rmux, bin, name));
-    }
 
     // tmux: list-sessions by name; an absent server exits non-zero → no match.
     // orgasmic:TASK-0RCRY
@@ -376,7 +322,7 @@ async fn find_orphan_mux_session(run_id: &str) -> Option<(MuxKind, String, Strin
                 .map(str::trim)
                 .find(|name| name.starts_with(&tmux_prefix))
             {
-                return Some((MuxKind::Tmux, "tmux".to_string(), name.to_string()));
+                return Some(("tmux".to_string(), name.to_string()));
             }
         }
     }
@@ -387,12 +333,10 @@ async fn find_orphan_mux_session(run_id: &str) -> Option<(MuxKind, String, Strin
 /// Proxy an interactive `<mux> attach … -t <session>` over a PTY so the browser
 /// xterm renders the live byte stream — typing, arrow keys, ctrl-combos, and
 /// resizes all flow through, instead of the old 1s `capture-pane` polling. The
-/// same machinery serves both tmux and rmux (TASK-104); `kind`/`bin` select the
-/// multiplexer.
+/// `bin` selects the tmux executable.
 #[allow(clippy::too_many_arguments)]
 async fn serve_mux_session_socket(
     socket: WebSocket,
-    kind: MuxKind,
     bin: String,
     session: String,
     run_id: String,
@@ -428,7 +372,7 @@ async fn serve_mux_session_socket(
     };
 
     let mut cmd = CommandBuilder::new(&bin);
-    cmd.args(kind.attach_args(&session));
+    cmd.args(["attach", "-t", &session]);
     // portable-pty starts children with an empty environment. tmux needs at
     // minimum TERM (to load a terminfo entry capable of `clear`/`cup`/etc.),
     // plus HOME / PATH / USER so the per-user tmux server socket is reachable.
@@ -638,7 +582,7 @@ fn pane_frame_json(frame: TmuxPaneFrame) -> String {
 }
 
 /// Paste `text` into the session's active pane and press Enter, via the
-/// multiplexer's buffer commands. tmux and rmux share this verb set
+/// tmux buffer commands
 /// (`set-buffer`/`paste-buffer`/`delete-buffer`/`send-keys`), so `bin` selects
 /// which one drives the composer send.
 async fn paste_text_and_enter(bin: &str, session: &str, text: &str) -> anyhow::Result<()> {
@@ -655,7 +599,7 @@ async fn paste_text_and_enter(bin: &str, session: &str, text: &str) -> anyhow::R
 /// cells on screen; an explicit `refresh-client` per client redraws the whole
 /// screen and clears the garbage. Best-effort: a session with no live clients
 /// (or a mux that rejects the target) is a no-op, never a hard error on the
-/// attach path. Applies to both tmux and rmux (both ship these verbs).
+/// attach path.
 async fn refresh_session_clients(bin: &str, session: &str) {
     let listed = tokio::process::Command::new(bin)
         .args(["list-clients", "-t", session, "-F", "#{client_tty}"])
@@ -697,25 +641,6 @@ async fn run_mux<const N: usize>(bin: &str, args: [&str; N]) -> anyhow::Result<(
 mod tests {
     use super::*;
     use serde_json::Value;
-
-    #[test]
-    fn mux_kind_routes_rmux_transport_and_defaults_to_tmux() {
-        assert_eq!(MuxKind::from_transport("rmux"), MuxKind::Rmux);
-        // Every non-rmux transport (tmux, tmux-tui, stdio, …) attaches via tmux.
-        assert_eq!(MuxKind::from_transport("tmux"), MuxKind::Tmux);
-        assert_eq!(MuxKind::from_transport("tmux-tui"), MuxKind::Tmux);
-        assert_eq!(MuxKind::from_transport("ws"), MuxKind::Tmux);
-    }
-
-    #[test]
-    fn mux_attach_verb_differs_by_kind() {
-        // rmux spells the attach subcommand `attach-session`; tmux uses `attach`.
-        assert_eq!(
-            MuxKind::Rmux.attach_args("s"),
-            ["attach-session", "-t", "s"]
-        );
-        assert_eq!(MuxKind::Tmux.attach_args("s"), ["attach", "-t", "s"]);
-    }
 
     #[test]
     fn mock_pane_frames_keep_their_wire_shape() {

@@ -33,7 +33,7 @@ contains: must not be admitted as a session record
 # which panics on its first case under this injection, so the pinned red named
 # only the path failure and the semantic rule was never exercised at all. Split
 # into its own test, the red run reaches it: an entry that presents this run as a
-# terminal rmux run — the exact pair `plan_compaction` reads as permission to
+# terminal tmux run — the exact pair `plan_compaction` reads as permission to
 # delete — loads out of a snapshot its own envelopes do not support.
 contains: a semantic claim its own source envelopes do not reproduce
 

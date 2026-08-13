@@ -32,7 +32,7 @@ not refresh work.
 
 ## Why the fix is not "stop counting heartbeats"
 
-Because that alone kills every rmux dispatch. `pane_activity` is the only stall
+Because that alone kills every pane dispatch. `pane_activity` is the only stall
 input a pane transport has (TASK-RWCRN, and the variant's own doc comment in
 `orgasmic-core::session` names this change as the one that must not drop it), so
 the clock splits by *evidence*, not by variant class: pane bytes count, harness

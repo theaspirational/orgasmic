@@ -14,11 +14,6 @@
 //!   tuple (`arch_010`). The supervisor refuses to mutate state on a run
 //!   whose caller identity tuple doesn't match the current run record (e.g.
 //!   a stale handle left behind by a previous boot or replacement runtime).
-//! - **AC #5**: babysitter runs always live in
-//!   `sessions/<run-id>.babysitter.jsonl`, the supervisor coalesces
-//!   implementer events into `BabysitterSummaryChunk` envelopes before the
-//!   babysitter sees them, and the babysitter driver enforces the closed
-//!   tool set (`BabysitterTool::ALL`).
 //! - Failed runs terminate after the Failed release tombstone; the supervisor
 //!   never auto-spawns a continuation. Manager rescue is out-of-band via
 //!   `orgasmic run recover` (TASK-QPKCD).
@@ -33,14 +28,13 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::{
-    read_session_file, scan_session_lifecycle_complete, BabysitterSummaryChunk, BabysitterTool,
-    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
-    TextStream,
+    read_session_file, scan_session_lifecycle_complete, DriverEvent, Lifecycle, ReleaseOutcome,
+    RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
 };
 use orgasmic_drivers::{
-    AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
-    DriverError, ManagerWakeRequest, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest,
-    TransitionAck, TransitionRequest, UserInputRequest, WorkerDriver,
+    AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError, ManagerWakeRequest,
+    NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionAck, TransitionRequest,
+    UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -50,20 +44,13 @@ use tokio::time::Instant;
 use tracing::{error, warn};
 use uuid::Uuid;
 
-use crate::driver_resolution::resolve_launch_driver;
 use crate::runtime::BootIdentity;
 use crate::writer::{SessionAppend, WriterHandle};
 
-static BABYSITTER_SPAWN_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_EVENTS_HANDLED: AtomicU64 = AtomicU64::new(0);
 static SPAWN_PIPELINE_POLLS: AtomicU64 = AtomicU64::new(0);
 static ARTIFACTOR_LIFECYCLE_TOKEN: AtomicU64 = AtomicU64::new(1);
 
-const BABYSITTER_AUTO_SPAWN_MAX_RETRIES: u32 = 10;
-const BABYSITTER_AUTO_SPAWN_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
-const BABYSITTER_AUTO_SPAWN_MAX_BACKOFF: Duration = Duration::from_secs(60);
-const BABYSITTER_SUMMARY_EVENT_THRESHOLD: usize = 50;
-const BABYSITTER_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_MAX_RUN_DURATION: Duration = Duration::from_secs(14_400);
 const DRIVER_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -78,7 +65,7 @@ pub(crate) const STALL_TIMEOUT_REASON: &str = "stall_timeout_exceeded";
 /// How long the supervisor waits for a work-evidence probe before giving up on
 /// it and releasing the run on the evidence it already has (TASK-JK66P).
 ///
-/// The probe shells out (`rmux display-message`, `ps`), so a wedged rmux daemon
+/// The probe shells out (`tmux display-message`, `ps`), so a wedged tmux server
 /// would otherwise be able to make every stalled run immortal — the exact
 /// failure mode this task exists to close, re-entered through the fix. On
 /// expiry the observation is [`WorkEvidence::Unknown`] and the release proceeds
@@ -155,14 +142,12 @@ pub(crate) fn is_worker_finalize_admitted_note(event: &serde_json::Value) -> boo
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorMetrics {
-    pub babysitter_spawn_attempts: u64,
     pub watcher_events_handled: u64,
     pub spawn_pipeline_polls: u64,
 }
 
 pub fn supervisor_metrics() -> SupervisorMetrics {
     SupervisorMetrics {
-        babysitter_spawn_attempts: BABYSITTER_SPAWN_ATTEMPTS.load(Ordering::Relaxed),
         watcher_events_handled: WATCHER_EVENTS_HANDLED.load(Ordering::Relaxed),
         spawn_pipeline_polls: SPAWN_PIPELINE_POLLS.load(Ordering::Relaxed),
     }
@@ -176,27 +161,21 @@ pub fn record_spawn_pipeline_poll() {
     SPAWN_PIPELINE_POLLS.fetch_add(1, Ordering::Relaxed);
 }
 
-fn record_babysitter_spawn_attempt() {
-    BABYSITTER_SPAWN_ATTEMPTS.fetch_add(1, Ordering::Relaxed);
-}
-
 /// What a caller hands the supervisor to start a run.
 #[derive(Debug, Clone)]
 pub struct AcquireRequest {
     pub task_id: String,
     pub kind: RunKind,
     pub worker_id: String,
-    /// The resolved worker's kind ("implementer", "reviewer", "babysitter",
-    /// "manager", …) — the live role surfaced on [`RunSummary`]. RunKind only
-    /// distinguishes worker from babysitter supervision; this names who is
-    /// actually working.
+    /// The resolved worker's kind ("implementer", "reviewer", "manager", …)
+    /// surfaced on [`RunSummary`].
     pub role: String,
     pub project_id: Option<String>,
     pub worktree: Option<PathBuf>,
     /// Dispatch artifact paths (`orgasmic dispatch` CLI-derived), carried
     /// through to the `RunMeta` lifecycle event so a boot reattach can
     /// respawn the dispatch completion watcher. `None` for non-dispatch
-    /// acquires (manager launch, recovery, stage launch, babysitter).
+    /// acquires (manager launch, recovery, stage launch).
     pub last_path: Option<PathBuf>,
     pub stdout_path: Option<PathBuf>,
     /// Full UUID attempt token minted by the CLI for this dispatch. Fences
@@ -208,9 +187,6 @@ pub struct AcquireRequest {
     pub session_path: PathBuf,
     /// Driver-specific configuration. Forwarded to [`WorkerDriver::acquire`].
     pub driver_config: DriverConfig,
-    /// Babysitter-only: the run this babysitter is observing. Must be
-    /// `None` for `RunKind::Worker`.
-    pub babysitter_target: Option<String>,
     /// Optional worker-level no-driver-event threshold in seconds.
     /// `Some(0)` disables the stall detector entirely — used for interactive,
     /// operator-paced runs (the manager) that legitimately idle at a prompt.
@@ -224,12 +200,9 @@ pub struct AcquireRequest {
     /// released. Unlike `stall_timeout_secs`/`max_run_duration_secs`, this is
     /// disabled by default — `None` or `Some(0)` means no idle release.
     /// Only the persistent artifactor spawn path sets an explicit value;
-    /// every other caller (one-shot dispatch, manager, reviewer, babysitter)
+    /// every other caller (one-shot dispatch, manager, reviewer)
     /// must leave this `None`.
     pub idle_timeout_secs: Option<u32>,
-    /// When set on an implementer acquire, spawn this babysitter worker after
-    /// the implementer run is live.
-    pub babysitter: Option<BabysitterAutoSpawn>,
     /// Allowed semantic sub-states for this addressed run.
     pub applicable_states: Vec<String>,
     /// Maximum native semantic turns before supervisor failure.
@@ -238,23 +211,6 @@ pub struct AcquireRequest {
     /// (Failed recovery claims). When set, the supervisor uses this instead of
     /// minting a fresh hidden identity at acquire time.
     pub planned_identity: Option<RuntimeIdentity>,
-}
-
-/// Companion worker to spawn automatically after implementer acquire.
-#[derive(Debug, Clone)]
-pub struct BabysitterAutoSpawn {
-    pub worker_id: String,
-    pub mode: String,
-    pub harness: String,
-    pub driver_config: DriverConfig,
-    pub stall_timeout_secs: Option<u32>,
-    pub max_run_duration_secs: Option<u32>,
-    pub applicable_states: Vec<String>,
-    pub linked_skills: Vec<String>,
-    pub sandbox_permissions: Option<orgasmic_core::SandboxAllowlist>,
-    pub max_iterations: Option<u32>,
-    pub context_budget_chars: Option<u32>,
-    pub harness_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,8 +266,6 @@ pub enum SupervisorError {
         expected: String,
         got: String,
     },
-    #[error("babysitter target invalid: {0}")]
-    BabysitterTargetInvalid(String),
     #[error("reattach blocked: task={task_id} kind={kind:?} held by run={active_run_id}")]
     ReattachLeaseConflict {
         task_id: String,
@@ -433,7 +387,7 @@ pub struct Supervisor {
     /// The second channel the stall detector reads before releasing a run
     /// (TASK-JK66P): what is actually running under it. Production installs
     /// [`ProcessSubtreeCpuProbe`]; supervisor tests swap in doubles, because no
-    /// unit test can put a real cargo build under a real rmux pane. The
+    /// unit test can put a real cargo build under a real tmux pane. The
     /// production implementation is proven separately against a real process
     /// subtree.
     work_probe: Arc<std::sync::RwLock<Arc<dyn WorkEvidenceProbe>>>,
@@ -468,10 +422,6 @@ mod admission {
         /// run_id → live run record. Holds the driver control handle so the
         /// supervisor can call `release` later.
         pub(super) runs: HashMap<String, RunRecord>,
-        /// task_id → retry state after babysitter auto-spawn hits a stale
-        /// `(task_id, Babysitter)` lease. Prevents dispatch churn from turning
-        /// one stale babysitter lease into an immediate retry loop.
-        pub(super) babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
         /// Active dispatch cleanup reservations held through filesystem mutation
         /// (TASK-1FV1N). Blocks reuse of the same default worktree path.
         pub(super) cleanup_reservations: HashMap<CleanupReservationKey, DispatchCleanupReservation>,
@@ -485,8 +435,8 @@ mod admission {
     /// where a third has to declare itself.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) enum AdmissionPath {
-        /// A brand-new run: `acquire`, `acquire_recovery`, babysitter
-        /// auto-spawn. Any held lease for the key is a conflict.
+        /// A brand-new run: `acquire` or `acquire_recovery`. Any held lease for
+        /// the key is a conflict.
         Acquire,
         /// Rehydration of a runtime that outlived a daemon: explicit
         /// `reattach_tmux`, pending-plan `reattach_existing`, boot rehydration.
@@ -503,7 +453,7 @@ mod admission {
         pub(super) task_id: &'a str,
         pub(super) kind: RunKind,
         /// The worktree the run will occupy, when it has one. `None` means the
-        /// run touches no dispatch worktree (manager, babysitter, stage runs)
+        /// run touches no dispatch worktree (manager and stage runs)
         /// and no cleanup fence can apply to it.
         pub(super) worktree: Option<&'a Path>,
     }
@@ -559,7 +509,6 @@ mod admission {
                 acquisition_paused: false,
                 leases: HashMap::new(),
                 runs: HashMap::new(),
-                babysitter_auto_spawn_backoff: HashMap::new(),
                 cleanup_reservations,
                 close_guards,
             }
@@ -1172,14 +1121,13 @@ struct RunRecord {
     harness: Option<String>,
     project_id: Option<String>,
     /// The dispatched worktree root, when known (CLI dispatch acquire/reattach;
-    /// `None` for manager/recovery/stage/babysitter runs). Exposed on
+    /// `None` for manager/recovery/stage runs). Exposed on
     /// [`RunSummary`] so `orgasmic dispatch finalize --commit` can refuse to
     /// commit a git root that isn't the dispatched worktree (TASK-QKQ3R).
     worktree: Option<PathBuf>,
     sub_state: Option<RunSubState>,
     identity: RuntimeIdentity,
     session_path: PathBuf,
-    babysitter_target: Option<String>,
     /// Dispatch artifact paths (`orgasmic dispatch` CLI-derived), mirroring
     /// [`AcquireRequest::last_path`]/[`AcquireRequest::stdout_path`]. Exposed
     /// on [`RunSummary`] so `orgasmic dispatch finalize` can resolve the
@@ -1218,8 +1166,6 @@ struct RunRecord {
     /// in flight — after commit/abort/rollback, release as Cancelled
     /// (TASK-ARZGD OQ2).
     pending_cancel: bool,
-    /// On implementer runs only: companion babysitter run_id set by auto-spawn.
-    babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
     /// Instant of the last driver event that was *evidence of work*, per
     /// [`driver_event_advances_stall_clock`], or of the last work-evidence
@@ -1253,8 +1199,6 @@ struct RunRecord {
     control: Box<dyn DriverControl>,
     producer: Option<tokio::task::JoinHandle<()>>,
     event_drain: tokio::task::JoinHandle<()>,
-    /// Babysitter coalescing buffer (None on implementer runs).
-    babysitter_summary: Option<BabysitterSummaryBuffer>,
     /// PID-backed early-exit watcher owns canonical no-work release when set.
     early_exit_watcher_pid: Option<u32>,
     /// Owned PID observer. It may only publish observations into the record;
@@ -1331,17 +1275,6 @@ fn restored_manager_terminal_claim(
     Ok(restored)
 }
 
-struct BabysitterAutoSpawnBackoff {
-    attempts: u32,
-    next_retry: Instant,
-    gave_up_logged: bool,
-}
-
-struct ReleasedRun {
-    kind: RunKind,
-    babysitter_run_id: Option<String>,
-}
-
 /// Placeholder control left on a run record while an explicit release drains
 /// the event channel with the record still in the map (orgasmic:task_3TEDA).
 struct DetachedDriverControl;
@@ -1352,13 +1285,6 @@ impl DriverControl for DetachedDriverControl {
         &mut self,
         _req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
-        Err(DriverError::Unsupported("detached control"))
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        _req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
         Err(DriverError::Unsupported("detached control"))
     }
 
@@ -1426,24 +1352,6 @@ struct RunTimeoutCandidate {
     threshold: Duration,
     elapsed: Duration,
     deadline: Instant,
-}
-
-struct PendingBabysitterSummary {
-    run_id: String,
-    session_path: PathBuf,
-    identity: RuntimeIdentity,
-    chunk: BabysitterSummaryChunk,
-}
-
-#[derive(Default)]
-struct BabysitterSummaryBuffer {
-    window_started_at: Option<Instant>,
-    window_start_seq: u64,
-    window_end_seq: u64,
-    count: usize,
-    headline: String,
-    last_text: String,
-    tool_calls: Vec<String>,
 }
 
 /// Worktree diff summarizer used by manager-authorized recovery prompts
@@ -1712,154 +1620,7 @@ impl Supervisor {
         driver: &dyn WorkerDriver,
         req: AcquireRequest,
     ) -> Result<AcquireResponse, SupervisorError> {
-        let babysitter = req.babysitter.clone();
-        let task_id_for_babysitter = req.task_id.clone();
-        let auto_spawn_babysitter = req.kind == RunKind::Worker;
-        let sessions_dir = req
-            .session_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let resp = self.acquire_impl(driver, req, None).await?;
-        if auto_spawn_babysitter {
-            if let Some(bs) = babysitter {
-                if !self
-                    .should_attempt_babysitter_auto_spawn(&task_id_for_babysitter)
-                    .await
-                {
-                    return Ok(resp);
-                }
-                if let Some(bs_driver) = resolve_launch_driver(&bs.mode, &bs.harness) {
-                    record_babysitter_spawn_attempt();
-                    match self
-                        .spawn_babysitter(bs_driver.as_ref(), &resp.run_id, &sessions_dir, &bs)
-                        .await
-                    {
-                        Ok(bs_resp) => {
-                            self.clear_babysitter_auto_spawn_backoff(&task_id_for_babysitter)
-                                .await;
-                            let mut g = self.inner.lock().await;
-                            if let Some(rec) = g.runs.get_mut(&resp.run_id) {
-                                rec.babysitter_run_id = Some(bs_resp.run_id);
-                            }
-                        }
-                        Err(e) => {
-                            if matches!(e, SupervisorError::LeaseHeld { .. }) {
-                                self.record_babysitter_auto_spawn_lease_held(
-                                    &task_id_for_babysitter,
-                                    &resp.run_id,
-                                    &e,
-                                )
-                                .await;
-                            } else {
-                                warn!(error = %e, run_id = %resp.run_id, "babysitter auto-spawn failed");
-                            }
-                        }
-                    }
-                } else {
-                    warn!(
-                        run_id = %resp.run_id,
-                        mode = %bs.mode,
-                        harness = %bs.harness,
-                        "babysitter auto-spawn skipped: unsupported driver/harness pair"
-                    );
-                }
-            }
-        }
-        Ok(resp)
-    }
-
-    async fn should_attempt_babysitter_auto_spawn(&self, task_id: &str) -> bool {
-        let now = Instant::now();
-        let mut g = self.inner.lock().await;
-        let Some(state) = g.babysitter_auto_spawn_backoff.get_mut(task_id) else {
-            return true;
-        };
-        if state.attempts >= BABYSITTER_AUTO_SPAWN_MAX_RETRIES {
-            if !state.gave_up_logged {
-                state.gave_up_logged = true;
-                warn!(
-                    task_id,
-                    attempts = state.attempts,
-                    "babysitter auto-spawn paused after repeated lease-held failures; will resume after babysitter lease release"
-                );
-            }
-            return false;
-        }
-        now >= state.next_retry
-    }
-
-    async fn clear_babysitter_auto_spawn_backoff(&self, task_id: &str) {
-        self.inner
-            .lock()
-            .await
-            .babysitter_auto_spawn_backoff
-            .remove(task_id);
-    }
-
-    #[cfg(test)]
-    async fn babysitter_auto_spawn_attempts_for_test(&self, task_id: &str) -> u32 {
-        self.inner
-            .lock()
-            .await
-            .babysitter_auto_spawn_backoff
-            .get(task_id)
-            .map(|state| state.attempts)
-            .unwrap_or(0)
-    }
-
-    #[cfg(test)]
-    async fn force_babysitter_auto_spawn_retry_for_test(&self, task_id: &str) {
-        if let Some(state) = self
-            .inner
-            .lock()
-            .await
-            .babysitter_auto_spawn_backoff
-            .get_mut(task_id)
-        {
-            state.next_retry = Instant::now();
-        }
-    }
-
-    async fn record_babysitter_auto_spawn_lease_held(
-        &self,
-        task_id: &str,
-        run_id: &str,
-        error: &SupervisorError,
-    ) {
-        let mut g = self.inner.lock().await;
-        let state = g
-            .babysitter_auto_spawn_backoff
-            .entry(task_id.to_string())
-            .or_insert_with(|| BabysitterAutoSpawnBackoff {
-                attempts: 0,
-                next_retry: Instant::now(),
-                gave_up_logged: false,
-            });
-        state.attempts += 1;
-        let delay = babysitter_auto_spawn_backoff_delay(state.attempts);
-        state.next_retry = Instant::now() + delay;
-        if state.attempts >= BABYSITTER_AUTO_SPAWN_MAX_RETRIES {
-            if !state.gave_up_logged {
-                state.gave_up_logged = true;
-                warn!(
-                    task_id,
-                    run_id,
-                    attempts = state.attempts,
-                    error = %error,
-                    "babysitter auto-spawn paused after repeated lease-held failures; will resume after babysitter lease release"
-                );
-            }
-        } else {
-            tracing::debug!(
-                task_id,
-                run_id,
-                attempts = state.attempts,
-                retry_after_ms = delay.as_millis(),
-                error = %error,
-                "babysitter auto-spawn backed off after lease-held failure"
-            );
-        }
+        self.acquire_impl(driver, req, None).await
     }
 
     /// Acquire a claim-planned recovery run, installing the entire immutable
@@ -1879,17 +1640,6 @@ impl Supervisor {
         req: AcquireRequest,
         recovery_plan: Option<RecoveryReattachPlan>,
     ) -> Result<AcquireResponse, SupervisorError> {
-        if req.kind == RunKind::Worker && req.babysitter_target.is_some() {
-            return Err(SupervisorError::BabysitterTargetInvalid(
-                "worker runs cannot carry babysitter_target".into(),
-            ));
-        }
-        if req.kind == RunKind::Babysitter && req.babysitter_target.is_none() {
-            return Err(SupervisorError::BabysitterTargetInvalid(
-                "babysitter runs require babysitter_target".into(),
-            ));
-        }
-
         // Lease enforcement (AC #2). We hold the lock only long enough to
         // reserve the slot — the actual driver spawn is awaited without
         // the lock so a slow driver doesn't block other runs.
@@ -1946,7 +1696,6 @@ impl Supervisor {
             worker_id: req.worker_id.clone(),
             project_id: req.project_id.clone(),
             worktree: req.worktree.clone(),
-            babysitter_target: req.babysitter_target.clone(),
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
@@ -1961,10 +1710,7 @@ impl Supervisor {
         // event so the JSONL stream starts with a known marker.
         let acquire_evt = Lifecycle::Acquire {
             task_id: req.task_id.clone(),
-            kind: match req.kind {
-                RunKind::Worker => "worker".to_string(),
-                RunKind::Babysitter => "babysitter".to_string(),
-            },
+            kind: "worker".to_string(),
             worker_id: req.worker_id.clone(),
         };
         self.writer
@@ -2075,7 +1821,6 @@ impl Supervisor {
                 sub_state: initial_working_sub_state(&req.role),
                 identity: identity.clone(),
                 session_path: req.session_path.clone(),
-                babysitter_target: req.babysitter_target.clone(),
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
                 dispatch_attempt_token: req.dispatch_attempt_token.clone(),
@@ -2085,7 +1830,6 @@ impl Supervisor {
                 artifactor_lifecycle: ArtifactorLifecycle::Idle,
                 pending_terminal_drain: false,
                 pending_cancel: false,
-                babysitter_run_id: None,
                 last_driver_event_at: run_started_at,
                 last_progress_at: run_started_at,
                 run_started_at,
@@ -2104,11 +1848,6 @@ impl Supervisor {
                 control,
                 producer,
                 event_drain: tokio::spawn(async {}),
-                babysitter_summary: if kind == RunKind::Worker {
-                    Some(BabysitterSummaryBuffer::default())
-                } else {
-                    None
-                },
                 early_exit_watcher_pid: pid,
                 early_exit_watcher: None,
                 driver_has_work: false,
@@ -2169,14 +1908,11 @@ impl Supervisor {
                 {
                     warn!(error = %e, run_id = %run_id_for_drain, "session append failed");
                 }
-                // Bump the per-run sequence cursor and update the babysitter
-                // summary buffer if applicable.
-                let (pending_babysitter_summary, terminal_release) = {
+                // Bump the per-run sequence cursor and apply the iteration cap.
+                let terminal_release = {
                     let mut g = inner_for_drain.lock().await;
-                    let mut flush_to_babysitter: Option<String> = None;
                     let mut iteration_limit_hit = false;
                     if let Some(rec) = g.runs.get_mut(&run_id_for_drain) {
-                        let seq = rec.next_event_seq;
                         rec.next_event_seq += 1;
                         if matches!(evt, DriverEvent::AgentTurnComplete { .. }) {
                             rec.semantic_turn_count += 1;
@@ -2187,57 +1923,13 @@ impl Supervisor {
                                 }
                             }
                         }
-                        if rec.kind == RunKind::Worker {
-                            if let Some(buf) = rec.babysitter_summary.as_mut() {
-                                update_babysitter_buffer(buf, &evt, seq, event_at);
-                                if should_flush_babysitter_buffer(buf, event_at) {
-                                    flush_to_babysitter = rec.babysitter_run_id.clone();
-                                }
-                            }
-                        }
                     }
-                    let pending_summary =
-                        flush_to_babysitter.as_deref().and_then(|babysitter_run| {
-                            match take_babysitter_summary_locked(
-                                &mut g,
-                                &run_id_for_drain,
-                                babysitter_run,
-                            ) {
-                                Ok(summary) => summary,
-                                Err(e) => {
-                                    warn!(
-                                        error = %e,
-                                        run_id = %run_id_for_drain,
-                                        babysitter_run,
-                                        "babysitter summary flush failed"
-                                    );
-                                    None
-                                }
-                            }
-                        });
-                    let terminal_release = if terminal_outcome.is_some() || iteration_limit_hit {
+                    if terminal_outcome.is_some() || iteration_limit_hit {
                         take_driver_terminal_release(&mut g, &run_id_for_drain, iteration_limit_hit)
                     } else {
                         None
-                    };
-                    (pending_summary, terminal_release)
-                };
-                if let Some(summary) = pending_babysitter_summary {
-                    if let Err(e) = writer
-                        .append_session(SessionAppend {
-                            run_id: summary.run_id,
-                            session_path: summary.session_path,
-                            identity: summary.identity,
-                            authority: None,
-                            kind: SessionEventKind::BabysitterSummary,
-                            event: serde_json::to_value(&summary.chunk)
-                                .unwrap_or(serde_json::Value::Null),
-                        })
-                        .await
-                    {
-                        warn!(error = %e, "babysitter summary append failed");
                     }
-                }
+                };
                 if let Some(release) = terminal_release {
                     finish_driver_terminal_release(&writer, release, driver_release_timeout).await;
                 }
@@ -2357,7 +2049,7 @@ impl Supervisor {
         session_file: &crate::recovery_claim::SessionFile,
         identity: &RuntimeIdentity,
         task_id: &str,
-        kind: RunKind,
+        _kind: RunKind,
         worker_id: &str,
         role: &str,
         requires_worker_finalize: bool,
@@ -2422,10 +2114,7 @@ impl Supervisor {
         if !has_acquire {
             let acquire_evt = Lifecycle::Acquire {
                 task_id: task_id.to_string(),
-                kind: match kind {
-                    RunKind::Worker => "worker".to_string(),
-                    RunKind::Babysitter => "babysitter".to_string(),
-                },
+                kind: "worker".to_string(),
                 worker_id: worker_id.to_string(),
             };
             self.writer
@@ -2721,7 +2410,6 @@ impl Supervisor {
             worker_id: worker_id.clone(),
             project_id: project_id.clone(),
             worktree: worktree.clone(),
-            babysitter_target: None,
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
@@ -2822,7 +2510,6 @@ impl Supervisor {
             sub_state: initial_working_sub_state(&role),
             identity: identity.clone(),
             session_path: session_path.clone(),
-            babysitter_target: None,
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
             dispatch_attempt_token: None,
@@ -2832,7 +2519,6 @@ impl Supervisor {
             artifactor_lifecycle: ArtifactorLifecycle::Idle,
             pending_terminal_drain: false,
             pending_cancel: false,
-            babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             last_progress_at: run_started_at,
             run_started_at,
@@ -2850,11 +2536,6 @@ impl Supervisor {
             control,
             producer,
             event_drain: tokio::spawn(async {}),
-            babysitter_summary: if kind == RunKind::Worker {
-                Some(BabysitterSummaryBuffer::default())
-            } else {
-                None
-            },
             early_exit_watcher_pid: None,
             early_exit_watcher: None,
             driver_has_work: false,
@@ -2947,100 +2628,6 @@ impl Supervisor {
         })
     }
 
-    /// Spawn a babysitter watching `target_run`. AC #5: separate JSONL
-    /// (`<target_run>.babysitter.jsonl`), fixed tool set, summarized
-    /// implementer events as the only input the babysitter sees from the
-    /// implementer side.
-    pub async fn spawn_babysitter(
-        &self,
-        driver: &dyn WorkerDriver,
-        target_run: &str,
-        sessions_dir: &Path,
-        bs: &BabysitterAutoSpawn,
-    ) -> Result<AcquireResponse, SupervisorError> {
-        let (task_id, project_id) = {
-            let g = self.inner.lock().await;
-            let rec = g
-                .runs
-                .get(target_run)
-                .ok_or_else(|| SupervisorError::RunNotFound(target_run.into()))?;
-            (rec.task_id.clone(), None::<String>)
-        };
-        let bs_path = sessions_dir.join(format!("{}.babysitter.jsonl", target_run));
-        let req = AcquireRequest {
-            task_id,
-            kind: RunKind::Babysitter,
-            worker_id: bs.worker_id.clone(),
-            role: "babysitter".into(),
-            project_id,
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: bs_path,
-            driver_config: bs.driver_config.clone(),
-            babysitter_target: Some(target_run.into()),
-            stall_timeout_secs: bs.stall_timeout_secs,
-            max_run_duration_secs: bs.max_run_duration_secs,
-            idle_timeout_secs: None,
-            babysitter: None,
-            applicable_states: bs.applicable_states.clone(),
-            max_iterations: bs.max_iterations,
-            planned_identity: None,
-        };
-        let resp = self.acquire_impl(driver, req, None).await?;
-        // Emit a BabysitterSpawned envelope into the target run's session
-        // so the implementer's JSONL records that a watcher attached.
-        if let Some(target_rec) = self.inner.lock().await.runs.get(target_run) {
-            let evt = Lifecycle::BabysitterSpawned {
-                target_run: target_run.into(),
-                babysitter_run: resp.run_id.clone(),
-            };
-            let _ = self
-                .writer
-                .append_session(SessionAppend {
-                    run_id: target_run.into(),
-                    session_path: target_rec.session_path.clone(),
-                    identity: target_rec.identity.clone(),
-                    authority: None,
-                    kind: SessionEventKind::Lifecycle,
-                    event: serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null),
-                })
-                .await;
-        }
-        Ok(resp)
-    }
-
-    /// Hand the latest summarized chunk of the implementer's event stream
-    /// to the babysitter's JSONL. The supervisor coalesces driver events as
-    /// they arrive (see [`update_babysitter_buffer`]) and this method
-    /// flushes the current window.
-    pub async fn flush_babysitter_summary(
-        &self,
-        target_run: &str,
-        babysitter_run: &str,
-    ) -> Result<Option<BabysitterSummaryChunk>, SupervisorError> {
-        let pending = {
-            let mut g = self.inner.lock().await;
-            take_babysitter_summary_locked(&mut g, target_run, babysitter_run)?
-        };
-        let Some(pending) = pending else {
-            return Ok(None);
-        };
-        self.writer
-            .append_session(SessionAppend {
-                run_id: pending.run_id,
-                session_path: pending.session_path,
-                identity: pending.identity,
-                authority: None,
-                kind: SessionEventKind::BabysitterSummary,
-                event: serde_json::to_value(&pending.chunk).map_err(into_anyhow)?,
-            })
-            .await
-            .map_err(SupervisorError::Session)?;
-        Ok(Some(pending.chunk))
-    }
-
     pub async fn transition_state(
         &self,
         run_id: &str,
@@ -3057,31 +2644,6 @@ impl Supervisor {
             return Err(SupervisorError::DisallowedSubState(req.to.clone()));
         }
         Ok(rec.control.transition_state(req).await?)
-    }
-
-    pub async fn babysitter_action(
-        &self,
-        babysitter_run: &str,
-        tool: BabysitterTool,
-        payload: serde_json::Value,
-        caller_identity: &RuntimeIdentity,
-    ) -> Result<orgasmic_drivers::BabysitterAck, SupervisorError> {
-        let mut g = self.inner.lock().await;
-        let rec = g
-            .runs
-            .get_mut(babysitter_run)
-            .ok_or_else(|| SupervisorError::RunNotFound(babysitter_run.into()))?;
-        self.check_ownership(rec, caller_identity)?;
-        let target = rec
-            .babysitter_target
-            .clone()
-            .ok_or_else(|| SupervisorError::BabysitterTargetInvalid("missing target".into()))?;
-        let req = orgasmic_drivers::BabysitterRequest {
-            tool,
-            target_run: target,
-            payload,
-        };
-        Ok(rec.control.babysitter_action(req).await?)
     }
 
     pub async fn send_input(
@@ -3162,12 +2724,7 @@ impl Supervisor {
             .runs
             .get(&run_id)
             .expect("capability match came from this live record");
-        if rec.role != "terminal"
-            || !matches!(
-                rec.transport.as_str(),
-                "tmux" | "tmux-tui" | "rmux" | "rmux-tui"
-            )
-        {
+        if rec.role != "terminal" || !matches!(rec.transport.as_str(), "tmux" | "tmux-tui") {
             return Err(SupervisorError::ManagerClaimRefused(
                 "manager terminal capability is not attached to a claimable app terminal".into(),
             ));
@@ -3422,46 +2979,14 @@ impl Supervisor {
         finalized_by_worker: bool,
         caller_identity: Option<&RuntimeIdentity>,
     ) -> Result<(), SupervisorError> {
-        let released = self
-            .release_one(
-                run_id,
-                reason,
-                outcome,
-                finalized_by_worker,
-                caller_identity,
-            )
-            .await?;
-        if released.kind == RunKind::Worker {
-            if let Some(bs_run_id) = released.babysitter_run_id {
-                let cascade_reason = format!("cascade from implementer {run_id}");
-                // The babysitter itself never finalizes; only the implementer
-                // run it observes does, so the cascade release carries no
-                // caller identity of its own.
-                if let Err(e) = self
-                    .release_one(&bs_run_id, &cascade_reason, outcome, false, None)
-                    .await
-                {
-                    // orgasmic:TASK-RB1ZN — `ReleaseInProgress` joins
-                    // `RunNotFound` here rather than becoming new warn noise:
-                    // before the split, a babysitter someone else was already
-                    // releasing answered `RunNotFound` and was swallowed on
-                    // exactly this line. Both still mean the same thing to a
-                    // cascade — this babysitter is already someone's business.
-                    if !matches!(
-                        e,
-                        SupervisorError::RunNotFound(_) | SupervisorError::ReleaseInProgress(_)
-                    ) {
-                        warn!(
-                            error = %e,
-                            run_id,
-                            babysitter_run_id = %bs_run_id,
-                            "babysitter cascade release failed"
-                        );
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.release_one(
+            run_id,
+            reason,
+            outcome,
+            finalized_by_worker,
+            caller_identity,
+        )
+        .await
     }
 
     /// Release exactly one run record.
@@ -3481,19 +3006,8 @@ impl Supervisor {
         outcome: ReleaseOutcome,
         finalized_by_worker: bool,
         caller_identity: Option<&RuntimeIdentity>,
-    ) -> Result<ReleasedRun, SupervisorError> {
-        let (
-            task_id,
-            kind,
-            babysitter_run_id,
-            session_path,
-            identity,
-            transport,
-            control,
-            producer,
-            mut drain,
-            watcher,
-        ) = {
+    ) -> Result<(), SupervisorError> {
+        let (_task_id, session_path, identity, transport, control, producer, mut drain, watcher) = {
             let mut g = self.inner.lock().await;
             // Ownership check happens before the remove, under the same lock
             // guard, so there is no window between "checked" and "removed"
@@ -3539,8 +3053,6 @@ impl Supervisor {
             let watcher = rec.early_exit_watcher.take();
             (
                 rec.task_id.clone(),
-                rec.kind,
-                rec.babysitter_run_id.clone(),
                 rec.session_path.clone(),
                 rec.identity.clone(),
                 rec.transport.clone(),
@@ -3623,7 +3135,7 @@ impl Supervisor {
         // Producer completion proves every sender is gone. Drain the receiver
         // to closure; never abort the receiver while an event can still land.
         let _ = (&mut drain).await;
-        let (final_outcome, cleared_babysitter_backoff) = {
+        let final_outcome = {
             let mut g = self.inner.lock().await;
             let rec = g
                 .runs
@@ -3634,25 +3146,8 @@ impl Supervisor {
                 &rec.task_id,
                 rec.kind,
             ));
-            let cleared_babysitter_backoff = if rec.kind == RunKind::Babysitter {
-                g.babysitter_auto_spawn_backoff
-                    .remove(&rec.task_id)
-                    .is_some()
-            } else {
-                false
-            };
-            (
-                rec.terminal_outcome.unwrap_or(outcome),
-                cleared_babysitter_backoff,
-            )
+            rec.terminal_outcome.unwrap_or(outcome)
         };
-        if cleared_babysitter_backoff {
-            warn!(
-                task_id = %task_id,
-                run_id,
-                "babysitter auto-spawn resumed after babysitter lease release"
-            );
-        }
         let evt = Lifecycle::Release {
             reason: reason.into(),
             outcome: final_outcome,
@@ -3669,10 +3164,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
-        Ok(ReleasedRun {
-            kind,
-            babysitter_run_id,
-        })
+        Ok(())
     }
 
     pub async fn snapshot(&self) -> SupervisorSnapshot {
@@ -3694,7 +3186,6 @@ impl Supervisor {
                 sub_state: rec.sub_state.clone(),
                 identity: rec.identity.clone(),
                 session_path: rec.session_path.clone(),
-                babysitter_target: rec.babysitter_target.clone(),
                 event_count: rec.next_event_seq,
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
@@ -3778,7 +3269,6 @@ impl Supervisor {
         stall_timeout_secs: Option<u32>,
         max_run_duration_secs: Option<u32>,
         idle_timeout_secs: Option<u32>,
-        babysitter_target: Option<String>,
     ) {
         let mut g = self.inner.lock().await;
         if let Some(rec) = g.runs.get_mut(run_id) {
@@ -3786,7 +3276,6 @@ impl Supervisor {
             rec.max_run_duration =
                 resolve_timeout_secs(max_run_duration_secs, DEFAULT_MAX_RUN_DURATION);
             rec.idle_timeout = resolve_idle_timeout_secs(idle_timeout_secs);
-            rec.babysitter_target = babysitter_target;
         }
     }
 
@@ -5021,7 +4510,7 @@ pub struct RunSummary {
     pub run_id: String,
     pub task_id: String,
     /// The dispatched worker role — who is working right now ("implementer",
-    /// "reviewer", "babysitter", "manager", …). This is intentionally the
+    /// "reviewer", "manager", …). This is intentionally the
     /// public `run.kind` field; `run_kind` carries the supervisor lease axis.
     pub kind: String,
     pub run_kind: RunKind,
@@ -5041,7 +4530,6 @@ pub struct RunSummary {
     pub sub_state: Option<RunSubState>,
     pub identity: RuntimeIdentity,
     pub session_path: PathBuf,
-    pub babysitter_target: Option<String>,
     pub event_count: u64,
     /// Dispatch/stage artifact path when the run advertises finalize
     /// (`None` for manager/recovery/artifactor). `orgasmic dispatch finalize`
@@ -5060,22 +4548,12 @@ pub struct RunSummary {
     pub claimed_manager: bool,
 }
 
-fn make_run_id(kind: &RunKind) -> String {
-    let prefix = match kind {
-        RunKind::Worker => "run",
-        RunKind::Babysitter => "bs",
-    };
+fn make_run_id(_kind: &RunKind) -> String {
     format!(
-        "{prefix}-{}-{}",
+        "run-{}-{}",
         Utc::now().format("%Y%m%dT%H%M%S"),
         Uuid::new_v4().simple()
     )
-}
-
-fn babysitter_auto_spawn_backoff_delay(attempts: u32) -> Duration {
-    let exponent = attempts.saturating_sub(1).min(6);
-    let secs = BABYSITTER_AUTO_SPAWN_INITIAL_BACKOFF.as_secs() * (1_u64 << exponent);
-    Duration::from_secs(secs.min(BABYSITTER_AUTO_SPAWN_MAX_BACKOFF.as_secs()))
 }
 
 fn into_anyhow(e: serde_json::Error) -> anyhow::Error {
@@ -5201,7 +4679,7 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
 /// - TASK-VZMZE's wedged codex run consumed **6.77 s of CPU in 60 minutes** —
 ///   0.19 % of one core — while emitting a heartbeat every 30 s. It must not
 ///   read as work, or the fix for JK66P reintroduces VZMZE.
-/// - TASK-JK66P's healthy claude/rmux worker was inside
+/// - TASK-JK66P's healthy claude/tmux worker was inside
 ///   `scripts/run-tests.sh`: a cargo build saturates at least one core and its
 ///   subtree reads in the hundreds of percent.
 ///
@@ -5230,7 +4708,7 @@ pub(crate) enum WorkEvidence {
 /// Everything a [`WorkEvidenceProbe`] is allowed to know about a run.
 #[derive(Debug, Clone)]
 pub(crate) struct WorkProbeTarget {
-    /// Driver transport (`rmux`, `tmux`, `stdio`, …).
+    /// Driver transport (`tmux`, `stdio`, …).
     transport: String,
     /// Run identity — for pane transports this is what names the mux session.
     identity: RuntimeIdentity,
@@ -5242,7 +4720,7 @@ pub(crate) struct WorkProbeTarget {
 /// The second channel the stall detector consults before releasing a run.
 ///
 /// A trait rather than a free function because no unit test can spawn a real
-/// cargo build under a real rmux pane; the production implementation is proven
+/// cargo build under a real tmux pane; the production implementation is proven
 /// separately against a real process subtree
 /// (`process_subtree_cpu_probe_*`), and the supervisor tests drive the
 /// decision with doubles.
@@ -5275,43 +4753,22 @@ pub(crate) trait WorkEvidenceProbe: Send + Sync {
 /// bridge-session streaming that rides the same api-host sockets.
 #[derive(Default)]
 pub(crate) struct ProcessSubtreeCpuProbe {
-    /// Explicit rmux socket for the pane lookups. `None` — production — is
+    /// Explicit mux socket for pane lookups. `None` — production — is
     /// the default endpoint, where every dispatch session lives. Tests pin
     /// their owned server's socket so the probe reads panes the test created
     /// instead of live dispatch panes.
     ///
-    /// rmux only: a tmux probe inherits its `-L` from the drivers' own
-    /// `tmux_command()`, the same selection the driver used to create the
-    /// session (see [`pane_probe_command_with_override`]).
-    rmux_socket: Option<std::path::PathBuf>,
+    mux_socket: Option<std::path::PathBuf>,
 
     /// Test-only command override for mux probes. Production always leaves
     /// this unset. Keeping the override on the probe instance avoids changing
-    /// process-global `PATH` or `RMUX_SDK_DAEMON_BINARY` while parallel daemon
+    /// process-global `PATH` while parallel daemon
     /// tests are spawning their own mux clients.
     probe_binary_override: Option<std::path::PathBuf>,
 }
-
-#[cfg(test)]
-impl ProcessSubtreeCpuProbe {
-    fn with_rmux_socket(socket: &std::path::Path) -> Self {
-        Self {
-            rmux_socket: Some(socket.to_path_buf()),
-            ..Self::default()
-        }
-    }
-
-    fn with_probe_binary(binary: &std::path::Path) -> Self {
-        Self {
-            probe_binary_override: Some(binary.to_path_buf()),
-            ..Self::default()
-        }
-    }
-}
-
 impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
     fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence {
-        let socket = self.rmux_socket.as_deref();
+        let socket = self.mux_socket.as_deref();
         let probe_binary_override = self.probe_binary_override.as_deref();
         let Some(root) = work_probe_root_pid(target, socket, probe_binary_override) else {
             return WorkEvidence::Unknown;
@@ -5333,8 +4790,7 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
         }
         // orgasmic:TASK-JQ8AV,TASK-4CSMY — the subtree is quiet; before calling
         // that a wedge, read the one channel that can still see a
-        // provider-bound turn. Every pane transport, not just rmux: tmux is the
-        // shipped default driver, and a first-time user on tmux is exactly who
+        // provider-bound turn. A first-time user on tmux is exactly who
         // cannot diagnose a healthy worker killed at ten minutes. Only
         // rescues: a pane that cannot be read cannot save a run (JK66P's
         // fail-closed rule), it only gets named in the reason.
@@ -5389,47 +4845,27 @@ fn work_probe_root_pid(
 /// Which terminal multiplexer hosts a run's pane, for the transports that have
 /// one.
 ///
-/// `rmux` and `tmux` are one surface here — `display-message -p -t <session>`
-/// and `capture-pane -p -t <session>` are identical verbs on both, so
-/// [`pane_open_turn_marker`] classifies either mux's capture unchanged. What
-/// differs is only the binary, how the run's session is named, and how a
-/// non-default server is addressed.
-///
 /// The structured transports (`stdio`, `ws`, `subprocess-stream-json`) are
 /// deliberately absent: they stream turn events straight into the stall clock
 /// and need no pane channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneMux {
-    Rmux,
     Tmux,
 }
 
 impl PaneMux {
     fn for_transport(transport: &str) -> Option<Self> {
-        match transport {
-            "rmux" => Some(Self::Rmux),
-            // `tmux-tui` is the legacy driver id for the same transport.
-            "tmux" | "tmux-tui" => Some(Self::Tmux),
-            _ => None,
-        }
+        matches!(transport, "tmux" | "tmux-tui").then_some(Self::Tmux)
     }
 
     /// The run-scoped session name the driver created, derived from the same
     /// identity the driver used.
     fn session_name(self, identity: &RuntimeIdentity) -> String {
-        match self {
-            Self::Rmux => orgasmic_drivers::modes::rmux::rmux_session_name(identity),
-            Self::Tmux => orgasmic_drivers::modes::tmux::tmux_session_name(identity),
-        }
+        orgasmic_drivers::modes::tmux::tmux_session_name(identity)
     }
 }
 
 /// A read-only mux invocation for the probe's pane lookups.
-///
-/// rmux is addressed at the default endpoint in production (`socket: None`,
-/// where a dispatch's session lives) or at an explicit `-S` socket in tests; a
-/// run on a private endpoint resolves to `None` and therefore
-/// [`WorkEvidence::Unknown`], i.e. the pre-probe behavior.
 ///
 /// tmux carries its own server selection: `tmux_command()` is the one place
 /// the driver builds a tmux command line, and it applies the same `-L` the
@@ -5438,39 +4874,21 @@ impl PaneMux {
 /// server the pane is on" true by construction rather than by plumbing.
 // orgasmic:TASK-4CSMY
 fn pane_probe_command_with_override(
-    mux: PaneMux,
+    _mux: PaneMux,
     socket: Option<&std::path::Path>,
     probe_binary_override: Option<&std::path::Path>,
 ) -> Option<Command> {
     let mut cmd = if let Some(binary) = probe_binary_override {
         let mut cmd = Command::new(binary);
-        if mux == PaneMux::Rmux {
-            if let Some(socket) = socket {
-                cmd.arg("-S").arg(socket);
-            }
+        if let Some(socket) = socket {
+            cmd.arg("-S").arg(socket);
         }
         cmd
     } else {
-        match mux {
-            PaneMux::Rmux => {
-                let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-                let rmux_bin = probe.path.filter(|_| probe.found)?;
-                let mut cmd = Command::new(rmux_bin);
-                if let Some(socket) = socket {
-                    cmd.arg("-S").arg(socket);
-                }
-                cmd
-            }
-            // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
-            // to `rmux`, which answers `-V` with a lie and would point the probe at
-            // the rmux server hosting live dispatch panes.
-            PaneMux::Tmux => {
-                if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
-                    return None;
-                }
-                orgasmic_drivers::modes::tmux::tmux_command()
-            }
+        if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
+            return None;
         }
+        orgasmic_drivers::modes::tmux::tmux_command()
     };
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -5483,7 +4901,7 @@ fn pane_probe_command_with_override(
 /// Smaller than [`WORK_PROBE_TIMEOUT`] on purpose, because the two bound
 /// different things. `WORK_PROBE_TIMEOUT` stops the SUPERVISOR waiting; it
 /// cannot stop the probe, because `spawn_blocking` is not cancellable. So
-/// before this deadline existed, a wedged `rmux`, `tmux` or `ps` child outlived
+/// before this deadline existed, a wedged `tmux` or `ps` child outlived
 /// the timeout holding a blocking-pool thread and a live subprocess — and the
 /// stall sweep re-runs every [`RUN_TIMEOUT_CHECK_INTERVAL`], leaking one of each
 /// per sweep for as long as the mux stayed wedged. This is the bound that
@@ -5502,15 +4920,15 @@ const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Run a probe subprocess as an OWNED child under an OS-level deadline, and
 /// return its stdout only if it exited successfully inside that deadline.
 ///
-/// Every probe subprocess goes through here — both muxes' `display-message` and
-/// `capture-pane`, and the `ps` table — so "probe children are bounded, killed
-/// and reaped" is true by construction for each transport rather than by
-/// repetition at four call sites.
+/// Every probe subprocess goes through here — tmux `display-message` and
+/// `capture-pane`, plus the `ps` table — so "probe children are bounded, killed
+/// and reaped" is true by construction rather than by repetition at each call
+/// site.
 ///
 /// Three things this does that `Command::output()` did not:
 ///
 /// - the child gets its OWN PROCESS GROUP, so the kill below takes whatever it
-///   spawned too (an rmux client that forked a server, a shell around `ps`);
+///   spawned too (a tmux client that forked a server, a shell around `ps`);
 /// - the deadline is enforced against the child, not against an `await` the
 ///   child cannot see;
 /// - the child is REAPED after the kill. `kill` only signals; without the
@@ -5524,7 +4942,7 @@ const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// belt-and-braces. The pipe's write end is INHERITED, so `read_to_end` returns
 /// only when the LAST holder closes it — which is not necessarily the direct
 /// child. A child that exits successfully after backgrounding a descendant
-/// (`rmux` forking a server, `sh` leaving a job behind) leaves the reader thread
+/// (`tmux` forking a server, `sh` leaving a job behind) leaves the reader thread
 /// blocked forever, and a join with no deadline reproduces the exact leak this
 /// funnel exists to close: the blocking task, the helper thread and the
 /// descendant all outlive [`WORK_PROBE_TIMEOUT`], once per sweep, for as long
@@ -5810,7 +5228,7 @@ fn open_turn_status_row(raw: &str) -> bool {
 /// `●` (U+25CF) and `✽` (U+273D) are the two carried by the captures this
 /// module documents — four claude panes across 2026-07-29 and 2026-08-02, plus
 /// a fifth on 2026-08-03 (`● Precipitating… (1m 59s · ↓ 4.9k tokens · thinking
-/// more with high effort)`, live rmux pane, column 0, sixth non-blank row from
+/// more with high effort)`, live tmux pane, column 0, sixth non-blank row from
 /// the bottom). `✽` is one frame of an ANIMATED set, so its siblings are here
 /// too: a capture taken on a different frame is the same live turn, and the
 /// cost of missing it is the incident this whole channel exists to prevent —
@@ -6204,7 +5622,7 @@ fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
 /// at all" for the early-exit classification. `PaneActivity` is false there and
 /// true here, and that split is the point: a TUI painting its banner is not
 /// proof the *worker* worked, but a pane that demonstrably wrote bytes is proof
-/// the run is not frozen — and it is the ONLY stall input an rmux run has
+/// the run is not frozen — and it is the ONLY stall input a tmux run has
 /// (TASK-RWCRN; see the variant's doc comment in `orgasmic-core::session`,
 /// which names this change as the one that must not drop it).
 fn driver_event_advances_stall_clock(evt: &DriverEvent) -> bool {
@@ -6359,7 +5777,7 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
 /// TUI transports emit a terminal driver event when their pane/process exits.
 /// The structured modes use their stream-end path for protocol termination.
 fn terminal_event_releases_transport(transport: &str) -> bool {
-    matches!(transport, "tmux" | "tmux-tui" | "rmux")
+    matches!(transport, "tmux" | "tmux-tui")
 }
 
 /// A terminal event that declares *failure* releases the transport on every
@@ -6606,9 +6024,7 @@ fn same_worktree(a: &Path, b: &Path) -> bool {
 /// daemon reachability is not evidence that an unidentified worker is absent.
 ///
 /// The run the close is about to release is excluded: tearing down its own
-/// generation is exactly what the close is entitled to do. Babysitters are
-/// excluded too — one may legitimately still be attached, and it is not the
-/// worker whose output cleanup would destroy.
+/// generation is exactly what the close is entitled to do.
 fn blocking_run_for_close(
     inner: &Inner,
     params: &DispatchCloseGuardParams,
@@ -6701,8 +6117,7 @@ fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
 /// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan advertise the
 /// contract when they carry a `last_path`; artifactor and manager always do
 /// (their terminal verbs are submit / release, not `dispatch finalize`). Custom
-/// bare terminals (`terminal`) and babysitters are exempt (dec_WDR5K item 6
-/// seventh amendment / TASK-TZJFF). Unknown historical agent roles fail closed
+/// bare terminals (`terminal`) are exempt. Unknown historical agent roles fail closed
 /// (TASK-ARZGD) — which is why `architector` stays named here after dec_HBK6A
 /// retired it: nothing spawns one any more, but a persisted run recorded with
 /// that role must keep its original contract instead of silently changing
@@ -6712,7 +6127,7 @@ pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &s
     match role {
         "implementer" | "reviewer" | "architector" | "griller" | "planner" => last_path.is_some(),
         "artifactor" | "manager" => true,
-        "terminal" | "babysitter" => false,
+        "terminal" => false,
         // Fail closed: unknown non-terminal historical agent roles require
         // a declaration; protocol-end without one is Failed.
         _ => true,
@@ -7006,161 +6421,20 @@ async fn stop_and_join_driver_producer(
     }
 }
 
-fn take_babysitter_summary_locked(
-    g: &mut Inner,
-    target_run: &str,
-    babysitter_run: &str,
-) -> Result<Option<PendingBabysitterSummary>, SupervisorError> {
-    let chunk = {
-        let rec = g
-            .runs
-            .get_mut(target_run)
-            .ok_or_else(|| SupervisorError::RunNotFound(target_run.into()))?;
-        let Some(buf) = rec.babysitter_summary.as_mut() else {
-            return Ok(None);
-        };
-        if buf.count == 0 {
-            return Ok(None);
-        }
-        let chunk = BabysitterSummaryChunk {
-            window_start_seq: buf.window_start_seq,
-            window_end_seq: buf.window_end_seq,
-            event_count: buf.count,
-            headline: std::mem::take(&mut buf.headline),
-            last_text: std::mem::take(&mut buf.last_text),
-            tool_calls: std::mem::take(&mut buf.tool_calls),
-        };
-        buf.window_started_at = None;
-        buf.count = 0;
-        buf.window_start_seq = buf.window_end_seq;
-        chunk
-    };
-    let rec = g
-        .runs
-        .get(babysitter_run)
-        .ok_or_else(|| SupervisorError::RunNotFound(babysitter_run.into()))?;
-    Ok(Some(PendingBabysitterSummary {
-        run_id: babysitter_run.into(),
-        session_path: rec.session_path.clone(),
-        identity: rec.identity.clone(),
-        chunk,
-    }))
-}
-
-fn should_flush_babysitter_buffer(buf: &BabysitterSummaryBuffer, now: Instant) -> bool {
-    if buf.count == 0 {
-        return false;
-    }
-    buf.count >= BABYSITTER_SUMMARY_EVENT_THRESHOLD
-        || buf
-            .window_started_at
-            .map(|started_at| now.duration_since(started_at) >= BABYSITTER_SUMMARY_INTERVAL)
-            .unwrap_or(false)
-}
-
-fn update_babysitter_buffer(
-    buf: &mut BabysitterSummaryBuffer,
-    evt: &DriverEvent,
-    seq: u64,
-    event_at: Instant,
-) {
-    // Heartbeats, pane-activity liveness signals and turn-boundary protocol
-    // signals carry no substantive content; they must not inflate the summary
-    // window/count fed to the babysitter.
-    if matches!(
-        evt,
-        DriverEvent::Heartbeat { .. }
-            | DriverEvent::AgentTurnComplete { .. }
-            | DriverEvent::PaneActivity { .. }
-    ) {
-        return;
-    }
-    if buf.count == 0 {
-        buf.window_started_at = Some(event_at);
-        buf.window_start_seq = seq;
-    }
-    buf.window_end_seq = seq;
-    buf.count += 1;
-    match evt {
-        // Unreachable: filtered above, but the match must stay exhaustive.
-        DriverEvent::Heartbeat { .. }
-        | DriverEvent::AgentTurnComplete { .. }
-        | DriverEvent::PaneActivity { .. } => {}
-        DriverEvent::TextChunk { chunk, .. } => {
-            buf.last_text = truncate(chunk, 4096);
-            if buf.headline.is_empty() {
-                buf.headline = "text".into();
-            }
-        }
-        DriverEvent::ToolCall { name, .. } => {
-            buf.tool_calls.push(name.clone());
-            buf.headline = format!("tool:{name}");
-        }
-        DriverEvent::ToolResult { ok, .. } => {
-            buf.headline = if *ok {
-                "tool_result_ok".into()
-            } else {
-                "tool_result_fail".into()
-            };
-        }
-        DriverEvent::TransitionState { to, .. } => {
-            buf.headline = format!("transition:{to}");
-        }
-        DriverEvent::RunComplete { .. } => {
-            buf.headline = "run_complete".into();
-        }
-        DriverEvent::RunFail { error_code, .. } => {
-            buf.headline = format!("run_fail:{error_code}");
-        }
-        DriverEvent::DriverError { fatal, message } => {
-            buf.headline = if *fatal {
-                format!("driver_error_fatal:{message}")
-            } else {
-                format!("driver_error:{message}")
-            };
-        }
-        DriverEvent::Ready { .. } => {
-            if buf.headline.is_empty() {
-                buf.headline = "ready".into();
-            }
-        }
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        let mut end = max;
-        while !s.is_char_boundary(end) && end > 0 {
-            end -= 1;
-        }
-        format!("{}…", &s[..end])
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver_resolution::{stub_config, stub_driver, STUB_HARNESS, STUB_MODE};
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::session::TextStream;
     use orgasmic_core::{read_session_file, SessionEnvelope, SessionWriter};
     use orgasmic_drivers::{
-        modes::{
-            rmux::{
-                probe_rmux_binary, rmux_session_name,
-                test_tooling::{
-                    assert_not_degraded, assert_required_test_tooling, own_rmux_server_for_tests,
-                    skip_test_if_missing, test_environment_lock, StallableRmuxEndpoint,
-                    ToolRequirement,
-                },
-            },
-            tmux,
+        modes::tmux,
+        test_tooling::{
+            assert_required_test_tooling, live_session_guard, skip_test_if_missing,
+            test_environment_lock, ToolRequirement,
         },
-        BabysitterAck, BabysitterRequest, DriverError, DriverSession, RmuxDriver, ShellAdapter,
-        TmuxTuiDriver, TransitionAck, UserInputAck,
+        DriverError, DriverSession, TmuxTuiDriver, TransitionAck, UserInputAck,
     };
     use serde_json::json;
 
@@ -7208,6 +6482,103 @@ mod tests {
         })
     }
 
+    #[test]
+    fn pane_activity_is_non_terminal_and_is_not_evidence_of_work() {
+        let event = DriverEvent::PaneActivity { seq: 0, bytes: 480 };
+        assert!(terminal_outcome_for_event(&event).is_none());
+        assert!(!driver_event_counts_as_work(&event));
+        assert!(driver_event_counts_as_work(&DriverEvent::ToolCall {
+            call_id: "c1".into(),
+            name: "Edit".into(),
+            args: json!({}),
+            seq: 0,
+        }));
+    }
+
+    const MEASURED_CLAUDE_SPINNER_FRAMES: &[&[char]] = &[
+        &[
+            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273B}',
+        ],
+        &[
+            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273D}',
+        ],
+    ];
+    const CLAUDE_FRAME_NEEDLE: &str = "TERM===\"xterm-ghostty\")return[";
+    const SMALLEST_PLAUSIBLE_CLAUDE_BINARY: u64 = 1 << 20;
+
+    #[cfg(unix)]
+    const AT_REST_PANE_QUOTING_MARKERS: &str = concat!(
+        "printf '%s\\n'",
+        " '● Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
+        " '⏺ Reading crates/orgasmic-daemon/src/supervisor.rs'",
+        " '  ⎿  Read 240 lines'",
+        " '⏺ The reviewer says free-form matching rescues at-rest wedges.'",
+        " '  ⎿  ✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'",
+        " '  ⎿  Working (7s • Esc to interrupt)'",
+        " '⏺ Any pane containing Esc to interrupt used to be rescued.'",
+        " '⏺ The old rule matched anything after a glyph (that was the bug)'",
+        " '⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
+        " '⏺ Thinking for 8m 28s, running 12 shell commands…'",
+        " '  Thought for 26s, searched for 3 patterns, ran 3 shell commands'",
+        " '⏺ Considering… (2s)'",
+        " '⏺ Working (7s • Esc to interrupt)'",
+        " '────────────────────────────────────────────────────────────'",
+        " '❯ '",
+        " '────────────────────────────────────────────────────────────'",
+        " '  ● ~/Documents/code/tools/orgasmic | task-jq8av.1-impl | 0k/1000k'",
+        " '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent'",
+        "; sleep 300"
+    );
+    #[cfg(unix)]
+    const AT_REST_PANE_FORGED_STATUS_ROWS: &[&str] =
+        &["⏺ Considering… (2s)", "⏺ Working (7s • Esc to interrupt)"];
+    #[cfg(unix)]
+    const AT_REST_PANE_LAST_ROW: &str = "bypass permissions on (shift+tab to cycle)";
+
+    async fn tmux_spawn_usable_for_test() -> bool {
+        if !Command::new("tmux")
+            .arg("-V")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            return false;
+        }
+        tmux::own_tmux_server_for_tests();
+        let session = format!(
+            "orgasmic-supervisor-probe-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        let status = tokio::process::Command::from(tmux::tmux_command())
+            .args(["new-session", "-d", "-s", &session, "--", "sleep", "1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        let usable = status.is_ok_and(|status| status.success());
+        if usable {
+            let _ = tokio::process::Command::from(tmux::tmux_command())
+                .args(["kill-session", "-t", &session])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+        }
+        usable
+    }
+
+    #[tokio::test]
+    async fn required_test_tooling_is_present() {
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        assert_required_test_tooling(&[
+            ToolRequirement::new("tmux", 17, tmux_spawn_usable_for_test().await),
+            ToolRequirement::new("bash", 2, command_available_for_test("bash")),
+        ]);
+    }
+
     fn stream_end_release_for_transport(
         _transport: &str,
         terminal_outcome: Option<ReleaseOutcome>,
@@ -7222,70 +6593,9 @@ mod tests {
         }
     }
 
-    use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
-
-    /// Pane-transport double for the TASK-RWCRN stall tests: it emits `Ready`
-    /// at acquire and then, like a real rmux pane, nothing at all unless the
-    /// test injects it. The event sender lives behind a shared handle so the
-    /// channel stays open (a closed channel is stream-end, which would release
-    /// the run before any stall sweep ran) and `release` closes it.
-    struct RmuxPaneDriver {
-        event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
-    }
-
-    impl RmuxPaneDriver {
-        fn new() -> Self {
-            Self {
-                event_tx: Arc::new(Mutex::new(None)),
-            }
-        }
-
-        async fn inject(&self, evt: DriverEvent) {
-            if let Some(tx) = self.event_tx.lock().await.as_ref() {
-                tx.send(evt).await.expect("pane event channel is open");
-            }
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl WorkerDriver for RmuxPaneDriver {
-        fn transport(&self) -> &'static str {
-            "rmux"
-        }
-
-        fn harness(&self) -> Option<&'static str> {
-            Some("claude")
-        }
-
-        async fn acquire(
-            &self,
-            ctx: DriverContext,
-            _config: DriverConfig,
-        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
-            let (tx, rx) = tokio::sync::mpsc::channel(8);
-            *self.event_tx.lock().await = Some(tx.clone());
-            let _ = tx
-                .send(DriverEvent::Ready {
-                    protocol_version: "rmux/1".into(),
-                    capabilities: json!({"tui": true}),
-                })
-                .await;
-            Ok(DriverSession {
-                identity: ctx.identity,
-                pid: None,
-                events: rx,
-                control: Box::new(RmuxPaneControl {
-                    event_tx: Arc::clone(&self.event_tx),
-                }),
-                producer: None,
-                native_runtime: None,
-            })
-        }
-    }
-
     // orgasmic:TASK-4CSMY
     /// The same pane-transport double on `tmux`. A separate driver rather than
-    /// a parameter on the one above so the rmux test JQ8AV shipped keeps
+    /// a parameter on the one above so the tmux test JQ8AV shipped keeps
     /// exercising exactly the driver it was written against.
     ///
     /// `pid: None` is the shape that matters: a tmux pane is a child of the
@@ -7299,6 +6609,12 @@ mod tests {
         fn new() -> Self {
             Self {
                 event_tx: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        async fn inject(&self, evt: DriverEvent) {
+            if let Some(tx) = self.event_tx.lock().await.as_ref() {
+                tx.send(evt).await.expect("pane event channel is open");
             }
         }
     }
@@ -7330,7 +6646,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(RmuxPaneControl {
+                control: Box::new(PaneControl {
                     event_tx: Arc::clone(&self.event_tx),
                 }),
                 producer: None,
@@ -7386,7 +6702,7 @@ mod tests {
                 identity: ctx.identity,
                 pid: None,
                 events: rx,
-                control: Box::new(RmuxPaneControl {
+                control: Box::new(PaneControl {
                     event_tx: Arc::clone(&self.event_tx),
                 }),
                 producer: None,
@@ -7395,12 +6711,12 @@ mod tests {
         }
     }
 
-    struct RmuxPaneControl {
+    struct PaneControl {
         event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
     }
 
     #[async_trait::async_trait]
-    impl DriverControl for RmuxPaneControl {
+    impl DriverControl for PaneControl {
         async fn transition_state(
             &mut self,
             _req: TransitionRequest,
@@ -7409,13 +6725,6 @@ mod tests {
                 accepted: true,
                 message: None,
             })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -7473,13 +6782,6 @@ mod tests {
                 accepted: true,
                 message: None,
             })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn send_input(
@@ -7636,13 +6938,6 @@ mod tests {
                 accepted: true,
                 message: None,
             })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -7876,111 +7171,6 @@ mod tests {
     struct HungReleaseControl {
         events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
     }
-
-    struct FailingRmuxReapDriver {
-        producer_dropped: Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    struct FailingRmuxReapControl {
-        release_producer: Arc<tokio::sync::Notify>,
-        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
-    }
-
-    #[derive(Clone)]
-    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    struct CapturedLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for CapturedLogWriter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
-        type Writer = CapturedLogWriter;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            CapturedLogWriter(Arc::clone(&self.0))
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl WorkerDriver for FailingRmuxReapDriver {
-        fn transport(&self) -> &'static str {
-            "rmux"
-        }
-
-        async fn acquire(
-            &self,
-            ctx: DriverContext,
-            _config: DriverConfig,
-        ) -> Result<DriverSession, DriverError> {
-            let (tx, rx) = tokio::sync::mpsc::channel(8);
-            tx.send(DriverEvent::Ready {
-                protocol_version: "failing-rmux-reap/1".into(),
-                capabilities: json!({"test": true}),
-            })
-            .await
-            .unwrap();
-            let release_producer = Arc::new(tokio::sync::Notify::new());
-            let producer_release = Arc::clone(&release_producer);
-            let producer_dropped = Arc::clone(&self.producer_dropped);
-            let producer = tokio::spawn(async move {
-                let _drop_probe = ProducerDropProbe(producer_dropped);
-                producer_release.notified().await;
-            });
-            Ok(DriverSession {
-                identity: ctx.identity,
-                pid: None,
-                events: rx,
-                control: Box::new(FailingRmuxReapControl {
-                    release_producer,
-                    events: Some(tx),
-                }),
-                producer: Some(producer),
-                native_runtime: None,
-            })
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl DriverControl for FailingRmuxReapControl {
-        async fn transition_state(
-            &mut self,
-            _req: TransitionRequest,
-        ) -> Result<TransitionAck, DriverError> {
-            Err(DriverError::Unsupported("transition_state"))
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
-        }
-
-        async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
-            let _ = self
-                .events
-                .as_ref()
-                .unwrap()
-                .send(DriverEvent::RunComplete {
-                    summary: Some(reason.to_string()),
-                })
-                .await;
-            self.release_producer.notify_one();
-            Err(DriverError::Transport(
-                "SDK stalled and exact-endpoint CLI fallback refused".into(),
-            ))
-        }
-    }
-
     #[async_trait::async_trait]
     impl DriverControl for HungReleaseControl {
         async fn transition_state(
@@ -7988,13 +7178,6 @@ mod tests {
             _req: TransitionRequest,
         ) -> Result<TransitionAck, DriverError> {
             Err(DriverError::Unsupported("transition_state"))
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -8169,13 +7352,6 @@ mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
-        }
-
         async fn send_input(
             &mut self,
             _req: UserInputRequest,
@@ -8295,13 +7471,6 @@ mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
-        }
-
         async fn send_input(
             &mut self,
             _req: UserInputRequest,
@@ -8410,13 +7579,6 @@ mod tests {
                 accepted: true,
                 message: None,
             })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -8542,13 +7704,6 @@ mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
-        }
-
         async fn send_input(
             &mut self,
             _req: UserInputRequest,
@@ -8601,7 +7756,7 @@ mod tests {
     /// The probe every test supervisor starts with: it establishes nothing, so
     /// the stall path behaves exactly as it did before TASK-JK66P unless a test
     /// installs a probe that can answer. Also keeps the unit suite hermetic —
-    /// the production probe shells out to `rmux` and `ps`.
+    /// the production probe shells out to `tmux` and `ps`.
     struct UnobservableWorkProbe;
 
     impl WorkEvidenceProbe for UnobservableWorkProbe {
@@ -8839,73 +7994,6 @@ mod tests {
         assert!(terminal_outcome_for_event(&DriverEvent::Heartbeat { seq: 0 }).is_none());
     }
 
-    #[test]
-    fn heartbeat_does_not_pollute_babysitter_summary_window() {
-        // Heartbeats are pure liveness; they must not advance the window or
-        // count fed to the babysitter (otherwise a long quiet turn would look
-        // like a flurry of activity to the babysitter). (TASK-100.3)
-        let mut buf = BabysitterSummaryBuffer::default();
-        let now = Instant::now();
-        update_babysitter_buffer(&mut buf, &DriverEvent::Heartbeat { seq: 0 }, 7, now);
-        update_babysitter_buffer(&mut buf, &DriverEvent::Heartbeat { seq: 1 }, 8, now);
-        assert_eq!(buf.count, 0);
-        assert_eq!(buf.window_end_seq, 0);
-        assert!(buf.headline.is_empty());
-
-        // A real event after heartbeats still records cleanly.
-        update_babysitter_buffer(
-            &mut buf,
-            &DriverEvent::TextChunk {
-                stream: orgasmic_core::TextStream::Assistant,
-                chunk: "working".into(),
-                seq: 0,
-            },
-            9,
-            now,
-        );
-        assert_eq!(buf.count, 1);
-        assert_eq!(buf.window_start_seq, 9);
-        assert_eq!(buf.window_end_seq, 9);
-    }
-
-    #[test]
-    fn pane_activity_is_non_terminal_and_is_not_evidence_of_work() {
-        // TASK-RWCRN. The pane liveness signal must reset the stall clock (which
-        // the drain does for every drained event) without releasing the lease
-        // and without satisfying the early-exit "did any work" test: a TUI
-        // paints its banner even when the harness immediately wedges, so pane
-        // output alone must never make a no-work run look productive.
-        let evt = DriverEvent::PaneActivity { seq: 0, bytes: 480 };
-        assert!(terminal_outcome_for_event(&evt).is_none());
-        assert!(!driver_event_counts_as_work(&evt));
-        assert!(driver_event_counts_as_work(&DriverEvent::ToolCall {
-            call_id: "c1".into(),
-            name: "Edit".into(),
-            args: json!({}),
-            seq: 0,
-        }));
-
-        // And it must not inflate the babysitter's summary window, for the same
-        // reason a heartbeat must not.
-        let mut buf = BabysitterSummaryBuffer::default();
-        let now = Instant::now();
-        update_babysitter_buffer(&mut buf, &evt, 7, now);
-        assert_eq!(buf.count, 0);
-        assert_eq!(buf.window_end_seq, 0);
-        assert!(buf.headline.is_empty());
-    }
-
-    #[test]
-    fn agent_turn_complete_does_not_pollute_babysitter_summary_window() {
-        let mut buf = BabysitterSummaryBuffer::default();
-        let now = Instant::now();
-        update_babysitter_buffer(&mut buf, &DriverEvent::AgentTurnComplete { seq: 0 }, 7, now);
-        update_babysitter_buffer(&mut buf, &DriverEvent::AgentTurnComplete { seq: 1 }, 8, now);
-        assert_eq!(buf.count, 0);
-        assert_eq!(buf.window_end_seq, 0);
-        assert!(buf.headline.is_empty());
-    }
-
     /// Emits Ready, substantive driver events, and turn boundaries on acquire.
     struct SemanticTurnCountDriver;
 
@@ -9058,23 +8146,6 @@ mod tests {
         assert_eq!(credential_mode, None);
     }
 
-    fn test_babysitter_auto_spawn() -> BabysitterAutoSpawn {
-        BabysitterAutoSpawn {
-            worker_id: "babysitter-stall-detector".into(),
-            mode: STUB_MODE.into(),
-            harness: STUB_HARNESS.into(),
-            driver_config: stub_config(),
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            applicable_states: Vec::new(),
-            linked_skills: Vec::new(),
-            sandbox_permissions: None,
-            max_iterations: None,
-            context_budget_chars: None,
-            harness_args: Vec::new(),
-        }
-    }
-
     // orgasmic:TASK-AK6EM
     // ---------------------------------------------------------------------
     // Live-run admission fencing, close-guard handoff, and holder reclamation.
@@ -9130,13 +8201,6 @@ mod tests {
             _req: TransitionRequest,
         ) -> Result<TransitionAck, DriverError> {
             Err(DriverError::Unsupported("transition_state"))
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -9738,11 +8802,9 @@ mod tests {
             dispatch_attempt_token: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
-            babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             idle_timeout_secs: None,
-            babysitter: None,
             applicable_states: Vec::new(),
             max_iterations: None,
             planned_identity: None,
@@ -9804,13 +8866,6 @@ mod tests {
                 accepted: true,
                 message: None,
             })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
         }
 
         async fn send_input(
@@ -10019,7 +9074,7 @@ mod tests {
     }
 
     /// Mirrors the exact shape `spawn_worker_run` (api.rs) now produces for
-    /// an Artifactor && rmux dispatch (TASK-NZ3C9): stall disabled via
+    /// an Artifactor && tmux dispatch (TASK-NZ3C9): stall disabled via
     /// `Some(0)`, idle enabled via `DEFAULT_IDLE_TIMEOUT_SECS`.
     fn persistent_artifactor_req(task: &str, dir: &Path) -> AcquireRequest {
         let mut req = impl_req(task, dir);
@@ -10052,7 +9107,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = tmux::driver();
         let mut req = impl_req("TASK-ACQUIRE-SUBSTATE", dir.path());
-        req.worker_id = "reviewer-claude-rmux".into();
+        req.worker_id = "reviewer-claude-tmux".into();
         req.role = "reviewer".into();
         let resp = sup.acquire(&driver, req).await.unwrap();
 
@@ -10501,7 +9556,7 @@ mod tests {
     /// TASK-NZ3C9 (F9N5F reviewer HIGH-1): the 600s stall timeout used to
     /// pre-empt the 900s idle window, killing a persistent artifactor run
     /// long before idle ever got a chance to fire. With `spawn_worker_run`
-    /// now setting `stall_timeout_secs: Some(0)` for Artifactor && rmux, a
+    /// now setting `stall_timeout_secs: Some(0)` for Artifactor && tmux, a
     /// run that has gone quiet on the driver-event clock past the OLD 600s
     /// stall point (with the idle clock still fresh) must survive the
     /// sweep. Reverting the `Some(0)` guard in api.rs — or `resolve_timeout_secs`
@@ -10594,7 +9649,7 @@ mod tests {
     }
 
     /// TASK-RWCRN, the working half. Reproduces the measured shape of
-    /// run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d: an rmux run whose
+    /// run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d: an tmux run whose
     /// last driver event is `ready`, aged past the real 600 s
     /// `DEFAULT_STALL_TIMEOUT` while the worker is still working. One
     /// `pane_activity` event — what the driver now publishes while the pane
@@ -10605,11 +9660,11 @@ mod tests {
     /// the background monitor would release the aged run during the awaits that
     /// deliver the injected event.
     #[tokio::test]
-    async fn pane_activity_saves_a_working_rmux_pane_from_the_stall_detector() {
+    async fn pane_activity_saves_a_working_tmux_pane_from_the_stall_detector() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = RmuxPaneDriver::new();
+        let driver = TmuxPaneDriver::new();
         let req = manual_req(
-            "TASK-RMUX-PANE-WORKING",
+            "TASK-TMUX-PANE-WORKING",
             dir.path(),
             Some(DEFAULT_STALL_TIMEOUT.as_secs() as u32),
             None,
@@ -10649,10 +9704,10 @@ mod tests {
     /// stays frozen and the run is still released at the threshold instead of
     /// burning the 4-hour `DEFAULT_MAX_RUN_DURATION`.
     #[tokio::test]
-    async fn a_silent_rmux_pane_is_still_released_as_stalled() {
+    async fn a_silent_tmux_pane_is_still_released_as_stalled() {
         let (sup, dir, _w) = make_supervisor();
-        let driver = RmuxPaneDriver::new();
-        let req = manual_req("TASK-RMUX-PANE-WEDGED", dir.path(), Some(1), None);
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-TMUX-PANE-WEDGED", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
         wait_for_event_count(&sup, &resp.run_id, 1).await;
@@ -10741,7 +9796,7 @@ mod tests {
     /// stalled. It was healthy: report written, work committed, verify artifact
     /// self-tested PASS. It died at its final gate.
     ///
-    /// The pane is the only channel an rmux run has, and it was empty. The
+    /// The pane is the only channel an tmux run has, and it was empty. The
     /// evidence that existed was under the pane, not on it, and the probe is
     /// what reads it. Three consecutive expired budgets here, because the
     /// acceptance is that such a run survives *indefinitely* — one saved sweep
@@ -10752,7 +9807,7 @@ mod tests {
         sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Working {
             detail: "9 process(es) under pid 4242 at 412.0% cpu (work threshold 5.0%)".into(),
         })));
-        let driver = RmuxPaneDriver::new();
+        let driver = TmuxPaneDriver::new();
         let req = manual_req("TASK-QUIET-BUT-WORKING", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -10794,7 +9849,7 @@ mod tests {
         sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
             detail: "1 process(es) under pid 4242 at 0.2% cpu (work threshold 5.0%)".into(),
         })));
-        let driver = RmuxPaneDriver::new();
+        let driver = TmuxPaneDriver::new();
         let req = manual_req("TASK-STALL-REASON", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -10825,7 +9880,7 @@ mod tests {
     #[tokio::test]
     async fn an_unobservable_run_still_stalls_on_the_bare_reason() {
         let (sup, dir, _w) = make_unmonitored_supervisor();
-        let driver = RmuxPaneDriver::new();
+        let driver = TmuxPaneDriver::new();
         let req = manual_req("TASK-UNPROBEABLE", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
@@ -10884,9 +9939,9 @@ mod tests {
 
         // The RWCRN split, in one assertion: pane bytes are not proof the
         // WORKER worked (so the early-exit classifier ignores them) and are
-        // proof the run is not frozen (so the stall clock takes them). An rmux
+        // proof the run is not frozen (so the stall clock takes them). An tmux
         // run has no other stall input; dropping this is what would kill every
-        // rmux dispatch at 600s again.
+        // tmux dispatch at 600s again.
         let pane = DriverEvent::PaneActivity { seq: 0, bytes: 480 };
         assert!(!driver_event_counts_as_work(&pane));
         assert!(driver_event_advances_stall_clock(&pane));
@@ -11222,108 +10277,6 @@ mod tests {
         );
     }
 
-    /// The same finding at the SUPERVISOR, on the real probe, for BOTH pane
-    /// transports: a mux binary that never answers must not hold the stall
-    /// sweep and must not leave a process behind.
-    ///
-    /// Each arm gives its probe instance a binary that hangs. The override is
-    /// instance-local so this parallel test cannot redirect unrelated rmux or
-    /// tmux commands through a process-global environment variable. Every
-    /// other line of the path is the real one:
-    /// `ProcessSubtreeCpuProbe::observe` → `work_probe_root_pid` → `pane_pid` →
-    /// `probe_command_stdout`.
-    ///
-    /// The child deadline itself is proven at [`probe_command_stdout`]'s two
-    /// focused tests above. This supervisor-level test asserts the safety
-    /// behavior instead of a wall-clock threshold that also charges unrelated
-    /// fixture setup and host scheduling delay.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport() {
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-
-        for transport in ["rmux", "tmux"] {
-            let dir = tempfile::TempDir::new().expect("tempdir");
-            let shim = dir.path().join("tmux");
-            let armed = dir.path().join("armed");
-            let pidfile = dir.path().join("child.pid");
-            // A mux that WEDGES, which is not the same as a binary that hangs
-            // on everything: `-V` is answered locally and never contacts a
-            // server, so it keeps working — what wedges is the verb that talks
-            // to the server, which is exactly the call the probe makes.
-            // Answering `-V` also keeps the daemon's binary resolution
-            // (`probe_rmux_binary`, which execs it) out of the timed section;
-            // see the residual risk note on that call.
-            //
-            // Hard-link the suite-wide warmed fixture (TASK-STWVB): a fresh
-            // script here used to pay a Gatekeeper first-exec inside the timed
-            // section under parallel load. The inode is already warm; per-test
-            // paths live in adjacent files.
-            crate::test_fixtures::link_hanging_mux_shim(
-                &shim,
-                orgasmic_drivers::modes::rmux::RMUX_REQUIRED_VERSION,
-                &armed,
-                &pidfile,
-            );
-            assert!(
-                Command::new(&shim)
-                    .status()
-                    .expect("smoke the linked hanging-mux shim")
-                    .success(),
-                "the linked shim must answer before the timed section"
-            );
-
-            std::fs::write(&armed, "").expect("arm the shim");
-
-            let (sup, session_dir, _w) = make_unmonitored_supervisor();
-            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_probe_binary(&shim)));
-            let driver = TmuxTuiDriver;
-            let req = manual_req(
-                &format!("TASK-HUNG-{transport}"),
-                session_dir.path(),
-                Some(1),
-                None,
-            );
-            let session_path = req.session_path.clone();
-            let resp = sup.acquire(&driver, req).await.unwrap();
-            // A pane transport carries no wrapper pid, so the probe's FIRST act
-            // is the mux call that is about to hang.
-            {
-                let mut g = sup.inner.lock().await;
-                let rec = g.runs.get_mut(&resp.run_id).expect("run exists");
-                rec.transport = transport.to_string();
-                rec.early_exit_watcher_pid = None;
-            }
-            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
-
-            sup.release_first_timed_out_run().await;
-
-            let hung_child = std::fs::read_to_string(&pidfile)
-                .ok()
-                .and_then(|raw| raw.trim().parse::<u32>().ok());
-
-            let hung_child = hung_child.unwrap_or_else(|| {
-                panic!("{transport}: the probe never reached the hanging mux binary")
-            });
-            assert!(
-                !run_is_live(&sup, &resp.run_id).await,
-                "{transport}: an unanswerable probe must release the stalled run"
-            );
-            assert_eq!(
-                release_reason(&session_path).as_deref(),
-                Some(STALL_TIMEOUT_REASON),
-                "{transport}: a hung probe must remain Unknown, add no work credit, and \
-                 preserve the bare stall reason"
-            );
-            assert!(
-                wait_for_pid_to_disappear(hung_child, Duration::from_secs(5)).await,
-                "{transport}: the hung probe child must be killed and reaped; pid \
-                 {hung_child} survived"
-            );
-        }
-    }
-
     fn probe_identity() -> RuntimeIdentity {
         RuntimeIdentity {
             run_id: "run-probe".into(),
@@ -11358,403 +10311,6 @@ mod tests {
         "⏺ Now the measurement work required by finding 1.\n",
         "  ⎿  crates/orgasmic-daemon/src/supervisor.rs\n"
     );
-
-    /// The two frame sequences claude ANIMATES, transcribed from the
-    /// installed harness binary rather than inferred from a capture.
-    ///
-    /// Extraction and provenance live on [`STATUS_SPINNER_GLYPHS`]; this is
-    /// the same bytes in Rust. Order is the binary's own — ghostty first,
-    /// then everything else — and the repeated `✻` in the ghostty tail is
-    /// verbatim, not a transcription slip.
-    ///
-    /// The point of naming them HERE, separately from the table, is that a
-    /// test which walks the table can only prove the table's own entries are
-    /// accepted. It passes on an INCOMPLETE table, which is how U+2736 went
-    /// missing through a full review round. This const is the independent
-    /// side of the comparison, and
-    /// `status_spinner_glyphs_cover_the_installed_claude_frame_set` keeps it
-    /// honest against the binary on disk.
-    // orgasmic:TASK-4CSMY.2
-    const MEASURED_CLAUDE_SPINNER_FRAMES: &[&[char]] = &[
-        // TERM=xterm-ghostty
-        &[
-            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273B}',
-        ],
-        // every other terminal
-        &[
-            '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273D}',
-        ],
-    ];
-
-    /// TASK-JQ8AV, the classifier against the MEASURED live statuslines.
-    ///
-    /// Four captures, two dates, two transports: 2026-08-02 tmux (the two rows
-    /// [`PANE_STATUS_REGION_ROWS`] documents) and 2026-07-29 rmux (the incident
-    /// capture and this fleet's own harness). Tightening the contract must not
-    /// cost any of them — a classifier so strict it misses a real turn
-    /// re-creates the incident that three healthy workers died in.
-    #[test]
-    fn pane_open_turn_marker_recognizes_the_measured_statuslines() {
-        let measured = [
-            // 2026-08-02, live tmux pane, absolute row 44.
-            "● Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more with high effort)",
-            // 2026-08-02, the second live tmux pane, absolute row 44.
-            "● Grooving… (1m 22s · ↓ 4.1k tokens)",
-            // 2026-07-29, live rmux capture of this fleet's own harness.
-            "● Moonwalking… (20m 4s · ↓ 46.3k tokens)",
-            // 2026-07-29, the incident capture: what the three killed workers'
-            // panes were showing while the clock read them as wedged.
-            "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)",
-        ];
-        for row in measured {
-            assert_eq!(
-                pane_open_turn_marker(row).as_deref(),
-                Some(row),
-                "measured live statusline must classify as an open turn: {row}"
-            );
-            // And it still does with the rest of a real screen around it.
-            let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
-            assert_eq!(
-                pane_open_turn_marker(&screen).as_deref(),
-                Some(row),
-                "measured statusline in a measured screen: {row}"
-            );
-        }
-
-        // 2026-08-02, the TASK-4CSMY reviewer's live codex pane: flush left,
-        // third from the non-blank bottom. A CONFIRMED true positive — the
-        // classifier tightening of TASK-4CSMY.1 must not cost it.
-        let codex = "◦ Working (4m 11s • esc to interrupt)";
-        assert!(
-            pane_open_turn_marker(codex).is_some(),
-            "the measured live codex status row must still rescue: {codex}"
-        );
-        let codex_screen = format!("{MEASURED_TRANSCRIPT}\n{codex}\n\n{MEASURED_AT_REST_TAIL}");
-        assert_eq!(pane_open_turn_marker(&codex_screen).as_deref(), Some(codex));
-
-        // Elapsed-only spinner: a turn open before the first token arrives.
-        assert!(pane_open_turn_marker("· Considering… (2s)").is_some());
-        // The generic TUI interrupt hint, any case (codex-style spinners).
-        assert!(pane_open_turn_marker("Working (7s • Esc to interrupt)").is_some());
-        // The same hint carried inside a claude-shaped spinner row.
-        assert!(pane_open_turn_marker("● Herding… (5s · esc to interrupt)").is_some());
-        // Every animated frame of the measured spinner set is the same live
-        // turn; a capture caught on a different frame is not a missed rescue.
-        for glyph in STATUS_SPINNER_GLYPHS {
-            let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
-            assert!(
-                pane_open_turn_marker(&row).is_some(),
-                "status glyph must lead a spinner row: {row}"
-            );
-        }
-
-        // TASK-4CSMY.2, the positive control the loop above cannot be: it
-        // walks the table, so a table MISSING a frame satisfies it. These
-        // frames are named from the binary, not from the table.
-        for sequence in MEASURED_CLAUDE_SPINNER_FRAMES {
-            for glyph in *sequence {
-                let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
-                assert!(
-                    pane_open_turn_marker(&row).is_some(),
-                    "claude animates this frame, so it must open a turn: {row}"
-                );
-                let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
-                assert_eq!(
-                    pane_open_turn_marker(&screen).as_deref(),
-                    Some(row.as_str()),
-                    "claude frame inside a measured screen: {row}"
-                );
-            }
-        }
-
-        // U+2736 by name, because it is the one this fix exists for: it is a
-        // real frame in BOTH sequences and TASK-4CSMY.1's allowlist rejected
-        // it, so a turn frozen on it read as a wedge. Same row as the
-        // incident capture, repainted one frame over.
-        let frame_2736 = "✶ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
-        assert_eq!(
-            pane_open_turn_marker(frame_2736).as_deref(),
-            Some(frame_2736),
-            "U+2736 leads a live claude statusline: {frame_2736}"
-        );
-        let screen_2736 = format!("{MEASURED_TRANSCRIPT}\n{frame_2736}\n\n{MEASURED_AT_REST_TAIL}");
-        assert_eq!(
-            pane_open_turn_marker(&screen_2736).as_deref(),
-            Some(frame_2736)
-        );
-        // And U+2217 `∗`, which TASK-4CSMY.1 carried as a "frame sibling", is
-        // in neither sequence and no longer in the table. Nothing asserts it
-        // must be rejected — an unmeasured glyph is not a measured negative —
-        // but it must not be silently re-added either.
-        assert!(!STATUS_SPINNER_GLYPHS.contains(&'\u{2217}'));
-
-        // The last match in the region wins: the live statusline sits below
-        // anything older the region may still hold.
-        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
-        let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
-        let stacked = format!("{incident}\nsome transcript text\n{live}");
-        assert_eq!(pane_open_turn_marker(&stacked).as_deref(), Some(live));
-    }
-
-    /// The needle both this test and the recipe on [`STATUS_SPINNER_GLYPHS`]
-    /// search for. Keep them identical: the comment is how a human re-derives
-    /// what this test checks, and a comment that drifts from the test is
-    /// worth less than no comment.
-    const CLAUDE_FRAME_NEEDLE: &str = "TERM===\"xterm-ghostty\")return[";
-
-    /// Claude Code ships as one bundled-JS executable of a few hundred MiB.
-    /// A shim, a wrapper script, or a `claude` on PATH that is really
-    /// something else is orders of magnitude smaller, and this is what keeps
-    /// the audit from indicting one.
-    const SMALLEST_PLAUSIBLE_CLAUDE_BINARY: u64 = 1 << 20;
-
-    /// Every installed claude harness this host can see, deduplicated by
-    /// canonical path.
-    ///
-    /// PATH first, because that is the binary a worker actually launches,
-    /// then the installer's own location in case a test has pinned PATH to a
-    /// stub set.
-    fn installed_claude_binaries() -> Vec<PathBuf> {
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        let mut push = |path: PathBuf| {
-            let Ok(resolved) = path.canonicalize() else {
-                return;
-            };
-            let Ok(meta) = std::fs::metadata(&resolved) else {
-                return;
-            };
-            if !meta.is_file() || meta.len() < SMALLEST_PLAUSIBLE_CLAUDE_BINARY {
-                return;
-            }
-            if !candidates.contains(&resolved) {
-                candidates.push(resolved);
-            }
-        };
-        if let Some(path) = std::env::var_os("PATH") {
-            for dir in std::env::split_paths(&path) {
-                push(dir.join("claude"));
-            }
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            push(PathBuf::from(home).join(".local/bin/claude"));
-        }
-        candidates
-    }
-
-    /// The byte offset of `needle` in `path`, streamed so a 245 MiB harness
-    /// never lands in the test process's heap.
-    fn find_needle_offset(path: &Path, needle: &str) -> Option<u64> {
-        use std::io::Read;
-
-        const CHUNK: usize = 1 << 20;
-        let mut file = std::fs::File::open(path).ok()?;
-        let carry = needle.len().saturating_sub(1);
-        let mut buf = vec![0u8; carry + CHUNK];
-        let mut filled = 0usize;
-        let mut base = 0u64;
-        loop {
-            let read = file.read(&mut buf[filled..]).ok()?;
-            if read == 0 {
-                return None;
-            }
-            filled += read;
-            if let Some(at) = buf[..filled]
-                .windows(needle.len())
-                .position(|window| window == needle.as_bytes())
-            {
-                return Some(base + at as u64);
-            }
-            if filled > carry {
-                let dropped = filled - carry;
-                buf.copy_within(dropped..filled, 0);
-                base += dropped as u64;
-                filled = carry;
-            }
-        }
-    }
-
-    /// Decode one JS array literal of single-character double-quoted strings
-    /// — `["\xB7","✢",…]` — returning its chars and the byte index just
-    /// past the closing bracket.
-    ///
-    /// Deliberately narrow. Anything the frame arrays do not actually use
-    /// returns `None`, which surfaces as a loud extraction failure rather
-    /// than as a quietly short frame list.
-    fn decode_js_char_array(text: &str) -> Option<(Vec<char>, usize)> {
-        let bytes = text.as_bytes();
-        if bytes.first() != Some(&b'[') {
-            return None;
-        }
-        let mut at = 1usize;
-        let mut frames = Vec::new();
-        loop {
-            match bytes.get(at)? {
-                b']' => return Some((frames, at + 1)),
-                b',' => at += 1,
-                b'"' => {
-                    at += 1;
-                    let mut item = String::new();
-                    loop {
-                        match bytes.get(at)? {
-                            b'"' => {
-                                at += 1;
-                                break;
-                            }
-                            b'\\' => {
-                                let (glyph, used) = decode_js_escape(text.get(at..)?)?;
-                                item.push(glyph);
-                                at += used;
-                            }
-                            _ => {
-                                let glyph = text.get(at..)?.chars().next()?;
-                                item.push(glyph);
-                                at += glyph.len_utf8();
-                            }
-                        }
-                    }
-                    // A spinner frame is exactly one glyph. Two would mean we
-                    // are reading a different array than we think we are.
-                    let mut glyphs = item.chars();
-                    let glyph = glyphs.next()?;
-                    if glyphs.next().is_some() {
-                        return None;
-                    }
-                    frames.push(glyph);
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    /// `\xHH` and `\uHHHH`, the only two forms the bundler emits here.
-    fn decode_js_escape(rest: &str) -> Option<(char, usize)> {
-        let (digits, used) = match rest.as_bytes().get(1)? {
-            b'x' => (rest.get(2..4)?, 4),
-            b'u' => (rest.get(2..6)?, 6),
-            _ => return None,
-        };
-        let code = u32::from_str_radix(digits, 16).ok()?;
-        Some((char::from_u32(code)?, used))
-    }
-
-    /// The `[ghostty, everything-else]` frame sequences the binary at `path`
-    /// animates, or `None` if its spinner no longer has the shape the recipe
-    /// on [`STATUS_SPINNER_GLYPHS`] describes.
-    fn extract_claude_spinner_frames(path: &Path) -> Option<Vec<Vec<char>>> {
-        use std::io::{Read, Seek, SeekFrom};
-
-        let offset = find_needle_offset(path, CLAUDE_FRAME_NEEDLE)?;
-        let mut file = std::fs::File::open(path).ok()?;
-        file.seek(SeekFrom::Start(offset)).ok()?;
-        // Both arrays plus the `;return` between them fit in well under 512
-        // bytes; the source region is pure ASCII, so lossy decoding can only
-        // damage a boundary we do not read.
-        let mut raw = vec![0u8; 512];
-        let read = file.read(&mut raw).ok()?;
-        raw.truncate(read);
-        let window = String::from_utf8_lossy(&raw).into_owned();
-
-        // `CLAUDE_FRAME_NEEDLE` ends ON the opening bracket.
-        let arrays = window.get(CLAUDE_FRAME_NEEDLE.len() - 1..)?;
-        let (ghostty, used) = decode_js_char_array(arrays)?;
-        let (fallback, _) = decode_js_char_array(arrays.get(used..)?.strip_prefix(";return")?)?;
-        Some(vec![ghostty, fallback])
-    }
-
-    /// TASK-4CSMY.2, the completeness guard — and the deliverable that
-    /// outlives the one-character fix.
-    ///
-    /// Round 2 of this mechanism replaced "any punctuation glyph" with
-    /// [`STATUS_SPINNER_GLYPHS`], which closed a false-RESCUE hole and opened
-    /// a false-KILL one by omitting `✶` U+2736. Nothing in the suite could
-    /// tell: the real-pane arms hard-code a glyph each, and the table walk in
-    /// `pane_open_turn_marker_recognizes_the_measured_statuslines` proves
-    /// only that entries ALREADY IN the table are accepted. A table missing a
-    /// frame passed every one of them, and the cost of that omission is a
-    /// healthy worker stall-released mid-turn.
-    ///
-    /// So this compares the table against the harness on disk rather than
-    /// against another in-tree assertion. It runs the same extraction the
-    /// recipe on [`STATUS_SPINNER_GLYPHS`] documents, over the same needle,
-    /// and fails when claude animates a frame we would reject.
-    ///
-    /// Failure modes, deliberately split:
-    ///
-    /// - **No claude installed** — skip. There is nothing to compare against,
-    ///   and a host with no harness runs no workers. This skip is NOT wired
-    ///   into `required_test_tooling_is_present`: adding a `claude`
-    ///   requirement would turn the sentinel red on every host without Claude
-    ///   Code, CI included, which is a tooling-policy change well outside a
-    ///   classifier fix. The trade is real and stated: on a claude-less host
-    ///   this guard is silent.
-    /// - **Installed, but the spinner no longer has this shape** — FAIL. It
-    ///   is indistinguishable from the drift this exists to catch, and a skip
-    ///   there rebuilds exactly the hole. The message carries the recipe.
-    /// - **Installed, extracted, table does not cover it** — FAIL. The point.
-    /// - **Installed, extracted, table covers it, but the in-tree
-    ///   transcription is stale** — FAIL, with a message that says the
-    ///   classifier is still safe and only the citation needs re-cutting.
-    // orgasmic:TASK-4CSMY.2
-    #[tokio::test]
-    async fn status_spinner_glyphs_cover_the_installed_claude_frame_set() {
-        const TEST: &str = "status_spinner_glyphs_cover_the_installed_claude_frame_set";
-        // PATH is process-global and other tests pin it to stub sets.
-        let _environment = test_environment_lock().lock().await;
-
-        let binaries = installed_claude_binaries();
-        if skip_test_if_missing(TEST, &[("claude", !binaries.is_empty())]) {
-            return;
-        }
-
-        for binary in &binaries {
-            let Some(extracted) = extract_claude_spinner_frames(binary) else {
-                panic!(
-                    "{TEST}: {} is an installed claude harness but its spinner frames are no \
-                     longer where the recipe on STATUS_SPINNER_GLYPHS looks for them \
-                     (needle {CLAUDE_FRAME_NEEDLE:?}). Either claude reshaped that code or the \
-                     recipe rotted; re-derive by hand with\n  \
-                     LC_ALL=C grep -a -o 'TERM===\"xterm-ghostty\")return\\[[^]]*\\];return\\[[^]]*\\]' {}\n\
-                     and update STATUS_SPINNER_GLYPHS, MEASURED_CLAUDE_SPINNER_FRAMES and \
-                     CLAUDE_FRAME_NEEDLE together. Do NOT relax this to a skip: an unreadable \
-                     harness is not a harness that agrees with us.",
-                    binary.display(),
-                    binary.display(),
-                );
-            };
-
-            // The one that matters. A frame we reject is a live turn read as
-            // a wedge, which is TASK-JQ8AV.
-            for sequence in &extracted {
-                for glyph in sequence {
-                    assert!(
-                        STATUS_SPINNER_GLYPHS.contains(glyph),
-                        "{TEST}: {} animates U+{:04X} '{glyph}' and STATUS_SPINNER_GLYPHS does \
-                         not carry it, so a turn frozen on that frame classifies as a wedge and \
-                         the worker is stall-released. Add it to the table.",
-                        binary.display(),
-                        *glyph as u32,
-                    );
-                }
-            }
-
-            // Cheaper failure, same test: the classifier is safe, the
-            // citation is not.
-            let cited = MEASURED_CLAUDE_SPINNER_FRAMES
-                .iter()
-                .map(|sequence| sequence.to_vec())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                extracted,
-                cited,
-                "{TEST}: STATUS_SPINNER_GLYPHS still covers every frame {} animates, so the \
-                 classifier is safe — but the in-tree transcription no longer matches the \
-                 binary. Re-cut MEASURED_CLAUDE_SPINNER_FRAMES and the quoted output on \
-                 STATUS_SPINNER_GLYPHS.",
-                binary.display(),
-            );
-        }
-    }
-
     /// A pane at rest shows none of it. This is the wedge's shape, and an
     /// at-rest harness must never be rescued by its own chrome.
     #[test]
@@ -11959,585 +10515,6 @@ mod tests {
         // Padding inside the status body is spacing, not a different shape.
         assert!(pane_open_turn_marker("● Contemplating… ( 2m 31s )").is_some());
     }
-
-    /// Create the run's pane on the test-owned rmux server, running `script`
-    /// under `shell`. Addressed by explicit `-S`, same as every other probe
-    /// call in this test family — an unpinned call would land on the server
-    /// hosting live dispatch panes.
-    #[cfg(unix)]
-    fn spawn_probe_pane_stub(socket: &Path, session: &str, shell: &str, script: &str) {
-        let probe = probe_rmux_binary();
-        let rmux_bin = probe.path.filter(|_| probe.found).expect("rmux-gated test");
-        let status = Command::new(rmux_bin)
-            .arg("-S")
-            .arg(socket)
-            .args([
-                "new-session",
-                "-d",
-                "-x",
-                "200",
-                "-y",
-                "50",
-                "-s",
-                session,
-                "--",
-                shell,
-                "-c",
-                script,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("spawn rmux pane stub");
-        assert!(status.success(), "rmux new-session failed for {session}");
-    }
-
-    #[cfg(unix)]
-    fn kill_probe_pane_stub(socket: &Path, session: &str) {
-        let probe = probe_rmux_binary();
-        let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
-            return;
-        };
-        let _ = Command::new(rmux_bin)
-            .arg("-S")
-            .arg(socket)
-            .args(["kill-session", "-t", session])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    #[cfg(unix)]
-    async fn wait_for_open_turn_marker(
-        mux: PaneMux,
-        identity: &RuntimeIdentity,
-        socket: Option<&Path>,
-    ) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(pane) = pane_content(mux, identity, socket) {
-                if pane_open_turn_marker(&pane).is_some() {
-                    return;
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "stub pane never showed the open-turn statusline"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    #[cfg(unix)]
-    async fn wait_for_pane_pid(mux: PaneMux, identity: &RuntimeIdentity, socket: Option<&Path>) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if pane_pid(mux, identity, socket).is_some() {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "stub pane never resolved a pane pid"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    /// TASK-JQ8AV acceptance, both halves, against the REAL probe reading a
-    /// REAL rmux pane — and a stub that is NETWORK-WAITING rather than
-    /// sleeping, because the distinction is the task: a multi-minute
-    /// server-side think is ~0% cpu with an ESTABLISHED provider connection
-    /// and an open-turn statusline on screen, and under the two byte channels
-    /// alone that is indistinguishable from VZMZE's wedge (which is what
-    /// killed FZB6T, RB1ZN and SZJ2B on 2026-07-29).
-    ///
-    /// Three consecutive expired budgets, for the same reason
-    /// [`a_silent_pane_with_live_work_under_it_is_never_stalled`] uses three:
-    /// the acceptance is that a provider-bound run survives *indefinitely*,
-    /// and one saved sweep would not distinguish a fix from an off-by-one.
-    /// Then the wedge half: same run, pane at rest, process asleep with no
-    /// connection anywhere — it must die on schedule, with a reason that
-    /// names every channel that came up empty.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies() {
-        const TEST: &str =
-            "a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies";
-        // Lock order is flock-then-environment (the owned-server fixture pins
-        // process-global rmux endpoint resolution).
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
-            return;
-        }
-        let server = own_rmux_server_for_tests();
-        let socket = server.endpoint_path().to_path_buf();
-
-        // The provider's stand-in: a local listener the stub connects to and
-        // then blocks reading from.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
-        let port = listener.local_addr().expect("listener addr").port();
-
-        let (sup, dir, _w) = make_unmonitored_supervisor();
-        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_rmux_socket(&socket)));
-        let driver = RmuxPaneDriver::new();
-        let req = manual_req("TASK-PROVIDER-BOUND", dir.path(), Some(1), None);
-        let session_path = req.session_path.clone();
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        wait_for_event_count(&sup, &resp.run_id, 1).await;
-        let session = rmux_session_name(&resp.identity);
-
-        // The incident statusline, repainted on frame U+2736 `✶` — the frame
-        // TASK-4CSMY.1's allowlist REJECTED, and the one this arm exists to
-        // prove a real pane survives. Its tmux twin still paints the
-        // incident's own `✽`; two arms sharing one glyph is precisely how the
-        // missing frame passed a full review round. Then a genuine network
-        // wait: `exec 3<>/dev/tcp` holds an ESTABLISHED connection and `read`
-        // blocks on it at ~0% cpu.
-        let think_stub = format!(
-            "printf '✶ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
-             exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
-        );
-        spawn_probe_pane_stub(&socket, &session, "/bin/bash", &think_stub);
-        // Accepting the stub's connection is the proof it is network-waiting
-        // and not asleep; holding the stream keeps it blocked mid-read.
-        let _provider_side = tokio::time::timeout(
-            Duration::from_secs(10),
-            tokio::task::spawn_blocking(move || listener.accept()),
-        )
-        .await
-        .expect("stub connected within 10s")
-        .expect("accept task")
-        .expect("accept establishes the stub's connection");
-        wait_for_open_turn_marker(PaneMux::Rmux, &resp.identity, Some(&socket)).await;
-
-        for window in 0..3 {
-            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
-            sup.release_first_timed_out_run().await;
-            assert!(
-                run_is_live(&sup, &resp.run_id).await,
-                "quiet window {window}: a provider-bound network-waiting turn was \
-                 stall-released: {:?}",
-                release_reason(&session_path)
-            );
-        }
-        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
-
-        // The wedge half. A fresh pane under the same session name shows no
-        // statusline, and the process under it sleeps with no connection.
-        kill_probe_pane_stub(&socket, &session);
-        spawn_probe_pane_stub(&socket, &session, "/bin/sh", "sleep 300");
-        wait_for_pane_pid(PaneMux::Rmux, &resp.identity, Some(&socket)).await;
-        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
-        sup.release_first_timed_out_run().await;
-        assert!(
-            !run_is_live(&sup, &resp.run_id).await,
-            "an idle run with no provider connection and an at-rest pane must still stall"
-        );
-        let reason = release_reason(&session_path).expect("release tombstone");
-        assert_eq!(
-            reason.split(':').next(),
-            Some("stall_timeout_exceeded"),
-            "the leading token is what CLI and API classify on: {reason}"
-        );
-        assert!(
-            reason.contains("no work evidence for") && reason.contains("% cpu"),
-            "the reason must still carry the cpu channel: {reason}"
-        );
-        assert!(
-            reason.contains("no open-turn statusline in pane capture"),
-            "the reason must say the pane was consulted and came up empty: {reason}"
-        );
-
-        kill_probe_pane_stub(&socket, &session);
-    }
-
-    // orgasmic:TASK-4CSMY
-    /// Create the run's pane on the test-owned *tmux* server, running `script`
-    /// under `shell`. Built through `tmux::tmux_command()`, which carries the
-    /// `-L` the gate pinned — an unpinned call lands on whichever server
-    /// `$TMUX` names, which inside a worker is the one hosting live dispatch
-    /// panes (`.orgasmic/gotchas.org`).
-    #[cfg(unix)]
-    fn spawn_tmux_probe_pane_stub(session: &str, shell: &str, script: &str) {
-        let status = tmux::tmux_command()
-            .args([
-                "new-session",
-                "-d",
-                "-x",
-                "200",
-                "-y",
-                "50",
-                "-s",
-                session,
-                "--",
-                shell,
-                "-c",
-                script,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .expect("spawn tmux pane stub");
-        assert!(
-            status.success(),
-            "tmux new-session failed for {session} on {}",
-            tmux::tmux_server_selection()
-        );
-    }
-
-    #[cfg(unix)]
-    fn kill_tmux_probe_pane_stub(session: &str) {
-        let _ = tmux::tmux_command()
-            .args(["kill-session", "-t", session])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-
-    /// TASK-4CSMY acceptance, the tmux arm of the JQ8AV test above, against
-    /// the REAL probe reading a REAL tmux pane.
-    ///
-    /// This is not a refinement of the rmux case, it is the whole channel.
-    /// `pane_activity` was emitted by the rmux driver and nothing else, and
-    /// the open-turn consult was gated on `transport == "rmux"`, so a
-    /// provider-bound turn on tmux — ~0% cpu, no tool calls, no pane event —
-    /// had NO evidence channel that could see it and died at 600 s. tmux is
-    /// the shipped default driver, so that is the path a first-time user is
-    /// on.
-    ///
-    /// Same two arms and the same three windows as the rmux test: a
-    /// network-waiting turn survives repeatedly (one saved sweep would not
-    /// separate a fix from an off-by-one), then the same run with an at-rest
-    /// pane over a sleeping, connectionless process dies on schedule with a
-    /// reason naming both empty channels.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies() {
-        const TEST: &str = "a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies";
-        // Lock order is flock-then-environment, as in the rmux twin: the
-        // owned-server fixture pins process-global mux endpoint resolution.
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        if skip_test_if_missing(
-            TEST,
-            &[
-                ("tmux", tmux_spawn_usable_for_test().await),
-                ("bash", command_available_for_test("bash")),
-            ],
-        ) {
-            return;
-        }
-
-        // The provider's stand-in: a local listener the stub connects to and
-        // then blocks reading from.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
-        let port = listener.local_addr().expect("listener addr").port();
-
-        let (sup, dir, _w) = make_unmonitored_supervisor();
-        // No socket override: the tmux probe resolves its server through the
-        // drivers' own `tmux_command()`, which the gate above already pinned
-        // to this process's owned `-L`. The production default is the same
-        // call with nothing pinned.
-        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
-        let driver = TmuxPaneDriver::new();
-        let req = manual_req("TASK-TMUX-PROVIDER-BOUND", dir.path(), Some(1), None);
-        let session_path = req.session_path.clone();
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        wait_for_event_count(&sup, &resp.run_id, 1).await;
-        let session = tmux::tmux_session_name(&resp.identity);
-
-        let think_stub = format!(
-            "printf '✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
-             exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
-        );
-        spawn_tmux_probe_pane_stub(&session, "/bin/bash", &think_stub);
-        // Accepting the stub's connection is the proof it is network-waiting
-        // and not asleep; holding the stream keeps it blocked mid-read.
-        let _provider_side = tokio::time::timeout(
-            Duration::from_secs(10),
-            tokio::task::spawn_blocking(move || listener.accept()),
-        )
-        .await
-        .expect("stub connected within 10s")
-        .expect("accept task")
-        .expect("accept establishes the stub's connection");
-        wait_for_open_turn_marker(PaneMux::Tmux, &resp.identity, None).await;
-
-        for window in 0..3 {
-            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
-            sup.release_first_timed_out_run().await;
-            assert!(
-                run_is_live(&sup, &resp.run_id).await,
-                "quiet window {window}: a provider-bound network-waiting tmux turn was \
-                 stall-released: {:?}",
-                release_reason(&session_path)
-            );
-        }
-        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
-
-        // The wedge half, unchanged from the rmux arm: a fresh pane under the
-        // same session name with no statusline, over a sleeping process with
-        // no connection anywhere.
-        kill_tmux_probe_pane_stub(&session);
-        spawn_tmux_probe_pane_stub(&session, "/bin/sh", "sleep 300");
-        wait_for_pane_pid(PaneMux::Tmux, &resp.identity, None).await;
-        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
-        sup.release_first_timed_out_run().await;
-        assert!(
-            !run_is_live(&sup, &resp.run_id).await,
-            "an idle tmux run with no provider connection and an at-rest pane must still stall"
-        );
-        let reason = release_reason(&session_path).expect("release tombstone");
-        assert_eq!(
-            reason.split(':').next(),
-            Some("stall_timeout_exceeded"),
-            "the leading token is what CLI and API classify on: {reason}"
-        );
-        assert!(
-            reason.contains("no work evidence for") && reason.contains("% cpu"),
-            "the reason must still carry the cpu channel: {reason}"
-        );
-        assert!(
-            reason.contains("no open-turn statusline in pane capture"),
-            "the reason must say the pane was consulted and came up empty: {reason}"
-        );
-
-        kill_tmux_probe_pane_stub(&session);
-    }
-
-    /// An AT-REST pane that carries marker-shaped text everywhere a real one
-    /// would — painted by a shell that then sleeps, so the pane is genuinely at
-    /// rest, the subtree is genuinely quiet, and there is no connection
-    /// anywhere.
-    ///
-    /// This is the pane neither wedge arm could build. Both used a blank
-    /// `sleep 300` pane, which cannot catch a false rescue BY CONSTRUCTION: a
-    /// pane that is at rest AND carries marker-shaped bytes is the case the
-    /// TASK-4CSMY reviewer called a BLOCK SHIP, and it was untested on either
-    /// transport.
-    ///
-    /// The rows are the measured screen with the adversarial text spread across
-    /// all three places it really appears:
-    ///
-    /// - row 1 is a REAL statusline, stale — it must fall outside the status
-    ///   region ([`PANE_STATUS_REGION_ROWS`]) because seventeen rows follow it;
-    /// - rows 5-6 are tool results echoing the incident capture and the
-    ///   interrupt hint verbatim, indented as every tool result is;
-    /// - rows 7-9 are assistant prose quoting both, one of which ends in a
-    ///   parenthetical and one of which quotes a whole statusline mid-sentence;
-    /// - rows 12-13 are the TASK-4CSMY reviewer's BLOCK SHIP, and they are the
-    ///   reason this fixture was re-cut. They are BARE — no prose, no indent,
-    ///   flush left, a completed assistant bullet in front of a status-shaped
-    ///   body — and they sit INSIDE the status region, which every other
-    ///   adversarial row here avoids by construction. Under the shipped
-    ///   classifier each one credited the pane `Working` on every expired sweep
-    ///   to the 14,400 s ceiling.
-    ///
-    /// [`assert_quoted_marker_pane_is_not_rescued`] re-derives the region from
-    /// the real capture and asserts rows 12-13 are inside it, so a later row
-    /// added above cannot silently push them out and turn this back into a
-    /// position test.
-    ///
-    /// `printf '%s\n'` per row rather than one format string: the rows carry
-    /// `%` and `\`, which printf would eat.
-    // orgasmic:TASK-4CSMY.1
-    #[cfg(unix)]
-    const AT_REST_PANE_QUOTING_MARKERS: &str = concat!(
-        "printf '%s\\n'",
-        " '● Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
-        " '⏺ Reading crates/orgasmic-daemon/src/supervisor.rs'",
-        " '  ⎿  Read 240 lines'",
-        " '⏺ The reviewer says free-form matching rescues at-rest wedges.'",
-        " '  ⎿  ✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'",
-        " '  ⎿  Working (7s • Esc to interrupt)'",
-        " '⏺ Any pane containing Esc to interrupt used to be rescued.'",
-        " '⏺ The old rule matched anything after a glyph (that was the bug)'",
-        " '⏺ I quoted the statusline: Moonwalking… (20m 4s · ↓ 46.3k tokens)'",
-        " '⏺ Thinking for 8m 28s, running 12 shell commands…'",
-        " '  Thought for 26s, searched for 3 patterns, ran 3 shell commands'",
-        " '⏺ Considering… (2s)'",
-        " '⏺ Working (7s • Esc to interrupt)'",
-        " '────────────────────────────────────────────────────────────'",
-        " '❯ '",
-        " '────────────────────────────────────────────────────────────'",
-        " '  ● ~/Documents/code/tools/orgasmic | task-jq8av.1-impl | 0k/1000k'",
-        " '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← 1 agent'",
-        "; sleep 300"
-    );
-
-    /// The two BARE forged rows of [`AT_REST_PANE_QUOTING_MARKERS`]: the case
-    /// the TASK-4CSMY reviewer blocked on, asserted by identity rather than by
-    /// eye.
-    #[cfg(unix)]
-    const AT_REST_PANE_FORGED_STATUS_ROWS: &[&str] =
-        &["⏺ Considering… (2s)", "⏺ Working (7s • Esc to interrupt)"];
-
-    /// The last row [`AT_REST_PANE_QUOTING_MARKERS`] paints — waiting for it is
-    /// what makes "the screen is fully painted" true rather than likely.
-    #[cfg(unix)]
-    const AT_REST_PANE_LAST_ROW: &str = "bypass permissions on (shift+tab to cycle)";
-
-    #[cfg(unix)]
-    async fn wait_for_pane_text(
-        mux: PaneMux,
-        identity: &RuntimeIdentity,
-        socket: Option<&Path>,
-        needle: &str,
-    ) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(pane) = pane_content(mux, identity, socket) {
-                if pane.contains(needle) {
-                    return;
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "stub pane never painted {needle:?}"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    /// The shared body of the two adversarial arms: given a run whose pane is
-    /// showing [`AT_REST_PANE_QUOTING_MARKERS`], the classifier must read no
-    /// open turn and the sweep must release the run on schedule.
-    ///
-    /// The release is asserted on the FIRST expired sweep, which is the whole
-    /// claim: a false rescue is not a delay, it is unbounded — it repeats on
-    /// every sweep until `max_run_duration`, so a wedge that survives sweep one
-    /// survives to the 14,400 s ceiling.
-    #[cfg(unix)]
-    async fn assert_quoted_marker_pane_is_not_rescued(
-        sup: &Supervisor,
-        mux: PaneMux,
-        run_id: &str,
-        identity: &RuntimeIdentity,
-        socket: Option<&Path>,
-        session_path: &Path,
-    ) {
-        wait_for_pane_text(mux, identity, socket, AT_REST_PANE_LAST_ROW).await;
-        let pane = pane_content(mux, identity, socket).expect("capture the painted pane");
-        assert!(
-            pane.contains("Esc to interrupt") && pane.contains("Quantumizing…"),
-            "the fixture must really carry marker text, or this proves nothing:\n{pane}"
-        );
-
-        // TASK-4CSMY.1: the forged rows must land INSIDE the status region of
-        // the real capture. Derived from the capture, not asserted about the
-        // fixture string, because `capture-pane` blank-pads to the pane height
-        // and the region counts NON-BLANK rows. Without this the whole
-        // adversarial half could pass on position alone — which is exactly how
-        // the shipped arms passed while the hole was open.
-        let non_blank: Vec<&str> = pane.lines().filter(|row| !row.trim().is_empty()).collect();
-        let region = &non_blank[non_blank.len().saturating_sub(PANE_STATUS_REGION_ROWS)..];
-        for forged in AT_REST_PANE_FORGED_STATUS_ROWS {
-            assert!(
-                region.iter().any(|row| row.trim_end() == *forged),
-                "the forged row must be inside the last {PANE_STATUS_REGION_ROWS} non-blank \
-                 rows or this test proves nothing: {forged:?} not in {region:?}"
-            );
-        }
-
-        assert_eq!(
-            pane_open_turn_marker(&pane),
-            None,
-            "an at-rest pane that merely QUOTES marker text is not an open turn:\n{pane}"
-        );
-
-        age_run(sup, run_id, Some(Duration::from_millis(1_001)), None).await;
-        sup.release_first_timed_out_run().await;
-        assert!(
-            !run_is_live(sup, run_id).await,
-            "an at-rest pane quoting marker text must not rescue a wedge"
-        );
-        let reason = release_reason(session_path).expect("release tombstone");
-        assert_eq!(
-            reason.split(':').next(),
-            Some("stall_timeout_exceeded"),
-            "the leading token is what CLI and API classify on: {reason}"
-        );
-        assert!(
-            reason.contains("no open-turn statusline in pane capture"),
-            "the reason must say the pane was consulted and came up empty: {reason}"
-        );
-    }
-
-    /// TASK-JQ8AV.1 finding 1 on a REAL rmux pane: at rest, quoting the incident
-    /// text, and it dies on schedule.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued() {
-        const TEST: &str = "an_at_rest_rmux_pane_quoting_marker_text_is_not_rescued";
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
-            return;
-        }
-        let server = own_rmux_server_for_tests();
-        let socket = server.endpoint_path().to_path_buf();
-
-        let (sup, dir, _w) = make_unmonitored_supervisor();
-        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_rmux_socket(&socket)));
-        let driver = RmuxPaneDriver::new();
-        let req = manual_req("TASK-QUOTED-MARKERS-RMUX", dir.path(), Some(1), None);
-        let session_path = req.session_path.clone();
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        wait_for_event_count(&sup, &resp.run_id, 1).await;
-        let session = rmux_session_name(&resp.identity);
-
-        spawn_probe_pane_stub(&socket, &session, "/bin/sh", AT_REST_PANE_QUOTING_MARKERS);
-        assert_quoted_marker_pane_is_not_rescued(
-            &sup,
-            PaneMux::Rmux,
-            &resp.run_id,
-            &resp.identity,
-            Some(&socket),
-            &session_path,
-        )
-        .await;
-        kill_probe_pane_stub(&socket, &session);
-    }
-
-    /// The same proof on a REAL tmux pane — the transport TASK-4CSMY made the
-    /// shipped default, and the one whose reviewer blocked on this.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued() {
-        const TEST: &str = "an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued";
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        if skip_test_if_missing(TEST, &[("tmux", tmux_spawn_usable_for_test().await)]) {
-            return;
-        }
-
-        let (sup, dir, _w) = make_unmonitored_supervisor();
-        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
-        let driver = TmuxPaneDriver::new();
-        let req = manual_req("TASK-QUOTED-MARKERS-TMUX", dir.path(), Some(1), None);
-        let session_path = req.session_path.clone();
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        wait_for_event_count(&sup, &resp.run_id, 1).await;
-        let session = tmux::tmux_session_name(&resp.identity);
-
-        spawn_tmux_probe_pane_stub(&session, "/bin/sh", AT_REST_PANE_QUOTING_MARKERS);
-        assert_quoted_marker_pane_is_not_rescued(
-            &sup,
-            PaneMux::Tmux,
-            &resp.run_id,
-            &resp.identity,
-            None,
-            &session_path,
-        )
-        .await;
-        kill_tmux_probe_pane_stub(&session);
-    }
-
     #[tokio::test]
     async fn stall_detector_resets_on_driver_event() {
         let (sup, dir, _w) = make_supervisor();
@@ -12681,120 +10658,6 @@ mod tests {
         assert!(!run_is_live(&sup, &resp.run_id).await);
         assert_release_reason(&session_path, "max_run_duration_exceeded");
     }
-
-    // orgasmic:task_JGHNC
-    /// Where a PATH lookup of `tmux` lands, reported rather than reduced to a
-    /// yes/no — the strict rule needs the path to follow, not the answer.
-    fn which_tmux_for_test() -> Option<std::path::PathBuf> {
-        let out = Command::new("which").arg("tmux").output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!path.is_empty()).then(|| std::path::PathBuf::from(path))
-    }
-
-    fn command_available_for_test(command: &str) -> bool {
-        Command::new("which")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
-    async fn tmux_spawn_usable_for_test() -> bool {
-        // orgasmic:task_JGHNC
-        // Not `command_available_for_test("tmux")`: inside an orgasmic worker
-        // that lookup lands on the rmux shim, this probe then spawns a session
-        // through it, succeeds, and reports tmux PRESENT — so the tooling
-        // sentinel stays green and the honesty manifest never names the tmux
-        // tests that did not run. The rule is the api-side one, shared rather
-        // than copied, so gate and sentinel cannot disagree.
-        if crate::api::tests::tmux_mode_availability_for(which_tmux_for_test().as_deref()).is_err()
-        {
-            return false;
-        }
-        // orgasmic:TASK-0RCRY
-        // The one probe every tmux-gated test in this binary passes through:
-        // claim the owned server before any session is created on it.
-        tmux::own_tmux_server_for_tests();
-        let session = format!(
-            "orgasmic-supervisor-probe-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        );
-        let status = tokio::process::Command::from(tmux::tmux_command())
-            .args(["new-session", "-d", "-s", &session, "--", "sleep", "1"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await;
-        let ok = status.map(|status| status.success()).unwrap_or(false);
-        if ok {
-            let _ = tokio::process::Command::from(tmux::tmux_command())
-                .args(["kill-session", "-t", &session])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .await;
-        }
-        ok
-    }
-
-    #[tokio::test]
-    async fn required_test_tooling_is_present() {
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        assert_required_test_tooling(&[
-            // orgasmic:task_K4G1D — +1 for the rmux arm of the parameterized
-            // attach-proof test in `api`.
-            // orgasmic:task_JGHNC — +5 for the rmux arms of the five reattach
-            // and fencing shapes parameterized there. The tmux count is
-            // corrected rather than moved: it was 6 while nine tests gated on
-            // tmux, and a count that understates is the same lie as a probe
-            // that overstates — it is the number the NOT RUN block prints.
-            // Recount when a mux-gated test is added: api has six
-            // `MuxMode::Tmux` arms, six `MuxMode::Rmux` arms, two direct tmux
-            // gates and seven direct rmux gates; this module has one tmux
-            // gate and two rmux gates.
-            // orgasmic:task_JQ8AV — +1 for the network-waiting pane-stub
-            // acceptance test.
-            // orgasmic:TASK-4CSMY — +1 tmux for the tmux arm of that
-            // acceptance, which drives a real pane on a test-owned tmux
-            // server.
-            ToolRequirement::new("rmux", 15, probe_rmux_binary().found),
-            ToolRequirement::new("tmux", 10, tmux_spawn_usable_for_test().await),
-            ToolRequirement::new("bash", 1, command_available_for_test("bash")),
-        ]);
-    }
-
-    async fn tmux_has_session_for_test(session: &str) -> bool {
-        tokio::process::Command::from(tmux::tmux_command())
-            .args(["has-session", "-t", session])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
-    async fn wait_for_run_release(sup: &Supervisor, run_id: &str, timeout: Duration) {
-        let start = Instant::now();
-        loop {
-            let snapshot = sup.snapshot().await;
-            if snapshot.runs.iter().all(|run| run.run_id != run_id) {
-                return;
-            }
-            assert!(
-                start.elapsed() < timeout,
-                "run {run_id} did not release within {timeout:?}"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
     fn session_events(path: &Path) -> Vec<SessionEnvelope> {
         read_session_file(path).unwrap_or_default()
     }
@@ -12911,69 +10774,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tmux_process_exit_releases_supervisor_run_and_session() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "tmux_process_exit_releases_supervisor_run_and_session",
-            &[
-                ("tmux", tmux_spawn_usable_for_test().await),
-                ("bash", command_available_for_test("bash")),
-            ],
-        ) {
-            return;
-        }
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let mut req = dispatch_impl_req("TASK-TMUX-MOCK", dir.path());
-        req.worker_id = "implementer-claude-tmux".into();
-        // Dispatch-shaped acquire with last_path advertises finalize contract;
-        // pane exit without finalize must tombstone Failed.
-        req.driver_config = DriverConfig::from_value(json!({
-            "command": "bash",
-            "args": ["-lc", "printf 'mock output\\n'; exit 0"],
-        }));
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        let session = tmux::tmux_session_name(&resp.identity);
-        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(8)).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(
-            !tmux_has_session_for_test(&session).await,
-            "tmux session should be killed after process-exit release"
-        );
-
-        let events = session_events(&dir.path().join("TASK-TMUX-MOCK.jsonl"));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::Ready { .. })
-                )
-        }));
-        assert!(
-            !events.iter().any(|envelope| {
-                envelope.kind == SessionEventKind::DriverEvent
-                    && matches!(
-                        serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                        Ok(DriverEvent::TextChunk { .. })
-                    )
-            }),
-            "capture removal must not synthesize TextChunk from scrollback"
-        );
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::Lifecycle
-                && matches!(
-                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
-                    Ok(Lifecycle::Release {
-                        reason,
-                        outcome: ReleaseOutcome::Failed,
-                        finalized_by_worker: false,
-                        ..
-                    }) if reason == "protocol_end_without_finalize"
-                )
-        }));
-    }
-
-    #[tokio::test]
     async fn second_acquire_for_same_task_kind_is_rejected() {
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
@@ -13045,39 +10845,6 @@ mod tests {
         sup.acquire(&driver, impl_req("TASK-ORPHAN", dir.path()))
             .await
             .expect("lease cleared; fresh acquire succeeds");
-    }
-
-    #[tokio::test]
-    async fn different_kinds_share_a_task_id() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let r1 = sup
-            .acquire(&driver, impl_req("TASK-K", dir.path()))
-            .await
-            .unwrap();
-        let bs_req = AcquireRequest {
-            task_id: "TASK-K".into(),
-            kind: RunKind::Babysitter,
-            worker_id: "babysitter-stall-detector".into(),
-            role: "babysitter".into(),
-            project_id: None,
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join(format!("{}.babysitter.jsonl", r1.run_id)),
-            driver_config: tmux::inert_config(),
-            babysitter_target: Some(r1.run_id.clone()),
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: None,
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-        let r2 = sup.acquire(&driver, bs_req).await.unwrap();
-        assert_ne!(r1.run_id, r2.run_id);
     }
 
     #[tokio::test]
@@ -13497,7 +11264,7 @@ mod tests {
         // TUI transports obey the same declaration gate as stream-end
         // (TASK-TZJFF / TASK-S52X9).
         let (reason, outcome) =
-            stream_end_release_for_transport("rmux", Some(ReleaseOutcome::Completed), true);
+            stream_end_release_for_transport("tmux", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
     }
@@ -13505,7 +11272,7 @@ mod tests {
     #[test]
     fn stream_end_release_keeps_protocol_complete_when_finalize_contract_absent() {
         // Runs that do not advertise the terminal-declaration contract
-        // (babysitter, a stage launched without last_path, etc.) still treat
+        // (a stage launched without last_path, etc.) still treat
         // protocol-end as success.
         let (reason, outcome) =
             stream_end_release_for_transport("stdio", Some(ReleaseOutcome::Completed), false);
@@ -13524,7 +11291,6 @@ mod tests {
         assert!(run_requires_worker_finalize(&None, "manager"));
         assert!(!run_requires_worker_finalize(&None, "implementer"));
         assert!(!run_requires_worker_finalize(&None, "griller"));
-        assert!(!run_requires_worker_finalize(&None, "babysitter"));
         assert!(!run_requires_worker_finalize(&None, "terminal"));
         // Fail closed for unknown historical agent roles (TASK-ARZGD).
         assert!(run_requires_worker_finalize(&None, "worker"));
@@ -14333,195 +12099,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn babysitter_runs_use_separate_jsonl() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let impl_run = sup
-            .acquire(&driver, impl_req("TASK-BS", dir.path()))
-            .await
-            .unwrap();
-        let bs_run = sup
-            .spawn_babysitter(
-                &driver,
-                &impl_run.run_id,
-                dir.path(),
-                &test_babysitter_auto_spawn(),
-            )
-            .await
-            .unwrap();
-        assert!(bs_run.run_id.starts_with("bs-"));
-        let bs_path = dir
-            .path()
-            .join(format!("{}.babysitter.jsonl", impl_run.run_id));
-        assert!(bs_path.exists(), "babysitter JSONL exists");
-        // Implementer JSONL should record a BabysitterSpawned envelope.
-        let impl_env = orgasmic_core::read_session_file(dir.path().join("TASK-BS.jsonl")).unwrap();
-        let saw_spawn = impl_env.iter().any(|e| {
-            e.kind == SessionEventKind::Lifecycle
-                && e.event
-                    .get("phase")
-                    .and_then(|p| p.as_str())
-                    .is_some_and(|p| p == "babysitter_spawned")
-        });
-        assert!(saw_spawn, "babysitter spawn recorded in target run");
-    }
-
-    #[tokio::test]
-    async fn babysitter_summary_chunk_collapses_events() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let impl_run = sup
-            .acquire(&driver, impl_req("TASK-S", dir.path()))
-            .await
-            .unwrap();
-        let bs_run = sup
-            .spawn_babysitter(
-                &driver,
-                &impl_run.run_id,
-                dir.path(),
-                &test_babysitter_auto_spawn(),
-            )
-            .await
-            .unwrap();
-        // Drive a few events on the implementer side.
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        sup.transition_state(
-            &impl_run.run_id,
-            TransitionRequest {
-                from: "ready".into(),
-                to: "in_progress".into(),
-                reason: "go".into(),
-            },
-            &impl_run.identity,
-        )
-        .await
-        .unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        let chunk = sup
-            .flush_babysitter_summary(&impl_run.run_id, &bs_run.run_id)
-            .await
-            .unwrap()
-            .expect("at least one event accumulated");
-        assert!(chunk.event_count >= 1);
-        assert!(!chunk.headline.is_empty());
-        // Persisted as BabysitterSummary kind on the babysitter's JSONL.
-        let bs_env = orgasmic_core::read_session_file(
-            dir.path()
-                .join(format!("{}.babysitter.jsonl", impl_run.run_id)),
-        )
-        .unwrap();
-        assert!(bs_env
-            .iter()
-            .any(|e| e.kind == SessionEventKind::BabysitterSummary));
-    }
-
-    #[tokio::test]
-    async fn live_babysitter_summary_flushes_on_event_threshold() {
-        let (sup, dir, _w, events) = make_supervisor_with_events();
-        let driver = TmuxTuiDriver;
-        let mut req = impl_req("TASK-BS-LIVE", dir.path());
-        req.babysitter = Some(test_babysitter_auto_spawn());
-        // Subscribed before anything is driven: the writer publishes its
-        // append signal from another task, so a subscription taken after the
-        // flush would be waiting for an event that has already been sent.
-        let mut appends = events.subscribe();
-        let impl_run = sup.acquire(&driver, req).await.unwrap();
-        let bs_path = dir
-            .path()
-            .join(format!("{}.babysitter.jsonl", impl_run.run_id));
-        // Nothing can flush to a babysitter that never spawned. Fail on that
-        // here rather than letting it become a second, silent meaning for the
-        // wait below (TASK-5FEN5).
-        assert!(
-            sup.snapshot().await.runs.iter().any(|run| {
-                run.run_kind == RunKind::Babysitter
-                    && run.babysitter_target.as_deref() == Some(impl_run.run_id.as_str())
-            }),
-            "acquire must auto-spawn a babysitter for {} before a threshold flush can land",
-            impl_run.run_id
-        );
-
-        for _ in 0..BABYSITTER_SUMMARY_EVENT_THRESHOLD {
-            sup.transition_state(
-                &impl_run.run_id,
-                TransitionRequest {
-                    from: "implementer.working".into(),
-                    to: "implementer.working".into(),
-                    reason: "exercise live summary threshold".into(),
-                },
-                &impl_run.identity,
-            )
-            .await
-            .unwrap();
-        }
-
-        // The transitions reach the babysitter's JSONL through the run's event
-        // drain and then the writer task, neither of which has run when
-        // `transition_state` returns. Wait on the writer's own completion
-        // signal — the `RunEvent` it publishes *after* an append lands — not
-        // on a budget handed to that background work: under full-suite load
-        // the budget is what expires, never the flush (TASK-5FEN5). The outer
-        // timeout is a hang guard, not a work budget; it is only reached when
-        // the summary never lands at all.
-        let flushed = tokio::time::timeout(Duration::from_secs(30), async {
-            loop {
-                let env = orgasmic_core::read_session_file(&bs_path).unwrap();
-                if env
-                    .iter()
-                    .any(|e| e.kind == SessionEventKind::BabysitterSummary)
-                {
-                    return;
-                }
-                match appends.recv().await {
-                    Ok(_) => {}
-                    // A slow subscriber loses the oldest events; the file
-                    // re-read above, not the event payload, is the state that
-                    // decides this test.
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        panic!("writer event bus closed before the babysitter summary landed")
-                    }
-                }
-            }
-        })
-        .await;
-        assert!(
-            flushed.is_ok(),
-            "live summary threshold should append BabysitterSummary to {}",
-            bs_path.display()
-        );
-    }
-
-    #[tokio::test]
-    async fn babysitter_target_required_for_babysitter_kind() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let req = AcquireRequest {
-            task_id: "TASK-X".into(),
-            kind: RunKind::Babysitter,
-            worker_id: "babysitter-stall-detector".into(),
-            role: "babysitter".into(),
-            project_id: None,
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join("bs.jsonl"),
-            driver_config: tmux::inert_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: None,
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-        let err = sup.acquire(&driver, req).await.unwrap_err();
-        assert!(matches!(err, SupervisorError::BabysitterTargetInvalid(_)));
-    }
-
-    #[tokio::test]
     async fn snapshot_lists_live_runs() {
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
@@ -14543,515 +12120,6 @@ mod tests {
             "snapshot driver should come from WorkerDriver::transport at acquire time"
         );
     }
-
-    #[tokio::test]
-    async fn babysitter_can_invoke_allowed_tool() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let impl_run = sup
-            .acquire(&driver, impl_req("TASK-BT", dir.path()))
-            .await
-            .unwrap();
-        let bs_run = sup
-            .spawn_babysitter(
-                &driver,
-                &impl_run.run_id,
-                dir.path(),
-                &test_babysitter_auto_spawn(),
-            )
-            .await
-            .unwrap();
-        let ack = sup
-            .babysitter_action(
-                &bs_run.run_id,
-                BabysitterTool::Poke,
-                json!({"reason": "checking in"}),
-                &bs_run.identity,
-            )
-            .await
-            .unwrap();
-        assert!(ack.accepted);
-    }
-
-    /// Renamed from `stdio_acquire_auto_spawns_babysitter_jsonl`
-    /// (TASK-3NJ9K). What it proves is that a non-mux worker acquire
-    /// auto-spawns the babysitter JSONL; the stdio address it used to name
-    /// was incidental to that, and on a host with `codex` installed it made
-    /// this unit test spawn `codex app-server`.
-    #[tokio::test]
-    async fn worker_acquire_auto_spawns_babysitter_jsonl() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = stub_driver();
-        let req = AcquireRequest {
-            task_id: "TASK-079".into(),
-            kind: RunKind::Worker,
-            worker_id: "implementer-codex-stdio".into(),
-            role: "implementer".into(),
-            project_id: Some("orgasmic".into()),
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join("TASK-079.jsonl"),
-            driver_config: stub_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: Some(BabysitterAutoSpawn {
-                worker_id: "babysitter-stall-detector".into(),
-                mode: STUB_MODE.into(),
-                harness: STUB_HARNESS.into(),
-                driver_config: stub_config(),
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                applicable_states: Vec::new(),
-                linked_skills: Vec::new(),
-                sandbox_permissions: None,
-                max_iterations: None,
-                context_budget_chars: None,
-                harness_args: Vec::new(),
-            }),
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-        let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
-        let bs_path = dir
-            .path()
-            .join(format!("{}.babysitter.jsonl", impl_run.run_id));
-        assert!(
-            bs_path.exists(),
-            "babysitter JSONL exists for stdio implementer"
-        );
-    }
-
-    #[tokio::test]
-    async fn supervisor_no_spin_on_stale_babysitter_lease() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        sup.inner.lock().await.insert_lease_for_test(
-            lease_key(Some("orgasmic"), "TASK-SPIN", RunKind::Babysitter),
-            "bs-stale-lease".to_string(),
-        );
-
-        for idx in 0..25 {
-            let req = AcquireRequest {
-                task_id: "TASK-SPIN".into(),
-                kind: RunKind::Worker,
-                worker_id: "implementer-codex-stdio".into(),
-                role: "implementer".into(),
-                project_id: Some("orgasmic".into()),
-                worktree: None,
-                last_path: None,
-                stdout_path: None,
-                dispatch_attempt_token: None,
-                session_path: dir.path().join(format!("spin-{idx}.jsonl")),
-                driver_config: tmux::inert_config(),
-                babysitter_target: None,
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                idle_timeout_secs: None,
-                babysitter: Some(BabysitterAutoSpawn {
-                    worker_id: "babysitter-stall-detector".into(),
-                    // orgasmic:TASK-3NJ9K — what this proves is that a stale
-                    // babysitter lease does not spin the supervisor; the
-                    // babysitter's address is incidental to it. `tmux`/`claude`
-                    // reaches a launch site, and the launch seam refuses that
-                    // pair because tmux swaps the dispatch placeholder for the
-                    // real `claude` binary.
-                    mode: STUB_MODE.into(),
-                    harness: STUB_HARNESS.into(),
-                    driver_config: stub_config(),
-                    stall_timeout_secs: None,
-                    max_run_duration_secs: None,
-                    applicable_states: Vec::new(),
-                    linked_skills: Vec::new(),
-                    sandbox_permissions: None,
-                    max_iterations: None,
-                    context_budget_chars: None,
-                    harness_args: Vec::new(),
-                }),
-                applicable_states: Vec::new(),
-                max_iterations: None,
-                planned_identity: None,
-            };
-            let resp = sup.acquire(&driver, req).await.unwrap();
-            sup.release(&resp.run_id, "done", ReleaseOutcome::Completed)
-                .await
-                .unwrap();
-        }
-
-        let attempts = sup
-            .babysitter_auto_spawn_attempts_for_test("TASK-SPIN")
-            .await;
-        assert!(
-            attempts <= 3,
-            "25 dispatch-triggered auto-spawns should stay bounded by backoff; got {attempts}"
-        );
-    }
-
-    #[tokio::test]
-    async fn babysitter_release_clears_auto_spawn_give_up() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let task_id = "TASK-BS-RECOVER";
-        let held_bs = sup
-            .acquire(
-                &driver,
-                AcquireRequest {
-                    task_id: task_id.into(),
-                    kind: RunKind::Babysitter,
-                    worker_id: "babysitter-stall-detector".into(),
-                    role: "babysitter".into(),
-                    project_id: None,
-                    worktree: None,
-                    last_path: None,
-                    stdout_path: None,
-                    dispatch_attempt_token: None,
-                    session_path: dir.path().join("held.babysitter.jsonl"),
-                    driver_config: tmux::inert_config(),
-                    babysitter_target: Some("external-target".into()),
-                    stall_timeout_secs: None,
-                    max_run_duration_secs: None,
-                    idle_timeout_secs: None,
-                    babysitter: None,
-                    applicable_states: Vec::new(),
-                    max_iterations: None,
-                    planned_identity: None,
-                },
-            )
-            .await
-            .unwrap();
-
-        let attempts_before = supervisor_metrics().babysitter_spawn_attempts;
-        for idx in 0..BABYSITTER_AUTO_SPAWN_MAX_RETRIES {
-            let mut req = impl_req(task_id, dir.path());
-            req.session_path = dir.path().join(format!("recover-{idx}.jsonl"));
-            req.babysitter = Some(test_babysitter_auto_spawn());
-            let resp = sup.acquire(&driver, req).await.unwrap();
-            sup.release(&resp.run_id, "done", ReleaseOutcome::Completed)
-                .await
-                .unwrap();
-            if idx + 1 < BABYSITTER_AUTO_SPAWN_MAX_RETRIES {
-                sup.force_babysitter_auto_spawn_retry_for_test(task_id)
-                    .await;
-            }
-        }
-
-        assert_eq!(
-            sup.babysitter_auto_spawn_attempts_for_test(task_id).await,
-            BABYSITTER_AUTO_SPAWN_MAX_RETRIES,
-            "lease-held churn should put the task into give-up state"
-        );
-
-        sup.release(
-            &held_bs.run_id,
-            "babysitter lease released",
-            ReleaseOutcome::Completed,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            sup.babysitter_auto_spawn_attempts_for_test(task_id).await,
-            0,
-            "releasing the held babysitter lease should clear give-up state"
-        );
-
-        let mut req = impl_req(task_id, dir.path());
-        req.session_path = dir.path().join("recover-success.jsonl");
-        req.babysitter = Some(test_babysitter_auto_spawn());
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        let runs = sup.snapshot().await.runs;
-        assert!(
-            runs.iter()
-                .any(|run| run.run_kind == RunKind::Babysitter && run.task_id == task_id),
-            "fresh auto-spawn should succeed after babysitter release resets backoff"
-        );
-        assert!(
-            supervisor_metrics().babysitter_spawn_attempts >= attempts_before + 11,
-            "fresh attempt should increment past the give-up threshold"
-        );
-        sup.release(&resp.run_id, "done", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn implementer_release_cascades_to_auto_spawned_babysitter() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = stub_driver();
-        let req = AcquireRequest {
-            task_id: "TASK-082".into(),
-            kind: RunKind::Worker,
-            worker_id: "implementer-codex-stdio".into(),
-            role: "implementer".into(),
-            project_id: Some("orgasmic".into()),
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join("TASK-082.jsonl"),
-            driver_config: stub_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: Some(BabysitterAutoSpawn {
-                worker_id: "babysitter-stall-detector".into(),
-                mode: STUB_MODE.into(),
-                harness: STUB_HARNESS.into(),
-                driver_config: stub_config(),
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                applicable_states: Vec::new(),
-                linked_skills: Vec::new(),
-                sandbox_permissions: None,
-                max_iterations: None,
-                context_budget_chars: None,
-                harness_args: Vec::new(),
-            }),
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-
-        let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
-        let runs = sup.snapshot().await.runs;
-        assert_eq!(runs.len(), 2, "implementer plus babysitter are live");
-        let bs_run_id = {
-            let guard = sup.inner.lock().await;
-            guard
-                .runs
-                .get(&impl_run.run_id)
-                .and_then(|rec| rec.babysitter_run_id.clone())
-                .expect("companion babysitter run_id set on implementer")
-        };
-        assert!(
-            runs.iter()
-                .any(|run| run.run_id == bs_run_id && run.run_kind == RunKind::Babysitter),
-            "companion babysitter is live"
-        );
-
-        sup.release(&impl_run.run_id, "done", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-
-        let runs_after = sup.snapshot().await.runs;
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == impl_run.run_id),
-            "implementer released"
-        );
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == bs_run_id),
-            "babysitter cascade-released"
-        );
-    }
-
-    fn release_event_count(path: &Path) -> usize {
-        orgasmic_core::read_session_file(path)
-            .unwrap()
-            .iter()
-            .filter(|env| {
-                env.kind == SessionEventKind::Lifecycle
-                    && env.event.get("phase").and_then(|phase| phase.as_str()) == Some("release")
-            })
-            .count()
-    }
-
-    #[tokio::test]
-    async fn babysitter_release_before_implementer_release_is_idempotent() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = stub_driver();
-        let req = AcquireRequest {
-            task_id: "TASK-083-BS-FIRST".into(),
-            kind: RunKind::Worker,
-            worker_id: "implementer-codex-stdio".into(),
-            role: "implementer".into(),
-            project_id: Some("orgasmic".into()),
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join("TASK-083-BS-FIRST.jsonl"),
-            driver_config: stub_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: Some(BabysitterAutoSpawn {
-                worker_id: "babysitter-stall-detector".into(),
-                mode: STUB_MODE.into(),
-                harness: STUB_HARNESS.into(),
-                driver_config: stub_config(),
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                applicable_states: Vec::new(),
-                linked_skills: Vec::new(),
-                sandbox_permissions: None,
-                max_iterations: None,
-                context_budget_chars: None,
-                harness_args: Vec::new(),
-            }),
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-
-        let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
-        let runs = sup.snapshot().await.runs;
-        assert_eq!(runs.len(), 2, "implementer plus babysitter are live");
-        let bs_run_id = {
-            let guard = sup.inner.lock().await;
-            guard
-                .runs
-                .get(&impl_run.run_id)
-                .and_then(|rec| rec.babysitter_run_id.clone())
-                .expect("companion babysitter run_id set on implementer")
-        };
-        assert!(
-            runs.iter()
-                .any(|run| run.run_id == bs_run_id && run.run_kind == RunKind::Babysitter),
-            "companion babysitter is live"
-        );
-
-        sup.release(&bs_run_id, "babysitter done", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-
-        let runs_after_babysitter_release = sup.snapshot().await.runs;
-        assert!(
-            !runs_after_babysitter_release
-                .iter()
-                .any(|run| run.run_id == bs_run_id),
-            "babysitter released first"
-        );
-        assert!(
-            runs_after_babysitter_release
-                .iter()
-                .any(|run| run.run_id == impl_run.run_id),
-            "implementer remains live after babysitter release"
-        );
-
-        sup.release(
-            &impl_run.run_id,
-            "implementer done",
-            ReleaseOutcome::Completed,
-        )
-        .await
-        .unwrap();
-
-        let runs_after = sup.snapshot().await.runs;
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == impl_run.run_id),
-            "implementer released"
-        );
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == bs_run_id),
-            "already-released babysitter remains released"
-        );
-        assert_eq!(
-            release_event_count(
-                &dir.path()
-                    .join(format!("{}.babysitter.jsonl", impl_run.run_id))
-            ),
-            1,
-            "cascade RunNotFound is swallowed without writing a second babysitter release"
-        );
-    }
-
-    #[tokio::test]
-    async fn implementer_release_twice_is_idempotent_for_cascade() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = stub_driver();
-        let req = AcquireRequest {
-            task_id: "TASK-083-DOUBLE".into(),
-            kind: RunKind::Worker,
-            worker_id: "implementer-codex-stdio".into(),
-            role: "implementer".into(),
-            project_id: Some("orgasmic".into()),
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            dispatch_attempt_token: None,
-            session_path: dir.path().join("TASK-083-DOUBLE.jsonl"),
-            driver_config: stub_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: Some(BabysitterAutoSpawn {
-                worker_id: "babysitter-stall-detector".into(),
-                mode: STUB_MODE.into(),
-                harness: STUB_HARNESS.into(),
-                driver_config: stub_config(),
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                applicable_states: Vec::new(),
-                linked_skills: Vec::new(),
-                sandbox_permissions: None,
-                max_iterations: None,
-                context_budget_chars: None,
-                harness_args: Vec::new(),
-            }),
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            planned_identity: None,
-        };
-
-        let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
-        let runs = sup.snapshot().await.runs;
-        assert_eq!(runs.len(), 2, "implementer plus babysitter are live");
-        let bs_run_id = {
-            let guard = sup.inner.lock().await;
-            guard
-                .runs
-                .get(&impl_run.run_id)
-                .and_then(|rec| rec.babysitter_run_id.clone())
-                .expect("companion babysitter run_id set on implementer")
-        };
-        assert!(
-            runs.iter()
-                .any(|run| run.run_id == bs_run_id && run.run_kind == RunKind::Babysitter),
-            "companion babysitter is live"
-        );
-
-        sup.release(&impl_run.run_id, "done", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-
-        let second_release = sup
-            .release(&impl_run.run_id, "retry", ReleaseOutcome::Completed)
-            .await;
-        assert!(
-            matches!(second_release, Err(SupervisorError::RunNotFound(run_id)) if run_id == impl_run.run_id),
-            "release of an already-removed implementer should keep the existing RunNotFound contract"
-        );
-
-        let runs_after = sup.snapshot().await.runs;
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == impl_run.run_id),
-            "implementer remains released"
-        );
-        assert!(
-            !runs_after.iter().any(|run| run.run_id == bs_run_id),
-            "babysitter remains released"
-        );
-        assert_eq!(
-            release_event_count(&dir.path().join("TASK-083-DOUBLE.jsonl")),
-            1,
-            "second implementer release does not write another release event"
-        );
-        assert_eq!(
-            release_event_count(
-                &dir.path()
-                    .join(format!("{}.babysitter.jsonl", impl_run.run_id))
-            ),
-            1,
-            "second implementer release does not re-trigger babysitter cascade"
-        );
-    }
-
     #[cfg(unix)]
     #[tokio::test]
     async fn poll_direct_child_pid_prefers_worker_server_over_generic_sibling() {
@@ -16075,7 +13143,7 @@ mod tests {
             "TASK-QSSQH-TEARDOWN",
             DriverEvent::DriverError {
                 fatal: true,
-                message: "rmux pane exited by signal 15; equivalent shell exit code 143".into(),
+                message: "tmux pane exited by signal 15; equivalent shell exit code 143".into(),
             },
         )
         .await;
@@ -16229,177 +13297,6 @@ mod tests {
         );
     }
 
-    /// The rmux session name the driver reported on its persisted `Ready`, once
-    /// the supervisor has drained it. Fails rather than skips on a degraded
-    /// acquisition: an inert `Ready` owns no session, so every reap assertion
-    /// below would pass vacuously (TASK-R2HDN).
-    async fn live_rmux_session_from_session_file(path: &Path, timeout: Duration) -> String {
-        let start = Instant::now();
-        loop {
-            for envelope in session_events(path) {
-                if envelope.kind != SessionEventKind::DriverEvent
-                    || envelope.event.get("type").and_then(|ty| ty.as_str()) != Some("ready")
-                {
-                    continue;
-                }
-                let capabilities = &envelope.event["capabilities"];
-                assert_not_degraded(
-                    "supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill",
-                    capabilities["inert"] == true,
-                );
-                return capabilities["session"]
-                    .as_str()
-                    .expect("live rmux Ready reports a session")
-                    .to_string();
-            }
-            assert!(
-                start.elapsed() < timeout,
-                "no rmux Ready reached {} within {timeout:?}",
-                path.display()
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    }
-
-    // orgasmic:task_69CW6
-    /// TASK-6FNAY's acceptance criterion, driven through the production path
-    /// instead of a double: a real `RmuxControl` owning a real
-    /// `rmux_sdk::Session`, released by `Supervisor::release` at the real
-    /// `DRIVER_RELEASE_TIMEOUT` boundary, with the SDK's kill request stalled so
-    /// the endpoint-exact CLI fallback is the only thing that can reap.
-    ///
-    /// The surrogate this replaces slept and then flipped its own
-    /// `session_live` flag. Deleting the CLI fallback from
-    /// `RmuxControl::release`, or pointing it at a different daemon, left that
-    /// test green. Both turn this one red: the first because a real rmux
-    /// session survives; the second because the recorded argv stops naming the
-    /// session's own socket — and, on any host where a bare `rmux` resolves
-    /// somewhere else, because the session survives too.
-    #[tokio::test]
-    async fn supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill() {
-        const TEST: &str =
-            "supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill";
-        // Lock order is flock-then-environment: the fixture starts a real rmux
-        // daemon and repoints process-global rmux discovery at it.
-        let _live_guard = live_session_guard();
-        let _environment = test_environment_lock().lock().await;
-        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
-            return;
-        }
-        let endpoint = StallableRmuxEndpoint::start()
-            .await
-            .expect("private stallable rmux endpoint");
-
-        let (sup, dir, _writer) = make_supervisor();
-        let session_path = dir.path().join("TASK-6FNAY-REAP.jsonl");
-        let driver = RmuxDriver::new(Box::new(ShellAdapter::new()));
-        let mut req = impl_req("TASK-6FNAY-REAP", dir.path());
-        req.driver_config = DriverConfig::from_value(json!({
-            "command": "sh",
-            "args": ["-c", "while :; do printf 'reap\\n'; sleep 0.05; done"],
-        }));
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        let session =
-            live_rmux_session_from_session_file(&session_path, Duration::from_secs(30)).await;
-        assert!(
-            endpoint.session_exists(&session),
-            "rmux session {session} was not live before release"
-        );
-
-        // From here the SDK's ordered transport answers nothing. Only the CLI
-        // fallback can still reach the daemon.
-        endpoint.stall_sdk_transport();
-        let started = Instant::now();
-        sup.release(
-            &resp.run_id,
-            "rmux reap regression",
-            ReleaseOutcome::Completed,
-        )
-        .await
-        .unwrap();
-        let elapsed = started.elapsed();
-
-        assert!(
-            !endpoint.session_exists(&session),
-            "rmux session {session} survived a supervisor release with a stalled SDK kill"
-        );
-        let kill_invocations = endpoint
-            .recorded_cli_invocations()
-            .into_iter()
-            .filter(|argv| argv.iter().any(|arg| arg == "kill-session"))
-            .collect::<Vec<_>>();
-        let endpoint_exact = vec![
-            "-S".to_string(),
-            endpoint.endpoint_path().display().to_string(),
-            "kill-session".to_string(),
-            "-t".to_string(),
-            session.clone(),
-        ];
-        assert!(
-            kill_invocations.contains(&endpoint_exact),
-            "the CLI fallback must address the session's own endpoint and name; recorded \
-             {kill_invocations:?}, expected {endpoint_exact:?}"
-        );
-        assert!(
-            session_has_terminal_event(&session_events(&session_path)),
-            "release-owned RunComplete must be drained before lifecycle cleanup"
-        );
-        // The stall has to have been real: a fallback that ran without the SDK
-        // consuming its budget would mean the kill request reached the daemon.
-        assert!(
-            elapsed >= Duration::from_secs(1),
-            "release returned in {elapsed:?}; the SDK kill cannot have stalled"
-        );
-    }
-
-    #[tokio::test]
-    async fn rmux_reap_failure_is_logged_with_context_and_cleanup_remains_unconditional() {
-        let (sup, dir, _writer) = make_supervisor();
-        let producer_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let driver = FailingRmuxReapDriver {
-            producer_dropped: Arc::clone(&producer_dropped),
-        };
-        let session_path = dir.path().join("TASK-6FNAY-REAP-FAIL.jsonl");
-        let resp = sup
-            .acquire(&driver, impl_req("TASK-6FNAY-REAP-FAIL", dir.path()))
-            .await
-            .unwrap();
-        let log_bytes = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_writer(CapturedLog(Arc::clone(&log_bytes)))
-            .finish();
-        let dispatch = tracing::Dispatch::new(subscriber);
-        let _guard = tracing::dispatcher::set_default(&dispatch);
-
-        sup.release(
-            &resp.run_id,
-            "rmux reap failure regression",
-            ReleaseOutcome::Completed,
-        )
-        .await
-        .unwrap();
-
-        assert!(producer_dropped.load(Ordering::SeqCst));
-        assert!(
-            !sup.snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == resp.run_id),
-            "reap failure must not strand the run record"
-        );
-        assert_eq!(release_count(&session_path), 1);
-        let log = String::from_utf8(log_bytes.lock().unwrap().clone()).unwrap();
-        assert!(log.contains(&resp.run_id), "{log}");
-        assert!(log.contains("transport=\"rmux\""), "{log}");
-        assert!(
-            log.contains("SDK stalled and exact-endpoint CLI fallback refused"),
-            "{log}"
-        );
-    }
-
     fn test_run_record_shell() -> RunRecord {
         RunRecord {
             task_id: "TASK".into(),
@@ -16414,7 +13311,6 @@ mod tests {
             sub_state: None,
             identity: RuntimeIdentity::new("run-test", "boot-test"),
             session_path: PathBuf::from("/tmp/run.jsonl"),
-            babysitter_target: None,
             last_path: None,
             stdout_path: None,
             dispatch_attempt_token: None,
@@ -16424,7 +13320,6 @@ mod tests {
             artifactor_lifecycle: ArtifactorLifecycle::Idle,
             pending_terminal_drain: false,
             pending_cancel: false,
-            babysitter_run_id: None,
             last_driver_event_at: Instant::now(),
             last_progress_at: Instant::now(),
             run_started_at: Instant::now(),
@@ -16440,7 +13335,6 @@ mod tests {
             control: Box::new(NoopControl),
             producer: None,
             event_drain: tokio::spawn(async {}),
-            babysitter_summary: None,
             early_exit_watcher_pid: None,
             early_exit_watcher: None,
             driver_has_work: false,
@@ -16470,16 +13364,6 @@ mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Ok(BabysitterAck {
-                accepted: true,
-                message: None,
-            })
-        }
-
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
             Ok(())
         }
@@ -16493,5 +13377,773 @@ mod tests {
                 message: None,
             })
         }
+    }
+
+    /// TASK-JQ8AV, the classifier against the MEASURED live statuslines.
+    ///
+    /// Four captures, two dates, two transports: 2026-08-02 tmux (the two rows
+    /// [`PANE_STATUS_REGION_ROWS`] documents) and 2026-07-29 pane (the incident
+    /// capture and this fleet's own harness). Tightening the contract must not
+    /// cost any of them — a classifier so strict it misses a real turn
+    /// re-creates the incident that three healthy workers died in.
+    #[test]
+    fn pane_open_turn_marker_recognizes_the_measured_statuslines() {
+        let measured = [
+            // 2026-08-02, live tmux pane, absolute row 44.
+            "● Contemplating… (2m 31s · ↓ 7.1k tokens · thinking more with high effort)",
+            // 2026-08-02, the second live tmux pane, absolute row 44.
+            "● Grooving… (1m 22s · ↓ 4.1k tokens)",
+            // 2026-07-29, live pane capture of this fleet's own harness.
+            "● Moonwalking… (20m 4s · ↓ 46.3k tokens)",
+            // 2026-07-29, the incident capture: what the three killed workers'
+            // panes were showing while the clock read them as wedged.
+            "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)",
+        ];
+        for row in measured {
+            assert_eq!(
+                pane_open_turn_marker(row).as_deref(),
+                Some(row),
+                "measured live statusline must classify as an open turn: {row}"
+            );
+            // And it still does with the rest of a real screen around it.
+            let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
+            assert_eq!(
+                pane_open_turn_marker(&screen).as_deref(),
+                Some(row),
+                "measured statusline in a measured screen: {row}"
+            );
+        }
+
+        // 2026-08-02, the TASK-4CSMY reviewer's live codex pane: flush left,
+        // third from the non-blank bottom. A CONFIRMED true positive — the
+        // classifier tightening of TASK-4CSMY.1 must not cost it.
+        let codex = "◦ Working (4m 11s • esc to interrupt)";
+        assert!(
+            pane_open_turn_marker(codex).is_some(),
+            "the measured live codex status row must still rescue: {codex}"
+        );
+        let codex_screen = format!("{MEASURED_TRANSCRIPT}\n{codex}\n\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(pane_open_turn_marker(&codex_screen).as_deref(), Some(codex));
+
+        // Elapsed-only spinner: a turn open before the first token arrives.
+        assert!(pane_open_turn_marker("· Considering… (2s)").is_some());
+        // The generic TUI interrupt hint, any case (codex-style spinners).
+        assert!(pane_open_turn_marker("Working (7s • Esc to interrupt)").is_some());
+        // The same hint carried inside a claude-shaped spinner row.
+        assert!(pane_open_turn_marker("● Herding… (5s · esc to interrupt)").is_some());
+        // Every animated frame of the measured spinner set is the same live
+        // turn; a capture caught on a different frame is not a missed rescue.
+        for glyph in STATUS_SPINNER_GLYPHS {
+            let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
+            assert!(
+                pane_open_turn_marker(&row).is_some(),
+                "status glyph must lead a spinner row: {row}"
+            );
+        }
+
+        // TASK-4CSMY.2, the positive control the loop above cannot be: it
+        // walks the table, so a table MISSING a frame satisfies it. These
+        // frames are named from the binary, not from the table.
+        for sequence in MEASURED_CLAUDE_SPINNER_FRAMES {
+            for glyph in *sequence {
+                let row = format!("{glyph} Contemplating… (2m 31s · ↓ 7.1k tokens)");
+                assert!(
+                    pane_open_turn_marker(&row).is_some(),
+                    "claude animates this frame, so it must open a turn: {row}"
+                );
+                let screen = format!("{MEASURED_TRANSCRIPT}\n{row}\n\n{MEASURED_AT_REST_TAIL}");
+                assert_eq!(
+                    pane_open_turn_marker(&screen).as_deref(),
+                    Some(row.as_str()),
+                    "claude frame inside a measured screen: {row}"
+                );
+            }
+        }
+
+        // U+2736 by name, because it is the one this fix exists for: it is a
+        // real frame in BOTH sequences and TASK-4CSMY.1's allowlist rejected
+        // it, so a turn frozen on it read as a wedge. Same row as the
+        // incident capture, repainted one frame over.
+        let frame_2736 = "✶ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
+        assert_eq!(
+            pane_open_turn_marker(frame_2736).as_deref(),
+            Some(frame_2736),
+            "U+2736 leads a live claude statusline: {frame_2736}"
+        );
+        let screen_2736 = format!("{MEASURED_TRANSCRIPT}\n{frame_2736}\n\n{MEASURED_AT_REST_TAIL}");
+        assert_eq!(
+            pane_open_turn_marker(&screen_2736).as_deref(),
+            Some(frame_2736)
+        );
+        // And U+2217 `∗`, which TASK-4CSMY.1 carried as a "frame sibling", is
+        // in neither sequence and no longer in the table. Nothing asserts it
+        // must be rejected — an unmeasured glyph is not a measured negative —
+        // but it must not be silently re-added either.
+        assert!(!STATUS_SPINNER_GLYPHS.contains(&'\u{2217}'));
+
+        // The last match in the region wins: the live statusline sits below
+        // anything older the region may still hold.
+        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
+        let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
+        let stacked = format!("{incident}\nsome transcript text\n{live}");
+        assert_eq!(pane_open_turn_marker(&stacked).as_deref(), Some(live));
+    }
+
+    /// Every installed claude harness this host can see, deduplicated by
+    /// canonical path.
+    ///
+    /// PATH first, because that is the binary a worker actually launches,
+    /// then the installer's own location in case a test has pinned PATH to a
+    /// stub set.
+    fn installed_claude_binaries() -> Vec<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        let mut push = |path: PathBuf| {
+            let Ok(resolved) = path.canonicalize() else {
+                return;
+            };
+            let Ok(meta) = std::fs::metadata(&resolved) else {
+                return;
+            };
+            if !meta.is_file() || meta.len() < SMALLEST_PLAUSIBLE_CLAUDE_BINARY {
+                return;
+            }
+            if !candidates.contains(&resolved) {
+                candidates.push(resolved);
+            }
+        };
+        if let Some(path) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path) {
+                push(dir.join("claude"));
+            }
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            push(PathBuf::from(home).join(".local/bin/claude"));
+        }
+        candidates
+    }
+
+    /// The byte offset of `needle` in `path`, streamed so a 245 MiB harness
+    /// never lands in the test process's heap.
+    fn find_needle_offset(path: &Path, needle: &str) -> Option<u64> {
+        use std::io::Read;
+
+        const CHUNK: usize = 1 << 20;
+        let mut file = std::fs::File::open(path).ok()?;
+        let carry = needle.len().saturating_sub(1);
+        let mut buf = vec![0u8; carry + CHUNK];
+        let mut filled = 0usize;
+        let mut base = 0u64;
+        loop {
+            let read = file.read(&mut buf[filled..]).ok()?;
+            if read == 0 {
+                return None;
+            }
+            filled += read;
+            if let Some(at) = buf[..filled]
+                .windows(needle.len())
+                .position(|window| window == needle.as_bytes())
+            {
+                return Some(base + at as u64);
+            }
+            if filled > carry {
+                let dropped = filled - carry;
+                buf.copy_within(dropped..filled, 0);
+                base += dropped as u64;
+                filled = carry;
+            }
+        }
+    }
+
+    /// Decode one JS array literal of single-character double-quoted strings
+    /// — `["\xB7","✢",…]` — returning its chars and the byte index just
+    /// past the closing bracket.
+    ///
+    /// Deliberately narrow. Anything the frame arrays do not actually use
+    /// returns `None`, which surfaces as a loud extraction failure rather
+    /// than as a quietly short frame list.
+    fn decode_js_char_array(text: &str) -> Option<(Vec<char>, usize)> {
+        let bytes = text.as_bytes();
+        if bytes.first() != Some(&b'[') {
+            return None;
+        }
+        let mut at = 1usize;
+        let mut frames = Vec::new();
+        loop {
+            match bytes.get(at)? {
+                b']' => return Some((frames, at + 1)),
+                b',' => at += 1,
+                b'"' => {
+                    at += 1;
+                    let mut item = String::new();
+                    loop {
+                        match bytes.get(at)? {
+                            b'"' => {
+                                at += 1;
+                                break;
+                            }
+                            b'\\' => {
+                                let (glyph, used) = decode_js_escape(text.get(at..)?)?;
+                                item.push(glyph);
+                                at += used;
+                            }
+                            _ => {
+                                let glyph = text.get(at..)?.chars().next()?;
+                                item.push(glyph);
+                                at += glyph.len_utf8();
+                            }
+                        }
+                    }
+                    // A spinner frame is exactly one glyph. Two would mean we
+                    // are reading a different array than we think we are.
+                    let mut glyphs = item.chars();
+                    let glyph = glyphs.next()?;
+                    if glyphs.next().is_some() {
+                        return None;
+                    }
+                    frames.push(glyph);
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// `\xHH` and `\uHHHH`, the only two forms the bundler emits here.
+    fn decode_js_escape(rest: &str) -> Option<(char, usize)> {
+        let (digits, used) = match rest.as_bytes().get(1)? {
+            b'x' => (rest.get(2..4)?, 4),
+            b'u' => (rest.get(2..6)?, 6),
+            _ => return None,
+        };
+        let code = u32::from_str_radix(digits, 16).ok()?;
+        Some((char::from_u32(code)?, used))
+    }
+
+    /// The `[ghostty, everything-else]` frame sequences the binary at `path`
+    /// animates, or `None` if its spinner no longer has the shape the recipe
+    /// on [`STATUS_SPINNER_GLYPHS`] describes.
+    fn extract_claude_spinner_frames(path: &Path) -> Option<Vec<Vec<char>>> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let offset = find_needle_offset(path, CLAUDE_FRAME_NEEDLE)?;
+        let mut file = std::fs::File::open(path).ok()?;
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        // Both arrays plus the `;return` between them fit in well under 512
+        // bytes; the source region is pure ASCII, so lossy decoding can only
+        // damage a boundary we do not read.
+        let mut raw = vec![0u8; 512];
+        let read = file.read(&mut raw).ok()?;
+        raw.truncate(read);
+        let window = String::from_utf8_lossy(&raw).into_owned();
+
+        // `CLAUDE_FRAME_NEEDLE` ends ON the opening bracket.
+        let arrays = window.get(CLAUDE_FRAME_NEEDLE.len() - 1..)?;
+        let (ghostty, used) = decode_js_char_array(arrays)?;
+        let (fallback, _) = decode_js_char_array(arrays.get(used..)?.strip_prefix(";return")?)?;
+        Some(vec![ghostty, fallback])
+    }
+
+    /// TASK-4CSMY.2, the completeness guard — and the deliverable that
+    /// outlives the one-character fix.
+    ///
+    /// Round 2 of this mechanism replaced "any punctuation glyph" with
+    /// [`STATUS_SPINNER_GLYPHS`], which closed a false-RESCUE hole and opened
+    /// a false-KILL one by omitting `✶` U+2736. Nothing in the suite could
+    /// tell: the real-pane arms hard-code a glyph each, and the table walk in
+    /// `pane_open_turn_marker_recognizes_the_measured_statuslines` proves
+    /// only that entries ALREADY IN the table are accepted. A table missing a
+    /// frame passed every one of them, and the cost of that omission is a
+    /// healthy worker stall-released mid-turn.
+    ///
+    /// So this compares the table against the harness on disk rather than
+    /// against another in-tree assertion. It runs the same extraction the
+    /// recipe on [`STATUS_SPINNER_GLYPHS`] documents, over the same needle,
+    /// and fails when claude animates a frame we would reject.
+    ///
+    /// Failure modes, deliberately split:
+    ///
+    /// - **No claude installed** — skip. There is nothing to compare against,
+    ///   and a host with no harness runs no workers. This skip is NOT wired
+    ///   into `required_test_tooling_is_present`: adding a `claude`
+    ///   requirement would turn the sentinel red on every host without Claude
+    ///   Code, CI included, which is a tooling-policy change well outside a
+    ///   classifier fix. The trade is real and stated: on a claude-less host
+    ///   this guard is silent.
+    /// - **Installed, but the spinner no longer has this shape** — FAIL. It
+    ///   is indistinguishable from the drift this exists to catch, and a skip
+    ///   there rebuilds exactly the hole. The message carries the recipe.
+    /// - **Installed, extracted, table does not cover it** — FAIL. The point.
+    /// - **Installed, extracted, table covers it, but the in-tree
+    ///   transcription is stale** — FAIL, with a message that says the
+    ///   classifier is still safe and only the citation needs re-cutting.
+    // orgasmic:TASK-4CSMY.2
+    #[tokio::test]
+    async fn status_spinner_glyphs_cover_the_installed_claude_frame_set() {
+        const TEST: &str = "status_spinner_glyphs_cover_the_installed_claude_frame_set";
+        // PATH is process-global and other tests pin it to stub sets.
+        let _environment = test_environment_lock().lock().await;
+
+        let binaries = installed_claude_binaries();
+        if skip_test_if_missing(TEST, &[("claude", !binaries.is_empty())]) {
+            return;
+        }
+
+        for binary in &binaries {
+            let Some(extracted) = extract_claude_spinner_frames(binary) else {
+                panic!(
+                    "{TEST}: {} is an installed claude harness but its spinner frames are no \
+                     longer where the recipe on STATUS_SPINNER_GLYPHS looks for them \
+                     (needle {CLAUDE_FRAME_NEEDLE:?}). Either claude reshaped that code or the \
+                     recipe rotted; re-derive by hand with\n  \
+                     LC_ALL=C grep -a -o 'TERM===\"xterm-ghostty\")return\\[[^]]*\\];return\\[[^]]*\\]' {}\n\
+                     and update STATUS_SPINNER_GLYPHS, MEASURED_CLAUDE_SPINNER_FRAMES and \
+                     CLAUDE_FRAME_NEEDLE together. Do NOT relax this to a skip: an unreadable \
+                     harness is not a harness that agrees with us.",
+                    binary.display(),
+                    binary.display(),
+                );
+            };
+
+            // The one that matters. A frame we reject is a live turn read as
+            // a wedge, which is TASK-JQ8AV.
+            for sequence in &extracted {
+                for glyph in sequence {
+                    assert!(
+                        STATUS_SPINNER_GLYPHS.contains(glyph),
+                        "{TEST}: {} animates U+{:04X} '{glyph}' and STATUS_SPINNER_GLYPHS does \
+                         not carry it, so a turn frozen on that frame classifies as a wedge and \
+                         the worker is stall-released. Add it to the table.",
+                        binary.display(),
+                        *glyph as u32,
+                    );
+                }
+            }
+
+            // Cheaper failure, same test: the classifier is safe, the
+            // citation is not.
+            let cited = MEASURED_CLAUDE_SPINNER_FRAMES
+                .iter()
+                .map(|sequence| sequence.to_vec())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                extracted,
+                cited,
+                "{TEST}: STATUS_SPINNER_GLYPHS still covers every frame {} animates, so the \
+                 classifier is safe — but the in-tree transcription no longer matches the \
+                 binary. Re-cut MEASURED_CLAUDE_SPINNER_FRAMES and the quoted output on \
+                 STATUS_SPINNER_GLYPHS.",
+                binary.display(),
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_open_turn_marker(
+        mux: PaneMux,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(pane) = pane_content(mux, identity, socket) {
+                if pane_open_turn_marker(&pane).is_some() {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never showed the open-turn statusline"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pane_pid(mux: PaneMux, identity: &RuntimeIdentity, socket: Option<&Path>) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if pane_pid(mux, identity, socket).is_some() {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never resolved a pane pid"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    // orgasmic:TASK-4CSMY
+    /// Create the run's pane on the test-owned *tmux* server, running `script`
+    /// under `shell`. Built through `tmux::tmux_command()`, which carries the
+    /// `-L` the gate pinned — an unpinned call lands on whichever server
+    /// `$TMUX` names, which inside a worker is the one hosting live dispatch
+    /// panes (`.orgasmic/gotchas.org`).
+    #[cfg(unix)]
+    fn spawn_tmux_probe_pane_stub(session: &str, shell: &str, script: &str) {
+        let status = tmux::tmux_command()
+            .args([
+                "new-session",
+                "-d",
+                "-x",
+                "200",
+                "-y",
+                "50",
+                "-s",
+                session,
+                "--",
+                shell,
+                "-c",
+                script,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn tmux pane stub");
+        assert!(
+            status.success(),
+            "tmux new-session failed for {session} on {}",
+            tmux::tmux_server_selection()
+        );
+    }
+
+    #[cfg(unix)]
+    fn kill_tmux_probe_pane_stub(session: &str) {
+        let _ = tmux::tmux_command()
+            .args(["kill-session", "-t", session])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    /// TASK-4CSMY acceptance, the tmux arm of the JQ8AV test above, against
+    /// the REAL probe reading a REAL tmux pane.
+    ///
+    /// This is not a refinement of the pane case, it is the whole channel.
+    /// `pane_activity` was emitted by the pane driver and nothing else, and
+    /// the open-turn consult was gated on `transport == "pane"`, so a
+    /// provider-bound turn on tmux — ~0% cpu, no tool calls, no pane event —
+    /// had NO evidence channel that could see it and died at 600 s. tmux is
+    /// the shipped default driver, so that is the path a first-time user is
+    /// on.
+    ///
+    /// Same two arms and the same three windows as the pane test: a
+    /// network-waiting turn survives repeatedly (one saved sweep would not
+    /// separate a fix from an off-by-one), then the same run with an at-rest
+    /// pane over a sleeping, connectionless process dies on schedule with a
+    /// reason naming both empty channels.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies() {
+        const TEST: &str = "a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies";
+        // Lock order is flock-then-environment, as in the pane twin: the
+        // owned-server fixture pins process-global mux endpoint resolution.
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(
+            TEST,
+            &[
+                ("tmux", tmux_spawn_usable_for_test().await),
+                ("bash", command_available_for_test("bash")),
+            ],
+        ) {
+            return;
+        }
+
+        // The provider's stand-in: a local listener the stub connects to and
+        // then blocks reading from.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        // No socket override: the tmux probe resolves its server through the
+        // drivers' own `tmux_command()`, which the gate above already pinned
+        // to this process's owned `-L`. The production default is the same
+        // call with nothing pinned.
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-TMUX-PROVIDER-BOUND", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = tmux::tmux_session_name(&resp.identity);
+
+        let think_stub = format!(
+            "printf '✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
+             exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
+        );
+        spawn_tmux_probe_pane_stub(&session, "/bin/bash", &think_stub);
+        // Accepting the stub's connection is the proof it is network-waiting
+        // and not asleep; holding the stream keeps it blocked mid-read.
+        let _provider_side = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || listener.accept()),
+        )
+        .await
+        .expect("stub connected within 10s")
+        .expect("accept task")
+        .expect("accept establishes the stub's connection");
+        wait_for_open_turn_marker(PaneMux::Tmux, &resp.identity, None).await;
+
+        for window in 0..3 {
+            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+            sup.release_first_timed_out_run().await;
+            assert!(
+                run_is_live(&sup, &resp.run_id).await,
+                "quiet window {window}: a provider-bound network-waiting tmux turn was \
+                 stall-released: {:?}",
+                release_reason(&session_path)
+            );
+        }
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+
+        // The wedge half, unchanged from the pane arm: a fresh pane under the
+        // same session name with no statusline, over a sleeping process with
+        // no connection anywhere.
+        kill_tmux_probe_pane_stub(&session);
+        spawn_tmux_probe_pane_stub(&session, "/bin/sh", "sleep 300");
+        wait_for_pane_pid(PaneMux::Tmux, &resp.identity, None).await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(&sup, &resp.run_id).await,
+            "an idle tmux run with no provider connection and an at-rest pane must still stall"
+        );
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no work evidence for") && reason.contains("% cpu"),
+            "the reason must still carry the cpu channel: {reason}"
+        );
+        assert!(
+            reason.contains("no open-turn statusline in pane capture"),
+            "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+
+        kill_tmux_probe_pane_stub(&session);
+    }
+
+    fn command_available_for_test(command: &str) -> bool {
+        Command::new("which")
+            .arg(command)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    async fn tmux_has_session_for_test(session: &str) -> bool {
+        tokio::process::Command::from(tmux::tmux_command())
+            .args(["has-session", "-t", session])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    async fn wait_for_run_release(sup: &Supervisor, run_id: &str, timeout: Duration) {
+        let start = Instant::now();
+        loop {
+            let snapshot = sup.snapshot().await;
+            if snapshot.runs.iter().all(|run| run.run_id != run_id) {
+                return;
+            }
+            assert!(
+                start.elapsed() < timeout,
+                "run {run_id} did not release within {timeout:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn tmux_process_exit_releases_supervisor_run_and_session() {
+        let _live_guard = live_session_guard();
+        if skip_test_if_missing(
+            "tmux_process_exit_releases_supervisor_run_and_session",
+            &[
+                ("tmux", tmux_spawn_usable_for_test().await),
+                ("bash", command_available_for_test("bash")),
+            ],
+        ) {
+            return;
+        }
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let mut req = dispatch_impl_req("TASK-TMUX-MOCK", dir.path());
+        req.worker_id = "implementer-claude-tmux".into();
+        // Dispatch-shaped acquire with last_path advertises finalize contract;
+        // pane exit without finalize must tombstone Failed.
+        req.driver_config = DriverConfig::from_value(json!({
+            "command": "bash",
+            "args": ["-lc", "printf 'mock output\\n'; exit 0"],
+        }));
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        let session = tmux::tmux_session_name(&resp.identity);
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(8)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !tmux_has_session_for_test(&session).await,
+            "tmux session should be killed after process-exit release"
+        );
+
+        let events = session_events(&dir.path().join("TASK-TMUX-MOCK.jsonl"));
+        assert!(events.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::DriverEvent
+                && matches!(
+                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
+                    Ok(DriverEvent::Ready { .. })
+                )
+        }));
+        assert!(
+            !events.iter().any(|envelope| {
+                envelope.kind == SessionEventKind::DriverEvent
+                    && matches!(
+                        serde_json::from_value::<DriverEvent>(envelope.event.clone()),
+                        Ok(DriverEvent::TextChunk { .. })
+                    )
+            }),
+            "capture removal must not synthesize TextChunk from scrollback"
+        );
+        assert!(events.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::Release {
+                        reason,
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
+                        ..
+                    }) if reason == "protocol_end_without_finalize"
+                )
+        }));
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pane_text(
+        mux: PaneMux,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+        needle: &str,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(pane) = pane_content(mux, identity, socket) {
+                if pane.contains(needle) {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never painted {needle:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// The shared body of the two adversarial arms: given a run whose pane is
+    /// showing [`AT_REST_PANE_QUOTING_MARKERS`], the classifier must read no
+    /// open turn and the sweep must release the run on schedule.
+    ///
+    /// The release is asserted on the FIRST expired sweep, which is the whole
+    /// claim: a false rescue is not a delay, it is unbounded — it repeats on
+    /// every sweep until `max_run_duration`, so a wedge that survives sweep one
+    /// survives to the 14,400 s ceiling.
+    #[cfg(unix)]
+    async fn assert_quoted_marker_pane_is_not_rescued(
+        sup: &Supervisor,
+        mux: PaneMux,
+        run_id: &str,
+        identity: &RuntimeIdentity,
+        socket: Option<&Path>,
+        session_path: &Path,
+    ) {
+        wait_for_pane_text(mux, identity, socket, AT_REST_PANE_LAST_ROW).await;
+        let pane = pane_content(mux, identity, socket).expect("capture the painted pane");
+        assert!(
+            pane.contains("Esc to interrupt") && pane.contains("Quantumizing…"),
+            "the fixture must really carry marker text, or this proves nothing:\n{pane}"
+        );
+
+        // TASK-4CSMY.1: the forged rows must land INSIDE the status region of
+        // the real capture. Derived from the capture, not asserted about the
+        // fixture string, because `capture-pane` blank-pads to the pane height
+        // and the region counts NON-BLANK rows. Without this the whole
+        // adversarial half could pass on position alone — which is exactly how
+        // the shipped arms passed while the hole was open.
+        let non_blank: Vec<&str> = pane.lines().filter(|row| !row.trim().is_empty()).collect();
+        let region = &non_blank[non_blank.len().saturating_sub(PANE_STATUS_REGION_ROWS)..];
+        for forged in AT_REST_PANE_FORGED_STATUS_ROWS {
+            assert!(
+                region.iter().any(|row| row.trim_end() == *forged),
+                "the forged row must be inside the last {PANE_STATUS_REGION_ROWS} non-blank \
+                 rows or this test proves nothing: {forged:?} not in {region:?}"
+            );
+        }
+
+        assert_eq!(
+            pane_open_turn_marker(&pane),
+            None,
+            "an at-rest pane that merely QUOTES marker text is not an open turn:\n{pane}"
+        );
+
+        age_run(sup, run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(sup, run_id).await,
+            "an at-rest pane quoting marker text must not rescue a wedge"
+        );
+        let reason = release_reason(session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no open-turn statusline in pane capture"),
+            "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+    }
+
+    /// The same proof on a REAL tmux pane — the transport TASK-4CSMY made the
+    /// shipped default, and the one whose reviewer blocked on this.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued() {
+        const TEST: &str = "an_at_rest_tmux_pane_quoting_marker_text_is_not_rescued";
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(TEST, &[("tmux", tmux_spawn_usable_for_test().await)]) {
+            return;
+        }
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+        let driver = TmuxPaneDriver::new();
+        let req = manual_req("TASK-QUOTED-MARKERS-TMUX", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = tmux::tmux_session_name(&resp.identity);
+
+        spawn_tmux_probe_pane_stub(&session, "/bin/sh", AT_REST_PANE_QUOTING_MARKERS);
+        assert_quoted_marker_pane_is_not_rescued(
+            &sup,
+            PaneMux::Tmux,
+            &resp.run_id,
+            &resp.identity,
+            None,
+            &session_path,
+        )
+        .await;
+        kill_tmux_probe_pane_stub(&session);
     }
 }

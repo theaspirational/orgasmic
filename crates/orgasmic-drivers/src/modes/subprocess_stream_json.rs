@@ -17,10 +17,9 @@ use orgasmic_core::{DriverEvent, TextStream};
 use crate::adapters::cursor::distill_subprocess_exit_summary;
 use crate::catalog::TransportInteraction;
 use crate::r#trait::{
-    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
-    DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, PreflightOutcome, RunKind, TransitionAck,
-    TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError,
+    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, PreflightOutcome,
+    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 
 const MODE: &str = "subprocess-stream-json";
@@ -215,7 +214,6 @@ async fn spawn_composed(
         events: rx,
         control: Box::new(SubprocessStreamJsonControl {
             mode: control,
-            kind: ctx.run_kind,
             released: false,
         }),
         producer,
@@ -688,29 +686,6 @@ async fn handle_subprocess_command(
             };
             done
         }
-        SubprocessCommand::BabysitterAction { req, ack } => {
-            let result = adapter.babysitter_action(req).await;
-            let done = match result {
-                Ok(outcome) => match apply_outcome(outcome, events, stdin).await {
-                    Ok(done) => {
-                        let _ = ack.send(Ok(BabysitterAck {
-                            accepted: true,
-                            message: None,
-                        }));
-                        done
-                    }
-                    Err(e) => {
-                        let _ = ack.send(Err(e));
-                        false
-                    }
-                },
-                Err(e) => {
-                    let _ = ack.send(Err(e));
-                    false
-                }
-            };
-            done
-        }
         SubprocessCommand::SendInput { req, ack } => {
             let result = adapter.send_input(req).await;
             let done = match result {
@@ -797,10 +772,6 @@ enum SubprocessCommand {
         req: TransitionRequest,
         ack: oneshot::Sender<Result<TransitionAck, DriverError>>,
     },
-    BabysitterAction {
-        req: BabysitterRequest,
-        ack: oneshot::Sender<Result<BabysitterAck, DriverError>>,
-    },
     SendInput {
         req: UserInputRequest,
         ack: oneshot::Sender<Result<UserInputAck, DriverError>>,
@@ -833,7 +804,6 @@ impl SubprocessControlMode {
 
 struct SubprocessStreamJsonControl {
     mode: SubprocessControlMode,
-    kind: RunKind,
     released: bool,
 }
 
@@ -843,9 +813,6 @@ impl DriverControl for SubprocessStreamJsonControl {
         &mut self,
         req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
-        if self.kind == RunKind::Babysitter {
-            return Err(DriverError::WorkerToolBlocked("transition_state".into()));
-        }
         match &mut self.mode {
             SubprocessControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.transition_state(req).await?;
@@ -863,35 +830,6 @@ impl DriverControl for SubprocessStreamJsonControl {
                     .map_err(|_| DriverError::Transport("subprocess task ended".into()))?;
                 rx.await.map_err(|_| {
                     DriverError::Transport("subprocess transition ack dropped".into())
-                })?
-            }
-        }
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
-        if self.kind == RunKind::Worker {
-            return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
-        }
-        match &mut self.mode {
-            SubprocessControlMode::Simulated { adapter, events } => {
-                let outcome = adapter.babysitter_action(req).await?;
-                emit_events(events, outcome.events).await;
-                Ok(BabysitterAck {
-                    accepted: true,
-                    message: None,
-                })
-            }
-            SubprocessControlMode::Real { commands, .. } => {
-                let (ack, rx) = oneshot::channel();
-                commands
-                    .send(SubprocessCommand::BabysitterAction { req, ack })
-                    .await
-                    .map_err(|_| DriverError::Transport("subprocess task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("subprocess babysitter ack dropped".into())
                 })?
             }
         }

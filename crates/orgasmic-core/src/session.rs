@@ -6,7 +6,7 @@
 //! this layer: the worker drivers serialize their own native events into
 //! the `event` field; the daemon only enforces the envelope.
 //!
-//! Driver event vocabulary ([`DriverEvent`], [`Lifecycle`], [`BabysitterTool`])
+//! Driver event vocabulary ([`DriverEvent`], [`Lifecycle`])
 //! is shared between `orgasmic-drivers` and `orgasmic-daemon::supervisor` so
 //! the supervisor can persist driver-emitted events as well-typed payloads
 //! without each driver duplicating the JSON envelope shape (`arch_004`).
@@ -47,14 +47,14 @@ pub enum SessionError {
 ///
 /// The whole difference between a `text_chunk` that is a screen repaint and a
 /// `text_chunk` that is the assistant's actual words. A pane transport
-/// (rmux/tmux) has no other channel, so its `text_chunk` is rendered TUI output
+/// (tmux) has no other channel, so its `text_chunk` is rendered TUI output
 /// and forbidden storage; a structured transport's `text_chunk` is the model's or
 /// a subprocess's content, which is evidence.
 ///
 /// Lives here because [`SessionWriter`] is the choke point that has to act on
 /// it; `orgasmic-daemon` re-exports rather than re-implements it.
 pub fn transport_is_pane(transport: &str) -> bool {
-    matches!(transport.trim(), "rmux" | "tmux" | "tmux-tui")
+    matches!(transport.trim(), "tmux" | "tmux-tui")
 }
 
 /// One session JSONL line.
@@ -76,8 +76,6 @@ pub enum SessionEventKind {
     DriverEvent,
     /// Lifecycle event (acquire, attach, release, transition, etc.).
     Lifecycle,
-    /// Babysitter summary chunk handed to a stall detector.
-    BabysitterSummary,
     /// Free-form note written by a supervisor or recovery path.
     Note,
 }
@@ -219,9 +217,8 @@ impl SessionWriter {
     /// `driver_event` payloads pass through [`bound_driver_event_payload`]
     /// first: this is the single choke point every persisted harness payload
     /// goes through, so the cap cannot be bypassed by a new driver or a new
-    /// call site (orgasmic:TASK-FZB6T item 3). Lifecycle, babysitter-summary,
-    /// and note envelopes are supervisor-authored authority and are written
-    /// verbatim.
+    /// call site (orgasmic:TASK-FZB6T item 3). Lifecycle and note envelopes are
+    /// supervisor-authored authority and are written verbatim.
     ///
     /// Ahead of the cap sits a REFUSAL (orgasmic:TASK-FZB6T.2 finding 5): a
     /// `text_chunk` from a run whose recorded transport renders into a pane is
@@ -757,9 +754,7 @@ pub enum DriverEvent {
         chunk: String,
         seq: u64,
     },
-    /// Worker invoked a tool/transition. `name` matches a [`WorkerTool`]
-    /// variant for implementer runs and a [`BabysitterTool`] variant for
-    /// babysitter runs.
+    /// Worker invoked a tool/transition. `name` matches a [`WorkerTool`].
     ToolCall {
         call_id: String,
         name: String,
@@ -804,11 +799,11 @@ pub enum DriverEvent {
     /// Carries no content. Its sole purpose is to reset the supervisor's
     /// stall detector (`last_driver_event_at`) so an actively-working run that
     /// happens to be quiet is not mistaken for a stall. It is distinguished by
-    /// its `type` (`heartbeat`) so substantive views (evidence distillation,
-    /// babysitter summaries, UI transcripts) filter it out.
+    /// its `type` (`heartbeat`) so substantive views (evidence distillation and
+    /// UI transcripts) filter it out.
     Heartbeat { seq: u64 },
     /// A TUI pane wrote bytes to its terminal. Emitted only by the pane
-    /// transports (rmux), coalesced to at most one event per fixed interval,
+    /// transport (tmux), coalesced to at most one event per fixed interval,
     /// and carrying no pane content — `bytes` is just how many raw pane output
     /// bytes were observed in the window (dec_WDR5K item 7 keeps rendered TUI
     /// output out of the JSONL; see TASK-AFE5Q).
@@ -825,9 +820,9 @@ pub enum DriverEvent {
     ///
     /// It exists because a pane is a terminal, not an event source: without it
     /// `last_driver_event_at` freezes at `ready` and the supervisor's stall
-    /// detector releases every healthy rmux dispatch at exactly
+    /// detector releases every healthy tmux dispatch at exactly
     /// `DEFAULT_STALL_TIMEOUT` (TASK-RWCRN). This is the *only* stall input an
-    /// rmux run has, so anything that stops counting it against the stall
+    /// tmux run has, so anything that stops counting it against the stall
     /// clock — e.g. TASK-VZMZE moving stall onto a progress-only clock — must
     /// give the pane transports a replacement signal in the same change, or
     /// TASK-RWCRN regresses.
@@ -948,10 +943,6 @@ pub enum Lifecycle {
         diff_summary: String,
         acceptance_criteria: Vec<String>,
     },
-    BabysitterSpawned {
-        target_run: String,
-        babysitter_run: String,
-    },
     /// A still-live runtime from a prior daemon boot was rehydrated into the
     /// current supervisor. The original `run_id`/`runtime_id` are preserved
     /// (carried by the envelope); this event records the *new* boot that
@@ -1042,65 +1033,6 @@ impl WorkerTool {
             _ => None,
         }
     }
-}
-
-/// Babysitter tool set per arch_004. Babysitters cannot edit code or invoke
-/// arbitrary CLI commands; only these four actions are permitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BabysitterTool {
-    Poke,
-    Restart,
-    Escalate,
-    RecordFinding,
-}
-
-impl BabysitterTool {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BabysitterTool::Poke => "poke_implementer",
-            BabysitterTool::Restart => "restart_implementer",
-            BabysitterTool::Escalate => "escalate_to_human",
-            BabysitterTool::RecordFinding => "record_finding",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<BabysitterTool> {
-        match s {
-            "poke" | "poke_implementer" => Some(BabysitterTool::Poke),
-            "restart" | "restart_implementer" => Some(BabysitterTool::Restart),
-            "escalate" | "escalate_to_human" => Some(BabysitterTool::Escalate),
-            "record_finding" => Some(BabysitterTool::RecordFinding),
-            _ => None,
-        }
-    }
-
-    pub const ALL: [BabysitterTool; 4] = [
-        BabysitterTool::Poke,
-        BabysitterTool::Restart,
-        BabysitterTool::Escalate,
-        BabysitterTool::RecordFinding,
-    ];
-}
-
-/// A summarized implementer event chunk fed to the babysitter (arch_004).
-///
-/// The supervisor coalesces driver events from the implementer's session into
-/// a coarse summary before handing them to the babysitter, so the babysitter
-/// reasons about stall/escalation signals instead of raw byte streams.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BabysitterSummaryChunk {
-    pub window_start_seq: u64,
-    pub window_end_seq: u64,
-    pub event_count: usize,
-    /// Highest-level event observed in the window. `RunFail` outranks
-    /// `RunComplete` outranks `ToolCall`, etc.; see implementation in
-    /// `orgasmic-daemon::supervisor`.
-    pub headline: String,
-    /// Last assistant text, truncated. Empty if no text in window.
-    pub last_text: String,
-    /// Tool call names observed.
-    pub tool_calls: Vec<String>,
 }
 
 /// Read every envelope from a JSONL file. Skips empty lines but returns an
@@ -1573,7 +1505,7 @@ mod tests {
 
         push(
             SessionEventKind::Lifecycle,
-            json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-SCAN", "worker_id": "implementer-claude-rmux"}),
+            json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-SCAN", "worker_id": "implementer-claude-tmux"}),
             &mut out,
         );
         push(
@@ -1751,7 +1683,7 @@ mod tests {
         writer
             .append(
                 SessionEventKind::Lifecycle,
-                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-MIMIC", "worker_id": "implementer-claude-rmux"}),
+                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-MIMIC", "worker_id": "implementer-claude-tmux"}),
             )
             .unwrap();
         // A worker printing session JSON into its own transcript must not be
@@ -1865,18 +1797,18 @@ mod tests {
         writer
             .append(
                 SessionEventKind::Lifecycle,
-                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-TUI", "worker_id": "implementer-claude-rmux"}),
+                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-TUI", "worker_id": "implementer-claude-tmux"}),
             )
             .unwrap();
-        // The run states its own transport, exactly as a dispatched rmux run
+        // The run states its own transport, exactly as a dispatched tmux run
         // does. This line is what fences the writer.
         writer
             .append(
                 SessionEventKind::Lifecycle,
-                json!({"phase": "run_meta", "transport": "rmux", "harness": "claude", "driver_config": {}}),
+                json!({"phase": "run_meta", "transport": "tmux", "harness": "claude", "driver_config": {}}),
             )
             .unwrap();
-        assert_eq!(writer.transport(), Some("rmux"));
+        assert_eq!(writer.transport(), Some("tmux"));
 
         // One full-screen repaint: cursor home, clear, 40 rows of content.
         let repaint = format!(
@@ -1956,7 +1888,7 @@ mod tests {
             SessionWriter::open(&path, RuntimeIdentity::new("run-tui", "boot-tui")).unwrap();
         assert_eq!(
             writer.transport(),
-            Some("rmux"),
+            Some("tmux"),
             "a reopened writer must recover the run's recorded transport"
         );
         // Repeatedly, because a byte ceiling forbids one repaint and permits a
@@ -2356,27 +2288,6 @@ mod tests {
     }
 
     #[test]
-    fn babysitter_tool_set_is_closed() {
-        for t in BabysitterTool::ALL {
-            assert_eq!(BabysitterTool::parse(t.as_str()), Some(t));
-        }
-        assert_eq!(
-            BabysitterTool::parse("poke_implementer"),
-            Some(BabysitterTool::Poke)
-        );
-        assert_eq!(
-            BabysitterTool::parse("restart_implementer"),
-            Some(BabysitterTool::Restart)
-        );
-        assert_eq!(
-            BabysitterTool::parse("escalate_to_human"),
-            Some(BabysitterTool::Escalate)
-        );
-        assert!(BabysitterTool::parse("edit_file").is_none());
-        assert!(BabysitterTool::parse("shell").is_none());
-    }
-
-    #[test]
     fn lifecycle_round_trip() {
         let lc = Lifecycle::Acquire {
             task_id: "TASK-006".into(),
@@ -2447,7 +2358,7 @@ mod tests {
                 "{{\"seq\":{seq},\"time\":\"2026-08-08T00:00:00Z\",\"run_id\":\"run-tear\",\
                  \"runtime_id\":\"rt-tear\",\"boot_id\":\"boot-tear\",\"kind\":\"{kind}\",\
                  \"event\":{{\"phase\":\"acquire\",\"kind\":\"worker\",\
-                 \"task_id\":\"TASK-TEAR\",\"worker_id\":\"implementer-claude-rmux\"}}}}"
+                 \"task_id\":\"TASK-TEAR\",\"worker_id\":\"implementer-claude-tmux\"}}}}"
             )
         };
         const TEAR: &str = "{\"seq\":9001,\"kind\":\"lifecycle\",\"event\":{\"phase\":";

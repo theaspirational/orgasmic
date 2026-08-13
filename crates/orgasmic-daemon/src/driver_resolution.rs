@@ -8,7 +8,7 @@
 //!
 //! Under `cfg(test)` they are a fence, and the fence is **default-deny**:
 //! every mode resolves to a panic naming the address and pointing at
-//! [`stub_driver`], except the in-process stub and the two mux modes named in
+//! [`stub_driver`], except the in-process stub and the tmux mode named in
 //! [`LIVE_TOOLING_MODES`]. A mode added to the registry tomorrow is refused by
 //! this file without anyone editing it.
 //!
@@ -19,7 +19,7 @@
 //! address whose harness that mode would exec on its own. Without the second
 //! tier the allowance leaks: an ordinary dispatch of `tmux`/`claude` would have
 //! spawned a real billed agent, because the daemon stages a placeholder command
-//! that both mux modes deliberately swap for the harness's real binary.
+//! that the tmux mode deliberately swaps for the harness's real binary.
 //!
 //! The fence exists because a daemon unit test once built a
 //! `StageWorker { driver: "stdio", harness: "hermes" }` and guarded the
@@ -66,8 +66,8 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 /// The only real modes a daemon test build may resolve, and the only entry in
 /// this file that is an exception rather than a rule.
 ///
-/// `tmux` and `rmux` are the surface the suite's existing live mux family is
-/// built on — `test_tooling::skip_test_if_missing`, `own_rmux_server_for_tests`,
+/// `tmux` is the surface the suite's existing live mux family is
+/// built on — `test_tooling::skip_test_if_missing`, `own_tmux_server_for_tests`,
 /// `test_environment_lock` — a deliberate, gated body of coverage that this
 /// fence is not entitled to delete.
 ///
@@ -76,7 +76,7 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 /// into the driver config, so a test controls what the pane execs. That is
 /// false on exactly the path a dispatch takes: `spawn_worker_run` stages every
 /// worker with the placeholder `sh -lc 'echo orgasmic pipeline stage acquired;
-/// exec sh'`, and both mux modes recognise that sentinel and deliberately swap
+/// exec sh'`, and the tmux mode recognises that sentinel and deliberately swaps
 /// it for the harness's real binary off `$PATH` — `claude` with
 /// `--dangerously-skip-permissions`. What keeps the mux allowance honest is
 /// therefore not this list but [`resolve_launch_driver`], which every launch
@@ -95,13 +95,13 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 /// and it buys nothing at a launch site, which [`resolve_launch_driver`] gates
 /// separately.
 #[cfg(test)]
-pub(crate) const LIVE_TOOLING_MODES: &[&str] = &["tmux", "rmux"];
+pub(crate) const LIVE_TOOLING_MODES: &[&str] = &["tmux"];
 
 /// Legacy transport ids that name a [`LIVE_TOOLING_MODES`] transport.
 #[cfg(test)]
 const LIVE_TOOLING_TRANSPORTS: &[&str] = &["tmux-tui"];
 
-/// Test profile: [`STUB_MODE`]/[`STUB_HARNESS`] and the mux modes resolve;
+/// Test profile: [`STUB_MODE`]/[`STUB_HARNESS`] and tmux resolve;
 /// every other mode panics.
 ///
 /// An address the registry does not know still answers `None`, so the callers'
@@ -130,14 +130,14 @@ pub(crate) fn resolve_launch_driver(mode: &str, harness: &str) -> Option<Box<dyn
 /// Test profile: [`resolve_driver`] plus the pair rule the mux allowance needs.
 ///
 /// Resolving a driver launches nothing, which is why [`LIVE_TOOLING_MODES`] can
-/// hand the mux modes out at all: the suite's live mux coverage either attaches
+/// hand tmux out at all: the suite's live mux coverage either attaches
 /// to a session the test created itself, or execs through the daemon's pinned
 /// executable authority (`pinned_claude_execution_config`), which refuses an
 /// executable it has not verified.
 ///
 /// An ordinary dispatch has neither protection. `spawn_worker_run` stages the
-/// placeholder `sh -lc 'echo orgasmic pipeline stage acquired; exec sh'`, both
-/// mux modes swap that sentinel for the harness's real binary off `$PATH`, and
+/// placeholder `sh -lc 'echo orgasmic pipeline stage acquired; exec sh'`, the
+/// tmux mode swaps that sentinel for the harness's real binary off `$PATH`, and
 /// `claude` arrives with `--dangerously-skip-permissions`. That is the incident
 /// class in the spelling the standing pane mode makes likeliest, so the launch
 /// sites refuse a mux address carrying a harness the mode would exec — while
@@ -169,9 +169,7 @@ pub(crate) fn resolve_driver_by_transport(transport: &str) -> Option<Box<dyn Wor
 }
 
 #[cfg(test)]
-pub(crate) use stub::{
-    stub_config, stub_driver, STUB_HARNESS, STUB_MODE, STUB_TRANSPORT, TEST_PROFILE_REFUSAL,
-};
+pub(crate) use stub::{stub_driver, STUB_HARNESS, STUB_MODE, STUB_TRANSPORT, TEST_PROFILE_REFUSAL};
 
 /// The refusal a `(mode, harness)` pair earns under the test profile, or `None`
 /// when the pair is resolvable there.
@@ -218,9 +216,8 @@ mod stub {
     use async_trait::async_trait;
     use orgasmic_core::DriverEvent;
     use orgasmic_drivers::{
-        AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext,
-        DriverControl, DriverError, DriverSession, TransitionAck, TransitionRequest,
-        TransportInteraction, WorkerDriver,
+        AttachOutcome, Attached, DriverConfig, DriverContext, DriverControl, DriverError,
+        DriverSession, TransitionAck, TransitionRequest, TransportInteraction, WorkerDriver,
     };
     use serde_json::json;
     use tokio::sync::mpsc::Sender;
@@ -242,12 +239,6 @@ mod stub {
     /// Build the in-process stub transport.
     pub(crate) fn stub_driver() -> Box<dyn WorkerDriver> {
         Box::new(StubDriver::new())
-    }
-
-    /// The stub reads no configuration; this is the empty config every
-    /// stub-addressed fixture passes.
-    pub(crate) fn stub_config() -> DriverConfig {
-        DriverConfig::from_value(json!({}))
     }
 
     /// A transport with no subprocess, no socket, and no host lookup.
@@ -351,16 +342,6 @@ mod stub {
             Ok(TransitionAck {
                 accepted: true,
                 message: Some(format!("stub transition {} -> {}", req.from, req.to)),
-            })
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Ok(BabysitterAck {
-                accepted: true,
-                message: Some(format!("stub babysitter {:?}", req.tool)),
             })
         }
 
@@ -541,9 +522,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "refuses to resolve the real transport rmux/codex")]
-    fn spawning_rmux_codex_panics() {
-        let _ = resolve_launch_driver("rmux", "codex");
+    #[should_panic(expected = "refuses to resolve the real transport tmux/codex")]
+    fn spawning_tmux_codex_panics() {
+        let _ = resolve_launch_driver("tmux", "codex");
     }
 
     /// The two halves of the split, stated together: a mux address the mode
@@ -570,10 +551,10 @@ mod tests {
     }
 
     /// A mux mode carrying a harness it cannot exec stays launchable — that is
-    /// the whole live mux family (`rmux`/`custom` is a bare PTY).
+    /// the whole live mux family (`tmux`/`custom` is a bare PTY).
     #[test]
     fn mux_modes_still_launch_for_a_harness_they_cannot_exec() {
-        assert!(resolve_launch_driver("rmux", "custom").is_some());
+        assert!(resolve_launch_driver("tmux", "custom").is_some());
     }
 
     #[test]

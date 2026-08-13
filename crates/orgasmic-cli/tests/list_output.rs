@@ -18,7 +18,7 @@ mod common;
 
 use common::{init_git_repo, orgasmic_command, run_git, test_options};
 
-use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
+use orgasmic_drivers::test_tooling::live_session_guard;
 
 async fn boot(home: Home) -> RunningDaemon {
     home.ensure().unwrap();

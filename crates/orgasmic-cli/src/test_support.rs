@@ -16,16 +16,15 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 /// under `cargo test --workspace` peak concurrency those subprocesses
 /// transiently fail or race (a failed `git` spawn even panics `run_git`, whose
 /// `assert!(status.success())` treats CPU-pressure failure as a hard error).
-/// This is the same contention class as the live tmux/rmux tests (TASK-X0ZVE)
+/// This is the same contention class as the live tmux tests (TASK-X0ZVE)
 /// and shares their lock PATH, so at most one heavy test runs at a time across
 /// every binary. Held for the whole test via the returned guard (TASK-SJQ9V
 /// residual: doctor staleness, content-hub install, dispatch-close pruning).
 ///
 /// TASK-Z3093 collapsed the nine copies of this guard into one definition in
-/// `orgasmic_drivers::modes::rmux::test_tooling`, which also reaps the rmux
-/// sessions a test registers on it. Re-exported here so CLI callers keep their
+/// `orgasmic_drivers::test_tooling`. Re-exported here so CLI callers keep their
 /// existing import.
-pub(crate) use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
+pub(crate) use orgasmic_drivers::test_tooling::live_session_guard;
 
 /// Acquire the process-wide environment lock. Hold the returned guard for the
 /// duration of any test that sets/clears env or exercises production code that

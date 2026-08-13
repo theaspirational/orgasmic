@@ -4,15 +4,12 @@
 //!
 //! Adapted from HAR's `src/drivers/`. Differences from HAR:
 //!
-//! - One trait covers acquire, attach, release, event stream, transition,
-//!   and babysitter actions. There is no separate `WorkerHandle` indirection
+//! - One trait covers acquire, attach, release, event stream, and transition.
+//!   There is no separate `WorkerHandle` indirection
 //!   because the supervisor owns the lease bookkeeping (see
 //!   `orgasmic-daemon::supervisor`).
 //! - Driver events are emitted as [`orgasmic_core::DriverEvent`] values so
 //!   they land in the per-run JSONL session unchanged.
-//! - Babysitter runs reuse the same trait, but the spawning supervisor sets
-//!   `kind = RunKind::Babysitter`, and drivers honor the restricted tool set
-//!   from [`orgasmic_core::BabysitterTool`].
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -23,9 +20,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use orgasmic_core::{
-    BabysitterTool, DriverEvent, RuntimeIdentity, SandboxAllowlist, TextStream, WorkerTool,
-};
+use orgasmic_core::{DriverEvent, RuntimeIdentity, SandboxAllowlist, TextStream, WorkerTool};
 
 use crate::catalog::TransportInteraction;
 use crate::runtime_options::{
@@ -51,9 +46,6 @@ pub enum RunKind {
     /// `alias` keeps pre-rename persisted sessions deserializable.
     #[serde(alias = "implementer")]
     Worker,
-    /// A babysitter watching another run. Restricted tool set; cannot edit
-    /// code or invoke arbitrary CLI commands (`arch_004`).
-    Babysitter,
 }
 
 /// What spawning the driver needs from the supervisor.
@@ -65,12 +57,8 @@ pub struct DriverContext {
     pub worker_id: String,
     pub project_id: Option<String>,
     /// Worktree the driver should operate in. Drivers MAY ignore this when
-    /// the underlying runtime decides its own cwd (e.g. babysitters that
-    /// only call back into the daemon).
+    /// the underlying runtime decides its own cwd.
     pub worktree: Option<PathBuf>,
-    /// Babysitters only: the run id they are observing. `None` for
-    /// implementer runs.
-    pub babysitter_target: Option<String>,
 }
 
 /// Per-driver configuration. Each driver decides its own shape; the
@@ -384,18 +372,6 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         }))
     }
 
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        Ok(HarnessControlOutcome::event(DriverEvent::ToolCall {
-            call_id: format!("{}-bs-{}", self.harness(), uuid::Uuid::new_v4()),
-            name: req.tool.as_str().into(),
-            args: req.payload,
-            seq: self.next_seq(),
-        }))
-    }
-
     async fn send_input(
         &mut self,
         _req: UserInputRequest,
@@ -631,8 +607,8 @@ pub struct DriverSession {
     /// Event stream from the driver. The supervisor folds each event into
     /// the per-run JSONL.
     pub events: mpsc::Receiver<DriverEvent>,
-    /// Supervisor-side handle for transitions, babysitter actions, and
-    /// release. Implementations are usually a thin wrapper around the
+    /// Supervisor-side handle for transitions and release. Implementations
+    /// are usually a thin wrapper around the
     /// driver's command channel.
     pub control: Box<dyn DriverControl>,
     /// Driver-owned event producer. The supervisor retains this handle so a
@@ -646,19 +622,11 @@ pub struct DriverSession {
 
 #[async_trait]
 pub trait DriverControl: Send + Sync {
-    /// Ask the worker to transition the task state machine. Only meaningful
-    /// for `RunKind::Worker`. Babysitter drivers MAY reject this.
+    /// Ask the worker to transition the task state machine.
     async fn transition_state(
         &mut self,
         req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError>;
-
-    /// Invoke one of the four babysitter tools. Only meaningful for
-    /// `RunKind::Babysitter`. Implementer drivers MUST reject this.
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError>;
 
     /// Send user-authored input into a live interactive runtime.
     async fn send_input(&mut self, _req: UserInputRequest) -> Result<UserInputAck, DriverError> {
@@ -704,19 +672,6 @@ pub struct TransitionRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransitionAck {
-    pub accepted: bool,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BabysitterRequest {
-    pub tool: BabysitterTool,
-    pub target_run: String,
-    pub payload: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BabysitterAck {
     pub accepted: bool,
     pub message: Option<String>,
 }
@@ -886,8 +841,6 @@ pub enum DriverError {
     ManagerWakeProviderMismatch,
     #[error("manager wake pane is unavailable")]
     ManagerWakeUnavailable,
-    #[error("babysitter tool '{0}' is not in the allowed set")]
-    BabysitterToolBlocked(String),
     #[error("worker tool '{0}' is not callable on this run kind")]
     WorkerToolBlocked(String),
     #[error("driver i/o: {0}")]
@@ -896,23 +849,6 @@ pub enum DriverError {
     InputNotReady(std::time::Duration),
     #[error("driver: {0}")]
     Other(String),
-}
-
-/// Build a [`BabysitterRequest`] with validation that the tool is in the
-/// closed set. Drivers and the supervisor share this so the policy lives in
-/// one place.
-pub fn build_babysitter_request(
-    tool: &str,
-    target_run: String,
-    payload: Value,
-) -> Result<BabysitterRequest, DriverError> {
-    let tool = BabysitterTool::parse(tool)
-        .ok_or_else(|| DriverError::BabysitterToolBlocked(tool.to_string()))?;
-    Ok(BabysitterRequest {
-        tool,
-        target_run,
-        payload,
-    })
 }
 
 /// True if `name` is callable on an implementer run.
@@ -948,21 +884,6 @@ mod tests {
     }
 
     #[test]
-    fn babysitter_tool_set_is_closed() {
-        assert!(build_babysitter_request("poke", "run-x".into(), Value::Null).is_ok());
-        assert!(build_babysitter_request("poke_implementer", "run-x".into(), Value::Null).is_ok());
-        assert!(build_babysitter_request("restart", "run-x".into(), Value::Null).is_ok());
-        assert!(
-            build_babysitter_request("restart_implementer", "run-x".into(), Value::Null).is_ok()
-        );
-        assert!(build_babysitter_request("escalate", "run-x".into(), Value::Null).is_ok());
-        assert!(build_babysitter_request("escalate_to_human", "run-x".into(), Value::Null).is_ok());
-        assert!(build_babysitter_request("record_finding", "run-x".into(), Value::Null).is_ok());
-        let err = build_babysitter_request("shell", "run-x".into(), Value::Null).unwrap_err();
-        assert!(matches!(err, DriverError::BabysitterToolBlocked(_)));
-    }
-
-    #[test]
     fn implementer_tools_are_closed() {
         assert!(implementer_tool_is_allowed("transition_state"));
         assert!(!implementer_tool_is_allowed("delete_repo"));
@@ -970,10 +891,9 @@ mod tests {
 
     #[test]
     fn run_kind_round_trips() {
-        for k in [RunKind::Worker, RunKind::Babysitter] {
-            let j = serde_json::to_string(&k).unwrap();
-            let back: RunKind = serde_json::from_str(&j).unwrap();
-            assert_eq!(back, k);
-        }
+        let kind = RunKind::Worker;
+        let json = serde_json::to_string(&kind).unwrap();
+        let round_tripped: RunKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, kind);
     }
 }

@@ -19,8 +19,8 @@
 # `tmux_sessions_land_on_a_server_the_test_run_owns`, which asserts a real
 # session is reachable on the owned server and NOT on the shared one. It is
 # deliberately NOT in `cmd`: under the injection it would create its sessions on
-# whichever server the environment selects — the operator's own, or the rmux
-# server holding live worker panes — and a proof must not damage what it proves.
+# whichever server the environment selects — possibly the operator's own — and
+# a proof must not damage what it proves.
 
 exit: 101
 

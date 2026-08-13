@@ -521,7 +521,7 @@ fn crash_error(point: FaultPoint) -> CompactionError {
 ///
 /// `entries` is a CANDIDATE LIST and nothing more (dec_BBPW4). Terminal state,
 /// transport and reclaimability are all re-derived here from each file's
-/// current bytes; a catalog entry that says a live stdio run is a terminal rmux
+/// current bytes; a catalog entry that says a live stdio run is a terminal tmux
 /// one changes which paths are looked at and changes no decision.
 ///
 /// Every planned file is also proven STABLE: the file identity is read before
@@ -2095,7 +2095,7 @@ mod tests {
     #[test]
     fn a_plan_is_stable_and_a_dry_run_writes_nothing() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 40, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 40, true);
         let before = std::fs::read(&path).unwrap();
 
         let entries = indexed(&board);
@@ -2119,7 +2119,7 @@ mod tests {
     #[test]
     fn compaction_requires_the_exact_confirmation_token() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 20, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 20, true);
         let before = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
 
@@ -2143,7 +2143,7 @@ mod tests {
     #[test]
     fn compaction_reclaims_exactly_the_plan_and_stays_recoverable() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 64, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 64, true);
         let original = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
@@ -2240,7 +2240,7 @@ mod tests {
         use orgasmic_core::session::RuntimeIdentity;
 
         let held = board();
-        let path = write_session(&held.sessions, "run-lease", "rmux", 12, true);
+        let path = write_session(&held.sessions, "run-lease", "tmux", 12, true);
         let original = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&held.root, &indexed(&held));
         let token = plan.manifest_id.clone();
@@ -2341,7 +2341,7 @@ mod tests {
 
         // ---- the other half: no lease, so the transaction must REFUSE. ------
         let unheld = board();
-        let path = write_session(&unheld.sessions, "run-unheld", "rmux", 12, true);
+        let path = write_session(&unheld.sessions, "run-unheld", "tmux", 12, true);
         let original_unheld = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&unheld.root, &indexed(&unheld));
         let token = plan.manifest_id.clone();
@@ -2412,7 +2412,7 @@ mod tests {
         use std::sync::Arc;
 
         let board = board();
-        let path = write_session(&board.sessions, "run-cancel", "rmux", 12, true);
+        let path = write_session(&board.sessions, "run-cancel", "tmux", 12, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         assert_eq!(plan.files.len(), 1);
@@ -2623,7 +2623,7 @@ mod tests {
 
         // ---- BACKWARD: an older runtime reads what this build writes. -------
         let board = board();
-        let path = write_session(&board.sessions, "run-compat", "rmux", 24, true);
+        let path = write_session(&board.sessions, "run-compat", "tmux", 24, true);
         let original = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
@@ -2786,7 +2786,7 @@ mod tests {
             FaultPoint::AfterRename,
         ] {
             let board = board();
-            let path = write_session(&board.sessions, "run-crash", "rmux", 16, true);
+            let path = write_session(&board.sessions, "run-crash", "tmux", 16, true);
             let original = std::fs::read(&path).unwrap();
             let plan = plan_compaction(&board.root, &indexed(&board));
             let token = plan.manifest_id.clone();
@@ -2858,7 +2858,7 @@ mod tests {
     #[test]
     fn a_rollback_decodes_nothing_before_it_holds_the_lock() {
         let board = board();
-        write_session(&board.sessions, "run-a", "rmux", 8, true);
+        write_session(&board.sessions, "run-a", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         apply(plan, &token).unwrap();
@@ -2917,7 +2917,7 @@ mod tests {
 
         for (what, damage) in cases {
             let board = board();
-            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let path = write_session(&board.sessions, "run-a", "tmux", 12, true);
             let plan = plan_compaction(&board.root, &indexed(&board));
             let token = plan.manifest_id.clone();
             let fenced = fence_all(&plan);
@@ -2976,7 +2976,7 @@ mod tests {
     #[test]
     fn a_real_format_1_manifest_restores_the_generation_it_authorized() {
         let board = board();
-        let path = write_session(&board.sessions, "run-legacy", "rmux", 24, true);
+        let path = write_session(&board.sessions, "run-legacy", "tmux", 24, true);
         let original = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
@@ -3091,7 +3091,7 @@ mod tests {
     #[test]
     fn a_manifest_this_build_cannot_read_is_refused_not_reported_as_an_empty_success() {
         let board = board();
-        let path = write_session(&board.sessions, "run-future", "rmux", 8, true);
+        let path = write_session(&board.sessions, "run-future", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         let original = std::fs::read(&path).unwrap();
@@ -3152,7 +3152,7 @@ mod tests {
     #[test]
     fn an_invalid_record_survives_compaction_byte_for_byte() {
         let board = board();
-        let path = write_session(&board.sessions, "run-invalid", "rmux", 6, true);
+        let path = write_session(&board.sessions, "run-invalid", "tmux", 6, true);
         let source = std::fs::read_to_string(&path).unwrap();
         let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
 
@@ -3214,7 +3214,7 @@ mod tests {
     #[test]
     fn a_run_that_has_not_ended_is_never_compacted() {
         let board = board();
-        write_session(&board.sessions, "run-live", "rmux", 40, false);
+        write_session(&board.sessions, "run-live", "tmux", 40, false);
         let plan = plan_compaction(&board.root, &indexed(&board));
         assert!(plan.is_empty());
         assert_eq!(plan.skipped_not_terminal, 1);
@@ -3222,7 +3222,7 @@ mod tests {
 
     /// dec_BBPW4 / finding 4 — the catalog is a candidate list, never deletion
     /// authority. A semantically corrupt entry claiming a LIVE stdio run is a
-    /// terminal rmux one authorizes nothing: the plan re-derives both facts from
+    /// terminal tmux one authorizes nothing: the plan re-derives both facts from
     /// the file's current bytes and refuses.
     #[test]
     fn a_corrupt_catalog_entry_cannot_authorize_a_deletion() {
@@ -3235,7 +3235,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         // The exact corruption the reviewer describes: valid JSON, right path,
         // right fingerprint, lying semantics.
-        entries[0].transport = Some("rmux".to_string());
+        entries[0].transport = Some("tmux".to_string());
         entries[0].terminal = Some(crate::run_catalog::TerminalRecord::DriverEvent {
             event: "run_complete".to_string(),
             at: Utc::now(),
@@ -3258,8 +3258,8 @@ mod tests {
     #[test]
     fn a_file_that_changed_after_planning_is_skipped_untouched() {
         let board = board();
-        let stable = write_session(&board.sessions, "run-a", "rmux", 32, true);
-        let racing = write_session(&board.sessions, "run-b", "rmux", 32, true);
+        let stable = write_session(&board.sessions, "run-a", "tmux", 32, true);
+        let racing = write_session(&board.sessions, "run-b", "tmux", 32, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         assert_eq!(plan.files.len(), 2);
@@ -3300,7 +3300,7 @@ mod tests {
     #[test]
     fn compaction_compares_the_planned_digest_not_just_the_counts() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
 
@@ -3354,7 +3354,7 @@ mod tests {
     #[test]
     fn an_unfenced_session_is_never_rewritten() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 16, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 16, true);
         let before = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
@@ -3390,7 +3390,7 @@ mod tests {
     #[test]
     fn an_unleased_session_is_never_restored_by_rollback() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 16, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 16, true);
         let original = std::fs::read(&path).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
@@ -3427,7 +3427,7 @@ mod tests {
     #[test]
     fn maintenance_is_exclusive_per_project() {
         let board = board();
-        write_session(&board.sessions, "run-a", "rmux", 8, true);
+        write_session(&board.sessions, "run-a", "tmux", 8, true);
         let held = acquire_maintenance_lock(&board.root).unwrap();
 
         let plan = plan_compaction(&board.root, &indexed(&board));
@@ -3458,7 +3458,7 @@ mod tests {
     #[test]
     fn torn_and_blank_records_survive_compaction() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 16, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 16, true);
         let mut content = std::fs::read(&path).unwrap();
         // The run's terminal fact has to survive the torn tail, or the run is
         // simply not a candidate: a driver `run_complete` is what a session
@@ -3496,7 +3496,7 @@ mod tests {
     #[test]
     fn a_nested_type_collision_is_never_reclaimed() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 8, true);
         let mut content = std::fs::read_to_string(&path).unwrap();
         // The exact shape the byte-scan classifier got wrong: a structured-transport
         // tool_result whose content block is `{"type":"text_chunk"}`, and whose
@@ -3556,7 +3556,7 @@ mod tests {
     #[test]
     fn a_stale_staging_file_is_never_the_live_file() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 24, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 24, true);
         let staging = staging_path(&path);
         std::fs::write(&staging, b"garbage from a killed transaction\n").unwrap();
         let original = std::fs::read(&path).unwrap();
@@ -3591,7 +3591,7 @@ mod tests {
     #[test]
     fn rollback_refuses_a_manifest_naming_a_foreign_path() {
         let board = board();
-        write_session(&board.sessions, "run-a", "rmux", 8, true);
+        write_session(&board.sessions, "run-a", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         apply(plan, &token).unwrap();
@@ -3635,7 +3635,7 @@ mod tests {
     #[test]
     fn rollback_refuses_a_destination_it_did_not_produce() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         apply(plan, &token).unwrap();
@@ -3660,7 +3660,7 @@ mod tests {
     #[test]
     fn rollback_refuses_a_corrupted_archive() {
         let board = board();
-        let path = write_session(&board.sessions, "run-a", "rmux", 8, true);
+        let path = write_session(&board.sessions, "run-a", "tmux", 8, true);
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();
         let report = apply(plan, &token).unwrap();
@@ -3696,7 +3696,7 @@ mod tests {
             FaultPoint::AfterRename,
         ] {
             let board = board();
-            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let path = write_session(&board.sessions, "run-a", "tmux", 12, true);
             let original = std::fs::read(&path).unwrap();
             let plan = plan_compaction(&board.root, &indexed(&board));
             let token = plan.manifest_id.clone();
@@ -3754,7 +3754,7 @@ mod tests {
     fn a_full_disk_before_the_rename_never_touches_the_live_file() {
         for point in [FaultPoint::ArchiveWrite, FaultPoint::StageWrite] {
             let board = board();
-            let path = write_session(&board.sessions, "run-a", "rmux", 12, true);
+            let path = write_session(&board.sessions, "run-a", "tmux", 12, true);
             let original = std::fs::read(&path).unwrap();
             let plan = plan_compaction(&board.root, &indexed(&board));
             let token = plan.manifest_id.clone();
@@ -3792,8 +3792,8 @@ mod tests {
     #[test]
     fn a_failed_result_journal_stops_the_transaction() {
         let board = board();
-        let first = write_session(&board.sessions, "run-a", "rmux", 12, true);
-        let second = write_session(&board.sessions, "run-b", "rmux", 12, true);
+        let first = write_session(&board.sessions, "run-a", "tmux", 12, true);
+        let second = write_session(&board.sessions, "run-b", "tmux", 12, true);
         let original_second = std::fs::read(&second).unwrap();
         let plan = plan_compaction(&board.root, &indexed(&board));
         let token = plan.manifest_id.clone();

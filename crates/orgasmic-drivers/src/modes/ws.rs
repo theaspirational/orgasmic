@@ -25,10 +25,9 @@ use crate::modes::jsonrpc::{
     send_driver_error, JsonRpcTransport, RpcIds,
 };
 use crate::r#trait::{
-    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
-    DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter, HarnessRequest,
-    PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
-    WorkerDriver, WsProtocol,
+    preflight_via_adapter, AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError,
+    DriverSession, HarnessEventAdapter, HarnessRequest, PreflightOutcome, TransitionAck,
+    TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver, WsProtocol,
 };
 use crate::runtime_options::{RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsRequest};
 use crate::sandbox::allowlist_from_driver_config;
@@ -191,7 +190,6 @@ impl WorkerDriver for WsDriver {
             events: rx,
             control: Box::new(WsControl {
                 mode: control,
-                kind: ctx.run_kind,
                 released: false,
             }),
             producer,
@@ -398,19 +396,6 @@ where
             }));
             close
         }
-        WsCommand::BabysitterAction { req, ack } => {
-            let result = adapter.babysitter_action(req).await;
-            let done = handle_outcome(result, &mut transport, events, ids).await;
-            let close = matches!(done, Ok(true));
-            if close {
-                let _ = transport.ws.close(None).await;
-            }
-            let _ = ack.send(done.map(|_| BabysitterAck {
-                accepted: true,
-                message: None,
-            }));
-            close
-        }
         WsCommand::SendInput { req, ack } => {
             let result = adapter.send_input(req).await;
             let done = handle_outcome(result, &mut transport, events, ids).await;
@@ -480,10 +465,6 @@ enum WsCommand {
         req: TransitionRequest,
         ack: oneshot::Sender<Result<TransitionAck, DriverError>>,
     },
-    BabysitterAction {
-        req: BabysitterRequest,
-        ack: oneshot::Sender<Result<BabysitterAck, DriverError>>,
-    },
     SendInput {
         req: UserInputRequest,
         ack: oneshot::Sender<Result<UserInputAck, DriverError>>,
@@ -538,7 +519,6 @@ enum WsControlMode {
 
 struct WsControl {
     mode: WsControlMode,
-    kind: RunKind,
     released: bool,
 }
 
@@ -548,9 +528,6 @@ impl DriverControl for WsControl {
         &mut self,
         req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
-        if self.kind == RunKind::Babysitter {
-            return Err(DriverError::WorkerToolBlocked("transition_state".into()));
-        }
         match &mut self.mode {
             WsControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.transition_state(req).await?;
@@ -568,35 +545,6 @@ impl DriverControl for WsControl {
                     .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
                 rx.await.map_err(|_| {
                     DriverError::Transport("websocket transition ack dropped".into())
-                })?
-            }
-        }
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
-        if self.kind == RunKind::Worker {
-            return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
-        }
-        match &mut self.mode {
-            WsControlMode::Simulated { adapter, events } => {
-                let outcome = adapter.babysitter_action(req).await?;
-                crate::modes::jsonrpc::emit_events(events, outcome.events).await;
-                Ok(BabysitterAck {
-                    accepted: true,
-                    message: None,
-                })
-            }
-            WsControlMode::Real { commands } => {
-                let (ack, rx) = oneshot::channel();
-                commands
-                    .send(WsCommand::BabysitterAction { req, ack })
-                    .await
-                    .map_err(|_| DriverError::Transport("websocket task ended".into()))?;
-                rx.await.map_err(|_| {
-                    DriverError::Transport("websocket babysitter ack dropped".into())
                 })?
             }
         }

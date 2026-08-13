@@ -1,29 +1,4 @@
-# Pinned from the real red run of 2026-07-29 with the injection applied.
-#
-# The injection restores the one pre-fix line: `credential_mode: None` back in
-# the `Lifecycle::RunMeta` PATTERN (plus the `..` it needed). That is the whole
-# defect — a refutable pattern where a binding was meant. A RunMeta carrying
-# `Some(mode)` does not match, falls to `_ => {}`, `meta` stays `None`, and
-# `meta?` returns: the run is not a boot-reattach candidate at all.
 exit: 101
-
-# THE DEFECT, stated directly. The message names the resolved mode that did it,
-# so the failure reads as the class it is rather than as one bad fixture.
 contains: a live run whose harness resolved credential_mode=Some("native_login") must be a boot-reattach candidate; a refutable pattern on this field drops the whole run and it is never rehydrated after a daemon restart
-
-# THE BLAST RADIUS, unreachable. The test that proves an acp-stdio run declines
-# safely (driver says NotReattachable, lease released) cannot get as far as
-# asking: the candidate it needs does not exist. acp-stdio/claude is the one
-# production path that writes `Some(_)` today.
 contains: a credential-resolving stdio run is now a candidate
-
-# THE TASK-KPMFK INTERACTION, on a genuinely live rmux session through the real
-# `reattach_live_runs_on_boot`. The stage identity is on disk and the mux
-# session is live, and the post-restart supervisor still has no such run —
-# because the credential mode dropped it before any stage rule could look at
-# it. KPMFK's stage-watcher respawn is only as reachable as this function.
-contains: stage run should be rehydrated into the post-restart supervisor
-
-# All three, and only these three. A binary that collapses wholesale is a
-# different failure and has not reproduced this defect.
-contains: test result: FAILED. 0 passed; 3 failed
+contains: test result: FAILED. 0 passed; 2 failed

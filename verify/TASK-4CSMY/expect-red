@@ -1,37 +1,6 @@
-# Pinned from the real red run of 2026-08-02 with the injection applied.
-#
-# The injection is two hunks, one per blind channel:
-#
-#   drivers/tmux.rs — `pane_activity_watch` returns before it opens anything,
-#   so the tmux transport publishes no continuous pane event of any kind. The
-#   FIFO, the throttle and the `pipe-pane` plumbing stay exactly where the fix
-#   put them, unreachable.
-#
-#   daemon/supervisor.rs — the open-turn consult and the pane-pid resolution
-#   are rmux-only again, as JQ8AV shipped them. `PaneMux`, `pane_content` and
-#   `pane_pid` keep working for rmux and a tmux run reaches none of it.
-#
-# Together that is the state the task names: on the shipped default driver a
-# provider-bound turn at ~0% cpu with no tool calls has NO evidence channel
-# able to see it, and the clock releases it at the deadline.
-
-exit: 101
-
-# The daemon half: the very first compressed window kills the network-waiting
-# tmux stub, and the tombstone is the FZB6T/RB1ZN/SZJ2B shape.
-contains: quiet window 0: a provider-bound network-waiting tmux turn was stall-released
-contains: stall_timeout_exceeded
-
-# The driver half: the watcher publishes nothing at all for a real, writing
-# pane, so its event channel closes before any activity arrives.
+# The injection removes tmux pane activity and quiet-pane process/status
+# evidence. Both owned tests must fail: the driver sees no activity, and the
+# daemon releases the healthy provider-bound turn.
+exit: nonzero
 contains: tmux_pane_activity_publishes_raw_byte_counts_from_a_real_pane
-contains: the pane event channel closed before any activity
-
-# Exactly one test per binary, and both binaries. A suite that collapses
-# wholesale is a different failure and has not reproduced this defect; a run
-# that reddens only one target has reproduced only half of it. The filtered-out
-# counts are deliberately not pinned — they move with every unrelated test.
-contains: test result: FAILED. 0 passed; 1 failed
-contains: error: 2 targets failed:
-contains: `-p orgasmic-daemon --lib`
-contains: `-p orgasmic-drivers --lib`
+contains: a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies

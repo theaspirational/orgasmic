@@ -3,8 +3,8 @@
 # `env -u ...` because a dispatch leaks its run id and home into subprocesses,
 # and this test boots its own daemon against a temp home that must see neither.
 # `ORGASMIC_ALLOW_MISSING_TOOLS=tmux` because inside an orgasmic worker the
-# `tmux` on PATH is the rmux shim and the sentinel counts it as absent; this
-# test needs no multiplexer of its own.
+# the sentinel may count tmux as absent; this test needs no multiplexer of its
+# own.
 #
 # ONE test, and it is the loop one. A test that only asserts `--verdict` is
 # accepted cannot see this defect: the flag being parseable was never the

@@ -357,9 +357,6 @@ export function postManagerLaunch(body: {
   /** Extra argv appended verbatim to the harness CLI by the PTY modes — the
    * launcher's escape hatch for harnesses without typed options. */
   harness_args?: string[];
-  /** rmux only: spawn the session detached from the daemon so it survives a
-   * daemon restart/rebuild. Default ON for the manager. */
-  system_wide?: boolean;
 }): Promise<ManagerLaunchResponse> {
   return post<ManagerLaunchResponse>('/manager/launch', body);
 }

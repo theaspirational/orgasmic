@@ -257,7 +257,6 @@ cd "$REPO_ROOT"
 REAL_HOME="${ORGASMIC_HOME:-$HOME/.orgasmic}"
 INSTALLED_RUNTIME="$HOME/.orgasmic/bin/orgasmic"
 MACOS_PLIST="$HOME/Library/LaunchAgents/orgasmic.daemon.plist"
-MACOS_RMUX_PLIST="$HOME/Library/LaunchAgents/orgasmic.rmux.plist"
 SYSTEMD_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orgasmic-daemon.service"
 
 # A dispatch leaks its run id and home into every subprocess; both would point
@@ -291,7 +290,6 @@ fingerprint() {
 
 UNTOUCHABLE_PATHS="$INSTALLED_RUNTIME
 $MACOS_PLIST
-$MACOS_RMUX_PLIST
 $SYSTEMD_UNIT
 $REAL_HOME/config.yaml
 $REAL_HOME/daemon.lock"

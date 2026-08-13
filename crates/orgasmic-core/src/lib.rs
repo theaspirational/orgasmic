@@ -74,10 +74,10 @@ pub use schema::{
 pub use session::{
     bound_driver_event_payload, driver_event_total_cap, read_session_file, scan_session_lifecycle,
     scan_session_lifecycle_complete, scan_session_lifecycle_complete_reader,
-    scan_session_lifecycle_reader, BabysitterSummaryChunk, BabysitterTool, BoundedDriverEvent,
-    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEnvelope,
-    SessionError, SessionEventKind, SessionLifecycleScan, SessionScanBudget, SessionWriter,
-    TextStream, WorkerTool, DRIVER_EVENT_PAYLOAD_CAP_BYTES, RETENTION_TIERS,
+    scan_session_lifecycle_reader, BoundedDriverEvent, DriverEvent, Lifecycle, ReleaseOutcome,
+    RunSubState, RuntimeIdentity, SessionEnvelope, SessionError, SessionEventKind,
+    SessionLifecycleScan, SessionScanBudget, SessionWriter, TextStream, WorkerTool,
+    DRIVER_EVENT_PAYLOAD_CAP_BYTES, RETENTION_TIERS,
 };
 pub use slots::{
     compile as compile_slots, default_registry as default_slot_registry, dry_run as slot_dry_run,

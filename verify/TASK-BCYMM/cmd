@@ -1,7 +1,7 @@
 # One line. Run from the repo root by `orgasmic verify TASK-BCYMM`.
 # `env -u ...` because a dispatch leaks its run id and home into subprocesses.
 #
-# One target, ~6s, no tmux, no network, no rmux daemon: the fixture module's
+# One target, ~6s, no tmux and no network: the fixture module's
 # own test, which spawns the `cursor-worker-sibling` arm (the arm TASK-BCYMM
 # measured leaking), panics between the spawn and the cleanup, and then reads
 # the process table for survivors in the fixture's process group.

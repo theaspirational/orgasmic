@@ -1,9 +1,0 @@
-# One line. Run from the repo root by `orgasmic verify TASK-K4G1D`.
-#
-# Deliberately ONE test, and deliberately the one that contacts no multiplexer.
-# The injection below removes the guard that keeps a tmux-mode run off the rmux
-# shim, so under it a behavioural replay would start real sessions — on a dev
-# box the operator's own tmux server, and inside an orgasmic worker the rmux
-# server hosting live worker panes. A proof must not touch what it proves, so
-# this replay is a pure function assertion over a temp-dir symlink.
-env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib tmux_mode_rejects_an_rmux_shim_resolved_as_tmux

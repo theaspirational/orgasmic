@@ -123,7 +123,6 @@ pub enum WorkerKind {
     Analyzer,
     Griller,
     Glossarist,
-    Babysitter,
     Manager,
     Artifactor,
 }
@@ -137,7 +136,6 @@ impl WorkerKind {
             Self::Analyzer => "analyzer",
             Self::Griller => "griller",
             Self::Glossarist => "glossarist",
-            Self::Babysitter => "babysitter",
             Self::Manager => "manager",
             Self::Artifactor => "artifactor",
         }
@@ -154,7 +152,6 @@ impl FromStr for WorkerKind {
             "analyzer" => Self::Analyzer,
             "griller" => Self::Griller,
             "glossarist" => Self::Glossarist,
-            "babysitter" => Self::Babysitter,
             "manager" => Self::Manager,
             "artifactor" => Self::Artifactor,
             _ => return Err(()),

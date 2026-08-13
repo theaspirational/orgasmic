@@ -1230,7 +1230,7 @@ pub fn project_sessions_dir(project_root: &Path) -> PathBuf {
 ///
 /// Check 5 is the one the first four do not cover. Path and fingerprint prove
 /// which BYTES an entry is about; they prove nothing about what it says those
-/// bytes mean. A record claiming a live stdio session is a terminal rmux run
+/// bytes mean. A record claiming a live stdio session is a terminal tmux run
 /// passed all four checks and then authorized its own deletion.
 ///
 /// A refused entry costs one bounded re-scan of a file that is on disk anyway.
@@ -1790,7 +1790,7 @@ fn compact_envelopes(envelopes: &[SessionEnvelope]) -> Vec<SessionEnvelope> {
 /// orgasmic:TASK-FZB6T.2 finding 4 — snapshot admission checked JSON shape,
 /// version, session path and file fingerprint, then took `lifecycle`,
 /// `terminal`, `driver` and `transport` VERBATIM. A valid-JSON but semantically
-/// corrupt snapshot could therefore present a live stdio run as a terminal rmux
+/// corrupt snapshot could therefore present a live stdio run as a terminal tmux
 /// one, and a steady-state refresh treats the unchanged fingerprint as a cache
 /// hit and never re-derives it.
 ///
@@ -2246,7 +2246,7 @@ pub struct HistoryBucket {
     /// `transport/harness` as recorded by `RunMeta`, or `unknown`.
     pub driver: String,
     /// Event class: `lifecycle`, `rendered_tui`, `semantic`, `pane_activity`,
-    /// `babysitter_summary`, `note`, or `unparsed`.
+    /// `note`, or `unparsed`.
     pub event_class: String,
     #[serde(flatten)]
     pub totals: HistoryClassTotals,
@@ -2262,12 +2262,11 @@ pub struct HistoryBucket {
 /// while a final record with no terminating newline was charged a newline it
 /// does not have. Both are ordinary shapes — a session file torn by a kill ends
 /// mid-line by definition.
-pub const EVENT_CLASSES: [&str; 9] = [
+pub const EVENT_CLASSES: [&str; 8] = [
     "lifecycle",
     "rendered_tui",
     "semantic",
     "pane_activity",
-    "babysitter_summary",
     "note",
     "unparsed",
     "blank",
@@ -2297,7 +2296,6 @@ pub fn classify_history_line(line: &[u8]) -> &'static str {
     };
     match envelope.kind.as_deref() {
         Some(b"lifecycle") => "lifecycle",
-        Some(b"babysitter_summary") => "babysitter_summary",
         Some(b"note") => "note",
         // Driver events: the rendered-TUI class is the legacy `text_chunk`
         // written by a pane transport before dec_WDR5K item 7 — the payload the
@@ -2668,7 +2666,7 @@ fn scan_envelope_discriminators(line: &[u8]) -> Option<EnvelopeDiscriminators> {
 ///
 /// orgasmic:TASK-FZB6T.1 finding 2 — this is the whole difference between a
 /// `text_chunk` that is a screen repaint and a `text_chunk` that is the
-/// assistant's actual words. A pane transport (rmux/tmux) had no other channel
+/// assistant's actual words. A pane transport (tmux) had no other channel
 /// before dec_WDR5K item 7, so its legacy `text_chunk` lines are rendered TUI
 /// output; a structured transport's `text_chunk` is the model's or a subprocess's
 /// content, which is evidence and must never be reclaimed.
@@ -2920,14 +2918,14 @@ mod tests {
         };
         push(
             SessionEventKind::Lifecycle,
-            json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-CAT", "worker_id": "implementer-claude-rmux"}),
+            json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-CAT", "worker_id": "implementer-claude-tmux"}),
             &mut out,
         );
         push(
             SessionEventKind::Lifecycle,
             json!({
                 "phase": "run_meta",
-                "transport": "rmux",
+                "transport": "tmux",
                 "harness": "claude",
                 "project_id": project_id,
                 "worktree": worktree,
@@ -3863,7 +3861,7 @@ mod tests {
         //
         // Each of these is valid JSON at the right path with the right file
         // identity, and each lies about what the session file MEANS. The one
-        // that mattered is the first: it presents this run as a terminal rmux
+        // that mattered is the first: it presents this run as a terminal tmux
         // run, which is precisely the pair `plan_compaction` used to read as
         // permission to delete.
         /// One named way to corrupt a semantic field of an otherwise valid
@@ -3873,7 +3871,7 @@ mod tests {
             (
                 "terminal + transport: the deletion-authority pair",
                 Box::new(|entry: &mut RunCatalogEntry| {
-                    entry.transport = Some("rmux".to_string());
+                    entry.transport = Some("tmux".to_string());
                     entry.terminal = Some(TerminalRecord::DriverEvent {
                         event: "run_complete".to_string(),
                         at: Utc::now(),
@@ -4576,7 +4574,7 @@ mod tests {
         // Only a PANE transport's rendered TUI is reclaimable; authority,
         // unclassifiable lines, and the same `text_chunk` shape from a
         // structured transport are not (orgasmic:TASK-FZB6T.1 finding 2).
-        for pane in ["rmux", "tmux", "tmux-tui"] {
+        for pane in ["tmux", "tmux-tui"] {
             assert!(class_is_reclaimable("rendered_tui", Some(pane)), "{pane}");
         }
         // `acp-stdio` and `acp-ws` are the pre-TASK-XCJYC spellings, still on
@@ -4609,7 +4607,7 @@ mod tests {
             "blank",
             "torn",
         ] {
-            assert!(!class_is_reclaimable(class, Some("rmux")), "{class}");
+            assert!(!class_is_reclaimable(class, Some("tmux")), "{class}");
         }
     }
 
@@ -4667,7 +4665,7 @@ mod tests {
             );
             assert!(!class_is_reclaimable(
                 classify_history_line(unprovable),
-                Some("rmux")
+                Some("tmux")
             ));
         }
 
@@ -4772,7 +4770,7 @@ mod tests {
                 "an invalid record must not be classified as reclaimable payload: {rendered}"
             );
             assert!(
-                !class_is_reclaimable(classify_history_line(case), Some("rmux")),
+                !class_is_reclaimable(classify_history_line(case), Some("tmux")),
                 "{rendered}"
             );
         }
@@ -4874,7 +4872,7 @@ mod tests {
                      classified {class}, serde_json parses = {parses}"
                 );
                 assert!(
-                    parses || !class_is_reclaimable(class, Some("rmux")),
+                    parses || !class_is_reclaimable(class, Some("tmux")),
                     "a line no parser accepts must never be reclaimable: 0x{byte:02x} at \
                      offset {boundary}"
                 );
@@ -4901,7 +4899,7 @@ mod tests {
             );
             assert!(!class_is_reclaimable(
                 classify_history_line(&line),
-                Some("rmux")
+                Some("tmux")
             ));
         }
 
@@ -4956,7 +4954,7 @@ mod tests {
         assert_eq!(totals["blank"].bytes, 1 + 4);
         assert_eq!(totals["torn"].lines, 1);
         assert!(
-            !class_is_reclaimable("torn", Some("rmux")),
+            !class_is_reclaimable("torn", Some("tmux")),
             "a record that may have been cut off mid-write is never reclaimed"
         );
         assert_eq!(totals["rendered_tui"].lines, 1);
@@ -5003,7 +5001,7 @@ mod tests {
         assert_eq!(report.reclaimable_bytes, rendered);
         assert!(rendered > 256 * 1024);
         assert_eq!(
-            report.reclaimable_by_driver.get("rmux/claude").copied(),
+            report.reclaimable_by_driver.get("tmux/claude").copied(),
             Some(rendered)
         );
         // Lifecycle is accounted and never reclaimable.

@@ -31,7 +31,7 @@ use common::{init_git_repo, orgasmic_command, run_git, test_options};
 
 /// The heading TASK-0RCRY is stuck with, and the correction it needs.
 const RETRACTED_TITLE: &str =
-    "Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server and six gated tests never run";
+    "Workers inherit the daemon's $TMUX, so tests share an ambient server and six gated tests never run";
 const CORRECTED_TITLE: &str =
     "No tmux call site passes -L/-S, so every probe and test session shares one server — on a dev box, the operator's own";
 

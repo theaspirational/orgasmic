@@ -32,7 +32,7 @@ indistinguishable at the only place anyone looks.
 ## What the fix reads instead
 
 CPU burned by the process subtree under the run — the pane's root process for
-rmux (resolved through `rmux display-message '#{pane_pid}'`), the wrapper pid
+tmux (resolved through `tmux display-message '#{pane_pid}'`), the wrapper pid
 for subprocess transports. Liveness alone is deliberately not the test:
 TASK-VZMZE's wedged harness was alive for the entire hour it did nothing at
 0.19% of a core, while a cargo build's subtree reads in the hundreds of percent.
@@ -49,7 +49,7 @@ tests, which use `DEFAULT_STALL_TIMEOUT` itself.
 
 ## What the probe cannot be proven by, here
 
-No unit test can put a real cargo build under a real rmux pane, so these two
+No unit test can put a real cargo build under a real tmux pane, so these two
 drive the decision with a probe double and the production probe is proven
 separately against a real process subtree:
 `process_subtree_cpu_probe_sees_a_real_cpu_burning_child` (a `/bin/sh` busy loop

@@ -54,7 +54,7 @@ commits the worktree so commit-stall is impossible, emits the correct
 completion tx (`implementer.reported` / `reviewer.reported` / etc. — the
 manager records the matching `*.done` when it closes the dispatch), and
 releases the lease. This is the sole success authority for every dispatch mode
-(stdio, ws, subprocess-stream-json, tmux, rmux). Pane/process exit
+(stdio, ws, subprocess-stream-json, tmux). Pane/process exit
 or protocol end without finalize is a failed run — there is no end-of-turn
 marker or scrollback-scrape fallback. If your assignment cannot be
 completed as written, finalize with `--status blocked --reason "<why>"`

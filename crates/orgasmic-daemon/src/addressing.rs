@@ -64,12 +64,12 @@ mod tests {
     #[test]
     fn supported_pair_accepted() {
         validate_supported_pair("stdio", "codex").unwrap();
-        validate_supported_pair("rmux", "custom").unwrap();
+        validate_supported_pair("tmux", "custom").unwrap();
     }
 
     #[test]
     fn unsupported_pair_rejected() {
-        let err = validate_supported_pair("tmux", "custom").unwrap_err();
+        let err = validate_supported_pair("stdio", "custom").unwrap_err();
         assert!(err.contains("unsupported mode/harness"));
         assert!(err.contains("supported:"));
     }

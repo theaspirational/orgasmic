@@ -16,13 +16,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use orgasmic_core::{BabysitterTool, DriverEvent, SandboxAllowlist, TextStream};
+use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 
 use crate::preflight::{classify_api_key, classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
-    implementer_tool_is_allowed, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome,
-    RunKind, StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
+    implementer_tool_is_allowed, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome, RunKind, StdioSpawn,
+    TransitionRequest, UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
     RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest, RuntimeOptionsState,
@@ -422,28 +422,6 @@ impl HarnessEventAdapter for CursorAcpAdapter {
         })
     }
 
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        let text = format!(
-            "orgasmic babysitter action\nrun: {}\ntool: {}\npayload: {}",
-            req.target_run,
-            req.tool.as_str(),
-            req.payload
-        );
-        Ok(HarnessControlOutcome {
-            events: vec![DriverEvent::ToolCall {
-                call_id: format!("cursor-acp-bs-{}", uuid::Uuid::new_v4()),
-                name: req.tool.as_str().into(),
-                args: req.payload,
-                seq: self.next_seq(),
-            }],
-            wire_messages: self.prompt_messages(&text),
-            ..HarnessControlOutcome::default()
-        })
-    }
-
     async fn send_input(
         &mut self,
         req: UserInputRequest,
@@ -789,7 +767,6 @@ impl CursorAcpAdapter {
             .unwrap_or(RunKind::Worker)
         {
             RunKind::Worker => self.implementer_tool_allowed(name, kind, args),
-            RunKind::Babysitter => BabysitterTool::parse(name).is_some(),
         }
     }
 
@@ -1613,7 +1590,6 @@ mod tests {
             worker_id: "implementer-composer-acp".into(),
             project_id: Some("orgasmic".into()),
             worktree: Some(std::env::current_dir().unwrap()),
-            babysitter_target: None,
         }
     }
 

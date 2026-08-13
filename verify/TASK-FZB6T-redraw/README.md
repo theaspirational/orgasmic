@@ -7,7 +7,7 @@ Sibling artifacts: `verify/TASK-FZB6T` (the catalog), `verify/TASK-FZB6T-corrupt
 ## The defect
 
 dec_WDR5K item 7 and TASK-AFE5Q got rendered TUI output out of the JSONL by
-changing the pane transports: rmux drops each pane chunk after measuring it and
+changing the pane transport: tmux drops each pane chunk after measuring it and
 publishes a coalesced `PaneActivity` byte *count*. That is the right fix and it
 holds today.
 
@@ -31,7 +31,7 @@ harness payload goes through (`orgasmic-core::session`):
   `stream` and the envelope `time` are untouched, so a bounded stream still
   answers how many tool calls ran, which failed, which were retried, and how long
   each took;
-- lifecycle, babysitter-summary, and note envelopes are supervisor-authored
+- lifecycle and note envelopes are supervisor-authored
   authority and are written verbatim — a digested `prompt_draft` would lose the
   operator the exact text that was staged;
 - the digest names the harness-native transcript rather than a path orgasmic

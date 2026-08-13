@@ -6,7 +6,7 @@
 //! A `std::process::Command` inherits the parent's environment, and the parent
 //! of every test here is whatever shell ran `cargo test`. Inside a dispatch
 //! that shell is a worker pane, and the driver exports `ORGASMIC_RUN_ID` into
-//! it (`modes/rmux.rs`, `modes/tmux.rs`) while the dispatch harness exports
+//! it (`modes/tmux.rs`) while the dispatch harness exports
 //! `ORGASMIC_HOME`. Both are read by production paths the tests drive —
 //! `manager.rs` resolves `dispatch finalize` through `ORGASMIC_RUN_ID`,
 //! `orgasmic_core::Home` resolves through `ORGASMIC_HOME` — so a test that
@@ -33,7 +33,7 @@ use std::process::Command;
 /// The only `ORGASMIC_*` variables a spawned child may inherit.
 ///
 /// `ORGASMIC_ALLOW_MISSING_TOOLS` is the operator's explicit waiver for absent
-/// tooling (`orgasmic_drivers::modes::rmux::test_tooling`), passed in on
+/// tooling (`orgasmic_drivers::test_tooling`), passed in on
 /// purpose by `scripts/run-tests.sh`. It records a decision about the machine,
 /// not about which run/home/daemon to address, and a child that probed tooling
 /// without it would waive differently from its parent — so it propagates.

@@ -55,7 +55,7 @@ describe('artifacts api', () => {
       {
         nodes: ['dec_ABC12'],
         prompt: 'Summarize the decision',
-        mode: 'rmux',
+        mode: 'tmux',
         harness: 'claude',
       },
       'orgasmic',
@@ -63,7 +63,7 @@ describe('artifacts api', () => {
     expect(post).toHaveBeenCalledWith('/artifacts/generate?project=orgasmic', {
       nodes: ['dec_ABC12'],
       prompt: 'Summarize the decision',
-      mode: 'rmux',
+      mode: 'tmux',
       harness: 'claude',
     });
   });
@@ -71,13 +71,13 @@ describe('artifacts api', () => {
   it('generateArtifact allows an empty node set (prompt-only artifact)', async () => {
     post.mockResolvedValueOnce({ artifact_id: 'ART-2', run_id: 'run-2' });
     await generateArtifact(
-      { nodes: [], prompt: 'Prompt only', mode: 'rmux', harness: 'claude' },
+      { nodes: [], prompt: 'Prompt only', mode: 'tmux', harness: 'claude' },
       'orgasmic',
     );
     expect(post).toHaveBeenCalledWith('/artifacts/generate?project=orgasmic', {
       nodes: [],
       prompt: 'Prompt only',
-      mode: 'rmux',
+      mode: 'tmux',
       harness: 'claude',
     });
   });

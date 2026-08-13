@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use orgasmic_core::{SandboxAllowlist, WorkerKind};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Supervisor-floor timeouts mirrored as kind defaults when templates omit them.
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 600;
@@ -28,20 +28,6 @@ const REVIEWER_STATES: &[&str] = &[
     "requested_changes",
 ];
 
-/// Addressed babysitter launch configuration (kind is always babysitter).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct BabysitterAddress {
-    pub mode: String,
-    pub harness: String,
-    #[serde(default)]
-    pub harness_args: Vec<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub effort: Option<String>,
-}
-
 /// Fully resolved governance values for a (kind[, harness]) lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GovernanceDefaults {
@@ -51,7 +37,6 @@ pub struct GovernanceDefaults {
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Vec<String>,
     pub linked_skills: Vec<String>,
-    pub babysitter: Option<BabysitterAddress>,
     pub sandbox_permissions: Option<SandboxAllowlist>,
 }
 
@@ -66,15 +51,6 @@ pub struct GovernancePatch {
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Option<Vec<String>>,
     pub linked_skills: Option<Vec<String>>,
-    /// Tri-state babysitter attachment: absent = inherit, `Some(None)` = disable,
-    /// `Some(Some(addr))` = explicit address.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_babysitter_patch",
-        serialize_with = "serialize_babysitter_patch",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub babysitter: Option<Option<BabysitterAddress>>,
     pub sandbox_permissions: Option<SandboxPermissionsPatch>,
 }
 
@@ -93,8 +69,6 @@ impl<'de> Deserialize<'de> for GovernancePatch {
             max_run_duration_secs: Option<u32>,
             applicable_states: Option<Vec<String>>,
             linked_skills: Option<Vec<String>>,
-            #[serde(default, deserialize_with = "deserialize_babysitter_patch")]
-            babysitter: Option<Option<BabysitterAddress>>,
             sandbox_permissions: Option<SandboxPermissionsPatch>,
         }
         let raw = Raw::deserialize(deserializer)?;
@@ -118,7 +92,6 @@ impl<'de> Deserialize<'de> for GovernancePatch {
             max_run_duration_secs: raw.max_run_duration_secs,
             applicable_states: raw.applicable_states,
             linked_skills: raw.linked_skills,
-            babysitter: raw.babysitter,
             sandbox_permissions: raw.sandbox_permissions,
         })
     }
@@ -189,8 +162,7 @@ pub fn kind_harness_key(kind: WorkerKind, harness: &str) -> String {
 }
 
 /// Seeded from current shipped worker templates (iterations/budget/states) plus
-/// supervisor timeout floors. Babysitter attachment is None — templates currently
-/// omit `:BABYSITTER_WORKER:`. Sandbox is None at kind level (template harness
+/// supervisor timeout floors. Sandbox is None at kind level (template harness
 /// pins remain template-owned until cutover).
 pub fn kind_defaults(kind: WorkerKind) -> GovernanceDefaults {
     match kind {
@@ -199,7 +171,6 @@ pub fn kind_defaults(kind: WorkerKind) -> GovernanceDefaults {
         WorkerKind::Planner => defaults(Some(12), Some(480_000), BASE_STATES),
         WorkerKind::Artifactor => defaults(Some(20), Some(600_000), BASE_STATES),
         WorkerKind::Griller => defaults(Some(10), Some(400_000), BASE_STATES),
-        WorkerKind::Babysitter => defaults(None, Some(320_000), BASE_STATES),
         // Not seeded by this task's kind list; keep a conservative floor.
         WorkerKind::Analyzer | WorkerKind::Glossarist | WorkerKind::Manager => {
             defaults(None, None, BASE_STATES)
@@ -219,7 +190,6 @@ fn defaults(
         max_run_duration_secs: Some(DEFAULT_MAX_RUN_DURATION_SECS),
         applicable_states: states.iter().map(|s| (*s).to_string()).collect(),
         linked_skills: Vec::new(),
-        babysitter: None,
         sandbox_permissions: None,
     }
 }
@@ -243,9 +213,6 @@ impl GovernanceDefaults {
         }
         if let Some(ref skills) = patch.linked_skills {
             self.linked_skills = skills.clone();
-        }
-        if let Some(babysitter) = &patch.babysitter {
-            self.babysitter = babysitter.clone();
         }
         if let Some(ref sandbox_patch) = patch.sandbox_permissions {
             let mut list = self.sandbox_permissions.clone().unwrap_or_default();
@@ -343,40 +310,8 @@ pub fn known_governance_patch_keys() -> &'static [&'static str] {
         "max_run_duration_secs",
         "applicable_states",
         "linked_skills",
-        "babysitter",
         "sandbox_permissions",
     ]
-}
-
-/// Deserialize tri-state babysitter overlay: absent field = inherit (`None`),
-/// JSON/YAML null = disable (`Some(None)`), object = explicit address.
-fn deserialize_babysitter_patch<'de, D>(
-    deserializer: D,
-) -> Result<Option<Option<BabysitterAddress>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = serde_json::Value::deserialize(deserializer)?;
-    match value {
-        serde_json::Value::Null => Ok(Some(None)),
-        other => BabysitterAddress::deserialize(other)
-            .map(|addr| Some(Some(addr)))
-            .map_err(serde::de::Error::custom),
-    }
-}
-
-fn serialize_babysitter_patch<S>(
-    value: &Option<Option<BabysitterAddress>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match value {
-        None => serializer.serialize_none(),
-        Some(None) => serializer.serialize_none(),
-        Some(Some(addr)) => addr.serialize(serializer),
-    }
 }
 
 pub fn known_sandbox_permission_keys() -> &'static [&'static str] {
@@ -411,7 +346,6 @@ mod tests {
             vec!["working", "done", "blocked", "cancelled"]
         );
         assert!(d.linked_skills.is_empty());
-        assert!(d.babysitter.is_none());
         assert!(d.sandbox_permissions.is_none());
     }
 
@@ -420,13 +354,6 @@ mod tests {
         let d = kind_defaults(WorkerKind::Reviewer);
         assert_eq!(d.max_iterations, Some(10));
         assert!(d.applicable_states.iter().any(|s| s == "requested_changes"));
-    }
-
-    #[test]
-    fn babysitter_defaults_omit_max_iterations() {
-        let d = kind_defaults(WorkerKind::Babysitter);
-        assert_eq!(d.max_iterations, None);
-        assert_eq!(d.context_budget_chars, Some(320_000));
     }
 
     #[test]
@@ -553,75 +480,6 @@ mod tests {
         assert!(!sandbox.allow_patch, "dispatch layer");
         assert!(!sandbox.allow_network, "kind layer must survive");
         assert!(sandbox.allow_writes_outside_cwd, "untouched default field");
-    }
-
-    #[test]
-    fn babysitter_patch_absent_field_inherits() {
-        let patch: GovernancePatch = serde_json::from_str(r#"{"max_iterations": 5}"#).unwrap();
-        assert_eq!(patch.babysitter, None);
-    }
-
-    #[test]
-    fn babysitter_patch_null_disables() {
-        let patch: GovernancePatch = serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
-        assert_eq!(patch.babysitter, Some(None));
-    }
-
-    #[test]
-    fn babysitter_patch_object_sets_explicit_address() {
-        let patch: GovernancePatch = serde_json::from_str(
-            r#"{"babysitter": {"mode": "stdio", "harness": "codex", "model": "gpt-5"}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            patch.babysitter,
-            Some(Some(BabysitterAddress {
-                mode: "stdio".into(),
-                harness: "codex".into(),
-                harness_args: Vec::new(),
-                model: Some("gpt-5".into()),
-                effort: None,
-            }))
-        );
-    }
-
-    #[test]
-    fn babysitter_patch_yaml_null_disables() {
-        let patch: GovernancePatch = serde_yaml::from_str(
-            r#"
-babysitter: null
-max_iterations: 7
-"#,
-        )
-        .unwrap();
-        assert_eq!(patch.babysitter, Some(None));
-        assert_eq!(patch.max_iterations, Some(7));
-    }
-
-    #[test]
-    fn babysitter_patch_disable_overrides_lower_layer_address() {
-        let mut map = BTreeMap::new();
-        map.insert(
-            "implementer".into(),
-            GovernancePatch {
-                babysitter: Some(Some(BabysitterAddress {
-                    mode: "tmux".into(),
-                    harness: "codex".into(),
-                    ..BabysitterAddress::default()
-                })),
-                ..GovernancePatch::default()
-            },
-        );
-        let overlay = DispatchGovernanceOverlay::from_map(map);
-        let dispatch_patch: GovernancePatch =
-            serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
-        let resolved = resolve_governance(
-            WorkerKind::Implementer,
-            Some("codex"),
-            &overlay,
-            Some(&dispatch_patch),
-        );
-        assert!(resolved.babysitter.is_none());
     }
 
     #[test]

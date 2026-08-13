@@ -538,7 +538,6 @@ mod tests {
             worker_id: "fixture".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
-            babysitter_target: None,
         };
         let mut adapter = crate::adapters::CursorAcpAdapter::new();
         let init = adapter

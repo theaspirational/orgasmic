@@ -21,7 +21,7 @@ function resolveVerb(subState: string | null | undefined): string {
  * Collapse a live run's role + worker into one performer pill descriptor.
  * Returns null when hasLiveRun is false (caller renders idle chips as-is).
  * The worker id headlines when it carries more info than the bare role
- * (role "implementer", worker "implementer-claude-rmux" → the worker);
+ * (role "implementer", worker "implementer-claude-tmux" → the worker);
  * when they coincide ("manager", dispatch worker "reviewer") the role shows.
  * When live: "Reviewer · working" with dot separator per dec_041.
  */

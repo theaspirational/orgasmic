@@ -224,13 +224,12 @@ export function ManagerTmuxPane({
       fontFamily:
         'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
       fontSize: 13,
-      // Match rmux's web-share frontend: 1.2 line-height gives TUI output a bit
-      // of breathing room and reduces glyph-row overlap.
+      // A 1.2 line-height gives TUI output breathing room and reduces
+      // glyph-row overlap.
       lineHeight: 1.2,
       scrollback: 5000,
-      // Borrowed from rmux's web-share terminal: on macOS, treat Option as Meta
-      // so the wrapped TUIs receive Alt/Meta chords (Alt+arrows, Meta+Enter)
-      // instead of composed accented characters.
+      // On macOS, treat Option as Meta so wrapped TUIs receive Alt/Meta chords
+      // (Alt+arrows, Meta+Enter) instead of composed accented characters.
       macOptionIsMeta: true,
       theme: {
         background: '#050505',
@@ -241,8 +240,7 @@ export function ManagerTmuxPane({
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    // Clickable URLs in agent output — open in a new tab (rmux's frontend wires
-    // the same WebLinksAddon).
+    // Clickable URLs in agent output open in a new tab.
     term.loadAddon(
       new WebLinksAddon((event, uri) => {
         if (event.button === 0) window.open(uri, '_blank', 'noopener,noreferrer');

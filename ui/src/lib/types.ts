@@ -441,11 +441,11 @@ export type RuntimeIdentity = {
 export type RunSummary = {
   run_id: string;
   task_id: string;
-  /// Run surface: 'worker' | 'babysitter'.
+  /// Run surface.
   kind: string;
   worker_id?: string | null;
   /// Who is working right now — the resolved worker's kind
-  /// ('implementer', 'reviewer', 'babysitter', 'manager', …).
+  /// ('implementer', 'reviewer', 'manager', …).
   role?: string | null;
   driver?: string | null;
   harness?: string | null;
@@ -453,7 +453,6 @@ export type RunSummary = {
   sub_state?: string | null;
   identity: RuntimeIdentity;
   session_path: string;
-  babysitter_target?: string | null;
   event_count: number;
   /**
    * Present for an app terminal that has atomically taken the project's
@@ -476,12 +475,6 @@ export type ManagerDriverProfile = {
   mode_label: string;
   harness_label: string;
   installed: boolean;
-  /** Mode-level binary requirement (e.g. rmux needs a separately provisioned
-   * `rmux` daemon binary), checked independently of the harness binary. */
-  mode_binary?: string | null;
-  /** Whether {@link mode_binary} resolves. Absent for modes with no extra
-   * binary requirement. */
-  mode_installed?: boolean | null;
 };
 
 export type ManagerDriversResponse = {
@@ -723,13 +716,6 @@ export type GovernancePatch = {
     allow_patch?: boolean | null;
     allow_network?: boolean | null;
     allow_writes_outside_cwd?: boolean | null;
-  } | null;
-  babysitter?: {
-    mode?: string;
-    harness?: string;
-    harness_args?: string[];
-    model?: string | null;
-    effort?: string | null;
   } | null;
   max_iterations?: number | null;
   context_budget_chars?: number | null;

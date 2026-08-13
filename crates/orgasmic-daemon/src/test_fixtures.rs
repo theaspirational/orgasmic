@@ -125,7 +125,7 @@ if [ -f "$fixture_mode_file" ]; then
       armed=$(/bin/cat "$0.mux-armed")
       pidfile=$(/bin/cat "$0.mux-pidfile")
       for a in "$@"; do
-        [ "$a" = -V ] && { echo "rmux $version"; exit 0; }
+        [ "$a" = -V ] && { echo "tmux $version"; exit 0; }
       done
       [ -f "$armed" ] || exit 0
       echo $$ > "$pidfile"
@@ -382,19 +382,6 @@ pub(crate) fn write_linked_fixture_text(path: &Path, name: &str, value: &str) {
         )
     });
 }
-
-/// Install the shared fixture as a hanging mux binary for stall-probe tests.
-///
-/// Per-test paths live in adjacent files so every arm reuses one warmed inode.
-#[cfg(test)]
-pub(crate) fn link_hanging_mux_shim(path: &Path, version: &str, armed: &Path, pidfile: &Path) {
-    link_shared_test_executable(path);
-    write_linked_fixture_text(path, "orgasmic-mode", "hanging-mux");
-    write_linked_fixture_text(path, "mux-version", version);
-    write_linked_fixture_value(path, "mux-armed", armed);
-    write_linked_fixture_value(path, "mux-pidfile", pidfile);
-}
-
 // orgasmic:task_BCYMM
 /// A fixture process spawned in its own process group, whose whole tree is
 /// reaped when the handle drops.
@@ -406,7 +393,7 @@ pub(crate) fn link_hanging_mux_shim(path: &Path, version: &str, armed: &Path, pi
 /// result: fixture trees reparented to init, still holding `/bin/sleep 3600`
 /// 40 minutes later, executing from worktrees that had already been removed.
 /// This is the process-side answer to the same problem TASK-Z3093 solved for
-/// rmux sessions — ownership registered at spawn, reaped on `Drop`, which runs
+/// tmux sessions — ownership registered at spawn, reaped on `Drop`, which runs
 /// on the unwind path.
 ///
 /// Spawning in a fresh group (`process_group(0)`, so the child's pid *is* the
@@ -415,7 +402,7 @@ pub(crate) fn link_hanging_mux_shim(path: &Path, version: &str, armed: &Path, pi
 #[cfg(unix)]
 pub(crate) struct FixtureProcess {
     child: std::process::Child,
-    group: orgasmic_drivers::modes::rmux::test_tooling::OwnedProcessGroup,
+    group: orgasmic_drivers::test_tooling::OwnedProcessGroup,
 }
 
 #[cfg(unix)]
@@ -454,7 +441,7 @@ pub(crate) fn spawn_in_own_process_group(command: &mut Command, what: &str) -> F
         .unwrap_or_else(|error| panic!("spawn {what}: {error}"));
     // Register before returning: the caller must never hold an unowned tree,
     // not even for the one statement it would take to register it itself.
-    let group = orgasmic_drivers::modes::rmux::test_tooling::owned_process_group(child.id());
+    let group = orgasmic_drivers::test_tooling::owned_process_group(child.id());
     FixtureProcess { child, group }
 }
 

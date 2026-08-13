@@ -22,7 +22,7 @@ use orgasmic_core::{
     Home, Lifecycle, ReleaseOutcome, SessionEnvelope, SessionEventKind, SessionScanBudget,
 };
 use orgasmic_daemon::{Daemon, DaemonOptions};
-use orgasmic_drivers::modes::rmux::test_tooling::test_environment_lock;
+use orgasmic_drivers::test_tooling::test_environment_lock;
 use serde_json::{json, Value};
 
 /// The CLI's own run-list budget. Every assertion here is well inside it.
@@ -626,7 +626,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         // rendered TUI output, a structured transport's is the assistant's
         // words and its tool results. The accounting has to tell them apart,
         // and a board with only one of them cannot prove that it does.
-        let transport = if index % 2 == 0 { "rmux" } else { "stdio" };
+        let transport = if index % 2 == 0 { "tmux" } else { "stdio" };
         SessionFixture::new(&format!("run-scale-{index:03}"), transport, Some("claude"))
             .released(ReleaseOutcome::Completed)
             .transcript_bytes(bytes)
@@ -755,7 +755,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
     // structured transport's identical-looking `text_chunk` is assistant and
     // subprocess evidence and must never be counted as free space.
     assert!(
-        report["reclaimable_by_driver"]["rmux/claude"]
+        report["reclaimable_by_driver"]["tmux/claude"]
             .as_u64()
             .unwrap()
             > 0,
@@ -775,7 +775,7 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         .any(|b| b["event_class"] == "lifecycle" && b["reclaimable"] == false));
     assert!(
         buckets.iter().any(|b| b["event_class"] == "rendered_tui"
-            && b["driver"] == "rmux/claude"
+            && b["driver"] == "tmux/claude"
             && b["reclaimable"] == true),
         "a pane transport's rendered payload is the reclaimable class"
     );

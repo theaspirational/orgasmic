@@ -85,4 +85,3 @@ Reviewer and human performers also use approved, requested_changes.
 - reviewer.approved
 - human.requested_changes
 - manager.working
-- babysitter.working

@@ -61,7 +61,7 @@ describe('persisted Run Dock restore eligibility', () => {
     expect(
       restorableStoredTabs(
         stored,
-        [liveRun('run-external', 'external'), liveRun('run-worker', 'rmux')],
+        [liveRun('run-external', 'external'), liveRun('run-worker', 'tmux')],
         ['run-recovered'],
       ),
     ).toEqual([stored[1], stored[2]]);

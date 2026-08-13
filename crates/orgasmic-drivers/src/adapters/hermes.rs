@@ -16,9 +16,9 @@ use tokio::time::timeout;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::r#trait::{
-    BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn, TransitionRequest, UserInputRequest,
-    WireMessage, WsProtocol,
+    DriverConfig, DriverContext, DriverError, HarnessControlOutcome, HarnessEventAdapter,
+    HarnessRequest, RunKind, StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
+    WsProtocol,
 };
 use crate::runtime_options::{
     dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest,
@@ -117,7 +117,7 @@ fn default_auto_start_turn() -> bool {
 /// check the credential the launch will actually consume, and on every hermes
 /// mode that credential is not one orgasmic selects:
 ///
-/// - stdio, tmux, rmux: the spawn is a bare `hermes acp` / `hermes` with no
+/// - stdio, tmux: the spawn is a bare `hermes acp` / `hermes` with no
 ///   provider on the argv. The configured provider travels only inside
 ///   `thread_start._meta.orgasmic`, and hermes ignores it. Measured: a
 ///   `session/new` carrying `provider: "nonexistent-provider"` succeeded and
@@ -365,41 +365,6 @@ impl HarnessEventAdapter for HermesAdapter {
                 from: req.from.clone(),
                 to: req.to.clone(),
                 reason: req.reason.clone(),
-            }],
-            wire_messages: vec![wire_message],
-            ..HarnessControlOutcome::default()
-        })
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        let control_text = format!(
-            "Babysitter action {} for run {}: {}",
-            req.tool.as_str(),
-            req.target_run,
-            req.payload
-        );
-        let wire_message = if let Some(session_id) = self.session_id.as_deref() {
-            WireMessage::JsonRpc {
-                method: "session/prompt".into(),
-                params: hermes_prompt_params(session_id, &control_text),
-            }
-        } else {
-            WireMessage::Json(json!({
-                "type": "babysitter_action",
-                "tool": req.tool.as_str(),
-                "target_run": req.target_run,
-                "payload": req.payload,
-            }))
-        };
-        Ok(HarnessControlOutcome {
-            events: vec![DriverEvent::ToolCall {
-                call_id: format!("hermes-bs-{}", uuid::Uuid::new_v4()),
-                name: req.tool.as_str().into(),
-                args: req.payload.clone(),
-                seq: self.seq,
             }],
             wire_messages: vec![wire_message],
             ..HarnessControlOutcome::default()
@@ -655,7 +620,6 @@ fn spawn_payload(ctx: &DriverContext, cfg: &HermesConfig) -> Value {
         "worker_id": ctx.worker_id,
         "project_id": ctx.project_id,
         "worktree": ctx.worktree,
-        "babysitter_target": ctx.babysitter_target,
     })
 }
 
@@ -1116,7 +1080,6 @@ mod tests {
             worker_id: "implementer-hermes".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         }
     }
 

@@ -150,21 +150,8 @@ fn render(
     out
 }
 
-/// Binaries a pair needs, with the mode's own runtime called out separately —
-/// an rmux pair fails at launch when only the harness CLI is present.
 fn requirements(profile: &TransportProfile) -> String {
-    let mut parts = vec![format!(
-        "{} ({})",
-        profile.binary,
-        installed_word(profile.installed)
-    )];
-    if let Some(binary) = profile.mode_binary.as_deref() {
-        parts.push(format!(
-            "{binary} ({})",
-            installed_word(profile.mode_installed.unwrap_or(false))
-        ));
-    }
-    parts.join(", ")
+    format!("{} ({})", profile.binary, installed_word(profile.installed))
 }
 
 fn installed_word(installed: bool) -> &'static str {
@@ -281,9 +268,7 @@ mod tests {
         let mut transports = transport_profiles();
         transports.retain(|profile| profile.interaction.is_unattended());
         assert!(!transports.is_empty());
-        assert!(transports
-            .iter()
-            .all(|profile| profile.mode != "tmux" && profile.mode != "rmux"));
+        assert!(transports.iter().all(|profile| profile.mode != "tmux"));
     }
 
     /// A harness with no machine-readable catalog is listed with that fact, not
@@ -338,18 +323,5 @@ mod tests {
         }];
         let text = render(&transport_profiles(), Some(&options));
         assert!(text.contains("`model/list` protocol RPC"), "{text}");
-    }
-
-    #[test]
-    fn requirements_report_the_mode_binary_separately() {
-        let profile = transport_profiles()
-            .into_iter()
-            .find(|profile| profile.mode == "rmux")
-            .expect("rmux pair present");
-        let text = requirements(&profile);
-        assert!(
-            text.contains("rmux") || profile.mode_binary.is_none(),
-            "rmux pairs must name their own runtime binary: {text}"
-        );
     }
 }

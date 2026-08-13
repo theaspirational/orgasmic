@@ -34,7 +34,7 @@ contains: tmux new-session failed (exit 1) on the default shared server (no -L/-
 # ...and the socket it landed on was not a tmux server. Two spellings, because
 # which one tmux emits depends on how long TMPDIR is on the host, and both mean
 # the same thing: the `$TMUX` this run inherited names something that does not
-# speak tmux's protocol — a plain file here, an rmux socket in the wild.
+# speak tmux's protocol — a plain file in this replay.
 contains-any: Socket operation on non-socket
 contains-any: File name too long
 

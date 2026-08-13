@@ -20,15 +20,9 @@ futures.workspace = true
 libc = "0.2"
 reqwest.workspace = true
 tokio-tungstenite.workspace = true
-# rmux hybrid driver (TASK-104, TASK-FG7FD): typed session control. The SDK
-# starts or connects to a daemon but does NOT bundle the `rmux` binary, so the
-# driver discovers/provisions that separately (RMUX_SDK_DAEMON_BINARY or PATH).
-# RMUX's detached RPC protocol requires the CLI, daemon, and SDK to use the
-# same release; keep this exact and mirror it in the runtime binary probe.
-rmux-sdk = "=0.9.0"
 tempfile = "3"
-# TASK-Z3093: the one shared `LiveSessionGuard` lives in the normal library
-# (`modes::rmux::test_tooling`), not behind `#[cfg(test)]`, because integration
+# The shared `LiveSessionGuard` lives in the normal library (`test_tooling`),
+# not behind `#[cfg(test)]`, because integration
 # test binaries in three crates need it. Its flock therefore needs fs2 as a
 # real dependency rather than a dev-dependency.
 fs2 = { workspace = true }

@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions};
-use orgasmic_drivers::modes::rmux::test_tooling::{
+use orgasmic_drivers::test_tooling::{
     assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
 };
 

@@ -11,11 +11,11 @@ use orgasmic_core::{
 };
 use orgasmic_daemon::recovery_claim::{load_recovery_claim, RecoveryClaim, RecoveryClaimStatus};
 use orgasmic_daemon::{Daemon, DaemonOptions};
-use orgasmic_drivers::modes::rmux::test_tooling::{
-    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
-};
 use orgasmic_drivers::modes::tmux::{
     own_tmux_server_for_tests, real_tmux_on_path, tmux_command, TMUX_SOCKET_ENV,
+};
+use orgasmic_drivers::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
 };
 use serde_json::{json, Value};
 
@@ -228,21 +228,17 @@ fn token(home: &Home) -> String {
 /// Is a *real* tmux usable here, and — once the answer is yes — the server this
 /// process owns claimed?
 ///
-/// Both halves are load-bearing, and this file learned each the hard way:
+/// Both checks are load-bearing:
 ///
-/// 1. *Strictness.* The former gate was `tmux -V`, and inside an orgasmic
-///    worker rmux prepends a shim directory in which `tmux` is a symlink to
-///    `rmux`; the shim answers `-V` and prints `tmux 3.4`. So this file's tmux
-///    test ran in every worker suite, reported tmux, and executed rmux. The
-///    rule is TASK-K4G1D's, reached here through `orgasmic_drivers` because an
+/// 1. *Strictness.* The gate resolves the same tmux binary as the driver. The
+///    rule is reached here through `orgasmic_drivers` because an
 ///    integration-test crate cannot import the daemon's `#[cfg(test)]` copy;
 ///    `api::tests::daemon_and_driver_tmux_strictness_agree` keeps the two from
 ///    drifting and TASK-VJ633 collapses them.
 /// 2. *Isolation* (TASK-0RCRY). Claimed here, before any session exists,
 ///    because this is the one gate every tmux-touching path below passes
 ///    through. Deliberately after the strictness check: claiming starts a
-///    keepalive session, and claiming through the shim would start it on the
-///    rmux server — the thing being prevented.
+///    keepalive session on the isolated server.
 ///
 /// The claim also covers the *child daemons*, which are what actually create
 /// the panes: [`spawn_daemon_child`] hands them the owned socket explicitly,
@@ -267,7 +263,7 @@ fn required_test_tooling_is_present() {
 /// One choke point, for the same reason `tmux_command` is one in the driver:
 /// the `-L` selection is what keeps `kill-session` below off a server this test
 /// did not create. Unpinned, it reached whatever server the environment
-/// selected — inside a worker, `/private/tmp/rmux-501/default`, the rmux server
+/// selected — inside a worker, `/private/tmp/tmux-501/default`, the tmux server
 /// hosting live worker panes, which this file then ran `kill-session` against.
 fn tmux(args: &[&str]) -> Command {
     let mut command = tmux_command();
@@ -346,7 +342,7 @@ fn every_tmux_invocation_is_pinned_to_an_owned_server() {
             Some("-L"),
             "unpinned tmux invocation `{rendered}`: without -L it reaches the server the \
              environment selects — the operator's own on a dev box, and inside an orgasmic \
-             worker the rmux server hosting live worker panes"
+             worker the tmux server hosting live worker panes"
         );
         assert!(
             argv.get(1).is_some_and(|socket| !socket.is_empty()),

@@ -209,7 +209,7 @@ export function normalizeTranscriptParts(
       continue;
     }
 
-    // 'pane_activity' is a content-free rmux liveness signal (TASK-RWCRN),
+    // 'pane_activity' is a content-free pane liveness signal,
     // rendered nowhere for the same reason heartbeats are not.
     if (eventType === 'ready' || eventType === 'heartbeat' || eventType === 'pane_activity')
       continue;
