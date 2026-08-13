@@ -35,6 +35,54 @@ use uuid::Uuid;
 
 use crate::events::{EventBus, EventPayload, Topic};
 
+/// The multi-tx append reached the ledger, but the writer could not confirm
+/// that the retained descriptor was synced. Callers must distinguish this
+/// committed outcome from an ordinary failed transaction without parsing its
+/// human-readable text.
+#[derive(Debug)]
+pub struct CommittedSyncUncertainError {
+    retry: bool,
+    source: String,
+}
+
+impl CommittedSyncUncertainError {
+    pub(crate) fn initial(source: impl std::fmt::Display) -> Self {
+        Self {
+            retry: false,
+            source: source.to_string(),
+        }
+    }
+
+    fn retry(source: impl std::fmt::Display) -> Self {
+        Self {
+            retry: true,
+            source: source.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for CommittedSyncUncertainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.retry {
+            write!(
+                f,
+                "multi transaction committed but durability remains uncertain; retained ledger \
+                 descriptor could not be synced: {}",
+                self.source
+            )
+        } else {
+            write!(
+                f,
+                "multi transaction committed but durability is uncertain; retry the same \
+                 request_id to sync the retained ledger descriptor without appending again: {}",
+                self.source
+            )
+        }
+    }
+}
+
+impl std::error::Error for CommittedSyncUncertainError {}
+
 /// Test-only counters and injectors for writer durability tests.
 #[doc(hidden)]
 pub mod test_hooks {
@@ -1682,9 +1730,8 @@ async fn writer_loop(
                             }
                             Err(error) => {
                                 command_failed = true;
-                                let _ = reply.send(Err(anyhow!(
-                                    "multi transaction committed but durability remains uncertain; retained ledger descriptor could not be synced: {error}"
-                                )));
+                                let _ = reply
+                                    .send(Err(anyhow!(CommittedSyncUncertainError::retry(error))));
                             }
                         }
                     }
@@ -1721,7 +1768,7 @@ async fn writer_loop(
                                 );
                                 drop(cache);
                                 let _ = reply.send(Err(anyhow!(
-                                    "multi transaction committed but durability is uncertain; retry the same request_id to sync the retained ledger descriptor without appending again: {error}"
+                                    CommittedSyncUncertainError::initial(error)
                                 )));
                             }
                             Err(error) => {

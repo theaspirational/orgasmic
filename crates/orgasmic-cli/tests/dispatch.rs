@@ -3196,6 +3196,150 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_partial_close_retry_does_not_move_an_advanced_sibling_backwards() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("task-bundle-advanced-brief.md");
+    write(&brief, "bundle advanced sibling brief");
+    let worktree = tmp.path().join("worktrees/task-bundle-advanced");
+
+    let running = boot(home.clone()).await;
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-bundle-advanced-impl",
+        ],
+    );
+    let start_tx = tx_id_for(
+        &tx_log(&project_root),
+        "manager.dispatch_started",
+        "TASK-BUNDLE-A TASK-BUNDLE-B",
+    );
+    run_git(
+        &project_root,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    run_git(
+        &project_root,
+        &["branch", "-D", "task-bundle-advanced-impl"],
+    );
+    append_partial_close_tx(
+        &project_root,
+        &start_tx,
+        "TASK-BUNDLE-A",
+        &head,
+        "task-bundle-advanced-impl",
+    );
+
+    // Simulate workflow that legitimately continued after the old-format
+    // close. The original close retry must not treat that later state as its
+    // own `from` state and pull it back to IN_REVIEW.
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "in_review",
+            "--reason",
+            "advance after legacy close",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "done",
+            "--reason",
+            "finish after legacy close",
+        ],
+    );
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--started-tx",
+            &start_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--codex-session",
+            "session-bundle-advanced",
+            "--tokens",
+            "789",
+            "--wall",
+            "4s",
+            "--branch-delete",
+        ],
+    );
+    assert!(close_stdout.contains("closed: TASK-BUNDLE-A TASK-BUNDLE-B implementer.done tx="));
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+    assert_task_stage(&project_root, "TASK-BUNDLE-B", "IN_REVIEW", "in_review");
+    assert_eq!(
+        count_occurrences(&tx_log(&project_root), ":TYPE:         implementer.done"),
+        2,
+        "the missing sibling should close without duplicating the legacy close"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));

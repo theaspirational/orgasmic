@@ -91,7 +91,8 @@ use crate::supervisor::{
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{
-    FileMutate, FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle,
+    CommittedSyncUncertainError, FileMutate, FileRewrite, MutationIdentity, TxAppend, TxIdPolicy,
+    WriterHandle,
 };
 use crate::ws;
 
@@ -1715,11 +1716,12 @@ fn writer_transaction_error(error: impl std::fmt::Display) -> ApiError {
     ApiError::internal("failed to apply changes")
 }
 
-fn dispatch_close_writer_error(error: impl std::fmt::Display) -> ApiError {
-    let message = error.to_string();
-    if message.contains("multi transaction committed but durability is uncertain")
-        || message.contains("multi transaction committed but durability remains uncertain")
+fn dispatch_close_writer_error(error: anyhow::Error) -> ApiError {
+    if error
+        .downcast_ref::<CommittedSyncUncertainError>()
+        .is_some()
     {
+        let message = error.to_string();
         tracing::error!(error = %message, "dispatch close committed with uncertain durability");
         return ApiError::service_unavailable(json!({
             "error": message,
@@ -1727,7 +1729,7 @@ fn dispatch_close_writer_error(error: impl std::fmt::Display) -> ApiError {
             "durability": "uncertain",
         }));
     }
-    writer_transaction_error(message)
+    writer_transaction_error(error)
 }
 
 // orgasmic:task_HQ970
@@ -20803,6 +20805,26 @@ pub(crate) mod tests {
 
     async fn direct_catalog_test_state(home: Home) -> ApiState {
         direct_test_state(home, false).await
+    }
+
+    #[test]
+    fn dispatch_close_uncertain_durability_uses_typed_writer_error() {
+        let error = dispatch_close_writer_error(anyhow::Error::new(
+            CommittedSyncUncertainError::initial("injected sync failure"),
+        ));
+        assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+        let body = error.body.expect("structured committed response");
+        assert_eq!(body["committed"], true);
+        assert_eq!(body["durability"], "uncertain");
+
+        let impostor = dispatch_close_writer_error(anyhow::anyhow!(
+            "multi transaction committed but durability is uncertain"
+        ));
+        assert_eq!(
+            impostor.status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "human-readable text must not classify an untyped writer failure"
+        );
     }
 
     fn dispatch_close_request(from: LifecycleStage) -> DispatchCloseCommitRequest {
