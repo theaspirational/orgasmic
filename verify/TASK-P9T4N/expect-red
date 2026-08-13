@@ -1,0 +1,7 @@
+# The injection makes the multi-append writer physically emit only the first
+# entry while still returning both prepared results. It recreates the forbidden
+# ledger shape: terminal dispatch tx present, task.state_transitioned absent.
+exit: 101
+contains: dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request
+contains: called `Option::unwrap()` on a `None` value
+contains: test result: FAILED. 0 passed; 1 failed

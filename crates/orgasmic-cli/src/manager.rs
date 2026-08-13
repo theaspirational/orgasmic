@@ -673,6 +673,21 @@ struct TxAppendResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct DispatchCloseCommitRequest {
+    close_tx: TxAppendRequest,
+    state: String,
+    reason: String,
+    request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DispatchCloseCommitResponse {
+    close_tx: TxAppendResponse,
+    #[allow(dead_code)]
+    transition_tx_id: String,
+}
+
+#[derive(Debug, Serialize)]
 struct RunReleaseRequest {
     reason: Option<String>,
     request_id: Option<String>,
@@ -1330,55 +1345,52 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     // leg repairable from the ledger instead of by hand.
     let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
     let mut responses = Vec::new();
-    match args.status {
-        DispatchCloseStatus::Done => {
-            for task in &missing_close_tasks {
-                let request = close_done_request(
-                    &project_id,
-                    &open,
-                    task,
-                    &args,
-                    &CloseTxFacts {
-                        tx_type,
-                        merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
-                        worker_commit: verified_merge
-                            .as_ref()
-                            .and_then(|merge| merge.worker_commit.as_deref()),
-                        cleanup: &cleanup,
-                        transition: transition_for(&transitions, task),
-                    },
-                );
-                responses.push(
-                    runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
-                );
-            }
-        }
-        DispatchCloseStatus::Aborted => {
-            let reason = abort_reason.as_deref().expect("validated aborted reason");
-            for task in &missing_close_tasks {
-                let request = close_aborted_request(
-                    &project_id,
-                    &open,
-                    task,
-                    reason,
-                    &cleanup,
-                    transition_for(&transitions, task),
-                );
-                responses.push(
-                    runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
-                );
-            }
-        }
-    };
-
-    if let Err(err) =
-        apply_close_lifecycle_transitions(&client, &runtime, &project_id, &open.tx_id, &transitions)
-    {
-        eprintln!(
-            "warning: close tx appended but lifecycle update failed: {err}\n  \
-             the close tx records the transition it intended; the next `orgasmic manager` \
-             command finishes it"
-        );
+    for task in &missing_close_tasks {
+        let transition = transition_for(&transitions, task)
+            .expect("every readable close task has a lifecycle transition");
+        let close_tx = match args.status {
+            DispatchCloseStatus::Done => close_done_request(
+                &project_id,
+                &open,
+                task,
+                &args,
+                &CloseTxFacts {
+                    tx_type,
+                    merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
+                    worker_commit: verified_merge
+                        .as_ref()
+                        .and_then(|merge| merge.worker_commit.as_deref()),
+                    cleanup: &cleanup,
+                    transition: Some(transition),
+                },
+            ),
+            DispatchCloseStatus::Aborted => close_aborted_request(
+                &project_id,
+                &open,
+                task,
+                abort_reason.as_deref().expect("validated aborted reason"),
+                &cleanup,
+                Some(transition),
+            ),
+        };
+        let response: DispatchCloseCommitResponse = runtime.block_on(client.post_json(
+            &format!(
+                "/projects/{}/tasks/{}/dispatch/close",
+                path_segment(&project_id),
+                path_segment(task)
+            ),
+            &DispatchCloseCommitRequest {
+                close_tx,
+                state: transition.to.as_str().to_string(),
+                reason: format!(
+                    "transition {} to {}",
+                    transition.task,
+                    transition.to.as_str()
+                ),
+                request_id: close_lifecycle_request_id(task, &open.tx_id),
+            },
+        ))?;
+        responses.push(response.close_tx);
     }
 
     let tx_ids = if responses.is_empty() {
@@ -8493,27 +8505,6 @@ fn apply_task_lifecycle_transitions(
 /// unlabelled empty change set.
 fn close_lifecycle_request_id(task: &str, started_tx: &str) -> String {
     format!("dispatch-close-state-{}-{}", request_slug(task), started_tx)
-}
-
-/// Apply a close's lifecycle transitions, reporting per-task whether the
-/// daemon applied them now or recognised them as already applied.
-fn apply_close_lifecycle_transitions(
-    client: &DaemonClient,
-    runtime: &tokio::runtime::Runtime,
-    project_id: &str,
-    started_tx: &str,
-    transitions: &[CloseTransition],
-) -> Result<Vec<TaskStateOutcome>> {
-    let mut outcomes = Vec::new();
-    for transition in transitions {
-        outcomes.push(runtime.block_on(post_task_state(
-            client,
-            project_id,
-            transition,
-            &close_lifecycle_request_id(&transition.task, started_tx),
-        ))?);
-    }
-    Ok(outcomes)
 }
 
 /// The daemon's labelled no-op contract for `POST /projects/:id/tasks/:task`

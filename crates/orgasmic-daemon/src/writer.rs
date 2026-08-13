@@ -43,7 +43,9 @@ pub mod test_hooks {
     static SYNC_COUNT: AtomicU64 = AtomicU64::new(0);
     static SYNC_ATTEMPT_COUNT: AtomicU64 = AtomicU64::new(0);
     static SCAN_COUNT: AtomicU64 = AtomicU64::new(0);
+    static FLOCK_COUNT: AtomicU64 = AtomicU64::new(0);
     static FAIL_NEXT_SYNC: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_NEXT_MULTI_BEFORE_COMMIT: AtomicUsize = AtomicUsize::new(0);
 
     #[cfg(test)]
     #[derive(Debug)]
@@ -88,7 +90,9 @@ pub mod test_hooks {
         SYNC_COUNT.store(0, Ordering::SeqCst);
         SYNC_ATTEMPT_COUNT.store(0, Ordering::SeqCst);
         SCAN_COUNT.store(0, Ordering::SeqCst);
+        FLOCK_COUNT.store(0, Ordering::SeqCst);
         FAIL_NEXT_SYNC.store(0, Ordering::SeqCst);
+        FAIL_NEXT_MULTI_BEFORE_COMMIT.store(0, Ordering::SeqCst);
     }
 
     pub fn sync_count() -> u64 {
@@ -103,8 +107,32 @@ pub mod test_hooks {
         SCAN_COUNT.load(Ordering::SeqCst)
     }
 
+    pub fn flock_count() -> u64 {
+        FLOCK_COUNT.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn record_flock() {
+        FLOCK_COUNT.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub fn fail_next_sync(count: usize) {
         FAIL_NEXT_SYNC.store(count, Ordering::SeqCst);
+    }
+
+    pub fn fail_next_multi_before_commit(count: usize) {
+        FAIL_NEXT_MULTI_BEFORE_COMMIT.store(count, Ordering::SeqCst);
+    }
+
+    pub(crate) fn before_multi_commit() -> Result<()> {
+        if FAIL_NEXT_MULTI_BEFORE_COMMIT
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            bail!("injected failure before multi transaction commit");
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -170,7 +198,7 @@ pub mod test_hooks {
 
 type ProjectMonthKey = (String, String);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct ProjectTxSeqCache {
     by_project_month: HashMap<ProjectMonthKey, u32>,
     project_max: HashMap<String, u32>,
@@ -271,6 +299,10 @@ enum WriterCommand {
         req: TransactionRequest,
         reply: oneshot::Sender<Result<TxAppendResult>>,
     },
+    TransactionMulti {
+        req: TransactionMultiRequest,
+        reply: oneshot::Sender<Result<Vec<TxAppendResult>>>,
+    },
     TransactionMutate {
         req: TransactionMutateRequest,
         reply: oneshot::Sender<Result<TxAppendResult>>,
@@ -300,6 +332,13 @@ struct TransactionRequest {
     request_id: String,
     mutation: Option<MutationIdentity>,
     mutation_id: Option<String>,
+}
+
+#[derive(Debug)]
+struct TransactionMultiRequest {
+    rewrites: Vec<FileRewrite>,
+    txs: Vec<TxAppend>,
+    request_id: String,
 }
 
 #[derive(Debug)]
@@ -565,6 +604,9 @@ enum CachedResponse {
         mutation: Option<MutationIdentity>,
         mutation_id: Option<String>,
     },
+    Multi {
+        results: Vec<TxAppendResult>,
+    },
     Rewrite,
 }
 
@@ -617,6 +659,10 @@ fn transaction_identity(tx: &TxAppend, rewrites: &[FileRewrite]) -> MutationIden
             .unwrap_or_else(|| "<none>".to_string()),
         payload,
     )
+}
+
+fn multi_cache_key(request_id: &str) -> String {
+    format!("transaction-multi:{request_id}")
 }
 
 fn cached_transaction_from_map(
@@ -732,6 +778,44 @@ impl WriterHandle {
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
         Ok(res.tx_id)
+    }
+
+    // orgasmic:task_P9T4N
+    /// Rewrite files and append an ordered group of tx entries as one writer
+    /// command. The group must target one ledger, so it is emitted by one
+    /// underlying append and acknowledged by one sync.
+    pub async fn transaction_multi(
+        &self,
+        rewrites: Vec<FileRewrite>,
+        txs: Vec<TxAppend>,
+    ) -> Result<Vec<TxAppendResult>> {
+        let first = txs
+            .first()
+            .ok_or_else(|| anyhow!("multi transaction requires at least one tx"))?;
+        let request_id = first
+            .request_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let cache_key = multi_cache_key(&request_id);
+        {
+            let cache = self.idempotency.lock().await;
+            if let Some(CachedResponse::Multi { results }) = cache.get(&cache_key) {
+                return Ok(results.clone());
+            }
+        }
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(WriterCommand::TransactionMulti {
+                req: TransactionMultiRequest {
+                    rewrites,
+                    txs,
+                    request_id,
+                },
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("writer task is gone"))?;
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))?
     }
 
     /// Apply a single-file read-modify-write and append its tx as one writer
@@ -1212,6 +1296,18 @@ fn describe_command(cmd: &WriterCommand) -> PendingWrite {
             tx_type: Some(req.tx.entry.ty.clone()),
             path: Some(req.tx.tx_path.clone()),
         },
+        WriterCommand::TransactionMulti { req, .. } => PendingWrite {
+            kind: "transaction_multi".to_string(),
+            run_id: None,
+            tx_type: Some(
+                req.txs
+                    .iter()
+                    .map(|tx| tx.entry.ty.as_str())
+                    .collect::<Vec<_>>()
+                    .join("+"),
+            ),
+            path: req.txs.first().map(|tx| tx.tx_path.clone()),
+        },
         WriterCommand::TransactionMutate { req, .. } => PendingWrite {
             kind: "transaction_mutate".to_string(),
             run_id: None,
@@ -1465,6 +1561,84 @@ async fn writer_loop(
                         );
                     }
                     let _ = reply.take().expect("writer reply available").send(result);
+                }
+            }
+            WriterCommand::TransactionMulti { req, reply } => {
+                let cache_key = multi_cache_key(&req.request_id);
+                let cached = {
+                    let cache = idempotency.lock().await;
+                    match cache.get(&cache_key) {
+                        Some(CachedResponse::Multi { results }) => Ok(Some(results.clone())),
+                        Some(_) => Err(anyhow!(
+                            "multi transaction cache key was used by a different mutation type"
+                        )),
+                        None => {
+                            let collision = req.txs.iter().find_map(|tx| {
+                                tx.request_id
+                                    .as_ref()
+                                    .filter(|request_id| cache.contains_key(*request_id))
+                            });
+                            match collision {
+                                Some(request_id) => Err(anyhow!(
+                                    "request_id `{request_id}` was already used outside this multi transaction"
+                                )),
+                                None => Ok(None),
+                            }
+                        }
+                    }
+                };
+                match cached {
+                    Ok(Some(results)) => {
+                        let _ = reply.send(Ok(results));
+                    }
+                    Err(error) => {
+                        command_failed = true;
+                        let _ = reply.send(Err(error));
+                    }
+                    Ok(None) => {
+                        let result = transaction_multi_inner(
+                            &mut tx_handles,
+                            &mut seq_cache,
+                            &req.rewrites,
+                            &req.txs,
+                            &req.request_id,
+                            test_hooks::before_multi_commit,
+                        );
+                        command_failed = result.is_err();
+                        if let Ok(ref results) = result {
+                            let mut cache = idempotency.lock().await;
+                            for (tx, result) in req.txs.iter().zip(results) {
+                                if let Some(request_id) = tx.request_id.as_ref() {
+                                    cache.insert(
+                                        request_id.clone(),
+                                        CachedResponse::Tx {
+                                            result: result.clone(),
+                                            mutation: Some(transaction_identity(tx, &req.rewrites)),
+                                            mutation_id: None,
+                                        },
+                                    );
+                                }
+                            }
+                            cache.insert(
+                                cache_key,
+                                CachedResponse::Multi {
+                                    results: results.clone(),
+                                },
+                            );
+                            drop(cache);
+                            for (tx, result) in req.txs.iter().zip(results) {
+                                events.publish(
+                                    Topic::Daemon,
+                                    EventPayload::TxAppended {
+                                        project_id: tx.project_id.clone(),
+                                        tx_id: result.tx_id.clone(),
+                                        ty: tx.entry.ty.clone(),
+                                    },
+                                );
+                            }
+                        }
+                        let _ = reply.send(result);
+                    }
                 }
             }
             WriterCommand::TransactionMutate { req, reply } => {
@@ -1942,17 +2116,49 @@ fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Re
     Ok(())
 }
 
-fn append_tx_inner(
+fn append_txs_inner(
     handles: &mut HashMap<PathBuf, CachedTxWriter>,
     seq_cache: &mut ProjectTxSeqCache,
-    req: TxAppend,
-) -> Result<TxAppendResult> {
-    let paths = HashSet::from([req.tx_path.clone()]);
+    reqs: &[TxAppend],
+) -> Result<Vec<TxAppendResult>> {
+    let first = reqs
+        .first()
+        .ok_or_else(|| anyhow!("multi transaction requires at least one tx"))?;
+    if reqs.iter().any(|req| req.tx_path != first.tx_path) {
+        bail!("multi transaction tx entries must target one ledger");
+    }
+    let paths = HashSet::from([first.tx_path.clone()]);
     if tx_handles_detached_from_paths(handles, &paths) {
         seq_cache.clear();
     }
-    let entry = prepare_tx_entry(seq_cache, &req)?;
-    write_tx_append(handles, &req.tx_path, &entry)
+    let mut staged_seq_cache = seq_cache.clone();
+    let entries = reqs
+        .iter()
+        .map(|req| prepare_tx_entry(&mut staged_seq_cache, req))
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(parent) = first.tx_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let writer = match handles.get_mut(&first.tx_path) {
+        Some(writer) => writer,
+        None => {
+            let writer = CachedTxWriter::open(&first.tx_path)?;
+            handles.insert(first.tx_path.clone(), writer);
+            handles.get_mut(&first.tx_path).expect("just inserted")
+        }
+    };
+    writer
+        .writer
+        .append_many(&entries)
+        .with_context(|| format!("append to {}", first.tx_path.display()))?;
+    *seq_cache = staged_seq_cache;
+    Ok(entries
+        .into_iter()
+        .map(|entry| TxAppendResult {
+            tx_id: entry.tx_id,
+            tx_path: first.tx_path.clone(),
+        })
+        .collect())
 }
 
 fn next_project_tx_id(
@@ -2194,6 +2400,43 @@ fn transaction_inner<F>(
 where
     F: FnOnce() -> Result<()>,
 {
+    let mut results = transaction_multi_inner(
+        handles,
+        seq_cache,
+        rewrites,
+        std::slice::from_ref(&tx),
+        request_id,
+        verify_before_commit,
+    )?;
+    Ok(results.remove(0))
+}
+
+fn transaction_multi_inner<F>(
+    handles: &mut HashMap<PathBuf, CachedTxWriter>,
+    seq_cache: &mut ProjectTxSeqCache,
+    rewrites: &[FileRewrite],
+    txs: &[TxAppend],
+    request_id: &str,
+    verify_before_commit: F,
+) -> Result<Vec<TxAppendResult>>
+where
+    F: FnOnce() -> Result<()>,
+{
+    if txs.is_empty() {
+        bail!("multi transaction requires at least one tx");
+    }
+    let tx_path = &txs[0].tx_path;
+    if txs.iter().any(|tx| tx.tx_path != *tx_path) {
+        bail!("multi transaction tx entries must target one ledger");
+    }
+    let mut request_ids = HashSet::new();
+    for tx in txs {
+        if let Some(id) = tx.request_id.as_ref() {
+            if !request_ids.insert(id) {
+                bail!("duplicate request_id in multi transaction: {id}");
+            }
+        }
+    }
     reject_duplicate_rewrites(rewrites)?;
     let mut locks = Vec::new();
     let locked = (|| -> Result<()> {
@@ -2207,24 +2450,25 @@ where
                     .with_context(|| format!("open {}", rewrite.path.display()))?;
                 FileExt::try_lock_exclusive(&file)
                     .with_context(|| format!("flock contention on {}", rewrite.path.display()))?;
+                test_hooks::record_flock();
                 locks.push((rewrite.path.clone(), file));
             }
         }
         Ok(())
     })();
     let result = locked.and_then(|()| {
-        transaction_locked_inner(
+        transaction_multi_locked_inner(
             handles,
             seq_cache,
             rewrites,
-            tx,
+            txs,
             request_id,
             verify_before_commit,
         )
     });
     for (path, file) in locks {
-        if let Err(e) = FileExt::unlock(&file) {
-            warn!(path = %path.display(), error = %e, "flock unlock failed");
+        if let Err(error) = FileExt::unlock(&file) {
+            warn!(path = %path.display(), error = %error, "flock unlock failed");
         }
     }
     result
@@ -2283,8 +2527,30 @@ fn transaction_locked_inner<F>(
 where
     F: FnOnce() -> Result<()>,
 {
+    let mut results = transaction_multi_locked_inner(
+        handles,
+        seq_cache,
+        rewrites,
+        std::slice::from_ref(&tx),
+        request_id,
+        verify_before_commit,
+    )?;
+    Ok(results.remove(0))
+}
+
+fn transaction_multi_locked_inner<F>(
+    handles: &mut HashMap<PathBuf, CachedTxWriter>,
+    seq_cache: &mut ProjectTxSeqCache,
+    rewrites: &[FileRewrite],
+    txs: &[TxAppend],
+    request_id: &str,
+    verify_before_commit: F,
+) -> Result<Vec<TxAppendResult>>
+where
+    F: FnOnce() -> Result<()>,
+{
     let mut staged = Vec::new();
-    let result = (|| -> Result<TxAppendResult> {
+    let result = (|| -> Result<Vec<TxAppendResult>> {
         for rewrite in rewrites {
             if let Some(parent) = rewrite.path.parent() {
                 std::fs::create_dir_all(parent)
@@ -2342,13 +2608,13 @@ where
             }
             renamed.push(idx);
         }
-        let appended = append_tx_inner(handles, seq_cache, tx);
+        let appended = append_txs_inner(handles, seq_cache, txs);
         if appended.is_err() {
             rollback_renamed_rewrites(&staged, &renamed);
             return appended;
         }
         let appended = appended?;
-        if let Err(error) = sync_tx_writer(handles, &appended.tx_path) {
+        if let Err(error) = sync_tx_writer(handles, &appended[0].tx_path) {
             rollback_renamed_rewrites(&staged, &renamed);
             return Err(error);
         }

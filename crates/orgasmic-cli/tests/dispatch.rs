@@ -8279,13 +8279,7 @@ fn seed_open_dispatch_tx(project_root: &Path, started_tx: &str, worktree: &Path,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
-    // TASK-EP3H1: `dispatch-close` writes the close tx and the task lifecycle
-    // transition as two daemon requests. When the second one fails — measured
-    // as a client-side timeout at load average ~190 — the close tx is on the
-    // ledger and the task is stranded at its pre-close stage, and the operator
-    // is left to repair it by hand. The close records the transition it
-    // intended, so the NEXT manager command finishes it.
+async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -8327,19 +8321,68 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         output.status.success(),
-        "the close tx leg succeeds, so the command still exits 0\nstdout={}\nstderr={}",
+        "the atomic close must not use the rejected legacy lifecycle route\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let close_stderr = String::from_utf8_lossy(&output.stderr).to_string();
     assert!(
-        close_stderr.contains("close tx appended but lifecycle update failed"),
-        "the tear must stay loud: {close_stderr}"
+        !close_stderr.contains("lifecycle update failed"),
+        "the close must have no client-visible boundary between ledger legs: {close_stderr}"
     );
-    assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
+    assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
+    let ledger = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let close = ledger.find("implementer.done TASK-CLEANUP").unwrap();
+    let transition = ledger.find("task.state_transitioned TASK-CLEANUP").unwrap();
+    assert!(
+        close < transition,
+        "terminal tx must immediately precede its lifecycle record"
+    );
+    assert_eq!(
+        ledger[close..transition].matches("* TX ").count(),
+        1,
+        "no concurrent tx may interleave the two close legs"
+    );
     drop(proxy);
 
-    // The next manager command finishes the transition the close recorded.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let tx_path = tx_file_path(&project_root);
+    let mut ledger = std::fs::read_to_string(&tx_path)
+        .unwrap_or_else(|_| "#+title: tx\n#+orgasmic_version: 1\n".to_string());
+    ledger.push_str(
+        "\n* TX 2026-07-29 Wed 10:00:00 implementer.done TASK-CLEANUP\n\
+         :PROPERTIES:\n\
+         :TX_ID:        tx-close-legacy-torn\n\
+         :TIME:         [2026-07-29 Wed 10:00:00]\n\
+         :TYPE:         implementer.done\n\
+         :ACTOR:        agent.implementer\n\
+         :MACHINE:      host\n\
+         :PROJECT:      orgasmic\n\
+         :TASK:         TASK-CLEANUP\n\
+         :CLOSED_TX:    tx-start-legacy-torn\n\
+         :LIFECYCLE_FROM: backlog\n\
+         :LIFECYCLE_TO: in_review\n\
+         :END:\n",
+    );
+    write(&tx_path, ledger);
+
+    let running = boot(home.clone()).await;
     let status_stdout = run_orgasmic(
         &home,
         &running,
@@ -8349,11 +8392,9 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         status_stdout.contains("reconciled: TASK-CLEANUP backlog -> in_review"),
-        "the next manager command must repair the torn close and say so: {status_stdout}"
+        "legacy ledger repair must remain active: {status_stdout}"
     );
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
-
-    // ...and it is not a standing repair loop: a second run has nothing to do.
     let repeat_stdout = run_orgasmic(
         &home,
         &running,
@@ -8363,7 +8404,7 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         !repeat_stdout.contains("reconciled:"),
-        "a repaired close must not reconcile twice: {repeat_stdout}"
+        "a repaired legacy close must not reconcile twice: {repeat_stdout}"
     );
 
     let _ = running.shutdown.send(());
