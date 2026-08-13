@@ -1,0 +1,13 @@
+diff --git a/crates/orgasmic-daemon/src/writer.rs b/crates/orgasmic-daemon/src/writer.rs
+--- a/crates/orgasmic-daemon/src/writer.rs
++++ b/crates/orgasmic-daemon/src/writer.rs
+@@ -2149,7 +2149,7 @@ fn append_txs_inner(
+     };
+     writer
+         .writer
+-        .append_many(&entries)
++        .append_many(&entries[..1])
+         .with_context(|| format!("append to {}", first.tx_path.display()))?;
+     *seq_cache = staged_seq_cache;
+     Ok(entries
+         .into_iter()

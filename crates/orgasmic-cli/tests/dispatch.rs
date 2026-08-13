@@ -16,6 +16,29 @@ use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+#[cfg(unix)]
+struct PermissionRestore {
+    path: PathBuf,
+    mode: u32,
+}
+
+#[cfg(unix)]
+impl PermissionRestore {
+    fn new(path: &Path, mode: u32) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            mode,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PermissionRestore {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+    }
+}
+
 // orgasmic:task_K5NDR
 #[path = "common/env_isolation.rs"]
 mod env_isolation;
@@ -3173,6 +3196,150 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_partial_close_retry_does_not_move_an_advanced_sibling_backwards() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("task-bundle-advanced-brief.md");
+    write(&brief, "bundle advanced sibling brief");
+    let worktree = tmp.path().join("worktrees/task-bundle-advanced");
+
+    let running = boot(home.clone()).await;
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--kind",
+            "implementer",
+            "--mode",
+            "ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-bundle-advanced-impl",
+        ],
+    );
+    let start_tx = tx_id_for(
+        &tx_log(&project_root),
+        "manager.dispatch_started",
+        "TASK-BUNDLE-A TASK-BUNDLE-B",
+    );
+    run_git(
+        &project_root,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    run_git(
+        &project_root,
+        &["branch", "-D", "task-bundle-advanced-impl"],
+    );
+    append_partial_close_tx(
+        &project_root,
+        &start_tx,
+        "TASK-BUNDLE-A",
+        &head,
+        "task-bundle-advanced-impl",
+    );
+
+    // Simulate workflow that legitimately continued after the old-format
+    // close. The original close retry must not treat that later state as its
+    // own `from` state and pull it back to IN_REVIEW.
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "in_review",
+            "--reason",
+            "advance after legacy close",
+        ],
+    );
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-BUNDLE-A",
+            "--state",
+            "done",
+            "--reason",
+            "finish after legacy close",
+        ],
+    );
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-BUNDLE-A",
+            "--task",
+            "TASK-BUNDLE-B",
+            "--started-tx",
+            &start_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--codex-session",
+            "session-bundle-advanced",
+            "--tokens",
+            "789",
+            "--wall",
+            "4s",
+            "--branch-delete",
+        ],
+    );
+    assert!(close_stdout.contains("closed: TASK-BUNDLE-A TASK-BUNDLE-B implementer.done tx="));
+    assert_task_stage(&project_root, "TASK-BUNDLE-A", "DONE", "done");
+    assert_task_stage(&project_root, "TASK-BUNDLE-B", "IN_REVIEW", "in_review");
+    assert_eq!(
+        count_occurrences(&tx_log(&project_root), ":TYPE:         implementer.done"),
+        2,
+        "the missing sibling should close without duplicating the legacy close"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -5766,7 +5933,6 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "--merge-sha",
             &merge_sha,
             "--worktree-remove",
-            "--branch-delete",
             "--reason",
             "merged",
         ],
@@ -5799,7 +5965,6 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "--merge-sha",
             &merge_sha,
             "--worktree-remove",
-            "--branch-delete",
             "--reason",
             "merged",
         ],
@@ -5818,7 +5983,7 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
     );
     assert!(
         branches.trim().is_empty(),
-        "close must delete the dispatch branch: {branches}"
+        "successful close must delete the dispatch branch by default: {branches}"
     );
 
     let tx_raw = tx_log(&project_root);
@@ -8258,13 +8423,7 @@ fn seed_open_dispatch_tx(project_root: &Path, started_tx: &str, worktree: &Path,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
-    // TASK-EP3H1: `dispatch-close` writes the close tx and the task lifecycle
-    // transition as two daemon requests. When the second one fails — measured
-    // as a client-side timeout at load average ~190 — the close tx is on the
-    // ledger and the task is stranded at its pre-close stage, and the operator
-    // is left to repair it by hand. The close records the transition it
-    // intended, so the NEXT manager command finishes it.
+async fn dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -8306,19 +8465,72 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         output.status.success(),
-        "the close tx leg succeeds, so the command still exits 0\nstdout={}\nstderr={}",
+        "the atomic close must not use the rejected legacy lifecycle route\nstdout={}\nstderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let close_stderr = String::from_utf8_lossy(&output.stderr).to_string();
     assert!(
-        close_stderr.contains("close tx appended but lifecycle update failed"),
-        "the tear must stay loud: {close_stderr}"
+        !close_stderr.contains("lifecycle update failed"),
+        "the close must have no client-visible boundary between ledger legs: {close_stderr}"
     );
-    assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
+    assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
+    let ledger = std::fs::read_to_string(tx_file_path(&project_root)).unwrap();
+    let close = ledger
+        .find("implementer.done TASK-CLEANUP")
+        .expect("terminal close tx must be present");
+    let transition = ledger
+        .find("task.state_transitioned TASK-CLEANUP")
+        .expect("atomic close must include the lifecycle transition tx");
+    assert!(
+        close < transition,
+        "terminal tx must immediately precede its lifecycle record"
+    );
+    assert_eq!(
+        ledger[close..transition].matches("* TX ").count(),
+        1,
+        "no concurrent tx may interleave the two close legs"
+    );
     drop(proxy);
 
-    // The next manager command finishes the transition the close recorded.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let tx_path = tx_file_path(&project_root);
+    let mut ledger = std::fs::read_to_string(&tx_path)
+        .unwrap_or_else(|_| "#+title: tx\n#+orgasmic_version: 1\n".to_string());
+    ledger.push_str(
+        "\n* TX 2026-07-29 Wed 10:00:00 implementer.done TASK-CLEANUP\n\
+         :PROPERTIES:\n\
+         :TX_ID:        tx-close-legacy-torn\n\
+         :TIME:         [2026-07-29 Wed 10:00:00]\n\
+         :TYPE:         implementer.done\n\
+         :ACTOR:        agent.implementer\n\
+         :MACHINE:      host\n\
+         :PROJECT:      orgasmic\n\
+         :TASK:         TASK-CLEANUP\n\
+         :CLOSED_TX:    tx-start-legacy-torn\n\
+         :LIFECYCLE_FROM: backlog\n\
+         :LIFECYCLE_TO: in_review\n\
+         :END:\n",
+    );
+    write(&tx_path, ledger);
+
+    let running = boot(home.clone()).await;
     let status_stdout = run_orgasmic(
         &home,
         &running,
@@ -8328,11 +8540,9 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         status_stdout.contains("reconciled: TASK-CLEANUP backlog -> in_review"),
-        "the next manager command must repair the torn close and say so: {status_stdout}"
+        "legacy ledger repair must remain active: {status_stdout}"
     );
     assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
-
-    // ...and it is not a standing repair loop: a second run has nothing to do.
     let repeat_stdout = run_orgasmic(
         &home,
         &running,
@@ -8342,7 +8552,7 @@ async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
     );
     assert!(
         !repeat_stdout.contains("reconciled:"),
-        "a repaired close must not reconcile twice: {repeat_stdout}"
+        "a repaired legacy close must not reconcile twice: {repeat_stdout}"
     );
 
     let _ = running.shutdown.send(());
@@ -10578,6 +10788,180 @@ async fn worktree_prune_refuses_a_live_run_in_a_nonconforming_worktree_name() {
     let _ = running.join.await;
 }
 
+/// TASK-GRCWC: a mode-000 descendant used to make the preliminary walk silently
+/// under-count the tree and then authorize deletion. The real verb must now
+/// refuse during classification, before either an earlier or blocked sentinel
+/// can be removed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_an_unreadable_descendant_before_deletion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-unreadable-walk",
+        "task-unreadable-walk-impl",
+        &head,
+    );
+    std::fs::remove_dir_all(project_root.join(".git/worktrees/task-unreadable-walk")).unwrap();
+    let earlier = worktree.join("a-earlier-sentinel.txt");
+    write(&earlier, "must survive because removal never starts");
+    let blocked = worktree.join("z-unreadable");
+    let nested = blocked.join("nested-sentinel.txt");
+    write(&nested, "must survive");
+    let _restore = PermissionRestore::new(&blocked, 0o755);
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert!(
+        std::fs::File::open(&blocked).is_err(),
+        "mode 000 must actually make the directory unreadable; a privileged test process \
+         must fail this fixture rather than report a meaningless pass"
+    );
+
+    let running = boot(home.clone()).await;
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        output.status.success(),
+        "a per-worktree safety refusal remains a reported skip, not a command crash\n{all}"
+    );
+    assert!(
+        earlier.is_file() && nested.is_file(),
+        "classification must refuse before deleting any content\n{all}"
+    );
+    assert!(
+        all.contains(&format!("SKIP PATH={}", worktree.display()))
+            && all.contains("worktree traversal incomplete")
+            && all.contains("z-unreadable")
+            && all.contains("Permission denied"),
+        "the refusal must name the worktree, unreadable descendant, and full OS error chain\n{all}"
+    );
+    assert!(
+        all.contains("the whole worktree was skipped and nothing within it was deleted"),
+        "the refusal must guarantee that classification authorized no deletion anywhere in the \
+         worktree\n{all}"
+    );
+    assert!(
+        all.contains("make the offending descendant readable")
+            && all.contains("chmod")
+            && all.contains("remove it by hand, then re-run")
+            && all.contains("no `--force` override"),
+        "the refusal must give the safe remedies and say that no force escape exists\n{all}"
+    );
+    assert!(
+        !all.contains(&format!("RECLAIMED PATH={}", worktree.display()))
+            && !all.contains(&format!("PARTIAL PATH={}", worktree.display())),
+        "an unsafe preliminary walk must authorize no deletion at all\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0") && all.contains("SKIPPED=1"),
+        "the refusal must remain visible in the summary\n{all}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-GRCWC: generate a real tree beyond the production bound. The sentinel
+/// at the bottom and the one sorted before the chain prove the preliminary
+/// refusal does not become destructive partial success.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn worktree_prune_refuses_an_over_depth_tree_before_deletion() {
+    const MAX_DEPTH_UNDER_TEST: usize = 64;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    let worktree = add_managed_worktree(
+        &home,
+        &project_root,
+        "task-deep-walk",
+        "task-deep-walk-impl",
+        &head,
+    );
+    std::fs::remove_dir_all(project_root.join(".git/worktrees/task-deep-walk")).unwrap();
+    let earlier = worktree.join("a-earlier-sentinel.txt");
+    write(&earlier, "must survive because removal never starts");
+    let mut deepest = worktree.join("z-deep");
+    std::fs::create_dir(&deepest).unwrap();
+    for _ in 0..=MAX_DEPTH_UNDER_TEST {
+        deepest.push("d");
+        std::fs::create_dir(&deepest).unwrap();
+    }
+    let nested = deepest.join("nested-sentinel.txt");
+    write(&nested, "must survive");
+
+    let running = boot(home.clone()).await;
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "worktree-prune"],
+    );
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        output.status.success(),
+        "a per-worktree safety refusal remains a reported skip, not a command crash\n{all}"
+    );
+    assert!(
+        earlier.is_file() && nested.is_file(),
+        "classification must refuse before deleting any content\n{all}"
+    );
+    assert!(
+        all.contains(&format!("SKIP PATH={}", worktree.display()))
+            && all.contains("refusing to descend deeper than 64 directory levels"),
+        "the refusal must name the production depth bound\n{all}"
+    );
+    assert!(
+        !all.contains(&format!("RECLAIMED PATH={}", worktree.display()))
+            && !all.contains(&format!("PARTIAL PATH={}", worktree.display())),
+        "an unsafe preliminary walk must authorize no deletion at all\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0") && all.contains("SKIPPED=1"),
+        "the refusal must remain visible in the summary\n{all}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-RMA18: KEPT MEANS UNTOUCHED.
 ///
 /// A removal that stops part-way has already destroyed files. Reporting that as
@@ -10615,12 +10999,13 @@ async fn a_removal_that_stops_part_way_reports_partial_and_never_kept() {
     write(&worktree.join("a-first.txt"), "removed before the failure");
     let blocked = worktree.join("zz-blocked");
     write(&blocked.join("inner.txt"), "cannot be unlinked");
+    let _restore = PermissionRestore::new(&blocked, 0o755);
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o500)).unwrap();
-    if std::fs::remove_file(blocked.join("inner.txt")).is_ok() {
-        // Running as root: the failure this test needs cannot be produced.
-        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        return;
-    }
+    assert!(
+        std::fs::remove_file(blocked.join("inner.txt")).is_err(),
+        "mode 0500 must actually prevent removal from this directory; a privileged test process \
+         must fail this fixture rather than report a meaningless PARTIAL/KEPT pass"
+    );
 
     let running = boot(home.clone()).await;
     let output = run_orgasmic_output(
@@ -10647,6 +11032,13 @@ async fn a_removal_that_stops_part_way_reports_partial_and_never_kept() {
     assert!(
         !all.contains(&format!("KEPT PATH={}", worktree.display())),
         "KEPT must mean untouched, and this worktree was touched\n{all}"
+    );
+    assert!(
+        all.contains("PRUNE_SUMMARY RECLAIMED=0")
+            && all.contains("PARTIAL=1")
+            && all.contains("KEPT=0"),
+        "a partial removal remains a failed, incomplete removal and must not be collapsed into \
+         RECLAIMED or KEPT in the summary\n{all}"
     );
 
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -11117,10 +11509,27 @@ async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() 
     let brief = tmp.path().join("codex/task-cleanup-brief.md");
     write(&brief, "cleanup brief");
     seed_open_dispatch_tx(&project_root, "tx-start-order", &worktree, &brief);
+    let tx_path = tx_file_path(&project_root);
+    let mut ledger = std::fs::read_to_string(&tx_path).unwrap();
+    ledger.push_str(
+        "\n* TX 2026-07-29 Wed 10:01:00 implementer.done TASK-CLEANUP\n\
+         :PROPERTIES:\n\
+         :TX_ID:        tx-close-order-torn\n\
+         :TIME:         [2026-07-29 Wed 10:01:00]\n\
+         :TYPE:         implementer.done\n\
+         :ACTOR:        agent.implementer\n\
+         :MACHINE:      host\n\
+         :PROJECT:      orgasmic\n\
+         :TASK:         TASK-CLEANUP\n\
+         :CLOSED_TX:    tx-start-order\n\
+         :LIFECYCLE_FROM: backlog\n\
+         :LIFECYCLE_TO: in_review\n\
+         :END:\n",
+    );
+    write(&tx_path, ledger);
     let outside_report = tmp.path().join("outside/last.txt");
 
     let running = boot(home.clone()).await;
-    let proxy = start_lifecycle_rejecting_proxy(running.addr).await;
     let close_args = [
         "manager".to_string(),
         "dispatch-close".to_string(),
@@ -11137,43 +11546,11 @@ async fn a_torn_close_is_reconciled_before_an_absolute_report_path_is_refused() 
         format!("REPORT_PATH={}", outside_report.display()),
     ];
     let borrowed: Vec<&str> = close_args.iter().map(String::as_str).collect();
-    let torn = run_orgasmic_output_with_daemon_url(
-        &home,
-        &format!("http://{}", proxy.addr),
-        &project_root,
-        &path_env,
-        &borrowed,
-        &[],
-    );
-    let torn_stderr = String::from_utf8_lossy(&torn.stderr).to_string();
-    assert!(
-        !torn.status.success(),
-        "an absolute REPORT_PATH is refused, which is what makes the ordering matter\
-         \nstdout={}\nstderr={torn_stderr}",
-        String::from_utf8_lossy(&torn.stdout)
-    );
-    // Tear the close for real, with the property the manager can actually pass.
-    let torn_close_args: Vec<&str> = borrowed[..borrowed.len() - 2].to_vec();
-    let torn = run_orgasmic_output_with_daemon_url(
-        &home,
-        &format!("http://{}", proxy.addr),
-        &project_root,
-        &path_env,
-        &torn_close_args,
-        &[],
-    );
-    assert!(
-        String::from_utf8_lossy(&torn.stderr)
-            .contains("close tx appended but lifecycle update failed"),
-        "the fixture must really tear the close: {}",
-        String::from_utf8_lossy(&torn.stderr)
-    );
     assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
-    drop(proxy);
 
-    // The re-run carries the same absolute REPORT_PATH the torn command line
-    // had. It must still be refused — and the stranded transition must be
-    // finished first, not left behind by the refusal.
+    // The old-format torn ledger is already present when the command starts.
+    // The absolute REPORT_PATH must still be refused — and the stranded
+    // transition must be finished first, not left behind by the refusal.
     let rerun = run_orgasmic_output(&home, &running, &project_root, &path_env, &borrowed);
     let rerun_stdout = String::from_utf8_lossy(&rerun.stdout).to_string();
     let rerun_stderr = String::from_utf8_lossy(&rerun.stderr).to_string();

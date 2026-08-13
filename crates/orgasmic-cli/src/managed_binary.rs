@@ -56,6 +56,7 @@ const SECURITY: &str = "/usr/bin/security";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceSigning {
+    Never,
     ConfiguredOnly,
     ReuseIncumbentIdentity,
 }
@@ -128,7 +129,8 @@ impl Installed {
 /// Publish `source` as the managed binary at `$ORGASMIC_HOME/bin/orgasmic`.
 #[cfg(unix)]
 pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Installed> {
-    install_with_signing(home, source, guard, SourceSigning::ConfiguredOnly)
+    let dest = home.bin_orgasmic();
+    install_with_signing_at(source, &dest, &dest, guard, SourceSigning::ConfiguredOnly)
 }
 
 /// Publish a contributor source build while preserving the incumbent signing
@@ -138,21 +140,75 @@ pub fn install(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Insta
 /// bundle must be refused, never blessed locally with the incumbent identity.
 #[cfg(unix)]
 pub fn install_source(home: &Home, source: &Path, guard: IdentityGuard) -> Result<Installed> {
-    install_with_signing(home, source, guard, SourceSigning::ReuseIncumbentIdentity)
+    let dest = home.bin_orgasmic();
+    install_with_signing_at(
+        source,
+        &dest,
+        &dest,
+        guard,
+        SourceSigning::ReuseIncumbentIdentity,
+    )
+}
+
+/// Stable, non-protected path used by `daemon restart --from-source`.
+///
+/// The build artifact remains in the checkout, but launchd must never execute
+/// that ad-hoc-signed, per-build path directly. The managed installed binary is
+/// kept separate so a temporary source test does not change install/update
+/// ownership.
+pub fn source_daemon_override_path(home: &Home) -> PathBuf {
+    let name = if cfg!(windows) {
+        "orgasmic-daemon-source.exe"
+    } else {
+        "orgasmic-daemon-source"
+    };
+    home.bin().join(name)
+}
+
+/// Publish a contributor build to the stable daemon-override path while using
+/// the installed daemon as the macOS code-identity authority.
+#[cfg(unix)]
+pub fn install_source_daemon_override(
+    home: &Home,
+    source: &Path,
+    guard: IdentityGuard,
+) -> Result<Installed> {
+    install_with_signing_at(
+        source,
+        &source_daemon_override_path(home),
+        &home.bin_orgasmic(),
+        guard,
+        SourceSigning::ReuseIncumbentIdentity,
+    )
+}
+
+/// Restore a previously published source override byte-for-byte. Rollback must
+/// not opportunistically re-sign a known-good incumbent from the previous run.
+#[cfg(unix)]
+pub fn restore_source_daemon_override(home: &Home, source: &Path) -> Result<Installed> {
+    install_with_signing_at(
+        source,
+        &source_daemon_override_path(home),
+        &home.bin_orgasmic(),
+        IdentityGuard::Skip,
+        SourceSigning::Never,
+    )
 }
 
 #[cfg(unix)]
-fn install_with_signing(
-    home: &Home,
+fn install_with_signing_at(
     source: &Path,
+    dest: &Path,
+    identity_reference: &Path,
     guard: IdentityGuard,
     source_signing: SourceSigning,
 ) -> Result<Installed> {
     use std::os::unix::fs::PermissionsExt;
 
-    let dest = home.bin_orgasmic();
-    let bin = home.bin();
-    std::fs::create_dir_all(&bin).with_context(|| format!("create {}", bin.display()))?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("managed destination has no parent: {}", dest.display()))?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
 
     // Resolve the source before anything else: when the destination is still the
     // legacy symlink it may point *at* this very file, and publishing must read
@@ -166,14 +222,20 @@ fn install_with_signing(
         );
     }
 
-    let migrated_from_symlink = std::fs::symlink_metadata(&dest)
+    let migrated_from_symlink = std::fs::symlink_metadata(dest)
         .map(|meta| meta.file_type().is_symlink())
         .unwrap_or(false);
-    let previous = read_identity(&dest);
+    let previous = read_identity(dest);
+    let reference_identity = read_identity(identity_reference);
 
-    // Stage inside `bin/` so the publish is a same-filesystem rename, and use a
-    // pid-scoped name so two concurrent installs cannot share a staging file.
-    let staged = bin.join(format!(".orgasmic.incoming.{}", std::process::id()));
+    // Stage beside the destination so the publish is a same-filesystem rename,
+    // and include the destination name so two publishes in one process cannot
+    // share a staging file.
+    let dest_name = dest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("orgasmic");
+    let staged = parent.join(format!(".{dest_name}.incoming.{}", std::process::id()));
     let _ = std::fs::remove_file(&staged);
     let result = (|| -> Result<Installed> {
         std::fs::copy(&source, &staged)
@@ -182,13 +244,18 @@ fn install_with_signing(
             .with_context(|| format!("chmod {}", staged.display()))?;
 
         let staged_identity = read_identity(&staged);
-        let mut resigned = resign_if_configured(&staged)?;
+        let mut resigned = match source_signing {
+            SourceSigning::Never => false,
+            SourceSigning::ConfiguredOnly | SourceSigning::ReuseIncumbentIdentity => {
+                resign_if_configured(&staged)?
+            }
+        };
         if !resigned
             && source_signing == SourceSigning::ReuseIncumbentIdentity
             && guard == IdentityGuard::Enforce
-            && previous.requirement() != staged_identity.requirement()
+            && reference_identity.requirement() != staged_identity.requirement()
         {
-            resigned = resign_with_incumbent_identity(&staged, &dest)?;
+            resigned = resign_with_incumbent_identity(&staged, identity_reference)?;
         }
         let current = read_identity(&staged);
         if current.requirement().is_some() {
@@ -199,16 +266,16 @@ fn install_with_signing(
         // early comparison against their linker signature would make the
         // configured source-signing path unreachable.
         if guard == IdentityGuard::Enforce {
-            enforce_identity(&previous, &current, &dest, &source)?;
+            enforce_identity(&reference_identity, &current, identity_reference, &source)?;
         }
 
         // Fresh inode by construction: `staged` is a new file, and rename moves
         // that inode into place. Anything already executing keeps the old inode.
-        std::fs::rename(&staged, &dest)
+        std::fs::rename(&staged, dest)
             .with_context(|| format!("publish {} as {}", staged.display(), dest.display()))?;
 
         Ok(Installed {
-            path: dest.clone(),
+            path: dest.to_path_buf(),
             previous,
             current,
             migrated_from_symlink,
@@ -681,6 +748,20 @@ mod codesign_tests {
             again.preserves_grants(),
             "a second install of the same identity must report grants as preserved"
         );
+
+        let source_candidate = seed(tmp.path(), "source-candidate");
+        adhoc_sign(&source_candidate);
+        let source_override =
+            install_source_daemon_override(&home, &source_candidate, IdentityGuard::Enforce)
+                .expect("publish source candidate with incumbent identity");
+        assert!(source_override.resigned);
+        assert_eq!(source_override.current, identity);
+        assert_eq!(
+            source_override.path,
+            source_daemon_override_path(&home),
+            "the source daemon must execute from its stable managed path"
+        );
+        verify_signature(&source_override.path).expect("published source override signature");
     }
 
     #[test]
@@ -717,6 +798,35 @@ mod codesign_tests {
 
         // Rollback restores a known-good binary and must never be blocked.
         install(&home, &second, IdentityGuard::Skip).expect("rollback bypasses the guard");
+    }
+
+    #[test]
+    fn source_daemon_override_is_guarded_by_the_installed_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(home.bin()).unwrap();
+
+        let incumbent = seed(tmp.path(), "incumbent");
+        adhoc_sign(&incumbent);
+        install(&home, &incumbent, IdentityGuard::Enforce).expect("seed installed daemon");
+
+        let candidate = seed(tmp.path(), "candidate");
+        std::fs::write(&candidate, std::fs::read("/bin/ls").unwrap()).unwrap();
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        adhoc_sign(&candidate);
+
+        let error = install_source_daemon_override(&home, &candidate, IdentityGuard::Enforce)
+            .expect_err("a source override with a different identity must be refused");
+        assert!(error.to_string().contains("different code identity"));
+        assert!(
+            !source_daemon_override_path(&home).exists(),
+            "a refused candidate must not create the service executable"
+        );
+        assert_eq!(
+            read_identity(&home.bin_orgasmic()),
+            read_identity(&incumbent),
+            "the installed identity remains the authority"
+        );
     }
 }
 

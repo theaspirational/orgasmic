@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
@@ -326,10 +326,22 @@ pub struct DispatchCloseArgs {
     /// Keep the worker's worktree on disk, overriding the default removal.
     #[arg(long = "no-worktree-remove")]
     pub no_worktree_remove: bool,
-    /// Also delete the worker's branch. Defaults to FALSE: the branch survives
-    /// the close unless this is passed.
-    #[arg(long = "branch-delete", default_value_t = false)]
+    /// Delete the worker's branch after its worktree is safely removed.
+    /// Successful closes do this by default; aborted closes require this flag.
+    /// Deletion is fenced to the recorded branch tip.
+    #[arg(long = "branch-delete", conflicts_with = "no_branch_delete")]
     pub branch_delete: bool,
+    /// Keep the worker's branch after a successful close.
+    #[arg(long = "no-branch-delete", conflicts_with = "branch_delete")]
+    pub no_branch_delete: bool,
+}
+
+fn dispatch_close_deletes_branch(args: &DispatchCloseArgs) -> bool {
+    args.branch_delete
+        || (args.status == DispatchCloseStatus::Done
+            && args.worktree_remove
+            && !args.no_worktree_remove
+            && !args.no_branch_delete)
 }
 
 /// Read-only dispatch inventory. Deliberately has NO `--project`: it reads
@@ -423,7 +435,13 @@ NESTED `.git` entry, of any type — which can KEEP a worktree over a vendored
 repository git itself would have let you delete. A worktree whose repository is
 gone cannot be salvaged, so unless something refuses it, it is removed with NO
 salvage, and the report says so. There is no `--force` on this verb, so a
-refusal names what to clear by hand instead of offering an override.")]
+refusal names what to clear by hand instead of offering an override. Before
+deletion begins, the anchored walk must completely traverse the worktree. A
+worktree containing an unreadable descendant or exceeding the 64-directory-level
+depth bound is SKIPPED whole, and nothing within it is deleted. During removal,
+KEPT means no content was deleted; a failure after any deletion is a failed,
+incomplete removal reported as PARTIAL with the affected worktree PATH, and is
+not counted as reclaimed.")]
 pub struct WorktreePruneArgs {
     /// Report what would be reclaimed and change nothing on disk.
     #[arg(long = "dry-run")]
@@ -652,6 +670,21 @@ struct TxAppendResponse {
     tx_path: PathBuf,
     #[allow(dead_code)]
     time: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DispatchCloseCommitRequest {
+    close_tx: TxAppendRequest,
+    state: String,
+    reason: String,
+    request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DispatchCloseCommitResponse {
+    close_tx: TxAppendResponse,
+    #[allow(dead_code)]
+    transition_tx_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -903,6 +936,19 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         &plan.branch,
         &plan.from_sha,
     )?;
+
+    // TASK-79VKP.6: each worker receives Cargo's default target directory
+    // inside its own checkout.  Do not seed it from the manager target: that
+    // would either copy tens of GiB before the worker starts, or risk stale
+    // workspace fingerprints and build-script paths from another checkout.
+    let cache_seed = private_worktree_target_policy(&plan.project_root, &plan.worktree_path);
+    eprintln!(
+        "dispatch cache-seed: status={} target={} duration_ms={}{}",
+        cache_seed.status(),
+        plan.worktree_path.join("target").display(),
+        cache_seed.elapsed().as_millis(),
+        cache_seed.detail(),
+    );
 
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
@@ -1195,6 +1241,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
     let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
+    let delete_branch = dispatch_close_deletes_branch(&args);
     // TASK-1T3FZ: a destructive close takes a DAEMON-OWNED reservation on the
     // worktree before it releases — or fails to find — any run, and holds it
     // until cleanup is done. The competing recovery runs in another process
@@ -1270,7 +1317,7 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
             report_path: None,
         }
     } else {
-        cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
+        cleanup_dispatch(&project_root, &open, remove_worktree, delete_branch)
     };
     finish_close_guard(&runtime, &client, &project_id, &open, close_guard.as_mut());
     if cleanup_status_reports_warning(cleanup.status) {
@@ -1298,55 +1345,77 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     // leg repairable from the ledger instead of by hand.
     let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
     let mut responses = Vec::new();
-    match args.status {
-        DispatchCloseStatus::Done => {
-            for task in &missing_close_tasks {
-                let request = close_done_request(
-                    &project_id,
-                    &open,
-                    task,
-                    &args,
-                    &CloseTxFacts {
-                        tx_type,
-                        merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
-                        worker_commit: verified_merge
-                            .as_ref()
-                            .and_then(|merge| merge.worker_commit.as_deref()),
-                        cleanup: &cleanup,
-                        transition: transition_for(&transitions, task),
-                    },
-                );
-                responses.push(
-                    runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
-                );
-            }
-        }
-        DispatchCloseStatus::Aborted => {
-            let reason = abort_reason.as_deref().expect("validated aborted reason");
-            for task in &missing_close_tasks {
-                let request = close_aborted_request(
-                    &project_id,
-                    &open,
-                    task,
-                    reason,
-                    &cleanup,
-                    transition_for(&transitions, task),
-                );
-                responses.push(
-                    runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
-                );
-            }
-        }
-    };
+    for task in &missing_close_tasks {
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("close task {task} has no prepared lifecycle transition")
+        })?;
+        let close_tx = match args.status {
+            DispatchCloseStatus::Done => close_done_request(
+                &project_id,
+                &open,
+                task,
+                &args,
+                &CloseTxFacts {
+                    tx_type,
+                    merge_sha: verified_merge.as_ref().map(|merge| merge.sha.as_str()),
+                    worker_commit: verified_merge
+                        .as_ref()
+                        .and_then(|merge| merge.worker_commit.as_deref()),
+                    cleanup: &cleanup,
+                    transition: Some(transition),
+                },
+            ),
+            DispatchCloseStatus::Aborted => close_aborted_request(
+                &project_id,
+                &open,
+                task,
+                abort_reason.as_deref().expect("validated aborted reason"),
+                &cleanup,
+                Some(transition),
+            ),
+        };
+        let response: DispatchCloseCommitResponse = runtime.block_on(client.post_json(
+            &format!(
+                "/projects/{}/tasks/{}/dispatch/close",
+                path_segment(&project_id),
+                path_segment(task)
+            ),
+            &DispatchCloseCommitRequest {
+                close_tx,
+                state: transition.to.as_str().to_string(),
+                reason: format!(
+                    "transition {} to {}",
+                    transition.task,
+                    transition.to.as_str()
+                ),
+                request_id: close_lifecycle_request_id(task, &open.tx_id),
+            },
+        ))?;
+        responses.push(response.close_tx);
+    }
 
-    if let Err(err) =
-        apply_close_lifecycle_transitions(&client, &runtime, &project_id, &open.tx_id, &transitions)
+    // A terminal tx written before close became atomic may carry no
+    // LIFECYCLE_FROM/TO metadata, so the ledger reconciler cannot infer its
+    // missing lifecycle leg. Preserve that legacy recovery only while the task
+    // is still at the stage owned by the dispatch: a later deliberate move is
+    // stronger evidence than the old close. Atomic close records are never
+    // replayed here, even if their task was subsequently moved.
+    let legacy_replay_tasks = legacy_close_replay_tasks(&project_root, &open, &tasks)?;
+    for task in tasks
+        .iter()
+        .filter(|task| legacy_replay_tasks.contains(*task))
     {
-        eprintln!(
-            "warning: close tx appended but lifecycle update failed: {err}\n  \
-             the close tx records the transition it intended; the next `orgasmic manager` \
-             command finishes it"
-        );
+        let transition = transition_for(&transitions, task).ok_or_else(|| {
+            anyhow::anyhow!("already-closed task {task} has no prepared lifecycle transition")
+        })?;
+        runtime
+            .block_on(post_task_state(
+                &client,
+                &project_id,
+                transition,
+                &close_lifecycle_request_id(task, &open.tx_id),
+            ))
+            .with_context(|| format!("recover lifecycle transition for legacy close {task}"))?;
     }
 
     let tx_ids = if responses.is_empty() {
@@ -3708,6 +3777,10 @@ enum WorktreeDisposition {
     /// salvage and deletes, so a permission error destroyed a worker's
     /// uncommitted output with no salvage attempted.
     Undetermined { detail: String },
+    /// The preliminary anchored walk could not completely traverse the tree.
+    /// NEVER reclaimed: this is the fail-closed half of the same errors and
+    /// depth limit [`anchored_dir::remove_contents`] propagates during removal.
+    UnsafeTraversal { detail: String },
 }
 
 impl ManagedWorktree {
@@ -3724,6 +3797,14 @@ impl ManagedWorktree {
             WorktreeDisposition::Held { detail } => detail.clone(),
             WorktreeDisposition::Undetermined { detail } => {
                 format!("repository state undetermined ({detail}); kept until it can be proven")
+            }
+            WorktreeDisposition::UnsafeTraversal { detail } => {
+                format!(
+                    "worktree traversal incomplete ({detail}); the whole worktree was skipped and \
+                     nothing within it was deleted; make the offending descendant readable (for \
+                     example with chmod) or remove it by hand, then re-run — this verb has no \
+                     `--force` override"
+                )
             }
         }
     }
@@ -3786,7 +3867,7 @@ fn scan_managed_worktrees(
                 None => normalize_path(candidate) == normalized,
             }
         };
-        let disposition = if cwd_is_inside(
+        let mut disposition = if cwd_is_inside(
             cwd.as_deref(),
             cwd_normalized.as_deref(),
             &child,
@@ -3823,7 +3904,19 @@ fn scan_managed_worktrees(
         // ONE walk, TWO answers, and it stays where it already was — see
         // [`walk_worktree`] and the ordering note in
         // [`worktree_submodule_refusal`].
-        let walk = disposition_is_reclaimable(&disposition).then(|| walk_worktree(&child.dir));
+        let walk = if disposition_is_reclaimable(&disposition) {
+            match walk_worktree(&child.dir) {
+                Ok(walk) => Some(walk),
+                Err(err) => {
+                    disposition = WorktreeDisposition::UnsafeTraversal {
+                        detail: format!("{err:#}"),
+                    };
+                    None
+                }
+            }
+        } else {
+            None
+        };
         found.push(ManagedWorktree {
             path,
             name,
@@ -4051,43 +4144,60 @@ struct WorktreeWalk {
 /// `O_NOFOLLOW|O_DIRECTORY` handles from the worktree root, so no symlink can
 /// have pointed the name at something outside the tree.
 ///
-/// Unreadable entries are skipped rather than failing the whole report: an
-/// under-count is honest, a missing report is not. That skip is a fail-open for
-/// the `.git` signal too, and it is the reason this signal is only ever ADDED
-/// to the other refusals rather than replacing one.
-// orgasmic:TASK-RMA18,TASK-RMA18.1.1.1
+/// A traversal error makes the worktree unsafe to reclaim. The automatic report
+/// can still describe other worktrees, but this one is kept before deletion.
+/// This is deliberately the same fail-closed depth and I/O policy
+/// [`anchored_dir::remove_contents`] enforces if removal reaches the tree.
+// orgasmic:TASK-RMA18,TASK-RMA18.1.1.1,TASK-GRCWC
 #[cfg(unix)]
-fn walk_worktree(root: &std::fs::File) -> WorktreeWalk {
-    fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) {
+fn walk_worktree(root: &std::fs::File) -> Result<WorktreeWalk> {
+    fn walk(dir: &std::fs::File, depth: u32, prefix: &str, found: &mut WorktreeWalk) -> Result<()> {
         if depth > anchored_dir::MAX_DEPTH {
-            return;
+            bail!(
+                "refusing to descend deeper than {} directory levels while scanning {}",
+                anchored_dir::MAX_DEPTH,
+                if prefix.is_empty() { "." } else { prefix }
+            );
         }
-        let Ok(names) = anchored_dir::entry_names(dir) else {
-            return;
-        };
+        let names = anchored_dir::entry_names(dir).with_context(|| {
+            format!(
+                "could not list worktree descendant {}",
+                if prefix.is_empty() { "." } else { prefix }
+            )
+        })?;
         for name in names {
             if depth > 1 && found.nested_git.is_none() && name == std::ffi::OsStr::new(".git") {
                 found.nested_git = Some(format!("{prefix}.git"));
             }
             match anchored_dir::open_child_dir(dir, &name) {
-                Ok(anchored_dir::ChildOpen::Dir(child)) => walk(
-                    &child,
-                    depth + 1,
-                    &format!("{prefix}{}/", name.to_string_lossy()),
-                    found,
-                ),
+                Ok(anchored_dir::ChildOpen::Dir(child)) => {
+                    walk(
+                        &child,
+                        depth + 1,
+                        &format!("{prefix}{}/", name.to_string_lossy()),
+                        found,
+                    )?;
+                }
                 Ok(_) => {
                     if let Ok(kind) = anchored_dir::stat_at(dir, &name) {
                         found.bytes = found.bytes.saturating_add(kind.len());
                     }
                 }
-                Err(_) => continue,
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "could not open worktree descendant {prefix}{}",
+                            name.to_string_lossy()
+                        )
+                    });
+                }
             }
         }
+        Ok(())
     }
     let mut found = WorktreeWalk::default();
-    walk(root, 1, "", &mut found);
-    found
+    walk(root, 1, "", &mut found)?;
+    Ok(found)
 }
 
 /// Compact size for a `KEY=value` field, so it carries no space.
@@ -4151,7 +4261,8 @@ fn report_managed_worktrees(
             // Two different reasons not to reclaim, reported apart: somebody
             // owns it, versus nobody could tell (TASK-M47E5.2 finding 3).
             let line = match worktree.disposition {
-                WorktreeDisposition::Undetermined { .. } => "KEPT_WORKTREE",
+                WorktreeDisposition::Undetermined { .. }
+                | WorktreeDisposition::UnsafeTraversal { .. } => "KEPT_WORKTREE",
                 _ => "HELD_WORKTREE",
             };
             println!(
@@ -5425,7 +5536,8 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     let now_open = scan_open_dispatches(&project_root)?;
 
     let mut reclaimed = 0usize;
-    let mut failed = 0usize;
+    let mut kept = 0usize;
+    let mut partial = 0usize;
     let mut reclaimed_bytes: u64 = 0;
     for worktree in &reclaimable {
         let normalized = normalize_path(&worktree.path);
@@ -5529,10 +5641,14 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
                 format_bytes(bytes)
             );
         } else {
-            failed += 1;
             // KEPT MEANS UNTOUCHED (TASK-RMA18). A removal that failed after it
             // had already deleted something is a PARTIAL, and saying KEPT there
             // tells an operator the tree is intact when it is a ruin.
+            if outcome.touched {
+                partial += 1;
+            } else {
+                kept += 1;
+            }
             println!(
                 "{} PATH={} WHY={}",
                 if outcome.touched { "PARTIAL" } else { "KEPT" },
@@ -5549,7 +5665,7 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
             }
         }
         Err(err) => {
-            failed += 1;
+            kept += 1;
             // `git worktree prune` clears admin metadata and removes no
             // worktree, so a failure here has destroyed nothing.
             println!("KEPT PATH={} WHY={err}", project_root.display());
@@ -5557,7 +5673,7 @@ fn worktree_prune(home: &Home, args: WorktreePruneArgs) -> Result<()> {
     }
 
     println!(
-        "PRUNE_SUMMARY RECLAIMED={reclaimed} BYTES={reclaimed_bytes} SIZE={} KEPT={failed} SKIPPED={skipped}",
+        "PRUNE_SUMMARY RECLAIMED={reclaimed} BYTES={reclaimed_bytes} SIZE={} PARTIAL={partial} KEPT={kept} SKIPPED={skipped}",
         format_bytes(reclaimed_bytes)
     );
     Ok(())
@@ -6717,6 +6833,62 @@ fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
         "reviewer" => Ok("reviewer.reported"),
         "architector" => Ok("architector.reported"),
         other => done_tx_type_for_kind(other),
+    }
+}
+
+/// Outcome of applying the private target policy to one dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WorktreeTargetSeed {
+    Skipped {
+        elapsed: Duration,
+        reason: &'static str,
+    },
+}
+
+impl WorktreeTargetSeed {
+    fn status(&self) -> &'static str {
+        match self {
+            Self::Skipped { .. } => "skipped",
+        }
+    }
+
+    fn elapsed(&self) -> Duration {
+        match self {
+            Self::Skipped { elapsed, .. } => *elapsed,
+        }
+    }
+
+    fn detail(&self) -> String {
+        match self {
+            Self::Skipped { reason, .. } => format!(" reason={reason}"),
+        }
+    }
+}
+
+/// Keep Cargo state private by deliberately leaving the new worktree target
+/// empty.  This is a bounded startup operation and the only universal cache
+/// policy that cannot expose a linked checkout's artifacts.  A future
+/// compiler-object cache may improve cold builds, but it must prove its own
+/// keying and process isolation rather than reuse Cargo target state.
+// orgasmic:TASK-79VKP.6
+fn private_worktree_target_policy(project_root: &Path, worktree: &Path) -> WorktreeTargetSeed {
+    let started = Instant::now();
+    if !project_root.join("Cargo.toml").is_file() {
+        return WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "not-cargo",
+        };
+    }
+    let target = worktree.join("target");
+    if target.exists() {
+        return WorktreeTargetSeed::Skipped {
+            elapsed: started.elapsed(),
+            reason: "private-target-present",
+        };
+    }
+    WorktreeTargetSeed::Skipped {
+        elapsed: started.elapsed(),
+        reason: "empty-private-target",
     }
 }
 
@@ -8119,12 +8291,10 @@ fn dispatch_lifecycle_transitions(
 /// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
 /// attempted.
 ///
-/// orgasmic:task_EP3H1 — the close is two daemon writes (close tx, then task
-/// transition) and cannot be one commit without either a multi-tx writer
-/// transaction or collapsing `task.state_transitioned` into the close tx. So
-/// the tx carries its own intent instead: a close whose second leg is lost
-/// leaves a ledger that still says where the task was going, and
-/// [`reconcile_torn_closes`] finishes it on the next manager command.
+/// orgasmic:task_EP3H1 — close now commits the terminal tx, rewrite, and
+/// `task.state_transitioned` under one writer lock. The tx still carries its
+/// own intent so [`reconcile_torn_closes`] can repair ledgers produced before
+/// that atomic path, as well as surviving client-side response loss.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CloseTransition {
     task: String,
@@ -8360,27 +8530,6 @@ fn close_lifecycle_request_id(task: &str, started_tx: &str) -> String {
     format!("dispatch-close-state-{}-{}", request_slug(task), started_tx)
 }
 
-/// Apply a close's lifecycle transitions, reporting per-task whether the
-/// daemon applied them now or recognised them as already applied.
-fn apply_close_lifecycle_transitions(
-    client: &DaemonClient,
-    runtime: &tokio::runtime::Runtime,
-    project_id: &str,
-    started_tx: &str,
-    transitions: &[CloseTransition],
-) -> Result<Vec<TaskStateOutcome>> {
-    let mut outcomes = Vec::new();
-    for transition in transitions {
-        outcomes.push(runtime.block_on(post_task_state(
-            client,
-            project_id,
-            transition,
-            &close_lifecycle_request_id(&transition.task, started_tx),
-        ))?);
-    }
-    Ok(outcomes)
-}
-
 /// The daemon's labelled no-op contract for `POST /projects/:id/tasks/:task`
 /// with a `state`, mirrored on the client (see `update_task_state` in the
 /// daemon's `api.rs`, where the contract is documented).
@@ -8530,6 +8679,63 @@ fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransi
         }
     }
     Ok(pending)
+}
+
+/// Already-closed tasks whose pre-atomic terminal tx still needs the legacy
+/// replay performed by `dispatch-close`.
+///
+/// The ledger match is deliberately exact on both generation (`CLOSED_TX`) and
+/// task. A close carrying lifecycle metadata belongs to the atomic/reconciler
+/// path and is never replayed here. An old-format close is eligible only while
+/// the task remains at the active stage established when that dispatch kind was
+/// opened; once an operator or later workflow moves it, the old close loses the
+/// right to mutate it.
+fn legacy_close_replay_tasks(
+    project_root: &Path,
+    open: &DispatchRecord,
+    tasks: &[String],
+) -> Result<BTreeSet<String>> {
+    let Some(active_stage) = legacy_close_active_stage(&open.kind) else {
+        return Ok(BTreeSet::new());
+    };
+    let entries = read_tx_entries(project_root)?;
+    let mut eligible = BTreeSet::new();
+    for task in tasks
+        .iter()
+        .filter(|task| open.closed_tasks.contains(*task))
+    {
+        let close = entries.iter().rev().find(|entry| {
+            matches!(
+                entry.ty.as_str(),
+                "implementer.done"
+                    | "reviewer.done"
+                    | "architector.done"
+                    | "manager.dispatch_aborted"
+            ) && extra(entry, "CLOSED_TX") == Some(open.tx_id.as_str())
+                && entry.task.as_deref() == Some(task.as_str())
+        });
+        let Some(close) = close else {
+            continue;
+        };
+        if extra(close, LIFECYCLE_FROM_KEY).is_some() || extra(close, LIFECYCLE_TO_KEY).is_some() {
+            continue;
+        }
+        if read_task_lifecycle(project_root, task)
+            .map(|info| info.stage == active_stage)
+            .unwrap_or(false)
+        {
+            eligible.insert(task.clone());
+        }
+    }
+    Ok(eligible)
+}
+
+fn legacy_close_active_stage(kind: &str) -> Option<LifecycleStage> {
+    match kind {
+        "implementer" | "architector" => Some(LifecycleStage::InProgress),
+        "reviewer" => Some(LifecycleStage::InReview),
+        _ => None,
+    }
 }
 
 fn dispatchable_stage(kind: DispatchKind, stage: LifecycleStage) -> bool {
@@ -9850,6 +10056,124 @@ mod tests {
         );
     }
 
+    /// TASK-79VKP.6's negative control in the production shape: two linked
+    /// Cargo worktrees must compile and run their own changed binary.  The
+    /// private policy leaves no manager-owned target artifacts to reuse.
+    #[test]
+    fn empty_private_targets_never_run_another_worktrees_binary() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("manager");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"private-target-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nanyhow = \"1\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"BASE\"); }\n",
+        )
+        .unwrap();
+
+        let base_build = Command::new("cargo")
+            .args(["build", "--quiet"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            base_build.status.success(),
+            "base build: {}",
+            String::from_utf8_lossy(&base_build.stderr)
+        );
+
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "tests@example.com"]);
+        git(&["config", "user.name", "Tests"]);
+        git(&["add", "Cargo.toml", "Cargo.lock", "src/main.rs"]);
+        git(&["commit", "-qm", "base"]);
+
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        create_worktree(&root, &first, "first-branch", "HEAD").unwrap();
+        create_worktree(&root, &second, "second-branch", "HEAD").unwrap();
+        std::fs::write(
+            first.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"FIRST\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("src/main.rs"),
+            "fn main() { let _: anyhow::Result<()> = Ok(()); println!(\"SECOND\"); }\n",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            private_worktree_target_policy(&root, &first),
+            WorktreeTargetSeed::Skipped {
+                reason: "empty-private-target",
+                ..
+            }
+        ));
+        assert!(matches!(
+            private_worktree_target_policy(&root, &second),
+            WorktreeTargetSeed::Skipped {
+                reason: "empty-private-target",
+                ..
+            }
+        ));
+
+        let first_for_build = first.clone();
+        let second_for_build = second.clone();
+        let (first_build, second_build) = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                Command::new("cargo")
+                    .arg("build")
+                    .current_dir(&first_for_build)
+                    .output()
+                    .unwrap()
+            });
+            let second = scope.spawn(|| {
+                Command::new("cargo")
+                    .arg("build")
+                    .current_dir(&second_for_build)
+                    .output()
+                    .unwrap()
+            });
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert!(
+            first_build.status.success(),
+            "first build: {}",
+            String::from_utf8_lossy(&first_build.stderr)
+        );
+        assert!(
+            second_build.status.success(),
+            "second build: {}",
+            String::from_utf8_lossy(&second_build.stderr)
+        );
+        let run = |worktree: &Path| {
+            let output = Command::new(worktree.join("target/debug/private-target-probe"))
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert_eq!(run(&first), "FIRST\n");
+        assert_eq!(run(&second), "SECOND\n");
+    }
+
     /// A project id is a path segment in the managed root, so anything that
     /// could escape it is refused rather than joined.
     // orgasmic:TASK-M47E5
@@ -10434,6 +10758,46 @@ mod tests {
     }
 
     #[test]
+    fn successful_close_deletes_branch_by_default_but_aborted_close_retains_it() {
+        let args_for = |status| DispatchCloseArgs {
+            task: vec!["TASK-086".to_string()],
+            started_tx: Some("tx-start".to_string()),
+            status,
+            merge_sha: None,
+            worker_commit: None,
+            worker_session: None,
+            reviewed_diff: None,
+            properties: Vec::new(),
+            verdict: None,
+            tokens: None,
+            wall: None,
+            reason: Some("test".to_string()),
+            no_review_required: false,
+            fix_round_final: false,
+            worktree_remove: true,
+            no_worktree_remove: false,
+            branch_delete: false,
+            no_branch_delete: false,
+        };
+
+        assert!(dispatch_close_deletes_branch(&args_for(
+            DispatchCloseStatus::Done
+        )));
+        assert!(!dispatch_close_deletes_branch(&args_for(
+            DispatchCloseStatus::Aborted
+        )));
+        let mut opted_out = args_for(DispatchCloseStatus::Done);
+        opted_out.no_branch_delete = true;
+        assert!(!dispatch_close_deletes_branch(&opted_out));
+        let mut retained_worktree = args_for(DispatchCloseStatus::Done);
+        retained_worktree.no_worktree_remove = true;
+        assert!(!dispatch_close_deletes_branch(&retained_worktree));
+        let mut explicit_abort = args_for(DispatchCloseStatus::Aborted);
+        explicit_abort.branch_delete = true;
+        assert!(dispatch_close_deletes_branch(&explicit_abort));
+    }
+
+    #[test]
     fn closes_architector_lifecycle_to_done() {
         let tmp = tempfile::tempdir().unwrap();
         let in_progress = tmp.path().join(".orgasmic/tasks/in_progress.org");
@@ -10462,6 +10826,7 @@ mod tests {
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
+            no_branch_delete: false,
         };
 
         assert_eq!(
@@ -10495,6 +10860,7 @@ mod tests {
             worktree_remove: true,
             no_worktree_remove: false,
             branch_delete: false,
+            no_branch_delete: false,
         };
         let tasks = vec!["TASK-086".to_string()];
         let expected =
@@ -12844,6 +13210,136 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    struct PermissionRestore {
+        path: PathBuf,
+        mode: u32,
+    }
+
+    #[cfg(unix)]
+    impl PermissionRestore {
+        fn new(path: &Path, mode: u32) -> Self {
+            Self {
+                path: path.to_path_buf(),
+                mode,
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PermissionRestore {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let _ =
+                std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(self.mode));
+        }
+    }
+
+    /// TASK-GRCWC: the cheap parity fixture. The preliminary walk and the
+    /// destructive traversal must reject the same unreadable descendant, and
+    /// the removal-side proof must show it rejected before touching anything.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_descendant_is_refused_by_both_walk_and_removal_untouched() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        let blocked = worktree.join("blocked");
+        std::fs::create_dir_all(&blocked).unwrap();
+        let survivor = blocked.join("survivor.txt");
+        std::fs::write(&survivor, "must survive").unwrap();
+        let _restore = PermissionRestore::new(&blocked, 0o755);
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(
+            std::fs::File::open(&blocked).is_err(),
+            "mode 000 must actually make the directory unreadable; a privileged test process \
+             must fail this fixture rather than report a meaningless pass"
+        );
+
+        let worktree_handle = std::fs::File::open(&worktree).unwrap();
+        let walk_error = walk_worktree(&worktree_handle)
+            .expect_err("the preliminary walk must reject the unreadable descendant");
+        assert!(
+            walk_error.to_string().contains("blocked"),
+            "the walk refusal must name the descendant: {walk_error:#}"
+        );
+
+        let parent = std::fs::File::open(tmp.path()).unwrap();
+        let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        let failure =
+            anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
+                .expect_err("the removal traversal must reject the same unreadable descendant");
+        assert!(
+            !failure.touched,
+            "the pure unreadable fixture has no earlier sibling to remove, so refusal must be \
+             untouched: {:#}",
+            failure.error
+        );
+        assert!(
+            failure.error.to_string().contains("blocked"),
+            "the removal refusal must name the same unreadable descendant: {:#}",
+            failure.error
+        );
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            survivor.is_file(),
+            "the removal traversal must not report success or destroy the unreadable tree"
+        );
+    }
+
+    /// TASK-GRCWC: the expensive parity fixture is generated to stay coupled
+    /// to the production bound. A pure chain means reaching the depth error
+    /// cannot have removed a sibling on the way down.
+    #[cfg(unix)]
+    #[test]
+    fn over_depth_descendant_is_refused_by_both_walk_and_removal_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let worktree = tmp.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let mut deepest = worktree.clone();
+        for _ in 0..=anchored_dir::MAX_DEPTH {
+            deepest.push("d");
+            std::fs::create_dir(&deepest).unwrap();
+        }
+        let survivor = deepest.join("survivor.txt");
+        std::fs::write(&survivor, "must survive").unwrap();
+
+        let worktree_handle = std::fs::File::open(&worktree).unwrap();
+        let walk_error = walk_worktree(&worktree_handle)
+            .expect_err("the preliminary walk must reject a tree beyond MAX_DEPTH");
+        assert!(
+            walk_error
+                .to_string()
+                .contains(&anchored_dir::MAX_DEPTH.to_string()),
+            "the walk refusal must name the production bound: {walk_error:#}"
+        );
+
+        let parent = std::fs::File::open(tmp.path()).unwrap();
+        let expected = anchored_dir::identity_at(&parent, std::ffi::OsStr::new("wt")).unwrap();
+        let failure =
+            anchored_dir::remove_dir_all_at(&parent, std::ffi::OsStr::new("wt"), expected)
+                .expect_err("the removal traversal must reject the same over-depth tree");
+        assert!(
+            !failure.touched,
+            "a pure chain cannot be partially removed before the depth refusal: {:#}",
+            failure.error
+        );
+        assert!(
+            failure
+                .error
+                .to_string()
+                .contains(&anchored_dir::MAX_DEPTH.to_string()),
+            "the removal refusal must name the same production bound: {:#}",
+            failure.error
+        );
+        assert!(
+            survivor.is_file(),
+            "the removal traversal must not report success or destroy the deep tree"
+        );
+    }
+
     /// TASK-RMA18.1.1.1 finding A, at the predicate: with NO REPOSITORY behind
     /// the worktree the disk is the only witness, and the witness is a nested
     /// `.git` OF ANY TYPE.
@@ -12875,7 +13371,7 @@ mod tests {
         std::fs::write(worktree.join("src/main.rs"), "fn main() {}").unwrap();
         let handle = std::fs::File::open(&worktree).unwrap();
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(
             walk.nested_git, None,
             "an empty placeholder and an ordinary tree hold no repository"
@@ -12901,7 +13397,7 @@ mod tests {
             "fixture premise: the nested `.git` must be a FILE, not a directory"
         );
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(
             walk.nested_git.as_deref(),
             Some("vendor/sub/.git"),
@@ -12945,7 +13441,7 @@ mod tests {
         std::fs::write(worktree.join("a.txt"), "ordinary file").unwrap();
         let handle = std::fs::File::open(&worktree).unwrap();
 
-        let walk = walk_worktree(&handle);
+        let walk = walk_worktree(&handle).unwrap();
         assert_eq!(walk.nested_git, None, "depth 1 is the worktree's own link");
         assert!(walk.bytes > 0, "the size walk must still have counted");
         assert_eq!(

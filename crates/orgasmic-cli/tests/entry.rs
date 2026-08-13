@@ -56,6 +56,7 @@ fn entry_prints_runtime_router_outside_project() {
 
     let output = orgasmic_command()
         .arg("entry")
+        .arg("--full")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(tmp.path())
         .output()
@@ -88,6 +89,7 @@ fn entry_resolves_workflow_project_user_shipped_order() {
 
     let outside = orgasmic_command()
         .arg("entry")
+        .arg("--full")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(tmp.path())
         .output()
@@ -120,6 +122,7 @@ fn entry_resolves_workflow_project_user_shipped_order() {
 
     let inside = orgasmic_command()
         .arg("entry")
+        .arg("--full")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(&nested)
         .output()
@@ -161,6 +164,7 @@ fn entry_warns_on_project_stub_version_skew() {
 
     let output = orgasmic_command()
         .arg("entry")
+        .arg("--full")
         .env("ORGASMIC_HOME", &home.root)
         .current_dir(&nested)
         .output()
@@ -178,4 +182,66 @@ fn entry_warns_on_project_stub_version_skew() {
     ));
     assert!(stdout.contains("run `orgasmic project migrate` when available"));
     assert!(stdout.contains("runtime agent router"));
+}
+
+#[test]
+fn entry_defaults_to_a_small_versioned_fast_route() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    seed_router(&home);
+    seed_shipped_workflow(
+        &home,
+        "* WORKFLOW default\n\nworkflow content that should stay out of fast output\n",
+    );
+
+    let output = orgasmic_command()
+        .arg("entry")
+        .env("ORGASMIC_HOME", &home.root)
+        .current_dir(tmp.path())
+        .output()
+        .expect("run fast orgasmic entry");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("ORGASMIC_ENTRY_FAST_V1 "));
+    assert!(stdout.contains("STATE use orgasmic CLI/daemon writes"));
+    assert!(stdout.contains("FULL orgasmic entry --full"));
+    assert!(!stdout.contains("workflow content that should stay out of fast output"));
+    assert!(
+        stdout.len() < 2_000,
+        "fast route grew unexpectedly: {} bytes",
+        stdout.len()
+    );
+}
+
+#[test]
+fn entry_ack_collapses_an_unchanged_router_to_one_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    seed_router(&home);
+    seed_shipped_workflow(&home, "* WORKFLOW default\n\nworkflow body\n");
+
+    let first = orgasmic_command()
+        .arg("entry")
+        .env("ORGASMIC_HOME", &home.root)
+        .current_dir(tmp.path())
+        .output()
+        .expect("run first orgasmic entry");
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    let fingerprint = first_stdout
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .expect("fast route fingerprint");
+
+    let ack = orgasmic_command()
+        .args(["entry", "--ack", fingerprint])
+        .env("ORGASMIC_HOME", &home.root)
+        .current_dir(tmp.path())
+        .output()
+        .expect("ack orgasmic entry");
+    assert!(ack.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&ack.stdout),
+        format!("ORGASMIC_ENTRY_UNCHANGED {fingerprint}\n")
+    );
 }

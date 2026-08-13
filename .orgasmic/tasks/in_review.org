@@ -1,3 +1,185 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-BX5SR One bad mutation kills the daemon writer task, and every write in the process fails until restart :daemon:writer:availability:
+:PROPERTIES:
+:ID: TASK-BX5SR
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-core/**,crates/orgasmic-daemon/**
+:END:
+
+** Description
+
+MEASURED DURING A LIVE OUTAGE, 2026-08-02, daemon boot =f8f67c0c=.
+
+Timeline from =~/.orgasmic/logs/daemon.out.log=:
+
+: 22:20:22.139  ERROR api: writer transaction failed
+:                     error=cached mutation lacks its recorded identity
+: 22:20:22.770  WARN  supervisor: session append failed
+:                     error=writer task is gone  run_id=run-20260802T215608-...
+: 22:21:45.489  ERROR api: writer transaction failed error=writer task is gone
+: 22:21:52.686  ERROR api: writer transaction failed error=writer task is gone
+
+One transaction failed on a cache-identity check, and 0.63s later the WRITER
+TASK ITSELF WAS GONE. From that moment every write in the daemon failed:
+=task update --state= returned 500 =failed to apply changes=, =manager
+dispatch-close= appended its tx but could not update the lifecycle, and the live
+TASK-FZB6T.2 workers session appends were dropped on the floor.
+
+Reads stayed healthy throughout — =orgasmic status=, =task get= and
+=dispatch-status= all answered normally — so from the outside the daemon looked
+FINE. That is the worst property of this failure: a manager can keep issuing
+commands and reading plausible state while nothing is being persisted.
+
+** What it cost
+
+The in-flight implementer for TASK-FZB6T.2 was guaranteed to lose its report,
+because =orgasmic dispatch finalize= is a WRITE. Recovering the writer required a
+daemon restart; the restart released the run and the rmux pane died with it, so
+the worker was killed mid-task with 2,452 insertions uncommitted. The manager
+preserved them as =d982af1= on =task-fzb6t.2-impl=.
+
+Note the shape: this is the SECOND report lost on this task in one session, by
+two completely different mechanisms (the first was the tmux stall ceiling). The
+=dispatch finalize= contract has no durable fallback when the daemon cannot
+write.
+
+** Two defects, and they should probably be separated
+
+1. *A failing transaction must not kill the writer.* Whatever
+   "cached mutation lacks its recorded identity" is, it is a per-request error
+   and belongs in a 500 for THAT request. Taking the writer down converts one
+   bad request into a total write outage. Same class as TASK-KKGKM, where one
+   unreadable project killed the whole runtime.
+2. *A dead writer must be loud and must be recoverable without a restart.*
+   =orgasmic status= reported =parse_errors: 0= and looked healthy while every
+   write was failing. At minimum status should report writer liveness; better,
+   the writer should be supervised and restarted in place.
+
+Note =orgasmic restart= itself degraded: it reported
+=daemon pre-stop drain returned 500: failed to drain writer before restart=
+and warned that mid-flight releases may be unreported — correct behaviour given
+the state, but it means the recovery path is also compromised by the same fault.
+
+** Acceptance
+
+- A writer transaction that fails for any reason returns an error for that
+  request and leaves the writer task running. A regression injects a failing
+  mutation and proves the NEXT write succeeds.
+- =orgasmic status= (and =doctor=) report writer liveness, so a dead writer is
+  visible without reading daemon logs.
+- The writer is supervised: if the task does exit, it is restarted in place, or
+  the daemon fails loudly rather than serving reads as if healthy.
+- Root-cause =cached mutation lacks its recorded identity= specifically: what
+  produces a cached mutation with no recorded identity, and why is it reachable
+  from =manager dispatch-close=? The outage began on that exact call.
+- Consider a durable fallback for =dispatch finalize= so a worker report is not
+  lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer
+  transaction so dispatch-close is one commit).
+
+* IN_REVIEW TASK-BX5SR.1 Add a daemon-level retained-descriptor writer-sync regression and remove the transaction-loop panic :daemon:writer:
+:PROPERTIES:
+:ID: TASK-BX5SR.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+Claude’s independent review of 6fdae3f found that the retained-descriptor sync correction is sound but its daemon-level routing is unguarded: current regressions either call TxWriter directly or fail before sync. Add a deterministic seam between append and sync that renames/unlinks/replaces the ledger pathname, then prove the daemon append still acknowledges through the retained writer descriptor. The test must fail if writer.rs reintroduces an OpenOptions reopen on the acknowledgement path.
+
+Also replace the latent `unreachable!("all writer transactions carry an identity")` inside the serialized writer task with a request-local error, so an unforeseen malformed internal command cannot kill all writes.
+
+Keep the retained-descriptor invariant under rename/atomic replacement. Do not add a post-sync stat/open or attempt to solve the separate external-unlink loss tradeoff.
+
+** Acceptance
+- A daemon-level append completes when the tx pathname is removed or renamed specifically between append and sync; the regression fails if the pre-fix pathname reopen is restored.
+- Fsync-before-ack, one-sync-per-batch, failure injection, and rewrite rollback remain proven.
+- No reachable writer transaction branch panics on absent mutation identity; it returns an error and the next command succeeds.
+- Focused writer/durability tests, fmt, clippy, and an independent review pass.
+
+* IN_REVIEW TASK-GRCWC neither walk_worktree fail-open has a fixture, and worktree-prune is a destructive verb on the operator binary
+:PROPERTIES:
+:ID: TASK-GRCWC
+:PRIORITY: P1
+:END:
+
+** Description
+Opened so the =TASK-RMA18= chain could close. *This residual was recorded on the
+round-seven close =tx-20260808-orgasmic-5480= and accepted knowingly by the
+operator* — it is not new, and it is not a review finding. It is the one thing
+that chain never closed.
+
+=orgasmic manager worktree-prune= is *DESTRUCTIVE* and has been on the operator
+binary since =ed0ebbc= (2026-08-08); it is still there in =2cf6ea7=.
+
+*** The two fail-opens
+=crates/orgasmic-cli/src/manager.rs=, =walk_worktree=:
+
+: :3833  if depth > anchored_dir::MAX_DEPTH { return; }
+: :3836  let Ok(names) = anchored_dir::entry_names(dir) else { return; };
+: :3855  Err(_) => continue,
+
+All three *fail OPEN* — the walk gives up quietly and the tree looks smaller and
+safer than it is. What makes that acceptable is that =remove_contents=
+(=:3179-3195=) propagates the SAME limits instead of swallowing them:
+
+: :3180  if depth > MAX_DEPTH { bail!(..) }
+: :3183  for name in entry_names(dir)?
+: :3184  match open_child_dir(dir, &name)?
+
+*** The problem
+*That symmetry has now been derived from source THREE times and executed ZERO
+times.* Round five's reviewer, round six's reviewer, and the manager on
+2026-08-08 — who checked the likeliest crack, the depth bases, and confirmed they
+match, because the =child= passed to =remove_contents(&child, 1, ..)= at =:3243=
+is the worktree root itself, so both enter it at depth 1.
+
+Three readings of the same code are not a test. *No fixture exercises either
+fail-open.*
+
+*** Second, unchanged and NOT data loss
+=RemovalFailure= carries =touched= and =remove_contents= is readdir-ordered, so a
+fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
+*The help does not say so.*
+
+** Acceptance
+1. *The cheap fixture first: =chmod 000=.* A directory the walk cannot list,
+   inside a worktree the verb is asked to prune. Prove the refusal, and prove
+   =remove_contents= would have refused too rather than partially removing.
+2. Then the depth one: a tree deeper than =MAX_DEPTH=. It is the expensive
+   fixture and it is why it has never been written; write it anyway or state the
+   bound it is being traded for.
+3. *Decide and state what a partial removal means to the operator*, and make the
+   help true about it. Today it is silent.
+4. *This should land before any further destructive change to this verb.* That
+   sentence has been in the handoff for two days; make it an acceptance instead.
+
+** Why P1
+The verb deletes directories on the operator's machine, it is installed, and the
+only argument for its safety is one nobody has run.
+
+* IN_REVIEW TASK-GRCWC.1 Make unsafe worktree-prune traversal refusals fully actionable and unambiguous :cli:safety:
+:PROPERTIES:
+:ID: TASK-GRCWC.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:END:
+
+** Description
+Claude’s independent review of TASK-GRCWC approved the fail-closed traversal mechanics but found the new `UnsafeTraversal` operator surface incomplete. `anyhow::Error::to_string()` drops the underlying errno; help grammatically says an unreadable descendant is skipped rather than the whole worktree; and the refusal gives no remedy despite a no-force command.
+
+Correct only this operator-facing safety contract and its direct coverage:
+- Preserve the full error cause chain (including Permission denied) in the SKIP refusal.
+- Say unambiguously that the WHOLE worktree is skipped and no content within it is deleted when traversal is incomplete; pin that wording in help parity.
+- Name the safe remedy: make the descendant readable or remove it by hand, then rerun; there is no force override.
+- Make the PARTIAL/KEPT summary regression fail rather than silently return under privilege, so that new accounting cannot false-green.
+
+Do not redesign traversal mechanics or add a force flag.
+
+** Acceptance
+- A chmod-000 production prune refusal includes the underlying permission error, the whole-worktree no-delete guarantee, and an actionable no-force remedy.
+- Help’s subject is the worktree and is pinned by a phrase-sensitive test.
+- Privileged execution cannot report a green PARTIAL/KEPT test without exercising the refusal.
+- Existing anchored traversal and all focused manager tests remain green; independent review passes.
+

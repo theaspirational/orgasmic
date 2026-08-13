@@ -1,0 +1,28 @@
+# Changed
+
+- Made `walk_worktree` propagate its existing depth, directory-listing, and child-open failures. `scan_managed_worktrees` now converts any incomplete preliminary traversal into an explicit non-reclaimable `UnsafeTraversal` disposition, so `worktree-prune` prints `SKIP` before reservation or deletion.
+- Kept the anchored directory-handle traversal, `anchored_dir::MAX_DEPTH`, and removal error propagation unchanged. Added direct parity tests proving both chmod-000 and generated over-depth trees are also refused by `remove_dir_all_at` with `touched == false` in pure-chain fixtures.
+- Added production-path CLI fixtures for a chmod-000 descendant and a generated tree beyond the 64-level bound. Both assert the real verb reports the unsafe candidate, reclaims nothing, emits no `PARTIAL`, and preserves sentinels sorted before and inside the unsafe branch. The permission fixture uses a Drop guard to restore mode and deliberately fails under a privileged account instead of returning a meaningless pass.
+- Made operator semantics explicit in `manager worktree-prune --help`: preliminary traversal failures are skipped untouched; `KEPT` means deletion removed no content; `PARTIAL PATH=...` is a failed incomplete removal after content deletion and is not reclaimed.
+- Split `PRUNE_SUMMARY` into truthful `PARTIAL` and `KEPT` counters instead of counting partial removals under `KEPT`. Extended the existing partial-removal regression and help parity test.
+- Changed only `crates/orgasmic-cli/src/manager.rs`, `crates/orgasmic-cli/tests/dispatch.rs`, and `crates/orgasmic-cli/tests/cli_parity.rs`. No destructive command was run against an operator worktree, and no daemon install/restart was performed.
+
+# Verification Gates
+
+- Baseline before editing: existing nested-git unit regression, worktree-prune help parity, and partial-removal integration regression all passed.
+- `cargo test -p orgasmic-cli --bin orgasmic descendant_is_refused_by_both_walk_and_removal_untouched` — 2 passed (chmod-000 and over-depth walk/removal parity).
+- `cargo test -p orgasmic-cli --test dispatch worktree_prune_refuses_an_` — 3 passed, including the two new production-command fixtures and the existing ancestor-symlink safety fixture.
+- `cargo test -p orgasmic-cli --test dispatch a_removal_that_stops_part_way_reports_partial_and_never_kept` — 1 passed, including `PRUNE_SUMMARY PARTIAL=1 KEPT=0` evidence.
+- `cargo test -p orgasmic-cli --test cli_parity worktree_prune_help_describes_the_mechanism_it_actually_uses` — 1 passed.
+- `cargo fmt --all -- --check` — passed.
+- `cargo clippy -p orgasmic-cli --bin orgasmic --tests -- -D warnings` — passed.
+- `git diff --check` — passed.
+
+# Unmet Criteria
+
+- None.
+
+# Residual Risk
+
+- The chmod-000 fixtures are Unix-only because the condition is represented by Unix permission bits. They fail loudly, rather than pass or silently skip, when run with privileges that bypass mode 000.
+- The full workspace test suite was not run; verification stayed on the requested focused manager/CLI tests, formatter, and targeted clippy. The produced diff is 418 insertions / 42 deletions across three files (mostly the two required fixture families), so the manager should apply the workflow's breadth trigger when selecting the independent verification stage.

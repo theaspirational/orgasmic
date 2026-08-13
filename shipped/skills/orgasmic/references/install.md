@@ -127,12 +127,18 @@ project-local agent behavior; the board entry should reflect the current feature
 branch while the work is in progress.
 
 `orgasmic daemon restart --from-source` runs `cargo build --release`, resolves
-the newest `target/release/orgasmic` or `target/<triple>/release/orgasmic`, and
-rewrites the local daemon service to that exact binary. It leaves
+the newest `target/release/orgasmic` or `target/<triple>/release/orgasmic`, then
+publishes a fresh-inode copy at
+`$ORGASMIC_HOME/bin/orgasmic-daemon-source`. On macOS the copy is signed to
+match the installed daemon's designated requirement before the service is
+changed. The service executable and working directory therefore stay outside
+protected checkout folders such as Documents. It leaves
 `$ORGASMIC_HOME/install.json` in bundle mode. Use `--no-build` only after you
 have already built the release binary. Use
 `orgasmic daemon restart --clear-runtime-override` to return to the installed
-runtime before the next update.
+runtime before the next update. If the candidate does not become ready, the
+previous runtime selection and source-override bytes are restored and restarted
+automatically.
 
 Use full source install only when the user explicitly wants the installed
 runtime to be source-managed:

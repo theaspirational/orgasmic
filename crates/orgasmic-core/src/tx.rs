@@ -392,6 +392,17 @@ impl TxWriter {
         &self.path
     }
 
+    /// Sync appended bytes through the descriptor retained by this writer.
+    ///
+    /// Keeping the sync on the append descriptor avoids reopening `path`
+    /// between the append and its durability acknowledgement. The pathname
+    /// may no longer name this file by then, but the bytes just appended still
+    /// belong to this descriptor and must be synced before the caller replies.
+    pub fn sync_data(&self) -> Result<(), TxError> {
+        self.file.sync_data()?;
+        Ok(())
+    }
+
     /// Append one tx entry.
     ///
     // orgasmic:task_HQ970
@@ -401,13 +412,26 @@ impl TxWriter {
     /// home ledger, and every daemon-internal caller — so a write the reader
     /// would choke on is refused instead of bricking the file.
     pub fn append(&mut self, entry: &TxEntry) -> Result<(), TxError> {
-        entry.validate()?;
-        entry.assert_round_trip()?;
-        if self.needs_leading_blank {
-            self.file.write_all(b"\n")?;
+        self.append_many(std::slice::from_ref(entry))
+    }
+
+    /// Append an ordered group of entries with one write and one flush.
+    /// Every entry is validated before any byte reaches the ledger.
+    pub fn append_many(&mut self, entries: &[TxEntry]) -> Result<(), TxError> {
+        if entries.is_empty() {
+            return Ok(());
         }
-        self.file.write_all(b"\n")?;
-        self.file.write_all(entry.render().as_bytes())?;
+        let mut rendered = String::new();
+        if self.needs_leading_blank {
+            rendered.push('\n');
+        }
+        for entry in entries {
+            entry.validate()?;
+            entry.assert_round_trip()?;
+            rendered.push('\n');
+            rendered.push_str(&entry.render());
+        }
+        self.file.write_all(rendered.as_bytes())?;
         self.file.flush()?;
         self.needs_leading_blank = false;
         Ok(())
@@ -583,6 +607,25 @@ mod tests {
                 ("TO_STATE".into(), "done".into())
             ]
         );
+    }
+
+    #[test]
+    fn retained_descriptor_syncs_after_path_is_renamed_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("2026-08.org");
+        let renamed = dir.path().join("2026-08.renamed.org");
+        let mut writer = TxWriter::open(&path).unwrap();
+        writer.append(&sample_entry()).unwrap();
+
+        std::fs::rename(&path, &renamed).unwrap();
+        assert!(!path.exists(), "the original pathname must stay absent");
+
+        writer
+            .sync_data()
+            .expect("the retained append descriptor remains syncable");
+        drop(writer);
+        let source = std::fs::read_to_string(renamed).unwrap();
+        assert_eq!(parse_tx_file(&source, "2026-08.org").unwrap().len(), 1);
     }
 
     #[test]

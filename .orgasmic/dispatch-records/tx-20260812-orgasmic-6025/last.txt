@@ -1,0 +1,33 @@
+# TASK-P9T4N completion
+
+## Changed
+
+- Added `TxWriter::append_many` and `WriterHandle::transaction_multi`; a multi transaction validates all entries, targets one ledger, preserves caller ordering, uses one writer command, one append, one sync, and one rewrite-lock scope.
+- Added multi-transaction idempotency records for the group and each member request id, retained writer event publication, sequence-cache staging, and deterministic pre-commit/flock test hooks.
+- Added the dispatch-close commit endpoint and routed the CLI terminal tx plus `task.state_transitioned` tx through it. The endpoint verifies the close tx project/task/type and lifecycle intent against current task state before committing.
+- Kept `reconcile_torn_closes` unchanged and retained both legacy-ledger repair and labelled response-loss replay coverage.
+- Added `verify/TASK-P9T4N` TCTTD red/green injection artifact.
+
+## Verification Gates
+
+- `cargo fmt --all --check` — PASS.
+- `git diff --check` — PASS.
+- `git apply --check verify/TASK-P9T4N/injection.patch` — PASS.
+- `cargo test -p orgasmic-core tx::` — PASS, 17 passed.
+- `cargo test -p orgasmic-daemon --test writer_durability` — PASS, 9 passed. Includes multi ordering, one flock/one sync, concurrent callers, and injected pre-commit failure landing neither leg.
+- `cargo test -p orgasmic-cli --test dispatch dispatch_close_commits_terminal_and_lifecycle_txs_in_one_request -- --exact` — PASS.
+- `cargo test -p orgasmic-cli --test dispatch legacy_torn_dispatch_close_is_still_repaired_by_next_manager_command -- --exact` — PASS.
+- `cargo test -p orgasmic-cli --test dispatch resubmitted_close_and_transition_are_labelled_no_ops -- --exact` — PASS.
+- `cargo test -p orgasmic-cli --bin orgasmic torn_close_candidates_yield_to_any_later_lifecycle_event` — PASS, 1 passed.
+- `cargo clippy -p orgasmic-core -p orgasmic-daemon -p orgasmic-cli --all-targets -- -D warnings` — PASS.
+- TCTTD replay, manual apply/run/reverse/run with tree comparison — RED exit 101 with pinned missing-transition signature; GREEN 1 passed; pre/post diff and status byte-identical.
+
+## Unmet Criteria
+
+None.
+
+## Residual Risk
+
+- The new multi-append API intentionally refuses entries targeting different ledger paths; dispatch-close entries share one project ledger.
+- Client-side response loss remains possible after a successful server commit. Existing deterministic request ids, labelled no-op behavior, and torn-close reconciliation remain the recovery backstop.
+- No daemon install or restart was performed.

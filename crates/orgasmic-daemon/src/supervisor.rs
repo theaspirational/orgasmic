@@ -1598,9 +1598,17 @@ impl Supervisor {
         )
     }
 
-    /// Ask the probe what is running under a run, bounded by
-    /// [`WORK_PROBE_TIMEOUT`]. The probe shells out, so it runs on the blocking
-    /// pool and never under the supervisor lock.
+    /// Ask the probe what is running under a run, waiting at most
+    /// [`WORK_PROBE_TIMEOUT`] for its answer. The probe shells out, so it runs
+    /// on the blocking pool and never under the supervisor lock.
+    ///
+    /// This timeout bounds the supervisor sweep, not the blocking task:
+    /// `spawn_blocking` cannot cancel a synchronous [`Command::spawn`]. If the
+    /// await expires, the sweep fails closed with [`WorkEvidence::Unknown`]
+    /// while the task continues to own, kill, and reap any child it spawned.
+    /// One observation can make up to three sequential subprocess calls; each
+    /// has the `spawn + child deadline + cleanup` contract documented on
+    /// [`probe_command_stdout`].
     async fn observe_work_evidence(&self, target: WorkProbeTarget) -> WorkEvidence {
         let probe = self.work_probe();
         let observation = tokio::time::timeout(
@@ -5274,8 +5282,14 @@ pub(crate) struct ProcessSubtreeCpuProbe {
     ///
     /// rmux only: a tmux probe inherits its `-L` from the drivers' own
     /// `tmux_command()`, the same selection the driver used to create the
-    /// session (see [`pane_probe_command`]).
+    /// session (see [`pane_probe_command_with_override`]).
     rmux_socket: Option<std::path::PathBuf>,
+
+    /// Test-only command override for mux probes. Production always leaves
+    /// this unset. Keeping the override on the probe instance avoids changing
+    /// process-global `PATH` or `RMUX_SDK_DAEMON_BINARY` while parallel daemon
+    /// tests are spawning their own mux clients.
+    probe_binary_override: Option<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -5283,6 +5297,14 @@ impl ProcessSubtreeCpuProbe {
     fn with_rmux_socket(socket: &std::path::Path) -> Self {
         Self {
             rmux_socket: Some(socket.to_path_buf()),
+            ..Self::default()
+        }
+    }
+
+    fn with_probe_binary(binary: &std::path::Path) -> Self {
+        Self {
+            probe_binary_override: Some(binary.to_path_buf()),
+            ..Self::default()
         }
     }
 }
@@ -5290,7 +5312,8 @@ impl ProcessSubtreeCpuProbe {
 impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
     fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence {
         let socket = self.rmux_socket.as_deref();
-        let Some(root) = work_probe_root_pid(target, socket) else {
+        let probe_binary_override = self.probe_binary_override.as_deref();
+        let Some(root) = work_probe_root_pid(target, socket, probe_binary_override) else {
             return WorkEvidence::Unknown;
         };
         let Some(table) = process_cpu_table() else {
@@ -5316,7 +5339,7 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
         // rescues: a pane that cannot be read cannot save a run (JK66P's
         // fail-closed rule), it only gets named in the reason.
         if let Some(mux) = PaneMux::for_transport(&target.transport) {
-            match pane_content(mux, &target.identity, socket) {
+            match pane_content_with_override(mux, &target.identity, socket, probe_binary_override) {
                 Some(pane) => match pane_open_turn_marker(&pane) {
                     Some(marker) => {
                         return WorkEvidence::Working {
@@ -5349,12 +5372,17 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
 /// pid at acquire; a pane transport has none, so the pane's root process is
 /// resolved from the mux by the run-scoped session name the driver built from
 /// the same identity.
-fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path>) -> Option<u32> {
+fn work_probe_root_pid(
+    target: &WorkProbeTarget,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<u32> {
     if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
         return Some(pid);
     }
-    PaneMux::for_transport(&target.transport)
-        .and_then(|mux| pane_pid(mux, &target.identity, socket))
+    PaneMux::for_transport(&target.transport).and_then(|mux| {
+        pane_pid_with_override(mux, &target.identity, socket, probe_binary_override)
+    })
 }
 
 // orgasmic:TASK-4CSMY
@@ -5409,25 +5437,39 @@ impl PaneMux {
 /// binary that owns its server. Reusing it is what makes "the probe reads the
 /// server the pane is on" true by construction rather than by plumbing.
 // orgasmic:TASK-4CSMY
-fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<Command> {
-    let mut cmd = match mux {
-        PaneMux::Rmux => {
-            let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-            let rmux_bin = probe.path.filter(|_| probe.found)?;
-            let mut cmd = Command::new(rmux_bin);
+fn pane_probe_command_with_override(
+    mux: PaneMux,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<Command> {
+    let mut cmd = if let Some(binary) = probe_binary_override {
+        let mut cmd = Command::new(binary);
+        if mux == PaneMux::Rmux {
             if let Some(socket) = socket {
                 cmd.arg("-S").arg(socket);
             }
-            cmd
         }
-        // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
-        // to `rmux`, which answers `-V` with a lie and would point the probe at
-        // the rmux server hosting live dispatch panes.
-        PaneMux::Tmux => {
-            if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
-                return None;
+        cmd
+    } else {
+        match mux {
+            PaneMux::Rmux => {
+                let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+                let rmux_bin = probe.path.filter(|_| probe.found)?;
+                let mut cmd = Command::new(rmux_bin);
+                if let Some(socket) = socket {
+                    cmd.arg("-S").arg(socket);
+                }
+                cmd
             }
-            orgasmic_drivers::modes::tmux::tmux_command()
+            // Not `tmux -V`: inside an orgasmic worker `tmux` on PATH is a symlink
+            // to `rmux`, which answers `-V` with a lie and would point the probe at
+            // the rmux server hosting live dispatch panes.
+            PaneMux::Tmux => {
+                if !orgasmic_drivers::modes::tmux::real_tmux_on_path() {
+                    return None;
+                }
+                orgasmic_drivers::modes::tmux::tmux_command()
+            }
         }
     };
     cmd.stdin(Stdio::null())
@@ -5448,8 +5490,9 @@ fn pane_probe_command(mux: PaneMux, socket: Option<&std::path::Path>) -> Option<
 /// actually ends both.
 ///
 /// Two seconds is an order of magnitude above what these calls take when the
-/// mux is healthy (a local `display-message` or `capture-pane` round trip) and
-/// well inside the 5 s the supervisor is prepared to wait for the whole probe.
+/// mux is healthy (a local `display-message` or `capture-pane` round trip).
+/// It is a POST-SPAWN child budget, not a whole-probe wall budget; see
+/// [`probe_command_stdout`] and [`Supervisor::observe_work_evidence`].
 // orgasmic:TASK-JQ8AV.1
 const PROBE_CHILD_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -5486,15 +5529,40 @@ const PROBE_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// funnel exists to close: the blocking task, the helper thread and the
 /// descendant all outlive [`WORK_PROBE_TIMEOUT`], once per sweep, for as long
 /// as the condition lasts.
+///
+/// `Command::spawn` is synchronous and Rust provides no way to forcibly cancel
+/// it. Therefore this function deliberately has a whole-call contract of
+/// `spawn + child deadline + synchronous cleanup`: after `spawn` returns, the
+/// child receives the COMPLETE supplied deadline, then any required group
+/// kill, reap, and reader join run before return. There is no finite whole-call
+/// bound independent of spawn latency or OS scheduling. Callers that need a
+/// shorter decision bound must time out their WAIT, as
+/// [`Supervisor::observe_work_evidence`] does; that does not detach this owned
+/// cleanup.
 // orgasmic:TASK-JQ8AV.1,TASK-4CSMY.1
 fn probe_command_stdout(mut cmd: Command, deadline: Duration) -> Option<Vec<u8>> {
+    probe_command_stdout_with_spawner(&mut cmd, deadline, Command::spawn)
+}
+
+/// Implementation seam for deterministically exercising synchronous spawn
+/// latency. The spawner owns all blocking work up to returning the tracked
+/// child; production passes [`Command::spawn`] directly.
+fn probe_command_stdout_with_spawner(
+    cmd: &mut Command,
+    deadline: Duration,
+    spawn: impl FnOnce(&mut Command) -> std::io::Result<std::process::Child>,
+) -> Option<Vec<u8>> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
         cmd.process_group(0);
     }
+    let mut child = spawn(cmd).ok()?;
+    // `Command::spawn` is synchronous and cannot be interrupted by this
+    // function's polling loop. Start the enforceable runtime budget only once
+    // the child exists; otherwise warm-host spawn latency can consume the
+    // whole budget before there is a process the deadline can kill.
     let expires_at = std::time::Instant::now() + deadline;
-    let mut child = cmd.spawn().ok()?;
     let stdout = child.stdout.take();
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -5590,13 +5658,23 @@ fn kill_probe_child(child: &mut std::process::Child) {
 /// `<mux> display-message -p -t <session> '#{pane_pid}'` — the pane's root
 /// process (the shell the harness runs in), whose descendants are the harness
 /// and everything the harness spawned.
+#[cfg(test)]
 fn pane_pid(
     mux: PaneMux,
     identity: &RuntimeIdentity,
     socket: Option<&std::path::Path>,
 ) -> Option<u32> {
+    pane_pid_with_override(mux, identity, socket, None)
+}
+
+fn pane_pid_with_override(
+    mux: PaneMux,
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<u32> {
     let session = mux.session_name(identity);
-    let mut cmd = pane_probe_command(mux, socket)?;
+    let mut cmd = pane_probe_command_with_override(mux, socket, probe_binary_override)?;
     cmd.args(["display-message", "-p", "-t", &session, "#{pane_pid}"]);
     let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
     String::from_utf8_lossy(&stdout).trim().parse().ok()
@@ -5606,13 +5684,23 @@ fn pane_pid(
 /// which survives exactly the state that starves the byte channels: a frozen
 /// TUI keeps its last frame, and that frame carries the open-turn statusline.
 // orgasmic:TASK-JQ8AV,TASK-4CSMY
+#[cfg(test)]
 fn pane_content(
     mux: PaneMux,
     identity: &RuntimeIdentity,
     socket: Option<&std::path::Path>,
 ) -> Option<String> {
+    pane_content_with_override(mux, identity, socket, None)
+}
+
+fn pane_content_with_override(
+    mux: PaneMux,
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+    probe_binary_override: Option<&std::path::Path>,
+) -> Option<String> {
     let session = mux.session_name(identity);
-    let mut cmd = pane_probe_command(mux, socket)?;
+    let mut cmd = pane_probe_command_with_override(mux, socket, probe_binary_override)?;
     cmd.args(["capture-pane", "-p", "-t", &session]);
     let stdout = probe_command_stdout(cmd, PROBE_CHILD_DEADLINE)?;
     Some(String::from_utf8_lossy(&stdout).into_owned())
@@ -10961,7 +11049,11 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        let deadline = Duration::from_millis(400);
+        // Test-local setup budget: after `/bin/sh` has spawned it still has to
+        // fork `sleep` and write the pidfile before the behavioral deadline.
+        // Keep that warm-host setup out of the assertion while still requiring
+        // deadline kill + reap below.
+        let deadline = Duration::from_secs(2);
         let started = Instant::now();
         let (out, child_pids) = tokio::task::spawn_blocking(move || {
             // The pids are read back out of the probe's own child, so the
@@ -11024,7 +11116,11 @@ mod tests {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        let deadline = Duration::from_millis(400);
+        // Test-local setup budget: after `/bin/sh` has spawned it still has to
+        // fork `sleep` and write the pidfile before the behavioral deadline.
+        // Keep that warm-host setup out of the assertion while still requiring
+        // deadline kill + reap below.
+        let deadline = Duration::from_secs(2);
         let started = Instant::now();
         let (out, grandchild) = tokio::task::spawn_blocking(move || {
             let out = probe_command_stdout(cmd, deadline);
@@ -11054,27 +11150,100 @@ mod tests {
         );
     }
 
+    /// TASK-GPY3H: synchronous spawn latency is additive to, and must never
+    /// consume, the post-spawn child deadline.
+    ///
+    /// The injected spawner blocks longer than the child budget before it
+    /// creates a child that cannot exit by itself. A deadline measured before
+    /// spawn would return almost immediately afterward; the production
+    /// contract instead grants the tracked child its full budget and returns
+    /// within measured spawn time + that budget + bounded test tolerance.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_spawn_latency_is_additive_to_the_full_post_spawn_deadline() {
+        let mut cmd = Command::new("/bin/sleep");
+        cmd.arg("120")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        let child_deadline = Duration::from_millis(200);
+        let injected_spawn_latency = child_deadline + Duration::from_millis(150);
+        let spawn_returned_at = Arc::new(std::sync::Mutex::new(None));
+        let child_pid = Arc::new(std::sync::Mutex::new(None));
+        let started = Instant::now();
+        let out = {
+            let spawn_returned_at = Arc::clone(&spawn_returned_at);
+            let child_pid = Arc::clone(&child_pid);
+            tokio::task::spawn_blocking(move || {
+                probe_command_stdout_with_spawner(&mut cmd, child_deadline, move |cmd| {
+                    std::thread::sleep(injected_spawn_latency);
+                    let child = cmd.spawn()?;
+                    *child_pid.lock().expect("child pid slot") = Some(child.id());
+                    *spawn_returned_at.lock().expect("spawn time slot") = Some(Instant::now());
+                    Ok(child)
+                })
+            })
+            .await
+            .expect("probe task")
+        };
+        let finished_at = Instant::now();
+        let spawn_returned_at = spawn_returned_at
+            .lock()
+            .expect("spawn time slot")
+            .expect("the injected spawner returned a child");
+        let child_pid = child_pid
+            .lock()
+            .expect("child pid slot")
+            .expect("the injected spawner recorded its child");
+        let spawn_wall = spawn_returned_at.duration_since(started);
+        let post_spawn_wall = finished_at.duration_since(spawn_returned_at);
+        let total_wall = finished_at.duration_since(started);
+
+        assert!(out.is_none(), "the deadlined child must not report success");
+        assert!(
+            spawn_wall >= injected_spawn_latency,
+            "the seam must delay spawn past the child budget: spawn={spawn_wall:?}, \
+             injected={injected_spawn_latency:?}"
+        );
+        assert!(
+            post_spawn_wall >= child_deadline,
+            "spawn latency must not consume the child's budget: post-spawn={post_spawn_wall:?}, \
+             budget={child_deadline:?}"
+        );
+        assert!(
+            total_wall < spawn_wall + child_deadline + Duration::from_secs(2),
+            "whole-call wall time must be measured spawn + child deadline + cleanup: \
+             total={total_wall:?}, spawn={spawn_wall:?}, budget={child_deadline:?}"
+        );
+        assert!(
+            wait_for_pid_to_disappear(child_pid, Duration::from_secs(2)).await,
+            "the tracked child must be killed and reaped; pid {child_pid} survived"
+        );
+    }
+
     /// The same finding at the SUPERVISOR, on the real probe, for BOTH pane
     /// transports: a mux binary that never answers must not hold the stall
     /// sweep and must not leave a process behind.
     ///
-    /// Each arm points the production `pane_probe_command` at a binary that
-    /// hangs — `RMUX_SDK_DAEMON_BINARY` for rmux (the documented override
-    /// `probe_rmux_binary` already honors), a PATH shim for tmux (which resolves
-    /// `tmux` by name). Every other line of the path is the real one:
+    /// Each arm gives its probe instance a binary that hangs. The override is
+    /// instance-local so this parallel test cannot redirect unrelated rmux or
+    /// tmux commands through a process-global environment variable. Every
+    /// other line of the path is the real one:
     /// `ProcessSubtreeCpuProbe::observe` → `work_probe_root_pid` → `pane_pid` →
     /// `probe_command_stdout`.
     ///
-    /// Bounded latency is asserted BELOW [`WORK_PROBE_TIMEOUT`] on purpose: at
-    /// or above it the assertion would pass on the outer timeout alone and
-    /// prove nothing about the child deadline.
+    /// The child deadline itself is proven at [`probe_command_stdout`]'s two
+    /// focused tests above. This supervisor-level test asserts the safety
+    /// behavior instead of a wall-clock threshold that also charges unrelated
+    /// fixture setup and host scheduling delay.
     #[cfg(unix)]
     #[tokio::test]
     async fn a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport() {
         let _live_guard = live_session_guard();
         let _environment = test_environment_lock().lock().await;
 
-        for (transport, mux) in [("rmux", PaneMux::Rmux), ("tmux", PaneMux::Tmux)] {
+        for transport in ["rmux", "tmux"] {
             let dir = tempfile::TempDir::new().expect("tempdir");
             let shim = dir.path().join("tmux");
             let armed = dir.path().join("armed");
@@ -11105,23 +11274,10 @@ mod tests {
                 "the linked shim must answer before the timed section"
             );
 
-            // Install the override for this arm only, and restore it after.
-            let saved_rmux = std::env::var_os("RMUX_SDK_DAEMON_BINARY");
-            let saved_path = std::env::var_os("PATH").unwrap_or_default();
-            match mux {
-                PaneMux::Rmux => std::env::set_var("RMUX_SDK_DAEMON_BINARY", &shim),
-                // Keep the system dirs on the test PATH (`.orgasmic/gotchas.org`:
-                // a bare tempdir PATH breaks every concurrent test that spawns
-                // a tool).
-                PaneMux::Tmux => std::env::set_var(
-                    "PATH",
-                    format!("{}:{}", dir.path().display(), saved_path.to_string_lossy()),
-                ),
-            }
             std::fs::write(&armed, "").expect("arm the shim");
 
             let (sup, session_dir, _w) = make_unmonitored_supervisor();
-            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::default()));
+            sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_probe_binary(&shim)));
             let driver = TmuxTuiDriver;
             let req = manual_req(
                 &format!("TASK-HUNG-{transport}"),
@@ -11129,6 +11285,7 @@ mod tests {
                 Some(1),
                 None,
             );
+            let session_path = req.session_path.clone();
             let resp = sup.acquire(&driver, req).await.unwrap();
             // A pane transport carries no wrapper pid, so the probe's FIRST act
             // is the mux call that is about to hang.
@@ -11140,29 +11297,24 @@ mod tests {
             }
             age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
 
-            let started = Instant::now();
             sup.release_first_timed_out_run().await;
-            let elapsed = started.elapsed();
 
             let hung_child = std::fs::read_to_string(&pidfile)
                 .ok()
                 .and_then(|raw| raw.trim().parse::<u32>().ok());
 
-            match mux {
-                PaneMux::Rmux => match saved_rmux {
-                    Some(value) => std::env::set_var("RMUX_SDK_DAEMON_BINARY", value),
-                    None => std::env::remove_var("RMUX_SDK_DAEMON_BINARY"),
-                },
-                PaneMux::Tmux => std::env::set_var("PATH", &saved_path),
-            }
-
             let hung_child = hung_child.unwrap_or_else(|| {
                 panic!("{transport}: the probe never reached the hanging mux binary")
             });
             assert!(
-                elapsed < WORK_PROBE_TIMEOUT,
-                "{transport}: the sweep must be bounded by the CHILD deadline, not by \
-                 WORK_PROBE_TIMEOUT; took {elapsed:?}"
+                !run_is_live(&sup, &resp.run_id).await,
+                "{transport}: an unanswerable probe must release the stalled run"
+            );
+            assert_eq!(
+                release_reason(&session_path).as_deref(),
+                Some(STALL_TIMEOUT_REASON),
+                "{transport}: a hung probe must remain Unknown, add no work credit, and \
+                 preserve the bare stall reason"
             );
             assert!(
                 wait_for_pid_to_disappear(hung_child, Duration::from_secs(5)).await,

@@ -1,0 +1,28 @@
+# Changed
+
+- Documented the real `probe_command_stdout` contract at both the implementation and `Supervisor::observe_work_evidence` caller boundaries: synchronous `Command::spawn` cannot be cancelled, so whole-call behavior is `spawn + complete post-spawn child deadline + synchronous cleanup`; the outer 5s await fails closed with `WorkEvidence::Unknown` but does not cancel owned kill/reap work.
+- Added `probe_command_stdout_with_spawner`, a production-used deterministic spawn seam, and `probe_spawn_latency_is_additive_to_the_full_post_spawn_deadline`. The test injects 350ms of spawn latency against a 200ms child deadline, proves the child still receives at least 200ms after spawn, proves total wall time is measured spawn + child deadline + cleanup tolerance, and proves the tracked child is gone.
+- Raised only the two pidfile tests' post-spawn deadlines from 400ms to 2s. Both retain deadline-return assertions and concrete descendant process-group disappearance checks.
+- Reused `claim_owned_rmux_endpoint` in `recovery_reattaches_rmux_session_when_handle_exists`, with the normal rmux availability skip before the owned-server pin.
+- Preserved the first repair's process-group kill, child wait/reap, shared stdout-drain deadline, fail-closed hung-mux behavior, and owned rmux isolation. No flake-registry, task-record, writer, cache-seeding, or TASK-T7KSH rmux `-V` changes.
+- The owned task record's exact observed panics remain `the stub recorded its \`sleep\` pid` and `the sweep must be bounded`. The measured trigger was eleven warm-host runs with `syspolicyd` rate climbing 0.36 to 1.46 and not recovering after five minutes; controls were the ignored new API test failing the same way, an interleaved unmodified sibling worktree green twice, and the same tree green when rested at rate 0.1070/load 1.69.
+- Chose a deadline/coordination fix, not a registry entry. TASK-4BBA6 (syspolicyd watchdog) should land before TASK-P4XKT (repeat passing tests), so repetition cannot amplify host load without attribution.
+
+# Verification Gates
+
+- PASS — serial focused tests (5 passed, 0 failed, 828 filtered; 9.53s; owner PID 63006; `/tmp/TASK-GPY3H-focused-1786576560-63003.log`):
+  `cargo test -p orgasmic-daemon --lib -- --test-threads=1 --exact supervisor::tests::a_probe_child_that_never_exits_is_killed_and_reaped_at_the_deadline supervisor::tests::a_probe_child_that_exits_leaving_a_descendant_on_stdout_is_bounded_and_killed supervisor::tests::a_hung_mux_binary_neither_holds_the_sweep_nor_leaks_a_child_on_either_transport api::tests::recovery_reattaches_rmux_session_when_handle_exists supervisor::tests::probe_spawn_latency_is_additive_to_the_full_post_spawn_deadline --nocapture`
+- PASS — `cargo fmt --all --check`
+- PASS — `git diff --check`
+- PASS — daemon clippy (owner PID 72132; `/tmp/TASK-GPY3H-clippy-1786576648-72121.log`):
+  `cargo clippy -p orgasmic-daemon --all-targets -- -D warnings`
+- Changed files only: `crates/orgasmic-daemon/src/supervisor.rs`, `crates/orgasmic-daemon/src/api.rs`.
+
+# Unmet Criteria
+
+- None.
+
+# Residual Risk
+
+- `std::process::Command::spawn` and OS cleanup/reap scheduling still have no forcibly cancellable finite wall bound. This is now explicit rather than hidden; the supervisor decision stays bounded/fail-closed, and spawned children remain owned until group kill and reap complete.
+- The deterministic seam covers spawn latency without recreating the hours-long degraded `syspolicyd` host state. TASK-4BBA6 remains the owner of live watchdog/attribution coverage for that condition.

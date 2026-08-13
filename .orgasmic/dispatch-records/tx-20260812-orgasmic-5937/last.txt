@@ -1,0 +1,313 @@
+# TASK-BX5SR (retained-descriptor writer sync) — independent review
+
+Commit under review: `6fdae3f7cdbc88e2699c7c1b69f20aae06490c75` ("TASK-BX5SR: Changed")
+Parent: `c5f1653`. Reviewed in worktree `TASK-BX5SR-review`, HEAD == the target commit,
+working tree clean. Harness: Claude (reviewer-claude-stdio). Read-only throughout — no
+source edited, no daemon started, stopped, or installed.
+
+## Verdict
+
+**PASS** — the retained-descriptor change is correct, minimal, in scope, and its stated
+invariant holds. Nothing in the diff blocks landing.
+
+Two MEDIUM follow-ups should be filed before TASK-BX5SR itself is closed: the daemon-level
+regression does not actually discriminate the fix from the code it replaced (F1), and the
+incident's `cached mutation lacks its recorded identity` is root-caused below but neither
+fixed nor covered on the side of the channel that actually emitted it (F2). Acceptance
+items 3 and 5 of the task record are untouched by this commit; see **Out of scope**.
+
+---
+
+## Findings
+
+### F1 · MEDIUM · test — no daemon-level regression fails if the fix is reverted
+
+`crates/orgasmic-daemon/src/writer.rs:1590`, `:2076`, `:1731`
+
+The whole change on the daemon side is swapping `sync_tx_path(path)` (fresh
+`OpenOptions::new().read(true).open(path)` + `sync_data`) for
+`sync_tx_writer(handles, path)` (lookup of the cached `CachedTxWriter` +
+`TxWriter::sync_data`). The two behave **identically** unless the tx pathname stops
+naming an openable file between the append and the sync.
+
+No test in the suite creates that condition:
+
+- `crates/orgasmic-daemon/tests/writer_durability.rs:104`
+  (`rewrite_transaction_rolls_back_when_tx_sync_fails`) arms `test_hooks::fail_next_sync`,
+  which fails inside `test_hooks::before_sync()` at `writer.rs:99-110` — i.e. *before* the
+  handle lookup and before any real `sync_data`. It never reaches the retained descriptor.
+  (`sync_attempt_count == 1`, `sync_count == 0` is exactly the assertion that it did not.)
+- `tx_append_acks_only_after_fsync` and `concurrent_tx_appends_group_commit_single_fsync`
+  leave the path present and unmodified at sync time.
+- `tx_append_reopens_after_path_inode_swap_and_rescans_sequence`
+  (`writer_durability.rs:233`) does rename over the tx path — but at
+  `writer_durability.rs:262`, *between* two fully completed append→sync cycles, not
+  between an append and its sync.
+- `writer_accepts_a_command_after_cached_mutation_identity_error` (`writer.rs:2500`) never
+  touches the tx path lifecycle.
+- `retained_descriptor_syncs_after_path_is_renamed_away` (`crates/orgasmic-core/src/tx.rs:599`)
+  is a good test, but it exercises `TxWriter::sync_data` directly. It is unaffected by which
+  function `writer.rs` calls, so it cannot guard the routing.
+
+Impact: a future refactor that reintroduces a fresh `open()` on the acknowledgement path —
+the exact shape that stalled the daemon for minutes on 2026-08-02 — reproduces the outage
+with a fully green test suite. The behavioural claim in the dispatch brief ("both post-append
+paths use the retained descriptor") is true by inspection today and unprotected tomorrow.
+
+Fix direction: add a test hook that runs between append and sync (a `before_sync` variant
+that takes a closure, or a one-shot "rename/unlink the tx path now" seam), then assert a
+daemon-level append still acks. A cheaper alternative that catches most of the regression:
+assert in `sync_tx_writer` that no fresh open occurs, via a counter incremented in
+`CachedTxWriter::open`, and assert it stays at 1 across an append→sync with the path
+renamed away.
+
+### F2 · MEDIUM · correctness — the incident's error is emitted on the *handle* side, is unfixed, and is permanent for that request id
+
+`crates/orgasmic-daemon/src/writer.rs:528-530`, `:663`, `:684`, `:1304-1311`;
+`crates/orgasmic-daemon/src/api.rs:1707-1710`, `:15667`, `:16362`
+
+Root cause (task acceptance item 4), traced end to end:
+
+1. `WriterHandle::transaction()` sends `TransactionRequest { mutation: Some(..), mutation_id: None }`
+   (`writer.rs:663`).
+2. On success the writer loop caches that as `CachedResponse::Tx { mutation_id: None, .. }`
+   (`writer.rs:1304-1311`).
+3. A later call with the **same `request_id`** through `WriterHandle::transaction_mutation()`
+   hits `self.cached_mutation(..)` at `writer.rs:684`, which reaches
+   `cached_mutation_from_map` — the cached `mutation` matches, so it passes the collision
+   guards at `:521` and `:523`, then hits
+   `mutation_id.clone().ok_or_else(|| anyhow!("cached mutation lacks its recorded identity"))`
+   at `writer.rs:528-530`.
+4. That error propagates out of `transaction_mutation` and is mapped by
+   `writer_transaction_error` (`api.rs:1707`) — `tracing::error!("writer transaction failed")`
+   plus `ApiError::internal("failed to apply changes")`. This matches the outage log line and
+   the reported 500 body verbatim.
+
+Two consequences the commit does not address:
+
+- **The production emitter is entirely caller-side.** The check at `writer.rs:684` runs
+  before anything is sent on the writer channel, so this error never reached the writer
+  task in the incident. That independently corroborates the brief's stall theory (the
+  identity error and the writer's death 0.63s later were unrelated events), and it means
+  the new regression at `writer.rs:2500` — which has to bypass `transaction_mutation` and
+  construct `WriterCommand::Transaction` by hand to reach the writer-side branch at
+  `writer.rs:1261` — covers a branch the incident did not take. As a guard for "a per-request
+  error leaves the writer running" the test is valid and worth keeping; as evidence about
+  *this* outage it proves nothing, and the commit message does not distinguish the two.
+- **The failure is permanent, not transient.** Nothing evicts or repairs the poisoned cache
+  entry, so every retry of that `request_id` returns the same 500 for the life of the boot.
+  A `manager dispatch-close` that first writes through `transaction()` and then creates
+  through `transaction_mutation()` under one `request_id` can never succeed by retrying.
+
+Fix direction: either record `mutation_id` for every cached transaction (so the `None` arm
+becomes structurally unreachable), or make the mismatch a typed 409-class error that names
+the colliding `request_id` and the two operations, so the caller can mint a fresh key
+instead of retrying into a permanent 500. The current `anyhow!` string gives an operator no
+way to act.
+
+### F3 · LOW · correctness — the ack now succeeds where it used to fail loudly, if the tx path was unlinked between append and sync
+
+`crates/orgasmic-daemon/src/writer.rs:1731-1742`; `crates/orgasmic-core/src/tx.rs:395-404`
+
+The retained-descriptor invariant is sound and correctly documented for the *renamed* and
+*atomically replaced* cases: the bytes just appended belong to that descriptor and syncing
+it is the only honest acknowledgement. One case diverges from the old behaviour, though:
+
+- Old: path unlinked with no replacement → `open()` returns ENOENT → error reply → the
+  caller retries → `tx_handles_detached_from_paths` (`writer.rs:1670`) reopens and the entry
+  lands in the live file.
+- New: `sync_data` on the orphaned inode succeeds → **success reply** → the entry is
+  silently lost.
+
+The window is narrow and external-only: the writer task is single-threaded and serialized,
+so nothing inside the daemon can unlink a tx file between an append and its sync. It takes
+another process (a `git checkout`, a manual cleanup, a second install) hitting a
+microsecond window. Hence LOW, and I would not gate landing on it.
+
+Fix direction, if it is worth closing: after a successful `sync_data`, re-check
+`CachedTxWriter::path_still_names_writer` and fail the request when the path no longer
+resolves. Note the tradeoff explicitly — that adds a `stat` to the acknowledgement path,
+and a `stat` on a wedged filesystem can stall the same way the `open` did. Deferring is a
+defensible call.
+
+### F4 · LOW · robustness — a panic site inside the writer task, in exactly the class TASK-BX5SR is about
+
+`crates/orgasmic-daemon/src/writer.rs:1270`
+
+```rust
+None => unreachable!("all writer transactions carry an identity"),
+```
+
+This runs inside the writer task loop. If it ever fires, the task unwinds, `rx` drops, and
+every subsequent write returns `writer task is gone` (`writer.rs:601,668,700,719,812,887,903`)
+until restart — the precise outage TASK-BX5SR was filed for.
+
+I verified it is unreachable today: all four construction sites of
+`WriterCommand::Transaction` (`writer.rs:657`, `:689`, and the two test sites `:2454`,
+`:2528`) pass `mutation: Some(..)`, and `TransactionRequest` is private to the module. So
+this is latent, not live. But a `bail!` here is strictly safer than `unreachable!` and costs
+nothing: it turns a hypothetical total write outage into one 500. Worth doing while the task
+is open, given the task's own acceptance criterion 1.
+
+### F5 · LOW · correctness (pre-existing) — the first append of a new month acks durable without a durable directory entry
+
+`crates/orgasmic-daemon/src/writer.rs:1710-1720`; `crates/orgasmic-core/src/tx.rs:369-389`
+
+`write_tx_append` does `create_dir_all` and `TxWriter::open` creates the file, but no
+parent-directory `fsync` follows before the success reply. On a crash between the ack and
+the next directory flush, a brand-new month's tx file can lose its directory entry while the
+daemon has already told the caller the tx is durable. Both `run_history.rs:979-984` and
+`run_catalog.rs:1540-1545` fsync the parent for exactly this reason, so the codebase is
+internally inconsistent here.
+
+Unchanged by this commit (the old path had the same gap) — classified **pre-existing**, not
+a regression. Flagged because it sits on the same acknowledgement contract this task is
+tightening.
+
+---
+
+## What I checked against the brief, item by item
+
+1. **Both post-append paths use the retained descriptor; no replacement fresh-path fsync.**
+   Confirmed. `grep -rn "sync_data\|sync_all\|fsync" crates/orgasmic-daemon/src crates/orgasmic-core/src`
+   leaves exactly two `sync_*` calls on the tx mutation path — `writer.rs:1738` (retained tx
+   descriptor) and `tx.rs:402`. The remaining daemon-side syncs at `writer.rs:2031` and
+   `:2051` are the rewrite tmp file and its backup, each synced through the descriptor that
+   wrote it, never reopened. No `OpenOptions ... .open(path)` survives on the acknowledgement
+   path.
+
+2. **Fsync before success reply; coalescing; failure replies; hooks; rollback; cache-lookup
+   reachability.** All confirmed.
+   - Ordering: `process_tx_batch` syncs at `writer.rs:1588-1594` and only then sends replies
+     at `writer.rs:1195-1208`. `transaction_inner` syncs at `:2076` before returning `Ok`.
+   - Coalescing: `paths_to_sync` is still a `HashSet<PathBuf>` (`writer.rs:1571`), one sync
+     per unique path per batch. `concurrent_tx_appends_group_commit_single_fsync` passes.
+   - Failure replies: `sync_failed_paths` still rewrites each affected item's result to an
+     error at `writer.rs:1596-1603`.
+   - Hooks: `before_sync()` is still the first statement in `sync_tx_writer` and
+     `after_sync()` still runs only after a successful sync — identical ordering to the
+     removed `sync_tx_path`.
+   - Rollback: `transaction_inner:2076-2079` still calls `rollback_renamed_rewrites` on sync
+     failure, before the `cleanup_staged_rewrites` arm at `:2087`.
+   - **Cache lookup cannot fail in any legitimate flow.** In `process_tx_batch`, a path is
+     inserted into `paths_to_sync` (`writer.rs:1583`) only after `write_tx_append` returned
+     `Ok`, and `write_tx_append` (`:1713-1719`) guarantees a handle is present on success.
+     In `transaction_inner`, the sync at `:2076` runs only on the `Ok` arm of
+     `append_tx_inner`, same guarantee. Nothing removes a handle between the two: the writer
+     task is single-threaded and `tx_handles.clear()` only happens under `Shutdown`
+     (`writer.rs:1395`). So the `no cached tx writer for {}` arm is defensive dead code —
+     correctly written as an error rather than an `expect`.
+
+3. **Retained-descriptor invariant under rename / atomic replace.** Sound. `TxWriter` holds a
+   plain `File` in `O_APPEND` with no buffering layer (`tx.rs:360-364`); `append` issues
+   `write_all` directly and the `flush()` at `tx.rs:422` is a no-op, so every appended byte is
+   already in the kernel when `sync_data` runs on the same fd. Syncing the descriptor we
+   appended to is the correct durability claim. The pre-append identity race (an external
+   replacement landing between `tx_handles_detached_from_paths` and the append) is unchanged
+   by this commit and, per the brief, not required here. One narrow divergence from the old
+   behaviour is F3 above.
+
+4. **Regressions prove the failure boundary; no unrelated change.** Partially — see F1. The
+   rewrite-rollback and injected-fsync-failure coverage is real and passes; the
+   retained-descriptor routing itself is unguarded. On the second half: the diff is 143
+   insertions across three files and contains nothing beyond the two call-site swaps, the new
+   `TxWriter::sync_data`, and three tests. No error is swallowed, no `?` removed, no change
+   to batching, leasing, deferral, or the single-channel serialization. Write scope
+   (`crates/orgasmic-core/**,crates/orgasmic-daemon/**`) is respected.
+
+5. **Broader BX5SR claims.**
+   - *Per-request errors stay nonfatal*: true, and unchanged by this commit — the
+     `WriterCommand::Transaction` arm at `writer.rs:1282-1289` already replied `Err` and
+     continued. The new test at `writer.rs:2500` is a characterization/regression guard for
+     pre-existing behaviour, not a fix. One residual panic site remains (F4).
+   - *Status liveness is truthful*: yes, and already satisfied **before** this commit.
+     `WriterStatus.liveness = !self.tx.is_closed()` (`writer.rs:980`) is false exactly when
+     the writer task's `rx` has dropped, i.e. when the task has exited. It is surfaced at
+     `api.rs:8119` in `/api/daemon/status`, and `orgasmic status` pretty-prints that whole
+     JSON (`crates/orgasmic-cli/src/main.rs:2370-2383`). A *stalled* (not dead) writer
+     correctly reports `liveness: true` and is instead visible via `in_flight_operation` /
+     `in_flight_age_ms`. Residual gap: nothing warns on a large `in_flight_age_ms` — the
+     operator has to read the field. `doctor` does not render writer state at all
+     (`crates/orgasmic-cli/src/doctor.rs` has no writer reference), so the task's
+     "(and `doctor`)" clause is not met.
+
+## Out of scope — what this commit does not do
+
+Stated precisely, so the task is not closed on a partial:
+
+- **Acceptance 3 (writer supervision).** Not implemented. There is no supervisor that
+  restarts the writer task in place, and no path that makes the daemon fail loudly rather
+  than continuing to serve reads once `liveness` goes false. Status merely reports it.
+- **Acceptance 4 (root cause).** Root-caused here (F2) but not fixed, and not documented in
+  the commit.
+- **Acceptance 5 (durable fallback for `dispatch finalize`).** Untouched. A worker report is
+  still lost when the daemon cannot write. Related: TASK-P9T4N (multi-tx writer transaction).
+- **Pre-append identity race.** Excluded by the dispatch brief; unchanged.
+- **`orgasmic restart` pre-stop drain degradation** observed during the outage. Untouched.
+- **`doctor` writer reporting.** Untouched.
+
+## Verification notes
+
+Independent verification, run from the review worktree at the target commit. These are my
+runs, not the implementer's claims.
+
+| Command | Result |
+|---|---|
+| `cargo test -p orgasmic-daemon --lib writer::` | **14 passed, 0 failed** (exit 0), incl. `writer_accepts_a_command_after_cached_mutation_identity_error` |
+| `cargo test -p orgasmic-daemon --test writer_durability` | **6 passed, 0 failed** (exit 0), incl. the new `rewrite_transaction_rolls_back_when_tx_sync_fails` |
+| `cargo test -p orgasmic-core --lib tx::` | **17 passed, 0 failed** (exit 0), incl. the new `retained_descriptor_syncs_after_path_is_renamed_away` |
+| `cargo fmt --check -p orgasmic-core -p orgasmic-daemon` | clean (exit 0) |
+| compiler warnings across all three test runs | 0 |
+
+Logs preserved at `/tmp/bx5sr-review/{lib,dur,tx}.log`.
+
+Not run, and why:
+- **`cargo clippy`** — not run; the brief did not assign independent gate verification and
+  the diff introduces no new lint surface beyond one `&self` method. Residual risk: a lint
+  regression would surface at the gate, not here.
+- **Live daemon probe** — explicitly forbidden by the brief (no restart, no install). The
+  production-path evidence for F2 is therefore static: the call chain
+  `api.rs:16362 → transaction_mutation → writer.rs:684 → cached_mutation_from_map:528 →
+  writer_transaction_error (api.rs:1707) → 500 "failed to apply changes"` is read off the
+  source and matches the outage log's message and status code exactly. Residual risk: I did
+  not reproduce the 500 against a running daemon.
+- **Empirical proof of F1** — proving "revert the fix and the suite still passes" would
+  require editing `writer.rs`, which the read-only boundary forbids. The claim is instead
+  established by enumeration: I inspected every test that reaches `sync_tx_writer` and
+  confirmed none removes or replaces the tx pathname between the append and the sync (see
+  F1 for the per-test reasoning). Residual risk: none I can identify, but it is an argument
+  rather than a run.
+
+Failure classification: no test failures observed in any run, so nothing to classify as
+regression / flaky / environment-blocked. F5 is classified **pre-existing** on the evidence
+that the removed `sync_tx_path` had the identical gap (see the diff at
+`writer.rs:1728-1738`).
+
+## Open questions
+
+1. Is a `request_id` ever intentionally shared between a `transaction()` write and a
+   `transaction_mutation()` create within one `manager dispatch-close`? If yes, F2 is a live
+   permanent-500 bug rather than a latent one, and it should be fixed before TASK-P9T4N
+   collapses dispatch-close into a single commit.
+2. Should the writer supervision work (acceptance 3) stay on TASK-BX5SR or be split out?
+   The task text itself proposes separating the two defects; this commit only touches the
+   durability path, so the task record currently overstates what has landed.
+3. Was the writer's death on 2026-08-02 ever attributed to a concrete panic? My reading says
+   the identity error could not have caused it (F2), and `liveness: !tx.is_closed()` going
+   false requires the task to have actually exited — which a stalled `open` does not do.
+   That leaves the death itself unexplained by this commit's theory, and worth confirming
+   from the boot `f8f67c0c` logs before the task is closed.
+
+## Fix directions (ranked)
+
+1. **F1** — add a between-append-and-sync test seam and a daemon-level regression that
+   renames or unlinks the tx path in that window, so the retained-descriptor routing is
+   guarded. Highest value: it is the only thing protecting the change under review.
+2. **F2** — record `mutation_id` on every cached transaction, or convert the mismatch into a
+   typed, actionable, non-500 error naming the colliding `request_id`. File as its own task;
+   it is the outage's opening symptom and is still fully present.
+3. **F4** — replace `unreachable!` at `writer.rs:1270` with `bail!`. One line, removes the
+   last writer-task panic site on the transaction path.
+4. **F3 / F5** — optional hardening of the acknowledgement contract; both are defensible to
+   defer, and F3's fix has a real cost (a `stat` on the ack path) that should be weighed
+   rather than applied reflexively.

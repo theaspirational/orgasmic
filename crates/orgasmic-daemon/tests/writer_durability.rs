@@ -11,9 +11,11 @@ fn hook_test_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-use orgasmic_core::tx::TxEntry;
+use orgasmic_core::tx::{parse_tx_file, TxEntry};
 use orgasmic_daemon::events::EventBus;
-use orgasmic_daemon::writer::{spawn as spawn_writer, test_hooks, TxAppend, TxIdPolicy};
+use orgasmic_daemon::writer::{
+    spawn as spawn_writer, test_hooks, FileRewrite, TxAppend, TxIdPolicy,
+};
 use tokio::task::JoinSet;
 
 fn sample_entry(tx_id: &str) -> TxEntry {
@@ -97,6 +99,329 @@ async fn tx_append_acks_only_after_fsync() {
     assert_eq!(test_hooks::sync_count(), 1);
     let source = std::fs::read_to_string(&tx_path).unwrap();
     assert!(source.contains("tx-fsync-ok"));
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn rewrite_transaction_rolls_back_when_tx_sync_fails() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+
+    test_hooks::fail_next_sync(1);
+    let err = handle
+        .transaction(
+            vec![FileRewrite {
+                path: target.clone(),
+                new_contents: b"after\n".to_vec(),
+            }],
+            TxAppend {
+                tx_path,
+                entry: sample_entry("tx-rewrite-sync-fail"),
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-rewrite-sync-fail".into()),
+            },
+        )
+        .await
+        .expect_err("injected tx sync failure must reject the transaction");
+
+    assert!(err.to_string().contains("fsync"), "unexpected error: {err}");
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "before\n");
+    assert_eq!(test_hooks::sync_attempt_count(), 1);
+    assert_eq!(test_hooks::sync_count(), 0);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn multi_transaction_orders_entries_under_one_flock_and_one_sync() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+
+    let results = handle
+        .transaction_multi(
+            vec![FileRewrite {
+                path: target.clone(),
+                new_contents: b"after\n".to_vec(),
+            }],
+            vec![
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-close"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-close".into()),
+                },
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-transition"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-transition".into()),
+                },
+            ],
+        )
+        .await
+        .expect("multi transaction");
+
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.tx_id.as_str())
+            .collect::<Vec<_>>(),
+        ["tx-close", "tx-transition"]
+    );
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "after\n");
+    let entries = parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.tx_id.as_str())
+            .collect::<Vec<_>>(),
+        ["tx-close", "tx-transition"]
+    );
+    assert_eq!(test_hooks::flock_count(), 1);
+    assert_eq!(test_hooks::sync_count(), 1);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn injected_multi_commit_failure_lands_neither_leg() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+    test_hooks::fail_next_multi_before_commit(1);
+
+    let error = handle
+        .transaction_multi(
+            vec![FileRewrite {
+                path: target.clone(),
+                new_contents: b"after\n".to_vec(),
+            }],
+            vec![
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-close"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-close-fail".into()),
+                },
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: sample_entry("tx-transition"),
+                    project_id: Some("orgasmic".into()),
+                    tx_id_policy: TxIdPolicy::Preserve,
+                    request_id: Some("req-transition-fail".into()),
+                },
+            ],
+        )
+        .await
+        .expect_err("injected boundary must fail before the commit");
+    assert!(error.to_string().contains("injected failure before multi"));
+    assert_eq!(std::fs::read_to_string(target).unwrap(), "before\n");
+    assert!(!tx_path.exists(), "neither ledger leg may land");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn post_append_sync_failure_keeps_rewrites_and_retry_syncs_without_duplicate_pair() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+    let rewrites = vec![FileRewrite {
+        path: target.clone(),
+        new_contents: b"after\n".to_vec(),
+    }];
+    let txs = vec![
+        TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-close-sync-uncertain"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some("req-close-sync-uncertain".into()),
+        },
+        TxAppend {
+            tx_path: tx_path.clone(),
+            entry: sample_entry("tx-transition-sync-uncertain"),
+            project_id: Some("orgasmic".into()),
+            tx_id_policy: TxIdPolicy::Preserve,
+            request_id: Some("req-transition-sync-uncertain".into()),
+        },
+    ];
+
+    test_hooks::fail_next_sync(1);
+    let error = handle
+        .transaction_multi(rewrites.clone(), txs.clone())
+        .await
+        .expect_err("failed durability acknowledgement must be explicit");
+    assert!(
+        error
+            .to_string()
+            .contains("committed but durability is uncertain"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "after\n");
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(
+        entries.len(),
+        2,
+        "both tx legs stay convergent with rewrites"
+    );
+
+    test_hooks::fail_next_sync(1);
+    let still_uncertain = handle
+        .transaction_multi(rewrites.clone(), txs.clone())
+        .await
+        .expect_err("a retained descriptor sync failure must remain explicit");
+    assert!(
+        still_uncertain
+            .to_string()
+            .contains("durability remains uncertain"),
+        "unexpected retained-descriptor error: {still_uncertain}"
+    );
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "failed re-sync must not append a pair");
+
+    let retried = handle
+        .transaction_multi(rewrites, txs)
+        .await
+        .expect("same semantic retry must sync, not append again");
+    assert_eq!(
+        retried
+            .iter()
+            .map(|result| result.tx_id.as_str())
+            .collect::<Vec<_>>(),
+        ["tx-close-sync-uncertain", "tx-transition-sync-uncertain"]
+    );
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "retry must not append a duplicate pair");
+    assert_eq!(test_hooks::sync_attempt_count(), 3);
+    assert_eq!(test_hooks::sync_count(), 1);
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn multi_transaction_request_id_collisions_fail_closed_on_semantic_changes() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("tasks.org");
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    std::fs::write(&target, "before\n").unwrap();
+    let handle = spawn_writer(EventBus::new());
+    let make_txs = |transition_reason: &str| {
+        let mut transition = sample_entry("tx-collision-transition");
+        transition.reason = Some(transition_reason.to_string());
+        vec![
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry: sample_entry("tx-collision-close"),
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-collision-close".into()),
+            },
+            TxAppend {
+                tx_path: tx_path.clone(),
+                entry: transition,
+                project_id: Some("orgasmic".into()),
+                tx_id_policy: TxIdPolicy::Preserve,
+                request_id: Some("req-collision-transition".into()),
+            },
+        ]
+    };
+    let original_rewrite = vec![FileRewrite {
+        path: target.clone(),
+        new_contents: b"after\n".to_vec(),
+    }];
+    handle
+        .transaction_multi(original_rewrite.clone(), make_txs("original"))
+        .await
+        .unwrap();
+
+    let rewrite_error = handle
+        .transaction_multi(
+            vec![FileRewrite {
+                path: target,
+                new_contents: b"different\n".to_vec(),
+            }],
+            make_txs("original"),
+        )
+        .await
+        .expect_err("rewrite collision must fail closed");
+    assert!(rewrite_error
+        .to_string()
+        .contains("different multi-transaction"));
+
+    let tx_error = handle
+        .transaction_multi(original_rewrite, make_txs("different"))
+        .await
+        .expect_err("tx semantic collision must fail closed");
+    assert!(tx_error.to_string().contains("different multi-transaction"));
+    let entries = parse_tx_file(&std::fs::read_to_string(&tx_path).unwrap(), "tx").unwrap();
+    assert_eq!(entries.len(), 2, "collisions must not append anything");
+}
+
+#[tokio::test]
+#[allow(clippy::await_holding_lock)]
+async fn concurrent_multi_transactions_never_interleave_their_entries() {
+    let _guard = hook_test_lock();
+    test_hooks::reset();
+    let tmp = tempfile::tempdir().unwrap();
+    let tx_path = tmp.path().join("tx").join("2026-08.org");
+    let handle = Arc::new(spawn_writer(EventBus::new()));
+    let mut tasks = JoinSet::new();
+    for group in ["a", "b"] {
+        let handle = Arc::clone(&handle);
+        let tx_path = tx_path.clone();
+        tasks.spawn(async move {
+            handle
+                .transaction_multi(
+                    Vec::new(),
+                    [1, 2]
+                        .into_iter()
+                        .map(|index| TxAppend {
+                            tx_path: tx_path.clone(),
+                            entry: sample_entry(&format!("tx-{group}-{index}")),
+                            project_id: Some("orgasmic".into()),
+                            tx_id_policy: TxIdPolicy::Preserve,
+                            request_id: Some(format!("req-{group}-{index}")),
+                        })
+                        .collect(),
+                )
+                .await
+                .unwrap();
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        result.unwrap();
+    }
+    let ids = parse_tx_file(&std::fs::read_to_string(tx_path).unwrap(), "tx")
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.tx_id)
+        .collect::<Vec<_>>();
+    assert!(
+        ids == ["tx-a-1", "tx-a-2", "tx-b-1", "tx-b-2"]
+            || ids == ["tx-b-1", "tx-b-2", "tx-a-1", "tx-a-2"],
+        "concurrent groups interleaved: {ids:?}"
+    );
 }
 
 #[tokio::test]
