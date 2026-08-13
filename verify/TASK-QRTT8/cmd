@@ -1,23 +1,2 @@
-# One line. Run from the repo root by `orgasmic verify TASK-QRTT8`.
-# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
-# and these tests build and drive a supervisor that must see neither.
-#
-# Three tests, one per layer the defect reaches:
-#
-# 1. the pattern itself — a RunMeta carrying a resolved credential mode must
-#    still be a boot-reattach candidate, asserted over every value the field
-#    can hold so it fails again the moment the pattern narrows to any one;
-# 2. the blast radius — the class the fix newly reaches (acp-stdio/claude, the
-#    one production path that writes `Some(_)`) must be declined SAFELY, and
-#    that check cannot even run while the candidate is never produced;
-# 3. the TASK-KPMFK interaction — a stage run on a genuinely live rmux session,
-#    driven through the real `reattach_live_runs_on_boot` by a second,
-#    independent `ApiState`/`Supervisor` standing in for the post-restart
-#    daemon. KPMFK's stage-watcher respawn is only as reachable as this
-#    function, so the whole of it is dead for a credential-resolving run.
-#
-# The tmux twin of (3) is the same assertion on the other transport and stays
-# in the suite. It is not here because an orgasmic worker has `tmux` symlinked
-# to `rmux`, so it skips — and a pinned count that changes with the machine
-# pins nothing.
-env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- boot_reattach_candidate_binds_every_resolved_credential_mode a_credential_resolving_stdio_run_is_declined_without_holding_its_lease boot_reattach_rmux_respawns_stage_watcher_for_a_credential_resolving_run
+# Two tests: the durable parser and the safe stdio decline path.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- boot_reattach_candidate_binds_every_resolved_credential_mode a_credential_resolving_stdio_run_is_declined_without_holding_its_lease

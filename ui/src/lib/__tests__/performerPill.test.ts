@@ -4,7 +4,7 @@ import { buildPerformerPill } from '../performerPill';
 describe('buildPerformerPill', () => {
   // idle → no pill
   it('returns null when hasLiveRun is false', () => {
-    expect(buildPerformerPill('implementer', 'implementer-claude-rmux', 'implementer.working', false)).toBeNull();
+    expect(buildPerformerPill('implementer', 'implementer-claude-tmux', 'implementer.working', false)).toBeNull();
   });
 
   // live + worker id matching the bare role (dispatch worker named after it)
@@ -18,10 +18,10 @@ describe('buildPerformerPill', () => {
 
   // live + named worker (adds info beyond the role)
   it('named worker adds info — pill shows full worker id', () => {
-    const pill = buildPerformerPill('implementer', 'implementer-claude-rmux', 'implementer.working', true);
+    const pill = buildPerformerPill('implementer', 'implementer-claude-tmux', 'implementer.working', true);
     expect(pill).not.toBeNull();
-    expect(pill?.label).toBe('Implementer-claude-rmux · working');
-    expect(pill?.performer).toBe('implementer-claude-rmux');
+    expect(pill?.label).toBe('Implementer-claude-tmux · working');
+    expect(pill?.performer).toBe('implementer-claude-tmux');
   });
 
   it('reviewer role with named reviewer worker headlines the worker', () => {

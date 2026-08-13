@@ -18,9 +18,9 @@ function run(overrides: Partial<RunSummary> = {}): RunSummary {
     task_id: 'TASK-SV032',
     kind: 'worker',
     role: 'reviewer',
-    driver: 'rmux',
+    driver: 'tmux',
     harness: 'custom',
-    worker_id: 'reviewer-claude-rmux',
+    worker_id: 'reviewer-claude-tmux',
     project_id: 'orgasmic',
     sub_state: null,
     identity: {
@@ -161,7 +161,7 @@ describe('isExternalManagerRun — dec_3Y2E1 external manager self-registration'
       driver: 'external',
       harness: 'external',
     });
-    const worker = run({ run_id: 'run-worker', driver: 'rmux' });
+    const worker = run({ run_id: 'run-worker', driver: 'tmux' });
     const groups = taskbarRunGroups([external, worker]);
     expect(groups.managers).toEqual([]);
     expect(groups.terminals).toEqual([]);

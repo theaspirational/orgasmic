@@ -25,11 +25,10 @@ export function isRunDockEligible(run: { driver?: string | null }): boolean {
 }
 
 // Drivers whose live surface is the PTY terminal (xterm pane) rather than the
-// structured chat transcript. rmux attaches through the same daemon PTY bridge as
-// tmux (`rmux attach-session`), so it renders in the terminal stack too.
+// structured chat transcript.
 export function isPtyTerminalDriver(driverTag: string): boolean {
   const normalized = driverTag.replaceAll('_', '-').toLowerCase();
-  return normalized === 'tmux-tui' || normalized === 'tmux' || normalized === 'rmux';
+  return normalized === 'tmux-tui' || normalized === 'tmux';
 }
 
 export function runUsesPtyTerminal(run: { driver?: string | null; kind?: string }): boolean {
@@ -52,7 +51,6 @@ const TRANSPORT_LABELS: Record<string, string> = {
   stdio: 'Stdio',
   ws: 'WebSocket',
   'subprocess-stream-json': 'Subprocess JSON',
-  rmux: 'rmux',
   'tmux-tui': 'Claude tmux',
   tmux: 'Claude tmux',
   'codex-stdio': 'Codex',

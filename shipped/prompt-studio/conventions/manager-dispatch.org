@@ -91,9 +91,7 @@ driver's coalesced `pane_activity` event while the pane writes, and, at the
 deadline when subtree CPU is below the work threshold, a capture of the pane
 looking for the harness's open-turn statusline. A transport missing both kills
 healthy workers in a long provider-bound think — ~0 % cpu, no tool calls,
-nothing to see — at exactly ten minutes. That incident has now happened twice,
-on rmux before TASK-RWCRN and on tmux before TASK-4CSMY, and both times the
-transport was the shipped default at the time.
+nothing to see — at exactly ten minutes.
 
 So the first question before a dispatch is not "which mode is current" but *does
 the runtime I am dispatching on publish pane liveness for this transport* — and
@@ -112,28 +110,13 @@ runs `manager.dispatch_orphaned`, and every worker that had not committed loses
 its work — there is no stall to detect, because from the daemon's side the runs
 simply ended.
 
-Measured, and this is the second failure mode rather than a variant of the
-first (TASK-4DTBZ, rmux transport survival): at `2026-08-03T00:03:10Z` the rmux
-daemon died under three concurrent dispatches and killed all three inside 24
-milliseconds — two implementers with uncommitted work and a reviewer that lost
-its entire run. It had cycled its pid at least three times in that one session,
-and it leaves no trace to find afterwards: no crash report, and its error log had
-not been written to in a week.
-
 **** Reading both properties at once
-The two properties can point at different transports, and on 2026-08-03 they did
-— which is the case worth understanding, not the dates in it. rmux was chosen
-for every dispatch that session precisely *because* it was the only transport
-carrying a liveness channel on the installed daemon: tmux gained one in
-TASK-4CSMY (merged 2026-08-02), which landed after that daemon was built, so a
-long-thinking tmux dispatch there was still released at ten minutes unless it
-carried `--governance-json '{"stall_timeout_secs":3600}'` with `max_run_duration`
-still bounding the run. So the transport that satisfied property one was the one
-that failed property two, and the transport that would have satisfied property
-two was blind on property one. Whichever way a manager turned, one live failure
-mode was in the path.
+Both properties must hold for the installed tmux runtime. A merged commit is
+not an installed one, and a running mux is not evidence that the daemon has the
+liveness implementation expected by the source tree. Check both before the
+session's first pane dispatch.
 
-What that means for a manager is not "prefer transport X". It is:
+What that means for a manager is:
 
 - Read both properties against the installed runtime before each session's first
   dispatch, and say in `--reason` which one you accepted the risk on. Neither
@@ -142,36 +125,24 @@ What that means for a manager is not "prefer transport X". It is:
 - When property one is unmet, raise `stall_timeout_secs` and no more — dropping
   the guard entirely leaves only the four-hour ceiling. Drop the override once
   the channel is installed, and not before.
-- When property two is the one you cannot guarantee — and today you never can,
-  for either mux — the mitigation is not in the flags. Tell the worker in its
+- When property two is the one you cannot guarantee, the mitigation is not in
+  the flags. Tell the worker in its
   brief to commit as soon as it has anything worth keeping, because a commit is
   the only worker output that survives its pane disappearing. Prefer fewer
   concurrent dispatches on one mux for the same reason: a mux death is
   correlated across every pane it owns, so three parallel runs are one failure,
   not three independent ones.
 
-The operator's standing direction on which transport to harden is tmux
-(2026-07-29): a first-time user is likely to have only tmux, so tmux is the
-transport that has to be trustworthy, and the way it becomes trustworthy is by
-carrying our own work. That is a reason to dogfood tmux, not a reason to dispatch
-onto a blind stall clock — pair it with the override until the runtime carries
-the channel.
+Tmux is the supported pane transport. Dogfood it, but do not dispatch onto a
+blind stall clock — pair it with the override until the installed runtime
+carries the channel.
 
-Before dispatching in a pane mode, confirm the pane runtime responds (`tmux ls`
-/ `rmux ls` for the mode you chose) and that the daemon's launchd PATH reaches
+Before dispatching in pane mode, confirm the pane runtime responds (`tmux ls`)
+and that the daemon's launchd PATH reaches
 that binary; a dispatch that cannot find it fails at spawn rather than reporting
 a missing tool. Note also that pane sessions are not currently reaped — check
-`tmux ls` / `rmux ls` for accumulation and kill stale `orgasmic-*-run-*`
+`tmux ls` for accumulation and kill stale `orgasmic-*-run-*`
 sessions during housekeeping.
-
-*Do not pass `--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches
-any more.* It was the interim workaround for TASK-RWCRN, where a pane emitted no
-driver events and the 600-second stall detector released every healthy worker at
-exactly ten minutes. The rmux driver now publishes a coalesced `pane_activity`
-driver event while the pane writes output, so the stall detector reads real pane
-liveness and the default 600 s threshold applies unchanged. Keeping the override
-would disable the only guard against a genuinely wedged pane, leaving the
-four-hour ceiling as the sole backstop.
 
 What the stall detector can and cannot see on a pane: silence means silence, so a
 harness parked on an interactive gate (trust prompt, login) or one that finished
@@ -303,8 +274,7 @@ check the rest of the invocation too.
    that exact marker as =/orgasmic resume=; if the provider exits in tmux's
    final delivery gap, zsh/bash execute only the side-effect-free =:= builtin
    with one literal argument. Tmux still refuses a busy, shell, trust/login,
-   unknown, or provider-mismatched foreground as a targeting gate; rmux stays
-   unsupported until it can prove a fresh conditional delivery.
+   unknown, or provider-mismatched foreground as a targeting gate.
 
    On =attention required=, inspect the preserved log/status artifacts and the
    concrete owned process/session once. Apply the shared

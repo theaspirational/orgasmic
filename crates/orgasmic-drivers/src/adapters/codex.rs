@@ -17,9 +17,9 @@ use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
-    BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome, StdioSpawn,
-    TransitionRequest, UserInputRequest, WireMessage, WsProtocol,
+    DriverConfig, DriverContext, DriverError, HarnessControlOutcome, HarnessEventAdapter,
+    HarnessRequest, Preflight, PreflightOutcome, StdioSpawn, TransitionRequest, UserInputRequest,
+    WireMessage, WsProtocol,
 };
 
 /// How `codex login status` reports each login state.
@@ -335,37 +335,6 @@ impl HarnessEventAdapter for CodexAdapter {
             let input = format!(
                 "orgasmic transition_state request\nfrom: {}\nto: {}\nreason: {}",
                 req.from, req.to, req.reason
-            );
-            outcome.wire_messages.push(WireMessage::JsonRpc {
-                method: "turn/steer".into(),
-                params: json!({
-                    "threadId": thread_id,
-                    "expectedTurnId": turn_id,
-                    "input": [text_input(input)],
-                }),
-            });
-        }
-        Ok(outcome)
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        let mut outcome = HarnessControlOutcome::event(DriverEvent::ToolCall {
-            call_id: format!("codex-bs-{}", uuid::Uuid::new_v4()),
-            name: req.tool.as_str().into(),
-            args: req.payload.clone(),
-            seq: self.seqs.next_tool(),
-        });
-        if let (Some(thread_id), Some(turn_id)) =
-            (self.thread_id.as_ref(), self.active_turn_id.as_ref())
-        {
-            let input = format!(
-                "orgasmic babysitter action\nrun: {}\ntool: {}\npayload: {}",
-                req.target_run,
-                req.tool.as_str(),
-                req.payload
             );
             outcome.wire_messages.push(WireMessage::JsonRpc {
                 method: "turn/steer".into(),
@@ -1088,9 +1057,6 @@ fn prompt_bundle(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> String {
     if let Some(worktree) = ctx.worktree.as_ref() {
         prompt.push_str(&format!("\nworktree: {}", worktree.display()));
     }
-    if let Some(target) = ctx.babysitter_target.as_ref() {
-        prompt.push_str(&format!("\nbabysitter_target: {target}"));
-    }
     prompt
 }
 
@@ -1164,7 +1130,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
+    use crate::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::{CodexAppserverDriver, RunKind, WorkerDriver};
     use futures::{SinkExt, StreamExt};
     use tokio::io::{AsyncRead, AsyncWrite};
@@ -1181,7 +1147,6 @@ mod tests {
             worker_id: "implementer-codex".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         }
     }
 

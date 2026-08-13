@@ -21,11 +21,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
-use orgasmic_core::{BabysitterTool, DriverEvent, TextStream};
+use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::r#trait::{
-    implementer_tool_is_allowed, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, RunKind, TransitionRequest,
+    implementer_tool_is_allowed, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, RunKind, TransitionRequest,
 };
 
 const TRANSPORT: &str = "cursor-agent";
@@ -305,18 +305,6 @@ impl HarnessEventAdapter for CursorAdapter {
         }))
     }
 
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        Ok(HarnessControlOutcome::event(DriverEvent::ToolCall {
-            call_id: format!("cursor-bs-{}", uuid::Uuid::new_v4()),
-            name: req.tool.as_str().into(),
-            args: req.payload,
-            seq: self.next_seq(),
-        }))
-    }
-
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
         let _ = reason;
         Ok(HarnessControlOutcome {
@@ -350,7 +338,6 @@ fn build_spawn_prompt(ctx: &DriverContext, cfg: &CursorAgentConfig) -> String {
             "worker_id": ctx.worker_id,
             "project_id": ctx.project_id,
             "worktree": ctx.worktree.as_ref().map(|p| p.display().to_string()),
-            "babysitter_target": ctx.babysitter_target,
         }
     });
     let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -733,7 +720,6 @@ impl CursorAgentTranslator {
     fn tool_allowed_for_kind(&self, name: &str, args: &Value) -> bool {
         match self.kind {
             RunKind::Worker => self.implementer_tool_allowed(name, args),
-            RunKind::Babysitter => BabysitterTool::parse(name).is_some(),
         }
     }
 
@@ -1204,7 +1190,6 @@ mod tests {
             worker_id: "implementer-composer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
-            babysitter_target: None,
         }
     }
 
@@ -1335,53 +1320,6 @@ mod tests {
                 chunk,
                 seq: 0,
             } if chunk.contains("cursor-agent tool shell ignored by orgasmic tool policy")
-        ));
-    }
-
-    #[tokio::test]
-    async fn babysitter_tool_use_obeys_babysitter_policy() {
-        let (tx, mut rx) = mpsc::channel(8);
-        let mut translator = test_translator(RunKind::Babysitter);
-        translator
-            .translate_value(
-                &tx,
-                &json!({
-                    "type": "tool_use",
-                    "id": "tool-poke",
-                    "name": "poke",
-                    "input": {"target_run": "run-worker"}
-                }),
-            )
-            .await;
-        translator
-            .translate_value(
-                &tx,
-                &json!({
-                    "type": "tool_use",
-                    "id": "tool-transition",
-                    "name": "transition_state",
-                    "input": {"to": "done"}
-                }),
-            )
-            .await;
-
-        let allowed = rx.recv().await.unwrap();
-        assert!(matches!(
-            allowed,
-            DriverEvent::ToolCall {
-                name,
-                seq: 0,
-                ..
-            } if name == "poke"
-        ));
-        let blocked = rx.recv().await.unwrap();
-        assert!(matches!(
-            blocked,
-            DriverEvent::TextChunk {
-                stream: TextStream::System,
-                chunk,
-                seq: 1,
-            } if chunk.contains("cursor-agent tool transition_state ignored by orgasmic tool policy")
         ));
     }
 

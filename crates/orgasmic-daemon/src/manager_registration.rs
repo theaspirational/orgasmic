@@ -2,7 +2,7 @@
 //! External manager self-registration (dec_3Y2E1).
 //!
 //! A manager session started outside the app (a plain terminal, even outside
-//! rmux) registers itself here so it appears in Running Agents as a
+//! tmux) registers itself here so it appears in Running Agents as a
 //! supervised run. Registration acquires a REAL supervisor run — driver
 //! `external`, no PTY — on the same `manager.launch:<project>` lease the
 //! app's own manager launch uses, so the manager singleton is enforced by one
@@ -24,9 +24,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use orgasmic_core::{DriverEvent, ReleaseOutcome};
 use orgasmic_drivers::{
-    BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
-    DriverSession, RunKind, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
-    WorkerDriver,
+    DriverConfig, DriverContext, DriverControl, DriverError, DriverSession, RunKind, TransitionAck,
+    TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -91,13 +90,6 @@ impl DriverControl for ExternalManagerControl {
         _req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
         Err(DriverError::Unsupported("transition_state"))
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        _req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
-        Err(DriverError::Unsupported("babysitter_action"))
     }
 
     async fn send_input(&mut self, _req: UserInputRequest) -> Result<UserInputAck, DriverError> {
@@ -259,13 +251,11 @@ impl ManagerRegistry {
                     dispatch_attempt_token: None,
                     session_path,
                     driver_config: DriverConfig::empty(),
-                    babysitter_target: None,
                     // Same as the app's own manager launch: interactive,
                     // operator-paced, never a stall/max-duration candidate.
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -439,11 +429,9 @@ mod tests {
             dispatch_attempt_token: None,
             session_path: session_path(dir, name),
             driver_config: DriverConfig::empty(),
-            babysitter_target: None,
             stall_timeout_secs: Some(0),
             max_run_duration_secs: Some(0),
             idle_timeout_secs: None,
-            babysitter: None,
             applicable_states: Vec::new(),
             max_iterations: None,
             planned_identity: None,
@@ -534,11 +522,9 @@ mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path(&dir, "manager-proj-app"),
                     driver_config: DriverConfig::empty(),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -594,11 +580,9 @@ mod tests {
                 dispatch_attempt_token: None,
                 session_path: session_path(&dir, "manager-proj-app"),
                 driver_config: DriverConfig::empty(),
-                babysitter_target: None,
                 stall_timeout_secs: Some(0),
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
-                babysitter: None,
                 applicable_states: Vec::new(),
                 max_iterations: None,
                 planned_identity: None,

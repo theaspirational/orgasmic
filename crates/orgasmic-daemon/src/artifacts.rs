@@ -1475,7 +1475,7 @@ mod tests {
 :ID:               ART-ADDR1
 :STATE:            submitted
 :VERSION:          1
-:LAUNCH_MODE:      rmux
+:LAUNCH_MODE:      tmux
 :LAUNCH_HARNESS:   claude
 :LAUNCH_MODEL:     old-model
 :LAUNCH_EFFORT:     high
@@ -1500,7 +1500,7 @@ mod tests {
         assert_eq!(parsed, first);
 
         let second = ArtifactLaunchAddress {
-            mode: "rmux".into(),
+            mode: "tmux".into(),
             harness: "custom".into(),
             harness_args: vec![],
             model: None,

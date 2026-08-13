@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Eye, Radio } from 'lucide-react';
+import { Radio } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import {
@@ -65,27 +65,15 @@ export function TaskAgentBadges({
 
   if (running.length === 0) return null;
 
-  // Babysitters watch a performer; they never headline the badge. One click
-  // goes straight to the performer's session — babysitter-only tasks still
-  // badge the babysitter, and the grouped menu always lists every run.
-  const performers = running.filter((run) => run.kind !== 'babysitter');
-  const primary = performers.length > 0 ? performers : running;
-
-  // When a performer headlines the badge, surface its companion babysitter as a
-  // small watcher dot stacked on the performer badge — one click opens the
-  // babysitter's live transcript, mirroring the performer click. A
-  // babysitter-only task badges the babysitter as primary, so no overlay there.
-  const watcher = performers.length > 0 ? running.find((run) => run.kind === 'babysitter') : undefined;
-
   const total = running.length;
-  const singleImmediate = primary.length === 1;
+  const singleImmediate = running.length === 1;
 
   function handleClick(event: React.MouseEvent) {
     // Badges live inside clickable task rows; never bubble to the row's open.
     event.preventDefault();
     event.stopPropagation();
     if (!singleImmediate) return;
-    const run = primary[0]!;
+    const run = running[0]!;
     openRun({ runId: run.run_id });
   }
 
@@ -96,30 +84,9 @@ export function TaskAgentBadges({
       title={running.map((r) => r.run_id).join(', ')}
     >
       <Radio className="size-2.5" />
-      {singleImmediate ? liveBadgeLabel(primary[0]!) : `${total} live`}
+      {singleImmediate ? liveBadgeLabel(running[0]!) : `${total} live`}
     </Badge>
   );
-
-  // Watcher dot — overlaps the performer badge's top-right corner. The ring in
-  // the page background colour lifts it off the badge so it reads as a distinct
-  // second agent rather than part of the performer pill.
-  const watcherDot = watcher ? (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        openRun({ runId: watcher.run_id });
-      }}
-      title={`${liveBadgeLabel(watcher)} · open transcript`}
-      aria-label="Open babysitter run"
-      className="absolute -right-1.5 -top-1.5 z-10 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-ring/50"
-    >
-      <span className="flex size-3.5 items-center justify-center rounded-full bg-amber-400 text-black shadow-sm ring-2 ring-background hover:bg-amber-300 dark:bg-amber-500 dark:hover:bg-amber-400">
-        <Eye className="size-2" />
-      </span>
-    </button>
-  ) : null;
 
   const badges = (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
@@ -138,7 +105,6 @@ export function TaskAgentBadges({
         >
           {liveBadge}
         </button>
-        {watcherDot}
       </div>
     );
   }

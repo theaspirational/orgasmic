@@ -1,5 +1,5 @@
 # Pinned from the real red run of 2026-07-30, on a host with hermes, codex,
-# claude, cursor-agent and rmux all on `$PATH` — the machine the incident
+# claude, cursor-agent and tmux all on `$PATH` — the machine the incident
 # happened on. The fence's answer does not depend on that, which is the point:
 # the same four tests fail on a host with none of them installed.
 
@@ -18,7 +18,7 @@ contains: test did not panic as expected
 # too: without it `tmux`/`claude` resolves at a launch site, which is the
 # dispatch address that would have spawned a real billed agent.
 contains: spawning_tmux_claude_panics - should panic ... FAILED
-contains: spawning_rmux_codex_panics - should panic ... FAILED
+contains: spawning_tmux_codex_panics - should panic ... FAILED
 
 # Exactly the fence, and only the fence: the stub still resolves, unknown pairs
 # still answer None, and nothing outside the module reaches the registry. A

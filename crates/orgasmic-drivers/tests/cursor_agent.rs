@@ -1,7 +1,7 @@
 use std::process::{Command, Stdio};
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
-use orgasmic_drivers::modes::rmux::test_tooling::{
+use orgasmic_drivers::test_tooling::{
     assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
 };
 use orgasmic_drivers::{
@@ -18,7 +18,6 @@ fn ctx(id: &str, kind: RunKind) -> DriverContext {
         worker_id: "implementer-composer".into(),
         project_id: Some("orgasmic".into()),
         worktree: None,
-        babysitter_target: None,
     }
 }
 

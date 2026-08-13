@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
-use orgasmic_drivers::modes::rmux::test_tooling::{
+use orgasmic_drivers::modes::tmux::{own_tmux_server_for_tests, real_tmux_on_path};
+use orgasmic_drivers::test_tooling::{
     assert_required_test_tooling, live_session_guard, skip_test_if_missing, ToolRequirement,
 };
-use orgasmic_drivers::modes::tmux::{own_tmux_server_for_tests, real_tmux_on_path};
 use reqwest::header::AUTHORIZATION;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -48,27 +48,16 @@ use env_isolation::{orgasmic_command, orgasmic_exe, scrub_ambient_orgasmic_env};
 /// Is this host's `tmux` really tmux, and does this process own the server the
 /// tmux-gated test below will reach?
 ///
-/// Two questions, one gate, in this order — the shape
+/// Two questions, one gate — the shape
 /// `crates/orgasmic-daemon/tests/recovery_fault_restart.rs` already uses
 /// (TASK-FJCE9), and this binary is the live-tmux test binary that TASK-K4G1D
 /// and TASK-0RCRY both missed.
 ///
-/// 1. Strictness (TASK-K4G1D/TASK-JGHNC). This used to ask `tmux -V`, which
-///    inside an orgasmic worker is answered by rmux's PATH shim — `tmux 3.4`
-///    while the real binary is 3.6a. So the gate said "tmux" and the test ran,
-///    driving `new-session` against `/private/tmp/rmux-501/default`: the rmux
-///    server hosting live dispatched worker panes.
-///
-/// 2. Claiming an owned server (TASK-0RCRY), deliberately *after* the
-///    strictness check, because claiming starts a keepalive session and
-///    claiming through the shim would start it on the rmux server — the thing
-///    step 1 exists to prevent.
-///
-/// Step 2 is what made TASK-2GS7V deterministic rather than merely dangerous.
+/// The strict binary check runs before claiming an isolated server. Claiming
+/// an owned server made TASK-2GS7V deterministic rather than merely dangerous.
 /// With no `-L`, tmux takes its socket from `$TMUX`, which in any environment
 /// that launched this suite from a multiplexer pane names a server this process
-/// did not create — an *rmux* socket inside a worker, which does not speak
-/// tmux's protocol. The manager launch below then fails at
+/// did not create. The manager launch below then fails at
 /// `tmux new-session`, `/api/manager/launch` answers an error carrying no
 /// `run_id`, and the test panics unwrapping it. The daemon runs in *this*
 /// process, so the in-process claim reaches it.
@@ -2622,7 +2611,7 @@ async fn dispatch_endpoint_failure_restores_bundled_lifecycle() {
             "--kind",
             "implementer",
             "--mode",
-            "tmux",
+            "stdio",
             "--harness",
             "custom",
             "--brief",
@@ -6852,8 +6841,8 @@ async fn dispatch_finalize_refuses_commit_when_git_root_does_not_match_dispatche
     let _ = running.join.await;
 }
 
-/// TASK-P4MGK: `orgasmic dispatch finalize` is accepted from stdio, not
-/// only rmux/ws. PATH has no `codex` so the driver stays Simulated and
+/// TASK-P4MGK: `orgasmic dispatch finalize` is accepted from stdio. PATH has
+/// no `codex` so the driver stays Simulated and
 /// the lease stays live until finalize (protocol-end is not the success
 /// signal).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -34,10 +34,10 @@ use crate::modes::subprocess_stream_json::{
     SubprocessStreamJsonDriver, RELEASE_DRAIN_BUDGET,
 };
 use crate::r#trait::{
-    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
-    DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, PreflightOutcome, RunKind, StdioSpawn,
-    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError,
+    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta,
+    PreflightOutcome, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
+    WorkerDriver,
 };
 use crate::runtime_options::{
     RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc, RuntimeOptionsRequest,
@@ -226,13 +226,6 @@ impl HarnessEventAdapter for StdioComposeAdapter {
         req: TransitionRequest,
     ) -> Result<HarnessControlOutcome, DriverError> {
         self.inner.transition_state(req).await
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        self.inner.babysitter_action(req).await
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
@@ -554,7 +547,6 @@ impl WorkerDriver for StdioDriver {
             events: rx,
             control: Box::new(StdioControl {
                 mode: control,
-                kind: ctx.run_kind,
                 released: false,
             }),
             producer,
@@ -947,17 +939,6 @@ async fn handle_stdio_command(
             }));
             close
         }
-        StdioCommand::BabysitterAction { req, ack } => {
-            let result = adapter.babysitter_action(req).await;
-            let done =
-                handle_outcome_with_summary(result, transport, events, ids, exit_summary).await;
-            let close = matches!(done, Ok(true));
-            let _ = ack.send(done.map(|_| BabysitterAck {
-                accepted: true,
-                message: None,
-            }));
-            close
-        }
         StdioCommand::SendInput { req, ack } => {
             let result = adapter.send_input(req).await;
             let done =
@@ -1020,10 +1001,6 @@ enum StdioCommand {
     TransitionState {
         req: TransitionRequest,
         ack: oneshot::Sender<Result<TransitionAck, DriverError>>,
-    },
-    BabysitterAction {
-        req: BabysitterRequest,
-        ack: oneshot::Sender<Result<BabysitterAck, DriverError>>,
     },
     SendInput {
         req: UserInputRequest,
@@ -1089,7 +1066,6 @@ async fn runtime_options_catalog_for_adapter(
 
 struct StdioControl {
     mode: StdioControlMode,
-    kind: RunKind,
     released: bool,
 }
 
@@ -1099,9 +1075,6 @@ impl DriverControl for StdioControl {
         &mut self,
         req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
-        if self.kind == RunKind::Babysitter {
-            return Err(DriverError::WorkerToolBlocked("transition_state".into()));
-        }
         match &mut self.mode {
             StdioControlMode::Simulated { adapter, events } => {
                 let outcome = adapter.transition_state(req).await?;
@@ -1119,34 +1092,6 @@ impl DriverControl for StdioControl {
                     .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
                 rx.await
                     .map_err(|_| DriverError::Transport("stdio transition ack dropped".into()))?
-            }
-        }
-    }
-
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
-        if self.kind == RunKind::Worker {
-            return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
-        }
-        match &mut self.mode {
-            StdioControlMode::Simulated { adapter, events } => {
-                let outcome = adapter.babysitter_action(req).await?;
-                crate::modes::jsonrpc::emit_events(events, outcome.events).await;
-                Ok(BabysitterAck {
-                    accepted: true,
-                    message: None,
-                })
-            }
-            StdioControlMode::JsonRpc { commands, .. } => {
-                let (ack, rx) = oneshot::channel();
-                commands
-                    .send(StdioCommand::BabysitterAction { req, ack })
-                    .await
-                    .map_err(|_| DriverError::Transport("stdio task ended".into()))?;
-                rx.await
-                    .map_err(|_| DriverError::Transport("stdio babysitter ack dropped".into()))?
             }
         }
     }
@@ -1250,9 +1195,8 @@ mod tests {
     use super::*;
     use crate::adapters::claude::ClaudeAdapter;
     use crate::adapters::shell::ShellAdapter;
-    use crate::modes::rmux::test_tooling::{
-        command_succeeds, skip_test_if_missing, test_environment_lock,
-    };
+    use crate::r#trait::RunKind;
+    use crate::test_tooling::{command_succeeds, skip_test_if_missing, test_environment_lock};
     use orgasmic_core::RuntimeIdentity;
     use serde_json::json;
 
@@ -1273,7 +1217,6 @@ mod tests {
             worker_id: "test".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         }
     }
 
@@ -1410,7 +1353,7 @@ mod tests {
     #[tokio::test]
     async fn the_resolved_claude_credential_mode_survives_the_mode_layer() {
         use crate::adapters::claude::ClaudeAdapter;
-        use crate::modes::rmux::test_tooling::test_environment_lock;
+        use crate::test_tooling::test_environment_lock;
 
         let _guard = test_environment_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");

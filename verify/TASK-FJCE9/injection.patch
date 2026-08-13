@@ -1,16 +1,15 @@
 diff --git a/crates/orgasmic-daemon/tests/recovery_fault_restart.rs b/crates/orgasmic-daemon/tests/recovery_fault_restart.rs
 --- a/crates/orgasmic-daemon/tests/recovery_fault_restart.rs
 +++ b/crates/orgasmic-daemon/tests/recovery_fault_restart.rs
-@@ -243,7 +243,14 @@ fn tmux_pane_identity_command(name: &str) -> Command {
+@@ -243,7 +243,13 @@ fn tmux_pane_identity_command(name: &str) -> Command {
  }
  
  fn tmux_kill_session_command(name: &str) -> Command {
 -    tmux(&["kill-session", "-t", name])
 +    // TASK-FJCE9 injection: the pre-fix state of this call site, verbatim. A
 +    // raw `tmux`, no `-L`, so the server is whichever one the environment
-+    // selects -- the operator's own on a dev box, and inside an orgasmic
-+    // worker /private/tmp/rmux-501/default, the rmux server hosting live
-+    // dispatched workers. This is the invocation that runs `kill-session`.
++    // selects, including the operator's own server on a developer machine.
++    // This is the invocation that runs `kill-session`.
 +    let mut command = Command::new("tmux");
 +    command.args(["kill-session", "-t", name]);
 +    command

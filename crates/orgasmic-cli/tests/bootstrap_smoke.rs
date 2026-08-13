@@ -29,7 +29,7 @@ use common::{init_git_repo, orgasmic_command, run_git, test_options, write};
 /// Serialize with the other daemon-booting cli tests (dispatch.rs) via the
 /// same shared flock path, so this suite doesn't contend under `cargo test
 /// --workspace`.
-use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
+use orgasmic_drivers::test_tooling::live_session_guard;
 
 async fn boot(home: Home) -> RunningDaemon {
     // Home config port is a decoy (65533): every CLI call below sets

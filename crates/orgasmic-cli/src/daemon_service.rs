@@ -18,8 +18,6 @@ use crate::home::Home;
 
 const MACOS_LABEL: &str = "orgasmic.daemon";
 const MACOS_PLIST_NAME: &str = "orgasmic.daemon.plist";
-const MACOS_RMUX_LABEL: &str = "orgasmic.rmux";
-const MACOS_RMUX_PLIST_NAME: &str = "orgasmic.rmux.plist";
 const SYSTEMD_UNIT_NAME: &str = "orgasmic-daemon.service";
 const WINDOWS_TASK_NAME: &str = r"\OrgasmicDaemon";
 const WINDOWS_TASK_XML: &str = "orgasmic-daemon-task.xml";
@@ -84,18 +82,7 @@ struct ServiceSpec {
     project_scan_timeout: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MacosRmuxServiceSpec {
-    exe: PathBuf,
-    home: PathBuf,
-    cwd: PathBuf,
-    stdout: PathBuf,
-    stderr: PathBuf,
-    config: PathBuf,
-    path: String,
-}
-
-pub(crate) const DAEMON_DRIVER_BINARIES: &[&str] = &["tmux", "rmux"];
+pub(crate) const DAEMON_DRIVER_BINARIES: &[&str] = &["tmux"];
 pub(crate) const DAEMON_HARNESS_BINARIES: &[&str] = &["claude", "cursor-agent"];
 
 /// PATH baked into generated daemon service definitions so launchd/systemd/task
@@ -401,7 +388,6 @@ fn write_macos_launch_agent(plist: &Path, spec: &ServiceSpec) -> Result<()> {
 
 fn start_macos_launch_agent(home: &Home) -> Result<()> {
     let spec = service_spec(home)?;
-    start_macos_rmux_launch_agent(home, &spec)?;
     let plist = macos_plist_path()?;
     write_macos_launch_agent(&plist, &spec)?;
     let uid = current_uid();
@@ -419,92 +405,6 @@ fn start_macos_launch_agent(home: &Home) -> Result<()> {
     .context("load LaunchAgent")?;
     // The plist is RunAtLoad; bootstrap already starts it. `kickstart -k`
     // immediately kills/restarts that fresh process and races readiness probes.
-    Ok(())
-}
-
-/// Start RMUX as its own direct user LaunchAgent before the orgasmic daemon.
-/// A child started by `orgasmic.daemon` inherits that job's macOS coalition;
-/// if the daemon is rebuilt or restarted while RMUX sessions survive, the
-/// child remains trapped in a terminated coalition and Security.framework
-/// calls fail with errSecParam (-50). Making the hidden RMUX daemon the main
-/// process of a separate LaunchAgent gives it an independent, persistent
-/// coalition. `exit-empty off` keeps that owner alive between sessions.
-fn start_macos_rmux_launch_agent(home: &Home, daemon: &ServiceSpec) -> Result<()> {
-    let Some(rmux) = resolve_binary_on_path("rmux", &daemon.path) else {
-        return Ok(());
-    };
-    validate_rmux_service_version(&rmux)?;
-    let packaged_daemon = rmux
-        .parent()
-        .map(|parent| parent.join("rmux-daemon"))
-        .filter(|candidate| candidate.is_file());
-
-    let spec = MacosRmuxServiceSpec {
-        // Release archives install a slim `rmux-daemon` next to the CLI.
-        // Cargo installs may expose only the full `rmux` dispatcher, whose
-        // hidden-daemon entry remains a supported fallback.
-        exe: packaged_daemon.unwrap_or(rmux),
-        home: user_home_dir().unwrap_or_else(|| home.root.clone()),
-        cwd: home.root.clone(),
-        stdout: home.logs().join("rmux.out.log"),
-        stderr: home.logs().join("rmux.err.log"),
-        config: home.state().join("rmux-launchd.conf"),
-        path: daemon.path.clone(),
-    };
-    if let Some(parent) = spec.config.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::write(&spec.config, render_macos_rmux_config())
-        .with_context(|| format!("write {}", spec.config.display()))?;
-
-    let plist = macos_rmux_plist_path()?;
-    if let Some(parent) = plist.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::write(&plist, render_macos_rmux_launch_agent(&spec))
-        .with_context(|| format!("write {}", plist.display()))?;
-
-    let uid = current_uid();
-    let domain = format!("gui/{uid}");
-    let service = format!("{domain}/{MACOS_RMUX_LABEL}");
-    let _ = run_command(
-        "launchctl",
-        &["bootout", &domain, plist.to_string_lossy().as_ref()],
-    );
-    run_command("launchctl", &["enable", &service]).context("enable RMUX LaunchAgent")?;
-    run_command(
-        "launchctl",
-        &["bootstrap", &domain, plist.to_string_lossy().as_ref()],
-    )
-    .context("load RMUX LaunchAgent")?;
-    wait_until_running(
-        || macos_service_running(&service),
-        MACOS_RMUX_START_TIMEOUT,
-        MACOS_RMUX_START_POLL,
-    )
-    .with_context(|| {
-        format!(
-            "launchd did not keep {service} running; an existing rmux daemon may own the default socket. Preserve any sessions, run `rmux kill-server`, then retry the orgasmic daemon start"
-        )
-    })?;
-    Ok(())
-}
-
-fn validate_rmux_service_version(rmux: &Path) -> Result<()> {
-    let output = Command::new(rmux)
-        .arg("-V")
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("run {} -V", rmux.display()))?;
-    let reported = String::from_utf8_lossy(&output.stdout);
-    let found = reported.split_whitespace().nth(1).unwrap_or("unknown");
-    let expected = orgasmic_drivers::modes::rmux::RMUX_REQUIRED_VERSION;
-    if !output.status.success() || found != expected {
-        bail!(
-            "RMUX LaunchAgent requires rmux {expected}; {} reports {found}. Update the CLI, daemon, and rmux-sdk together",
-            rmux.display()
-        );
-    }
     Ok(())
 }
 
@@ -562,8 +462,6 @@ fn macos_unload_timeout() -> Duration {
 }
 
 const MACOS_UNLOAD_POLL: Duration = Duration::from_millis(150);
-const MACOS_RMUX_START_TIMEOUT: Duration = Duration::from_secs(5);
-const MACOS_RMUX_START_POLL: Duration = Duration::from_millis(150);
 
 fn stop_macos_launch_agent(_home: &Home) -> Result<()> {
     let plist = macos_plist_path()?;
@@ -601,25 +499,6 @@ fn stop_macos_launch_agent(_home: &Home) -> Result<()> {
 
 fn macos_service_loaded(service: &str) -> bool {
     command_success("launchctl", &["print", service])
-}
-
-fn macos_service_running(service: &str) -> bool {
-    command_output_contains("launchctl", &["print", service], "state = running")
-}
-
-fn wait_until_running(
-    mut is_running: impl FnMut() -> bool,
-    timeout: Duration,
-    poll: Duration,
-) -> Result<()> {
-    let deadline = Instant::now() + timeout;
-    while !is_running() {
-        if Instant::now() >= deadline {
-            bail!("timed out after {}s", timeout.as_secs());
-        }
-        std::thread::sleep(poll);
-    }
-    Ok(())
 }
 
 /// Poll `is_loaded` until it reports false or `timeout` elapses. Takes a
@@ -665,14 +544,6 @@ fn macos_plist_path() -> Result<PathBuf> {
         .join("Library")
         .join("LaunchAgents")
         .join(MACOS_PLIST_NAME))
-}
-
-fn macos_rmux_plist_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is required for LaunchAgent path")?;
-    Ok(PathBuf::from(home)
-        .join("Library")
-        .join("LaunchAgents")
-        .join(MACOS_RMUX_PLIST_NAME))
 }
 
 fn start_linux_systemd(home: &Home) -> Result<()> {
@@ -886,53 +757,6 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
     )
 }
 
-fn render_macos_rmux_config() -> &'static str {
-    "# Owned by orgasmic: preserve normal tmux-compatible user configuration,\n\
-source-file -q /etc/tmux.conf\n\
-source-file -q ~/.tmux.conf\n\
-source-file -q ~/.config/tmux/tmux.conf\n\
-# Keep the direct LaunchAgent process alive between sessions.\n\
-set-option -g exit-empty off\n"
-}
-
-fn render_macos_rmux_launch_agent(spec: &MacosRmuxServiceSpec) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
-<plist version=\"1.0\">\n\
-<dict>\n\
-  <key>Label</key>\n  <string>{label}</string>\n\
-  <key>ProgramArguments</key>\n  <array>\n\
-    <string>{exe}</string>\n\
-    <string>--__internal-daemon</string>\n\
-    <string>--config-file</string>\n\
-    <string>{config}</string>\n\
-    <string>--config-quiet</string>\n\
-    <string>--config-cwd</string>\n\
-    <string>{cwd}</string>\n\
-  </array>\n\
-  <key>EnvironmentVariables</key>\n  <dict>\n\
-    <key>HOME</key>\n    <string>{home}</string>\n\
-    <key>PATH</key>\n    <string>{path}</string>\n\
-  </dict>\n\
-  <key>WorkingDirectory</key>\n  <string>{cwd}</string>\n\
-  <key>StandardOutPath</key>\n  <string>{stdout}</string>\n\
-  <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
-  <key>RunAtLoad</key>\n  <true/>\n\
-  <key>ProcessType</key>\n  <string>Interactive</string>\n\
-</dict>\n\
-</plist>\n",
-        label = MACOS_RMUX_LABEL,
-        exe = xml_escape_path(&spec.exe),
-        config = xml_escape_path(&spec.config),
-        home = xml_escape_path(&spec.home),
-        path = xml_escape(&spec.path),
-        cwd = xml_escape_path(&spec.cwd),
-        stdout = xml_escape_path(&spec.stdout),
-        stderr = xml_escape_path(&spec.stderr),
-    )
-}
-
 fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
     // systemd does not apply uniform quoting across directives. `ExecStart=` is a
     // command line and `Environment=` is a list of assignments — both support and
@@ -1108,18 +932,6 @@ mod tests {
         }
     }
 
-    fn rmux_spec() -> MacosRmuxServiceSpec {
-        MacosRmuxServiceSpec {
-            exe: PathBuf::from("/Users/tester/.cargo/bin/rmux-daemon"),
-            home: PathBuf::from("/Users/tester"),
-            cwd: PathBuf::from("/Users/tester/.orgasmic"),
-            stdout: PathBuf::from("/Users/tester/.orgasmic/logs/rmux.out.log"),
-            stderr: PathBuf::from("/Users/tester/.orgasmic/logs/rmux.err.log"),
-            config: PathBuf::from("/Users/tester/.orgasmic/state/rmux-launchd.conf"),
-            path: "/Users/tester/.cargo/bin:/usr/bin:/bin".to_string(),
-        }
-    }
-
     #[test]
     fn wait_until_unloaded_returns_once_probe_reports_unloaded() {
         let mut calls = 0;
@@ -1139,32 +951,6 @@ mod tests {
     fn wait_until_unloaded_times_out_when_still_loaded() {
         let result =
             wait_until_unloaded(|| true, Duration::from_millis(20), Duration::from_millis(5));
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("timed out"), "{err}");
-    }
-
-    #[test]
-    fn wait_until_running_returns_once_probe_reports_running() {
-        let mut calls = 0;
-        let result = wait_until_running(
-            || {
-                calls += 1;
-                calls >= 3
-            },
-            Duration::from_secs(5),
-            Duration::from_millis(1),
-        );
-        assert!(result.is_ok());
-        assert_eq!(calls, 3);
-    }
-
-    #[test]
-    fn wait_until_running_times_out_when_never_running() {
-        let result = wait_until_running(
-            || false,
-            Duration::from_millis(20),
-            Duration::from_millis(5),
-        );
         let err = result.unwrap_err().to_string();
         assert!(err.contains("timed out"), "{err}");
     }
@@ -1521,48 +1307,6 @@ mod tests {
             poll,
         )
         .expect("the derived ceiling must sit out a healthy drain and report success");
-    }
-
-    #[test]
-    fn macos_rmux_launch_agent_owns_the_hidden_daemon_directly() {
-        let plist = render_macos_rmux_launch_agent(&rmux_spec());
-        assert!(plist.contains("<string>orgasmic.rmux</string>"));
-        assert!(plist.contains("<string>/Users/tester/.cargo/bin/rmux-daemon</string>"));
-        assert!(plist.contains("<string>--__internal-daemon</string>"));
-        assert!(plist.contains("<string>--config-file</string>"));
-        assert!(plist.contains("rmux-launchd.conf"));
-        assert!(plist.contains("<key>RunAtLoad</key>"));
-        assert!(plist.contains("<key>ProcessType</key>"));
-        assert!(!plist.contains("<key>KeepAlive</key>"));
-    }
-
-    #[test]
-    fn macos_rmux_config_keeps_the_launchd_owned_daemon_alive() {
-        let config = render_macos_rmux_config();
-        assert!(config.contains("source-file -q ~/.tmux.conf"));
-        assert!(config.contains("source-file -q ~/.config/tmux/tmux.conf"));
-        assert!(config.contains("set-option -g exit-empty off"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rmux_service_version_gate_rejects_a_mismatched_cli() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let dir = tempfile::tempdir().expect("tempdir");
-        let fake = dir.path().join("rmux");
-        std::fs::write(&fake, "#!/bin/sh\nprintf 'rmux 0.5.0\\n'\n").expect("write fake rmux");
-        let mut permissions = std::fs::metadata(&fake)
-            .expect("fake metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake, permissions).expect("chmod fake rmux");
-
-        let error = validate_rmux_service_version(&fake)
-            .expect_err("0.5 CLI must be rejected")
-            .to_string();
-        assert!(error.contains("requires rmux 0.9.0"), "{error}");
-        assert!(error.contains("reports 0.5.0"), "{error}");
     }
 
     #[test]

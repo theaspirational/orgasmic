@@ -20,24 +20,22 @@ import {
 
 const driverProfiles = [
   {
-    mode: 'rmux',
+    mode: 'tmux',
     harness: 'claude',
     binary: 'claude',
-    display_name: 'rmux / claude',
-    mode_label: 'rmux',
+    display_name: 'tmux / claude',
+    mode_label: 'tmux',
     harness_label: 'claude',
     installed: true,
-    mode_installed: true,
   },
   {
-    mode: 'rmux',
+    mode: 'tmux',
     harness: 'custom',
     binary: 'custom',
-    display_name: 'rmux / custom',
-    mode_label: 'rmux',
+    display_name: 'tmux / custom',
+    mode_label: 'tmux',
     harness_label: 'custom',
     installed: true,
-    mode_installed: true,
   },
 ];
 
@@ -82,7 +80,7 @@ describe('TransportPicker custom argv', () => {
       <ControlledPicker
         initial={{
           ...emptyTransportSelection(),
-          mode: 'rmux',
+          mode: 'tmux',
           harness: 'custom',
           harness_args: [
             { id: 'row-1', token: 'opencode' },
@@ -120,7 +118,7 @@ describe('TransportPicker custom argv', () => {
       <ControlledPicker
         initial={{
           ...emptyTransportSelection(),
-          mode: 'rmux',
+          mode: 'tmux',
           harness: 'custom',
           harness_args: [{ id: 'row-1', token: 'opencode' }],
         }}
@@ -132,7 +130,7 @@ describe('TransportPicker custom argv', () => {
     });
 
     fireEvent.click(screen.getByRole('combobox'));
-    fireEvent.click(await screen.findByText('rmux / claude (rmux/claude)'));
+    fireEvent.click(await screen.findByText('tmux / claude (tmux/claude)'));
 
     await waitFor(() => {
       expect(screen.getByTestId('argv-payload')).toHaveTextContent('[]');
@@ -145,7 +143,7 @@ describe('TransportPicker custom argv', () => {
       <ControlledPicker
         initial={{
           ...emptyTransportSelection(),
-          mode: 'rmux',
+          mode: 'tmux',
           harness: 'custom',
           harness_args: [{ id: 'row-1', token: 'keep' }],
         }}

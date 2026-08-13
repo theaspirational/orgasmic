@@ -49,15 +49,6 @@ Properties:
 - run.created
 - run.failed             (stage completion watcher; =<stage>.failed= with stage "run")
 
-Auto-spawn success records reuse =run.created= with extras:
-- :RUN_ID:         supervisor-assigned run id
-- :ORIGIN:         =auto_spawn=
-- :WORKER:         historical execution label derived from the addressed kind/mode/harness
-- :STAGE:          lifecycle stage that triggered the spawn
-- :AGENT_KIND:     =implementer= | =reviewer=
-- :DRIVER:         driver mode resolved for the worker (e.g. =stdio=, =ws=, =subprocess-stream-json=, =tmux=)
-- :HARNESS:        harness id resolved for the worker (e.g. =claude=, =codex=, =cursor-agent=, =hermes=)
-
 Fresh recovery/resume also reuses =run.created= to record the replacement run
 and the generation it continues (TASK-6AYEJ.2). Without it the dispatch
 generation cannot resolve the replacement, and a worker finalize from the
@@ -70,29 +61,11 @@ recovery run leaves =dispatch-status= showing =[unreported]= forever. Extras:
 
 Not emitted for =reattach_tmux=, which preserves the run id and so needs no link.
 
-*** Auto-spawn failures
-- auto_spawn.failed
-
-Emitted when the auto-spawn consumer cannot complete the worker → driver → supervisor chain for an =AutoSpawnRequested= event. Extras:
-- :ORIGIN:         =auto_spawn=
-- :WORKER:         historical execution label derived from the attempted address
-- :STAGE:          lifecycle stage that triggered the spawn
-- :AGENT_KIND:     =implementer= | =reviewer=
-- :ERROR:          escaped, single-line failure cause (filesystem paths are sanitised at emission)
-- :TARGET:         optional session path (populated only when the failure occurred after the session file was reserved)
-
 *** Worker / driver
 - worker.spawned
 - worker.ready
 - worker.crashed
 - worker.stopped
-
-*** Babysitter
-- babysitter.spawned
-- babysitter.poke
-- babysitter.restart
-- babysitter.escalate
-- babysitter.finding_recorded
 
 *** Manager
 - manager.action

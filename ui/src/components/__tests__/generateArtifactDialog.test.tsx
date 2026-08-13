@@ -11,14 +11,13 @@ const generateArtifactMock = vi.fn();
 const fetchManagerDriversMock = vi.fn().mockResolvedValue({
   drivers: [
     {
-      mode: 'rmux',
+      mode: 'tmux',
       harness: 'claude',
       binary: 'claude',
-      display_name: 'rmux / claude',
-      mode_label: 'rmux',
+      display_name: 'tmux / claude',
+      mode_label: 'tmux',
       harness_label: 'claude',
       installed: true,
-      mode_installed: true,
     },
   ],
 });
@@ -35,14 +34,13 @@ afterEach(() => {
   fetchManagerDriversMock.mockResolvedValue({
     drivers: [
       {
-        mode: 'rmux',
+        mode: 'tmux',
         harness: 'claude',
         binary: 'claude',
-        display_name: 'rmux / claude',
-        mode_label: 'rmux',
+        display_name: 'tmux / claude',
+        mode_label: 'tmux',
         harness_label: 'claude',
         installed: true,
-        mode_installed: true,
       },
     ],
   });
@@ -132,7 +130,7 @@ describe('GenerateArtifactDialog draft preservation', () => {
       {
         nodes: [],
         prompt: 'Ship it',
-        mode: 'rmux',
+        mode: 'tmux',
         harness: 'claude',
         model: null,
         effort: null,

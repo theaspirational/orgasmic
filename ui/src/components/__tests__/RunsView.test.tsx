@@ -76,7 +76,7 @@ describe('RunsView external manager action', () => {
   });
 
   it('keeps Open for an attachable run', async () => {
-    fetchRecoveryInventoryMock.mockResolvedValue(response([run('run-worker', 'rmux')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(response([run('run-worker', 'tmux')]));
     render(<RunsView projectId="proj" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
     expect(openRunMock).toHaveBeenCalledWith({ runId: 'run-worker' });

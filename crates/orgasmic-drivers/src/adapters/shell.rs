@@ -1,5 +1,5 @@
 //! Pseudo-harness for a bare terminal session: no agent CLI, no event
-//! translation. The PTY modes (rmux/tmux) spawn the user's shell and the
+//! translation. The PTY mode (tmux) spawns the user's shell and the
 //! operator drives whatever tool they like by hand — e.g. a harness orgasmic
 //! does not natively support yet. The adapter exists because mode drivers are
 //! constructed around one; for a plain shell it only supplies the harness id
@@ -49,7 +49,7 @@ impl HarnessEventAdapter for ShellAdapter {
         // Only the PTY modes make sense for a bare shell; they never call
         // compose_request (they build their own spawn plan).
         Err(DriverError::Unsupported(
-            "custom harness runs only under a PTY mode (rmux/tmux)",
+            "custom harness runs only under the tmux PTY mode",
         ))
     }
 

@@ -38,7 +38,7 @@ import {
   workerRunTabLabel,
 } from './runDockLabels';
 import { RunSurface } from './RunSurface';
-import { launchSystemWide, resolveTerminalDriver } from './terminalLaunch';
+import { resolveTerminalDriver } from './terminalLaunch';
 
 export function RunDock() {
   const { activeProjectId } = useActiveProject();
@@ -244,7 +244,7 @@ export function RunDock() {
       const driver = resolveTerminalDriver(drivers.drivers);
       if (!driver) {
         toast.error('No terminal driver installed', {
-          description: 'Bare terminals need the tmux or rmux driver.',
+          description: 'Bare terminals need the tmux driver.',
         });
         return;
       }
@@ -252,7 +252,6 @@ export function RunDock() {
         project_id: activeProjectId,
         mode: driver.mode,
         harness: driver.harness,
-        system_wide: launchSystemWide(driver),
       });
       openRun({ runId: result.run_id });
       await Promise.all([manager.refresh(), runs.refresh()]);

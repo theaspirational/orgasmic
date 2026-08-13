@@ -1,9 +1,0 @@
-# One line. Run from the repo root by `orgasmic verify TASK-JGHNC`.
-#
-# Deliberately ONE test, and deliberately the one that contacts no multiplexer.
-# Under the injection the tmux-mode gate accepts the rmux shim again, so a
-# behavioural replay would start real sessions through it — inside an orgasmic
-# worker, on the rmux server hosting live worker panes. A proof must not touch
-# what it proves, so this replay repoints PATH at a temp-dir shim of its own
-# and asserts on the gate's answer. It starts no session in either state.
-env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib the_tmux_gate_the_daemon_tests_share_refuses_a_shimmed_tmux

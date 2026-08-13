@@ -12,12 +12,12 @@
 //!   start (one-sided, tight window) → **medium**; far or pre-run rollouts →
 //!   **not found** (never attribute a later attempt's rollout to an earlier run).
 //! - **cursor-agent**: recorded path (confined to `~/.cursor/projects`), else
-//!   Ready `session_id` + worktree → **high**; tmux/rmux TUI without Ready id
+//!   Ready `session_id` + worktree → **high**; tmux TUI without Ready id
 //!   uses unique cwd+launch-time correlation under the encoded project slug →
 //!   **medium**.
 //! - **hermes**: recorded path (confined to `~/.hermes/sessions`), else Ready
 //!   `session_id` → native `<id>.jsonl` (paired `session_<id>.json` is metadata
-//!   only) → **high**; tmux/rmux TUI without Ready id uses unique launch-time
+//!   only) → **high**; tmux TUI without Ready id uses unique launch-time
 //!   correlation among `.jsonl` files → **medium**.
 //! - **custom** (and unknown): honest **unsupported**, never a guess.
 
@@ -220,7 +220,7 @@ fn capability_session_id(capabilities: &Value) -> Option<String> {
 /// Max time after orgasmic run start for a codex rollout `session_meta.timestamp`.
 const CODEX_CWD_LAUNCH_MAX_AFTER: Duration = Duration::minutes(5);
 
-/// Max time after run start for tmux/rmux TUI transcript mtime correlation.
+/// Max time after run start for tmux TUI transcript mtime correlation.
 const TUI_TRANSCRIPT_LAUNCH_MAX_AFTER: Duration = Duration::minutes(10);
 
 /// Recorded `NativeRuntime.session_path` values are not trusted blindly: they

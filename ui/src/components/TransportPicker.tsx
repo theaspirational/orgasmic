@@ -51,15 +51,13 @@ export function TransportPicker({
   const drivers = useResource('transport-picker-drivers', fetchManagerDrivers);
   const profiles = useMemo(() => {
     const list = drivers.data?.drivers ?? [];
-    return requireInstalled
-      ? list.filter((d) => d.installed && (d.mode_installed ?? true))
-      : list;
+    return requireInstalled ? list.filter((d) => d.installed) : list;
   }, [drivers.data?.drivers, requireInstalled]);
 
   useEffect(() => {
     if (!value.mode && !value.harness && profiles.length > 0) {
       const preferred =
-        profiles.find((d) => d.mode === 'rmux' && d.harness === 'claude') ??
+        profiles.find((d) => d.mode === 'tmux' && d.harness === 'claude') ??
         profiles.find((d) => d.harness !== 'custom') ??
         profiles[0];
       if (preferred) {

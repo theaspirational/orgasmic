@@ -17,6 +17,8 @@ pub mod modes;
 pub(crate) mod preflight;
 pub mod runtime_options;
 pub mod sandbox;
+#[doc(hidden)]
+pub mod test_tooling;
 pub mod r#trait;
 pub mod transcript_finder;
 
@@ -27,14 +29,13 @@ pub use catalog::{
     harness_runtime_options, runtime_options_by_harness, transport_profile, transport_profiles,
     HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
-pub use modes::rmux::{probe_rmux_binary, RmuxBinaryProbe};
-pub use modes::{RmuxDriver, StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver};
+pub use modes::{StdioDriver, SubprocessStreamJsonDriver, TmuxDriver, WsDriver};
 pub use r#trait::{
-    build_babysitter_request, implementer_tool_is_allowed, AttachOutcome, Attached, BabysitterAck,
-    BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError, DriverSession,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, ManagerWakeRequest,
-    NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind, StdioSpawn, TransitionAck,
-    TransitionRequest, UserInputAck, UserInputRequest, WireMessage, WorkerDriver, WsProtocol,
+    implementer_tool_is_allowed, AttachOutcome, Attached, DriverConfig, DriverContext,
+    DriverControl, DriverError, DriverSession, HarnessControlOutcome, HarnessEventAdapter,
+    HarnessRequest, ManagerWakeRequest, NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind,
+    StdioSpawn, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WireMessage,
+    WorkerDriver, WsProtocol,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
@@ -58,10 +59,7 @@ pub const TRANSPORTS: &[&str] = &[
 
 /// First-class mode ids.
 ///
-/// `rmux` is a **bounded smoke** mode (TASK-104), not a production replacement
-/// for `tmux`. It is registered so the driver-catalog can surface it with its
-/// own (separately checked) `rmux` binary requirement.
-pub const MODES: &[&str] = &["subprocess-stream-json", "stdio", "ws", "tmux", "rmux"];
+pub const MODES: &[&str] = &["subprocess-stream-json", "stdio", "ws", "tmux"];
 
 // orgasmic:TASK-XCJYC, term_YX8AG
 /// Mode ids reserved for the **Agent Client Protocol** and unusable for
@@ -95,8 +93,8 @@ pub const HARNESSES: &[&str] = &["codex", "claude", "cursor-agent", "hermes", "c
 ///
 /// A multiplexer runs whatever command the caller writes into the driver
 /// config — but the daemon's dispatch path writes a *placeholder* (`sh -lc
-/// 'echo orgasmic pipeline stage acquired; exec sh'`), and both mux modes
-/// deliberately swap that placeholder for the harness's real binary. So for
+/// 'echo orgasmic pipeline stage acquired; exec sh'`), and tmux deliberately
+/// swaps that placeholder for the harness's real binary. So for
 /// every harness below, "the caller controls the command" is false on exactly
 /// the path a dispatch takes; `custom` is the one first-class harness that
 /// cannot become a provider process by itself, which is what makes it the
@@ -104,8 +102,8 @@ pub const HARNESSES: &[&str] = &["codex", "claude", "cursor-agent", "hermes", "c
 ///
 /// The daemon's test-profile fence reads this to decide whether a mux address
 /// is safe for a test to hold. It lives here, next to [`HARNESSES`], because
-/// the ground truth is each mode's `default_command_for_harness`; both modes
-/// carry a test asserting they still agree with this answer.
+/// the ground truth is tmux's `default_command_for_harness`; its tests assert
+/// that it still agrees with this answer.
 #[must_use]
 pub fn harness_execs_provider_binary(harness: &str) -> bool {
     matches!(harness, "claude" | "codex" | "cursor-agent" | "hermes")
@@ -135,9 +133,6 @@ pub const CODEX_ORIGINATOR: &str = "orgasmic";
 
 /// Explicitly supported first-class `(mode, harness)` pairs.
 ///
-/// rmux attaches through the same daemon PTY bridge as tmux (`rmux
-/// attach-session`), so it offers the same interactive harnesses. It still
-/// requires a separately provisioned `rmux` binary (checked independently).
 pub const SUPPORTED: &[(&str, &str)] = &[
     ("stdio", "claude"),
     ("stdio", "codex"),
@@ -150,15 +145,11 @@ pub const SUPPORTED: &[(&str, &str)] = &[
     ("tmux", "codex"),
     ("tmux", "cursor-agent"),
     ("tmux", "hermes"),
-    ("rmux", "claude"),
-    ("rmux", "codex"),
-    ("rmux", "cursor-agent"),
-    ("rmux", "hermes"),
-    // Arbitrary operator-supplied CLI in an rmux pane. Manager launches with
+    // Arbitrary operator-supplied CLI in a tmux pane. Manager launches with
     // no harness_args get a bare login shell; worker templates supply the
     // wrapped command line via `:HARNESS_ARGS:` (e.g. `opencode`) and the
     // compiled dispatch prompt is pasted into the spawned TUI.
-    ("rmux", "custom"),
+    ("tmux", "custom"),
 ];
 
 /// Validate that `(mode, harness)` is in the sole transport registry.
@@ -225,7 +216,6 @@ pub fn driver_for_mode_harness(mode: &str, harness: &str) -> Option<Box<dyn Work
         "stdio" => Some(Box::new(StdioDriver::new(adapter))),
         "ws" => Some(Box::new(WsDriver::new(adapter))),
         "tmux" => Some(Box::new(TmuxDriver::new(adapter))),
-        "rmux" => Some(Box::new(RmuxDriver::new(adapter))),
         _ => None,
     }
 }
@@ -326,7 +316,7 @@ mod tests {
                 !MODES.contains(reserved),
                 "`{reserved}` is reserved for the real Agent Client Protocol and must not name \
                  an orgasmic mode (TASK-XCJYC). A mode names its wire — use `stdio`, `ws`, \
-                 `subprocess-stream-json`, `tmux` or `rmux`; the `harness` field already says \
+                 `subprocess-stream-json` or `tmux`; the `harness` field already says \
                  which protocol runs over it. If this IS ACP, drop `{reserved}` from \
                  RESERVED_MODES in the same change."
             );

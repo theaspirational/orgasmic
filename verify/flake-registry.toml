@@ -108,18 +108,14 @@ filed = "2026-07-28"
 #     excuse whichever one fired — which is the mislabel this registry exists to
 #     prevent. Register them the next time one is caught, with its real panic.
 #
-#   supervisor::tests::live_babysitter_summary_flushes_on_event_threshold
-#     Measured here 2026-07-28, 2 of 3 runs at --test-threads=64 under 12 cpu
-#     hogs: 'live summary threshold should append BabysitterSummary to
-#     <tmp>/run-*.babysitter.jsonl', supervisor.rs:9727.
 #   index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh
 #     Same run: assertion left == right, left "" right
 #     "ssh://git@example.com/org/project.git", index.rs:2095.
-#     Both are load-dependent and neither had an owning task, so neither could
-#     be registered: an excuse with no owner is a permanent exemption.
+#     It was load-dependent and had no owning task, so it could not be
+#     registered: an excuse with no owner is a permanent exemption.
 #
-#     FIXED 2026-07-29 by TASK-5FEN5, so they never became entries. Both panics
-#     above were reproduced verbatim here first (3 of 11 and 1 of 11 loaded runs
+#     FIXED 2026-07-29 by TASK-5FEN5, so it never became an entry. The panic
+#     above was reproduced verbatim here first (1 of 11 loaded runs
 #     at --test-threads=64 under 10-12 hogs), and both tests turned out to be
 #     observing background work on a fixed budget rather than waiting for it to
 #     finish. Proof: verify/TASK-5FEN5.

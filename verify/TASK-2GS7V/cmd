@@ -1,40 +1,4 @@
-# One line. Run from the repo root by `orgasmic verify TASK-2GS7V`.
-#
-# THIS REPLAY MANUFACTURES ITS OWN ENVIRONMENT, and has to, because the defect
-# is environment-gated: it is invisible wherever the suite runs without a real
-# tmux, which is why it survived on merged HEAD (TASK-J1XCB measured it; nobody
-# could see it from a worker). The brief's two options are "resolve real tmux
-# inside the cmd" or "pin a non-tmux red one layer up"; this takes the first,
-# because the first replays the ACTUAL failure — the `run_id` unwrap at
-# dispatch.rs, from the manager launch the daemon could not make.
-#
-# Three things the line below builds, and why each is required:
-#
-# 1. A scratch bin dir whose `tmux` is a symlink to the first *real* tmux
-#    (K4G1D's recipe), searched over PATH and then the usual install dirs, and
-#    skipping any `tmux ->` symlink that lands on rmux. Inside a worker rmux
-#    shims `tmux` on PATH, and the shim MUST NOT be what runs here: measured
-#    2026-07-29 under this task, rmux ignores `$TMUX` entirely, so step 2 cannot
-#    steer it and an injected run through the shim would create its session on
-#    /private/tmp/rmux-501/default -- the server hosting live worker panes. If
-#    no real tmux is resolvable the line refuses to run rather than risk that,
-#    and verify fails loudly as it should on a host this proof cannot address.
-#
-# 2. `TMUX=<a regular file>`. `$TMUX` is where tmux takes its socket from when
-#    given neither -L nor -S, so this is a harmless, portable stand-in for the
-#    real trigger: a `$TMUX` naming a server this process did not create and
-#    that does not speak tmux's protocol (inside a worker, an rmux socket). A
-#    plain file yields `Socket operation on non-socket` -- deterministic, and it
-#    contacts no multiplexer, creates no session, and can collide with nothing.
-#    A path that does not exist would NOT do: tmux starts a fresh server there
-#    and the run goes green.
-#
-# 3. `-u ORGASMIC_TMUX_SOCKET`, so an operator who has pinned a socket by hand
-#    cannot hide the defect the way the fix does.
-#
-# Fixed, the gate claims an owned `-L` server before the test runs, `-L`
-# suppresses `$TMUX`, and step 2 is inert -- green. Injected, nothing is
-# pinned, `$TMUX` selects the dead socket, `tmux new-session` fails, the launch
-# answers no `run_id`, and the unwrap panics. Deliberately ONE test: the one
-# TASK-2GS7V names.
-T=$(mktemp -d); mkdir -p "$T/bin"; for d in $(printf %s "$PATH:/opt/homebrew/bin:/usr/local/bin:/usr/bin" | tr : ' '); do case "$(ls -ld "$d/tmux" 2>/dev/null)" in "") continue ;; *"-> "*rmux) continue ;; esac; ln -sf "$d/tmux" "$T/bin/tmux"; break; done; if [ ! -e "$T/bin/tmux" ]; then echo "TASK-2GS7V replay refused: no real tmux resolvable on this host (rmux shim only); this proof needs the real binary"; rm -rf "$T"; exit 2; fi; : > "$T/dead-socket"; env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_TMUX_SOCKET PATH="$T/bin:$PATH" TMUX="$T/dead-socket,1,0" cargo test -p orgasmic-cli --test dispatch app_manager_release_via_cli_orgasmic_run_id; rc=$?; rm -rf "$T"; exit $rc
+# Build an isolated PATH containing the host tmux, then poison inherited $TMUX
+# with a non-socket. Under the injection the availability gate does not claim
+# an owned `-L` server, so the manager launch reaches the poisoned endpoint.
+T=$(mktemp -d); mkdir -p "$T/bin"; TMUX_BIN=$(command -v tmux || true); if [ -z "$TMUX_BIN" ]; then echo "TASK-2GS7V replay refused: tmux is not installed"; rm -rf "$T"; exit 2; fi; ln -sf "$TMUX_BIN" "$T/bin/tmux"; : > "$T/dead-socket"; env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME -u ORGASMIC_TMUX_SOCKET PATH="$T/bin:$PATH" TMUX="$T/dead-socket,1,0" cargo test -p orgasmic-cli --test dispatch app_manager_release_via_cli_orgasmic_run_id; rc=$?; rm -rf "$T"; exit $rc

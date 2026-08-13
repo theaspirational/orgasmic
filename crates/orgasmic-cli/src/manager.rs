@@ -61,7 +61,7 @@ Examples:
     --brief /path/to/brief.md --mode stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --mode rmux --harness custom \\
+    --brief /path/to/brief.md --mode tmux --harness custom \\
     --harness-arg opencode --harness-arg --print-logs --dry-run")]
 pub struct DispatchArgs {
     /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
@@ -459,8 +459,7 @@ pub struct LeaseReleaseArgs {
     /// Project id; defaults to the project containing the cwd.
     #[arg(long)]
     pub project: Option<String>,
-    /// Lease kind: implementer (default; covers reviewer/architector
-    /// dispatches too) or babysitter.
+    /// Lease kind: implementer (covers reviewer/architector dispatches too).
     #[arg(long, default_value = "implementer")]
     pub kind: String,
 }
@@ -1528,7 +1527,6 @@ fn manager_session_scope() -> Option<String> {
         "TERM_SESSION_ID",
         "WT_SESSION",
         "TMUX_PANE",
-        "RMUX_SESSION_ID",
     ] {
         if let Ok(value) = std::env::var(name) {
             let value = value.trim();
@@ -2167,9 +2165,8 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     // (`reap_process_group`, TERM then KILL) — and this CLI is a member of that
     // group, because the harness spawned it. Release kills the process that
     // still had to write the tx. On stdio that reap is a direct
-    // `kill(-pgid, …)` and the tx was lost every time (3/3); on rmux it goes
-    // through the rmux server, and the extra hop left just enough time to win
-    // (2/2). Losing it left a durable commit, a durable last.txt, a RELEASED
+    // `kill(-pgid, …)` and the tx was lost every time (3/3). Losing it left a
+    // durable commit, a durable last.txt, a RELEASED
     // lease, no terminal tx — and NO orphan flag, because from the daemon's
     // side the release *was* a worker finalize. That fourth state is invisible
     // to both the success path and the rescue path; only `dispatch-status`'s
@@ -6924,7 +6921,7 @@ fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &st
     // project you trust?" dialog (`--dangerously-skip-permissions` does NOT
     // clear it in Claude 2.1.x). The driver accepts that dialog by sending a
     // keystroke before pasting the brief — see `accept_folder_trust` in the
-    // tmux/rmux drivers — so no global Claude config mutation is needed here.
+    // tmux driver — so no global Claude config mutation is needed here.
     Ok(())
 }
 

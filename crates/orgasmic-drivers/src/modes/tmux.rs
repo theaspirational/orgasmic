@@ -36,10 +36,10 @@ use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::catalog::TransportInteraction;
 use crate::r#trait::{
-    preflight_via_adapter, AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig,
-    DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
-    ManagerWakeRequest, NativeRuntimeMeta, PreflightOutcome, RunKind, TransitionAck,
-    TransitionRequest, UserInputAck, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, Attached, DriverConfig, DriverContext, DriverControl,
+    DriverError, DriverSession, HarnessEventAdapter, ManagerWakeRequest, NativeRuntimeMeta,
+    PreflightOutcome, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
+    WorkerDriver,
 };
 
 const MODE: &str = "tmux";
@@ -377,13 +377,13 @@ impl WorkerDriver for TmuxDriver {
             control: Box::new(TmuxTuiControl {
                 events: Some(tx),
                 session_name,
-                kind: ctx.run_kind,
                 inert,
                 lifecycle_abort: lifecycle_task.as_ref().map(JoinHandle::abort_handle),
                 pane_activity_abort: pane_activity_task.as_ref().map(JoinHandle::abort_handle),
                 startup_task,
                 startup_cancel,
                 send_child,
+                input_ready_timeout: cfg.input_ready_timeout,
                 terminal_emitted,
                 kill_on_drop: true,
                 released: false,
@@ -443,13 +443,13 @@ impl WorkerDriver for TmuxDriver {
                 control: Box::new(TmuxTuiControl {
                     events: Some(tx.clone()),
                     session_name: session_name.clone(),
-                    kind: ctx.run_kind,
                     inert: false,
                     lifecycle_abort: Some(lifecycle_abort),
                     pane_activity_abort,
                     startup_task: None,
                     startup_cancel: Arc::new(AtomicBool::new(false)),
                     send_child: SendChildOwner::new(),
+                    input_ready_timeout: cfg.input_ready_timeout,
                     terminal_emitted,
                     kill_on_drop: false,
                     released: false,
@@ -464,7 +464,6 @@ impl WorkerDriver for TmuxDriver {
 struct TmuxTuiControl {
     events: Option<mpsc::Sender<DriverEvent>>,
     session_name: String,
-    kind: RunKind,
     inert: bool,
     /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
     lifecycle_abort: Option<tokio::task::AbortHandle>,
@@ -477,6 +476,7 @@ struct TmuxTuiControl {
     startup_cancel: Arc<AtomicBool>,
     /// In-flight tmux CLI send child; killed/reaped before release returns.
     send_child: SendChildOwner,
+    input_ready_timeout: Duration,
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
@@ -555,9 +555,6 @@ impl DriverControl for TmuxTuiControl {
         &mut self,
         req: TransitionRequest,
     ) -> Result<TransitionAck, DriverError> {
-        if self.kind == RunKind::Babysitter {
-            return Err(DriverError::WorkerToolBlocked("transition_state".into()));
-        }
         if let Some(events) = self.events.as_ref() {
             let _ = events
                 .send(DriverEvent::TransitionState {
@@ -573,27 +570,38 @@ impl DriverControl for TmuxTuiControl {
         })
     }
 
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<BabysitterAck, DriverError> {
-        if self.kind == RunKind::Worker {
-            return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
+    async fn send_input(&mut self, req: UserInputRequest) -> Result<UserInputAck, DriverError> {
+        if self.inert {
+            return Err(DriverError::Unsupported("send_input"));
         }
-        if let Some(events) = self.events.as_ref() {
-            let _ = events
-                .send(DriverEvent::ToolCall {
-                    call_id: format!(
-                        "bs-{}",
-                        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-                    ),
-                    name: req.tool.as_str().into(),
-                    args: req.payload.clone(),
-                    seq: 0,
-                })
-                .await;
+
+        // Never paste into an active turn. A follow-up is accepted only after
+        // the pane exposes its composer again; callers may retry a busy ack.
+        if wait_for_input_ready(&self.session_name, self.input_ready_timeout)
+            .await
+            .is_err()
+        {
+            return Ok(UserInputAck {
+                accepted: false,
+                message: Some("harness busy".into()),
+            });
         }
-        Ok(BabysitterAck {
+
+        paste_text_into_pane(
+            &self.session_name,
+            &req.input,
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        send_keys(
+            &self.session_name,
+            &[String::from("Enter")],
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
+        Ok(UserInputAck {
             accepted: true,
             message: None,
         })
@@ -802,9 +810,7 @@ fn tmux_async_command() -> tokio::process::Command {
 /// Two things are being bought here, and `-L` alone buys only the first:
 ///
 /// 1. *Isolation.* Without `-L`, a test run reaches whichever server the
-///    environment selects — on a developer box that is the operator's own
-///    server, and inside an orgasmic worker (where `tmux` on `PATH` is a
-///    symlink to `rmux`) it is the rmux server hosting live worker panes.
+///    environment selects, which may be the operator's own server.
 /// 2. *Stability.* A tmux server exits when its last session goes away, and
 ///    its socket outlives that decision by a moment. The live-mux tests are
 ///    serialized by the TASK-Z3093 flock, so the shared server repeatedly
@@ -857,39 +863,26 @@ pub fn own_tmux_server_for_tests() -> &'static str {
 }
 
 // orgasmic:TASK-FJCE9
-/// Is the binary a PATH lookup of `tmux` landed on really tmux?
+/// Is tmux available at the resolved PATH location?
 ///
 /// **A deliberate, documented copy.** The canonical rule is TASK-K4G1D's
 /// `tmux_mode_availability_for` in `orgasmic-daemon`'s `api::tests`, and
 /// TASK-VJ633 owns collapsing the two. It is copied rather than called for the
-/// reason `modes::rmux::test_tooling` already documents: an integration-test
+/// reason `test_tooling` already documents: an integration-test
 /// crate cannot import a `#[cfg(test)]` library module, and
 /// `crates/orgasmic-daemon/tests/recovery_fault_restart.rs` is exactly such a
 /// crate — it must gate its live-tmux test on the same rule the daemon's own
-/// tests use, or it goes back to gating on `tmux -V`, which the rmux shim
-/// answers with a lie (`tmux 3.4`; the real binary is 3.6a).
+/// tests use.
 ///
 /// The copy is not free to drift: `daemon_and_driver_tmux_strictness_agree` in
 /// `api::tests` asserts the two answer identically over the whole matrix, next
 /// to the canonical rule so an edit there fails there.
 ///
-/// rmux installs a shim directory ahead of a worker's `PATH` in which `tmux` is
-/// a symlink to `rmux` (`.orgasmic/gotchas.org`). Following the symlink is the
-/// only reliable tell.
 #[doc(hidden)]
 pub fn tmux_mode_availability_for(resolved: Option<&Path>) -> Result<(), String> {
-    let Some(resolved) = resolved else {
+    let Some(_) = resolved else {
         return Err("no tmux on PATH".to_string());
     };
-    let real = std::fs::canonicalize(resolved).unwrap_or_else(|_| resolved.to_path_buf());
-    if real.file_name().and_then(|name| name.to_str()) == Some("rmux") {
-        return Err(format!(
-            "tmux on PATH ({}) is the rmux shim ({}); a genuine tmux-mode run needs the \
-             real binary resolved ahead of the shim",
-            resolved.display(),
-            real.display()
-        ));
-    }
     Ok(())
 }
 
@@ -897,8 +890,7 @@ pub fn tmux_mode_availability_for(resolved: Option<&Path>) -> Result<(), String>
 /// [`tmux_mode_availability_for`] applied to the PATH lookup the drivers do —
 /// the strict "is real tmux usable here?" a test binary gates on.
 ///
-/// Deliberately not `tmux_available()`: that asks `-V`, and inside an orgasmic
-/// worker the shim answers it.
+/// Deliberately based on the same PATH lookup used by the driver.
 #[doc(hidden)]
 #[must_use]
 pub fn real_tmux_on_path() -> bool {
@@ -1185,7 +1177,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
 }
 
 /// Environment a mux launch must export for `harness` so that run's transcript
-/// stays reachable afterwards. Shared by the tmux and rmux modes.
+/// stays reachable afterwards.
 ///
 /// codex derives `session_meta.originator` from its frontend, so a TUI launch
 /// records `codex-tui` unless [`crate::CODEX_ORIGINATOR_ENV`] overrides it. The
@@ -1819,15 +1811,6 @@ pub(crate) fn claude_session_path(session_id: &str, cwd: &std::path::Path) -> Op
     )
 }
 
-pub(crate) fn claude_native_runtime(
-    session_id: &str,
-    cwd: &std::path::Path,
-    command: &str,
-    args: &[String],
-) -> NativeRuntimeMeta {
-    claude_native_runtime_with_home(session_id, cwd, command, args, None)
-}
-
 fn claude_native_runtime_with_home(
     session_id: &str,
     cwd: &std::path::Path,
@@ -1870,7 +1853,7 @@ fn should_use_default_command(cfg: &TmuxTuiConfig, _harness: &str) -> bool {
 
 /// The daemon's dispatch path stages every worker with a placeholder command
 /// (`sh -lc 'echo orgasmic pipeline stage acquired; exec sh'`); terminal
-/// drivers swap it for the real harness invocation. Shared with the rmux
+/// drivers swap it for the real harness invocation. Shared with the tmux
 /// driver so both recognize the same sentinel.
 pub(crate) fn is_dispatch_placeholder(command: Option<&str>, args: &[String]) -> bool {
     command == Some("sh")
@@ -2453,10 +2436,50 @@ async fn session_exit_watch(
 /// writes wakes the read arm immediately.
 const PANE_ACTIVITY_SHUTDOWN_POLL: Duration = Duration::from_millis(500);
 
+/// Coalescing cadence for pane-liveness events. At 30 seconds, a four-hour
+/// run adds at most 480 content-free events while staying far inside the
+/// supervisor's stall timeout.
+const PANE_ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Coalesce raw pane byte observations into at most one liveness event per
+/// interval. Pane contents never cross this boundary.
+struct PaneActivityThrottle {
+    interval: Duration,
+    window_started_at: Option<tokio::time::Instant>,
+    bytes: u64,
+    seq: u64,
+}
+
+impl PaneActivityThrottle {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            window_started_at: None,
+            bytes: 0,
+            seq: 0,
+        }
+    }
+
+    fn observe_bytes(&mut self, bytes: u64, now: tokio::time::Instant) -> Option<DriverEvent> {
+        self.bytes = self.bytes.saturating_add(bytes);
+        let window_started_at = *self.window_started_at.get_or_insert(now);
+        if now.duration_since(window_started_at) < self.interval {
+            return None;
+        }
+        self.window_started_at = Some(now);
+        let event = DriverEvent::PaneActivity {
+            seq: self.seq,
+            bytes: std::mem::take(&mut self.bytes),
+        };
+        self.seq += 1;
+        Some(event)
+    }
+}
+
 // orgasmic:TASK-4CSMY
 /// Start the tmux transport's pane-liveness channel: the coalesced
 /// [`DriverEvent::PaneActivity`] the supervisor's stall clock reads
-/// (TASK-RWCRN gave rmux this; tmux had no continuous pane event of any kind,
+/// (TASK-RWCRN gave tmux this; tmux had no continuous pane event of any kind,
 /// so a provider-bound turn at ~0% cpu had no evidence channel at all).
 ///
 /// Returns `None` when the channel could not be established; the run then
@@ -2473,7 +2496,7 @@ fn start_pane_activity_watch(
             session_name,
             events,
             terminal_emitted,
-            crate::modes::rmux::PANE_ACTIVITY_INTERVAL,
+            PANE_ACTIVITY_INTERVAL,
         )
         .await;
     }))
@@ -2491,7 +2514,7 @@ fn start_pane_activity_watch(
 // orgasmic:TASK-4CSMY
 /// Publish coalesced pane activity for a live tmux session until the run ends.
 ///
-/// tmux has no SDK output stream, so the analogue of rmux's `PaneOutputStream`
+/// tmux has no SDK output stream, so the analogue of tmux's `PaneOutputStream`
 /// is `pipe-pane`: tmux runs a shell command *on the server* with the pane's
 /// raw output on its stdin. Piping that into a FIFO this task already holds
 /// open is what brings those bytes back into the driver process.
@@ -2543,7 +2566,7 @@ async fn pane_activity_watch(
         return;
     }
 
-    let mut activity = crate::modes::rmux::PaneActivityThrottle::new(activity_interval);
+    let mut activity = PaneActivityThrottle::new(activity_interval);
     let mut buf = vec![0u8; 16 * 1024];
     loop {
         tokio::select! {
@@ -3269,7 +3292,7 @@ fn line_is_numbered_menu_item(line: &str) -> bool {
 }
 
 /// Whether the pane is showing Claude's folder-trust dialog ("Do you trust the
-/// files in this folder?") as a numbered menu. Shared by the rmux driver. Used
+/// files in this folder?") as a numbered menu. Shared by the tmux driver. Used
 /// to accept the dialog (default "Yes, proceed") so a fresh worktree's harness
 /// reaches its composer instead of stranding the dispatch.
 pub(crate) fn pane_requests_folder_trust(pane: &str) -> bool {
@@ -3381,21 +3404,18 @@ pub fn inert_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::rmux::{
-        probe_rmux_binary,
-        test_tooling::{
-            assert_required_test_tooling, command_succeeds, skip_test_if_missing,
-            test_environment_lock, ToolRequirement,
-        },
+    use crate::r#trait::RunKind;
+    use crate::test_tooling::{
+        assert_required_test_tooling, command_succeeds, skip_test_if_missing,
+        test_environment_lock, ToolRequirement,
     };
-    use serde_json::Value;
     use std::collections::VecDeque;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
 
-    use crate::modes::rmux::test_tooling::live_session_guard;
+    use crate::test_tooling::live_session_guard;
 
     /// Drop-guard that kills a real tmux session on every exit path — success,
     /// assert-failure unwinding, or panic. Real-tmux tests assert pane/session
@@ -3474,7 +3494,6 @@ mod tests {
         let _live_guard = live_session_guard();
         let _environment = test_environment_lock().lock().await;
         assert_required_test_tooling(&[
-            ToolRequirement::new("rmux", 9, probe_rmux_binary().usable()),
             // orgasmic:TASK-4CSMY — +1 for the real-pane proof of the tmux
             // pane-liveness channel. The two live smokes beside it carry
             // `#[ignore]` and never run from the default suite, so counting
@@ -3495,7 +3514,6 @@ mod tests {
             worker_id: "implementer-claude-tmux".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
-            babysitter_target: None,
         }
     }
 
@@ -4082,7 +4100,7 @@ mod tests {
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
     }
 
-    /// Same stamp as rmux: the tmux mode launches the identical codex TUI, so
+    /// Same stamp as tmux: the tmux mode launches the identical codex TUI, so
     /// it must record the identical originator (TASK-GT91X).
     // orgasmic:TASK-GT91X
     #[test]
@@ -4893,46 +4911,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn babysitter_cannot_transition_state() {
-        let d = driver();
-        let mut s = d
-            .acquire(ctx("run-bs", RunKind::Babysitter), inert_config())
-            .await
-            .unwrap();
-        let _ready = s.events.recv().await.unwrap();
-        let err = s
-            .control
-            .transition_state(TransitionRequest {
-                from: "ready".into(),
-                to: "in_progress".into(),
-                reason: "x".into(),
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(err, DriverError::WorkerToolBlocked(_)));
-    }
-
-    #[tokio::test]
-    async fn implementer_cannot_invoke_babysitter_tool() {
-        let d = driver();
-        let mut s = d
-            .acquire(ctx("run-im", RunKind::Worker), inert_config())
-            .await
-            .unwrap();
-        let _ready = s.events.recv().await.unwrap();
-        let err = s
-            .control
-            .babysitter_action(BabysitterRequest {
-                tool: orgasmic_core::BabysitterTool::Poke,
-                target_run: "run-target".into(),
-                payload: Value::Null,
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(err, DriverError::BabysitterToolBlocked(_)));
-    }
-
-    #[tokio::test]
     async fn release_is_idempotent() {
         let d = driver();
         let mut s = d
@@ -4979,9 +4957,7 @@ mod tests {
     ///
     /// Before TASK-0RCRY no call site passed `-L`/`-S`, so every probe and
     /// fixture session landed on whichever server the environment selected: the
-    /// operator's own on a developer box, and inside an orgasmic worker — where
-    /// `tmux` on `PATH` is a symlink to `rmux` — the rmux server hosting live
-    /// worker panes.
+    /// operator's own on a developer box or a server hosting live worker panes.
     ///
     /// Injection: make `tmux_socket()` return `None`, or drop the `-L` from
     /// `tmux_command`, and the argv assertion below goes red. It is asserted
@@ -5186,13 +5162,13 @@ mod tests {
         let mut control = TmuxTuiControl {
             events: None,
             session_name: format!("orgasmic-wake-gone-{}", uuid::Uuid::new_v4().simple()),
-            kind: RunKind::Worker,
             inert: false,
             lifecycle_abort: None,
             pane_activity_abort: None,
             startup_task: None,
             startup_cancel: Arc::new(AtomicBool::new(false)),
             send_child: SendChildOwner::new(),
+            input_ready_timeout: default_input_ready_timeout(),
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             kill_on_drop: false,
             released: false,
@@ -5206,7 +5182,7 @@ mod tests {
 
     // orgasmic:TASK-4CSMY
     /// A newline-emitting pane and a newline-FREE redrawing pane, the two
-    /// fixtures TASK-RWCRN.1 established for rmux. The second is the ship
+    /// fixtures TASK-RWCRN.1 established for tmux. The second is the ship
     /// blocker: a full-screen TUI repaints with CR and ANSI and can go many
     /// minutes without an LF, so anything counting lines sees nothing at all
     /// for exactly the harnesses this event exists to protect.
@@ -5345,17 +5321,16 @@ mod tests {
             "{test_name} must run against a real pane, not an inert session"
         );
 
-        let observed =
-            tokio::time::timeout(crate::modes::rmux::PANE_ACTIVITY_INTERVAL * 2, async {
-                loop {
-                    match s.events.recv().await {
-                        Some(DriverEvent::PaneActivity { seq, bytes }) => break Some((seq, bytes)),
-                        Some(_) => continue,
-                        None => break None,
-                    }
+        let observed = tokio::time::timeout(PANE_ACTIVITY_INTERVAL * 2, async {
+            loop {
+                match s.events.recv().await {
+                    Some(DriverEvent::PaneActivity { seq, bytes }) => break Some((seq, bytes)),
+                    Some(_) => continue,
+                    None => break None,
                 }
-            })
-            .await;
+            }
+        })
+        .await;
 
         // Reap before asserting: a failed assertion must not leak the session.
         s.control.release("test done").await.unwrap();
@@ -5363,8 +5338,7 @@ mod tests {
         observed.expect("a writing pane must publish PaneActivity within 2 intervals")
     }
 
-    /// `#[ignore]` for the reason the rmux twin of this test is ignored
-    /// (TASK-RRT4T): it spawns a real session and waits a full
+    /// `#[ignore]` because it spawns a real session and waits a full
     /// `PANE_ACTIVITY_INTERVAL`, so the default summary counts it instead of
     /// silently paying 30 s for it. Run with
     /// `cargo test -p orgasmic-drivers -- --ignored live_tmux_pane_publishes`.
@@ -5705,7 +5679,6 @@ mod tests {
             worker_id: "implementer-claude-tmux".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
-            babysitter_target: None,
         };
         let attached = d.attach(attach_ctx, DriverConfig::empty()).await.unwrap();
         let AttachOutcome::Attached(mut attached) = attached else {

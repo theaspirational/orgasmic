@@ -30,9 +30,9 @@ use orgasmic_core::{DriverEvent, TextStream};
 use crate::modes::tmux::claude_session_path;
 use crate::preflight::{classify_api_key, read_status_output};
 use crate::r#trait::{
-    BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind,
-    StdioSpawn, TransitionRequest,
+    DriverConfig, DriverContext, DriverError, HarnessControlOutcome, HarnessEventAdapter,
+    HarnessRequest, NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind, StdioSpawn,
+    TransitionRequest,
 };
 
 const TRANSPORT: &str = "claude-stream-json";
@@ -616,32 +616,6 @@ impl HarnessEventAdapter for ClaudeAdapter {
         })
     }
 
-    async fn babysitter_action(
-        &mut self,
-        req: BabysitterRequest,
-    ) -> Result<HarnessControlOutcome, DriverError> {
-        let call_id = format!("claude-bs-{}", uuid::Uuid::new_v4());
-        let payload = json!({
-            "tool": req.tool.as_str(),
-            "target_run": req.target_run,
-            "payload": req.payload,
-        });
-        let text = format!(
-            "orgasmic babysitter control action:\n```json\n{}\n```",
-            serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
-        );
-        Ok(HarnessControlOutcome {
-            events: vec![DriverEvent::ToolCall {
-                call_id,
-                name: payload["tool"].as_str().unwrap_or("unknown").into(),
-                args: payload["payload"].clone(),
-                seq: self.next_seq(),
-            }],
-            stdin_payloads: vec![json_line_bytes(&claude_user_message(text))?],
-            ..HarnessControlOutcome::default()
-        })
-    }
-
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
         let text = format!("orgasmic control: release requested\nreason: {reason}");
         Ok(HarnessControlOutcome {
@@ -1162,7 +1136,6 @@ fn build_spawn_prompt(ctx: &DriverContext, cfg: &ClaudeStreamJsonConfig) -> Stri
             "worker_id": ctx.worker_id,
             "project_id": ctx.project_id,
             "worktree": ctx.worktree.as_ref().map(|p| p.display().to_string()),
-            "babysitter_target": ctx.babysitter_target,
         }
     });
     let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -1588,8 +1561,8 @@ pub fn simulated_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::modes::stdio::StdioComposeAdapter;
+    use crate::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::{AttachOutcome, ClaudeStreamJsonDriver, StdioDriver, WorkerDriver, WsDriver};
     use orgasmic_core::RuntimeIdentity;
     use tokio::time::{timeout, Duration};
@@ -1602,7 +1575,6 @@ mod tests {
             worker_id: "implementer-claude".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
-            babysitter_target: None,
         }
     }
 

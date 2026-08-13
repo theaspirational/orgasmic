@@ -31,9 +31,6 @@ Keep three terms distinct:
 - *Automatic continuation* — retired. Do not expect the daemon to inject a
   follow-on run after failure.
 
-Babysitter companion spawning is not failed-run continuation; leave that policy
-alone.
-
 ** Inspect before choosing
 Before any rescue action, gather evidence from:
 1. *Release tombstone* — =Lifecycle::Release= reason and outcome
@@ -47,7 +44,7 @@ Before any rescue action, gather evidence from:
 4. *Native transcript* — last agent message from the harness-native session log
    (never TUI scrollback alone).
 5. *Worktree* — =git status= / =git diff= / recent commits in the run worktree.
-6. *Runtime liveness* — whether the original tmux/rmux/native session is still
+6. *Runtime liveness* — whether the original tmux/native session is still
    live and reattachable (=orgasmic recovery status=, =orgasmic run list=).
 
 ** Judgment menu

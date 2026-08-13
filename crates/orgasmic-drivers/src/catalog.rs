@@ -21,7 +21,7 @@
 use serde::Serialize;
 
 use crate::runtime_options::dedupe_non_empty;
-use crate::{adapter_for_pair, driver_for_mode_harness, probe_rmux_binary, SUPPORTED};
+use crate::{adapter_for_pair, driver_for_mode_harness, SUPPORTED};
 
 /// Whether a dispatch on a transport runs with nobody attached, or spawns an
 /// interactive terminal pane.
@@ -90,22 +90,12 @@ pub struct TransportProfile {
     /// Harness CLI expected on PATH.
     pub binary: String,
     pub installed: bool,
-    /// Mode-level binary requirement, when the mode itself needs a separately
-    /// provisioned binary on top of the harness CLI. `rmux` (TASK-104) needs a
-    /// real `rmux` daemon binary; it is checked independently of the harness
-    /// binary so a missing prerequisite is reported honestly.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode_binary: Option<String>,
-    /// Whether [`Self::mode_binary`] resolves. `None` when the mode has no
-    /// extra binary requirement.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode_installed: Option<bool>,
 }
 
 impl TransportProfile {
     /// True when every binary this pair needs resolves right now.
     pub fn ready(&self) -> bool {
-        self.installed && self.mode_installed.unwrap_or(true)
+        self.installed
     }
 }
 
@@ -150,7 +140,6 @@ pub fn transport_profiles() -> Vec<TransportProfile> {
 /// to answer for them.
 pub fn transport_profile(mode: &str, harness: &str) -> TransportProfile {
     let binary = harness_binary(harness);
-    let mode_status = mode_binary_status(mode);
     TransportProfile {
         mode: mode.to_string(),
         harness: harness.to_string(),
@@ -162,8 +151,6 @@ pub fn transport_profile(mode: &str, harness: &str) -> TransportProfile {
             .unwrap_or(TransportInteraction::Undeclared),
         binary: binary.to_string(),
         installed: binary_on_path(binary),
-        mode_binary: mode_status.as_ref().map(|(b, _)| b.clone()),
-        mode_installed: mode_status.as_ref().map(|(_, ok)| *ok),
     }
 }
 
@@ -321,22 +308,6 @@ pub fn binary_on_path(binary: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Mode-level binary a driver needs *in addition to* its harness CLI, plus
-/// whether it currently resolves. Returns `None` for modes with no extra
-/// binary requirement. `rmux` (TASK-104) needs a separately provisioned `rmux`
-/// daemon binary, discovered via `RMUX_SDK_DAEMON_BINARY` or PATH — checked
-/// independently of the harness binary so a missing prerequisite is honest.
-pub fn mode_binary_status(mode: &str) -> Option<(String, bool)> {
-    match mode {
-        "rmux" => {
-            let probe = probe_rmux_binary();
-            let display = probe.path.clone().unwrap_or_else(|| "rmux".to_string());
-            Some((display, probe.usable()))
-        }
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,12 +342,12 @@ mod tests {
     }
 
     /// The discriminator a manager actually chooses on: pane modes are the
-    /// tmux/rmux family, everything else runs headless.
+    /// tmux is the interactive pane mode; everything else runs headless.
     #[test]
     fn pane_modes_are_the_only_interactive_transports() {
         for profile in transport_profiles() {
             let expected = match profile.mode.as_str() {
-                "tmux" | "rmux" => TransportInteraction::TerminalPane,
+                "tmux" => TransportInteraction::TerminalPane,
                 _ => TransportInteraction::Unattended,
             };
             assert_eq!(
@@ -385,13 +356,6 @@ mod tests {
                 profile.mode, profile.harness
             );
         }
-    }
-
-    #[test]
-    fn mode_binary_status_only_tracks_rmux() {
-        assert!(mode_binary_status("rmux").is_some());
-        assert!(mode_binary_status("tmux").is_none());
-        assert!(mode_binary_status("stdio").is_none());
     }
 
     #[test]

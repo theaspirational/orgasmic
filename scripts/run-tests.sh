@@ -88,7 +88,7 @@ BILLED_TEST="legacy_drivers_and_explicit_pairs_emit_equivalent_start_events"
 
 # orgasmic:TASK-S2KM0
 # The escape hatch that turns a missing-tooling sentinel FAILURE into a warning.
-# Mirrors `ALLOW_MISSING_TOOLS_ENV` in crates/orgasmic-drivers/src/modes/rmux.rs.
+# Mirrors `ALLOW_MISSING_TOOLS_ENV` in the driver test tooling.
 ALLOW_MISSING_ENV="ORGASMIC_ALLOW_MISSING_TOOLS"
 
 # Run id and home leak out of a dispatch into every child and break the suites

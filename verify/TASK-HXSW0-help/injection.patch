@@ -1,9 +1,8 @@
 diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
-index 0f849df..00a29a1 100644
 --- a/crates/orgasmic-cli/src/manager.rs
 +++ b/crates/orgasmic-cli/src/manager.rs
-@@ -59,16 +59,10 @@ Examples:
-     --brief /path/to/brief.md --mode rmux --harness custom \\
+@@ -64,16 +64,10 @@ Examples:
+     --brief /path/to/brief.md --mode tmux --harness custom \\
      --harness-arg opencode --harness-arg --print-logs --dry-run")]
  pub struct DispatchArgs {
 -    /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
@@ -19,7 +18,7 @@ index 0f849df..00a29a1 100644
      #[arg(long)]
      pub brief: PathBuf,
      /// Transport mode from `orgasmic_drivers::SUPPORTED`.
-@@ -83,16 +77,10 @@ pub struct DispatchArgs {
+@@ -88,16 +82,10 @@ pub struct DispatchArgs {
      /// Optional JSON array of argv tokens (alternative to repeated --harness-arg).
      #[arg(long = "harness-args-json")]
      pub harness_args_json: Option<String>,
@@ -36,7 +35,7 @@ index 0f849df..00a29a1 100644
      #[arg(long)]
      pub effort: Option<String>,
      /// Force the harness credential tier for this dispatch: `auto` (default,
-@@ -100,20 +88,12 @@ pub struct DispatchArgs {
+@@ -105,20 +93,12 @@ pub struct DispatchArgs {
      /// rejects an unknown value.
      #[arg(long = "credential-mode")]
      pub credential_mode: Option<String>,
@@ -57,10 +56,10 @@ index 0f849df..00a29a1 100644
      #[arg(long)]
      pub dry_run: bool,
      /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
-@@ -168,12 +148,6 @@ pub struct DispatchCloseArgs {
-     /// Why the dispatch is being closed this way; recorded on the close tx.
-     #[arg(long)]
-     pub reason: Option<String>,
+@@ -315,12 +295,6 @@ pub struct DispatchCloseArgs {
+     /// round's own REVIEW ROUND — "does this fix get reviewed at all".
+     #[arg(long = "fix-round-final")]
+     pub fix_round_final: bool,
 -    /// Remove the worker's git worktree as part of the close. DEFAULTS TO
 -    /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
 -    /// removal salvages uncommitted worker output to

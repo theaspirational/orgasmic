@@ -67,7 +67,7 @@ use crate::driver_resolution::{
 use crate::events::{EventBus, EventPayload, Topic};
 #[cfg(test)]
 use crate::governance::SandboxPermissionsPatch;
-use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
+use crate::governance::{DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{
     BoardEntry, Index, IndexSnapshot, ProjectCatalogEntry, ProjectIndex, ProjectLoadRequestError,
     ProjectLoadState, TaskOwner,
@@ -86,7 +86,7 @@ use crate::recovery_claim::{
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, CleanupHolderDiagnostic, DispatchCleanupOutcome, DispatchCleanupParams,
+    CleanupHolderDiagnostic, DispatchCleanupOutcome, DispatchCleanupParams,
     DispatchCloseGuardOutcome, DispatchCloseGuardParams, RecoveryReattachPlan, Supervisor,
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
@@ -260,8 +260,7 @@ pub struct ApiState {
 ///
 /// orgasmic:TASK-WGXKD.2 — derived from the teardown a single release actually
 /// performs, not chosen round:
-/// - driver release: `DRIVER_RELEASE_TIMEOUT` = 5s (supervisor.rs). rmux's 2s
-///   SDK reap plus 2s CLI fallback (drivers rmux.rs) nest *inside* that budget
+/// - driver release: `DRIVER_RELEASE_TIMEOUT` = 5s (supervisor.rs)
 ///   by construction, so they do not add to it.
 /// - producer join: the same 5s budget again (supervisor.rs
 ///   `release_driver_and_producer`), applied after the driver release returns.
@@ -2069,18 +2068,7 @@ fn apply_task_owners(
             .map(|id| id == project.project_id)
             .unwrap_or(true)
         {
-            // A babysitter only watches the performer; it never headlines the
-            // task. Prefer any non-babysitter run as the owner regardless of
-            // iteration order — a babysitter owns the task only when no
-            // performer run exists for it.
-            let new_owner = run.role.clone();
-            let replace = match owners.get(&run.task_id) {
-                None => true,
-                Some((existing, _)) => existing == "babysitter" && new_owner != "babysitter",
-            };
-            if replace {
-                owners.insert(run.task_id.clone(), (new_owner, run.run_id.clone()));
-            }
+            owners.insert(run.task_id.clone(), (run.role.clone(), run.run_id.clone()));
         }
     }
     for task in &mut project.tasks {
@@ -2127,7 +2115,7 @@ impl fmt::Display for PersistedContractError {
 fn resolve_persisted_terminal_contract(
     _home: &Home,
     worker_id: &str,
-    kind: RunKind,
+    _kind: RunKind,
     harness: Option<&str>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
@@ -2144,8 +2132,6 @@ fn resolve_persisted_terminal_contract(
                 } else {
                     "manager".into()
                 }
-            } else if kind == RunKind::Babysitter {
-                "babysitter".into()
             } else {
                 return Err(PersistedContractError {
                     message: format!(
@@ -2156,16 +2142,15 @@ fn resolve_persisted_terminal_contract(
         }
     };
     let persisted_bare_terminal = custom_terminal && role == "terminal";
-    let persisted_babysitter = kind == RunKind::Babysitter && role == "babysitter";
     let requires_worker_finalize = match meta_requires {
-        Some(false) if persisted_bare_terminal || persisted_babysitter => false,
+        Some(false) if persisted_bare_terminal => false,
         // Round-2 recovery runs could persist `false` for agent roles solely
         // because they had no last_path. That is not a terminal-shape proof:
         // fail closed under the universal contract and let fresh recovery
         // provision the missing path below (TASK-Y5K2C).
         Some(false) => true,
         Some(true) => true,
-        None if persisted_bare_terminal || persisted_babysitter => false,
+        None if persisted_bare_terminal => false,
         None => crate::supervisor::run_requires_worker_finalize(&last_path, &role),
     };
     Ok(PersistedTerminalContract {
@@ -2519,7 +2504,6 @@ fn worker_kind_name(kind: WorkerKind) -> &'static str {
         WorkerKind::Analyzer => "analyzer",
         WorkerKind::Griller => "griller",
         WorkerKind::Glossarist => "glossarist",
-        WorkerKind::Babysitter => "babysitter",
         WorkerKind::Manager => "manager",
         WorkerKind::Artifactor => "artifactor",
     }
@@ -2995,11 +2979,6 @@ pub struct ManagerLaunchRequest {
     /// the launcher's escape hatch for harnesses without typed options.
     #[serde(default)]
     pub harness_args: Vec<String>,
-    /// When true (and the driver is rmux), spawn the session "system-wide" so
-    /// it survives a daemon restart/rebuild. Defaults ON for the manager in the
-    /// UI. Ignored by non-rmux drivers.
-    #[serde(default)]
-    pub system_wide: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -3120,14 +3099,11 @@ async fn post_manager_launch(
         // `#[serde(alias = "effort")]` in an adapter into a dispatch-killing
         // `duplicate field` (TASK-4YC8E). Every reader of this key takes
         // `reasoning_effort`: the adapters read only that name, and the tmux
-        // and rmux mode configs fall back to it.
+        // mode config falls back to it.
         // orgasmic:TASK-4YC8E
         "model": req.model,
         "reasoning_effort": req.effort,
         "harness_args": req.harness_args,
-        // Threaded through to the rmux driver so the session is detached from
-        // the daemon's lifecycle and survives a restart (no-op for tmux).
-        "system_wide": req.system_wide,
     }));
     let driver_config = apply_driver_defaults(
         driver_config,
@@ -3162,14 +3138,12 @@ async fn post_manager_launch(
                 dispatch_attempt_token: None,
                 session_path,
                 driver_config,
-                babysitter_target: None,
                 // The manager is interactive and operator-paced: it idles at a
                 // prompt waiting for a human, which must never read as a
                 // stalled worker. 0 disables both detectors.
                 stall_timeout_secs: Some(0),
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
-                babysitter: None,
                 applicable_states: Vec::new(),
                 max_iterations: None,
                 planned_identity: None,
@@ -4225,17 +4199,6 @@ pub struct ManagerDriverProfile {
     /// Standalone provider label, e.g. "Claude" / "Codex" — the leaf choice within a mode.
     pub harness_label: String,
     pub installed: bool,
-    /// Mode-level binary requirement, when the mode itself needs a separately
-    /// provisioned binary on top of the harness CLI. `rmux` (TASK-104) needs a
-    /// real `rmux` daemon binary; the catalog checks it independently of the
-    /// harness binary so a missing prerequisite is reported honestly.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode_binary: Option<String>,
-    /// Whether [`Self::mode_binary`] resolves on PATH (or via
-    /// `RMUX_SDK_DAEMON_BINARY` for rmux). `None` when the mode has no extra
-    /// binary requirement.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode_installed: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4260,8 +4223,6 @@ async fn get_manager_drivers() -> Json<ManagerDriversResponse> {
             mode_label: profile.mode_label,
             harness_label: profile.harness_label,
             installed: profile.installed,
-            mode_binary: profile.mode_binary,
-            mode_installed: profile.mode_installed,
         })
         .collect();
     Json(ManagerDriversResponse { drivers })
@@ -4494,11 +4455,9 @@ async fn post_stage(
                 dispatch_attempt_token: None,
                 session_path: session_path.clone(),
                 driver_config,
-                babysitter_target: None,
                 stall_timeout_secs: worker.stall_timeout_secs,
                 max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: None,
-                babysitter: None,
                 applicable_states: worker.applicable_states.clone(),
                 max_iterations: worker.max_iterations,
                 planned_identity: None,
@@ -4614,7 +4573,6 @@ struct StageWorker {
     harness: String,
     linked_skills: Vec<String>,
     missing_skills: Vec<String>,
-    babysitter: Option<BabysitterAddress>,
     max_iterations: Option<u32>,
     context_budget_chars: Option<u32>,
     applicable_states: Vec<String>,
@@ -4673,7 +4631,6 @@ fn resolve_addressed_stage_worker(
         harness: harness.trim().to_string(),
         linked_skills: gov.linked_skills,
         missing_skills,
-        babysitter: gov.babysitter,
         max_iterations: gov.max_iterations,
         context_budget_chars: gov.context_budget_chars,
         applicable_states: gov.applicable_states,
@@ -5161,10 +5118,10 @@ fn stage_driver_config_with_overrides(
             map.insert("input_ready_timeout".to_string(), json!(secs));
         }
     }
-    if worker.kind == WorkerKind::Artifactor && worker.driver == "rmux" {
+    if worker.kind == WorkerKind::Artifactor && worker.driver == "tmux" {
         if let Some(map) = config.as_object_mut() {
             // orgasmic:dec_S02E2 — hot-session artifactor: persist across grilling
-            // rounds; not system_wide so daemon shutdown reaps the pane cleanly.
+            // rounds while daemon shutdown still reaps the pane cleanly.
             map.insert("persistent".to_string(), json!(true));
         }
     }
@@ -5209,156 +5166,6 @@ fn apply_driver_defaults(
         }
     }
     config
-}
-
-/// Compile the babysitter prompt fully from Prompt Studio.
-#[allow(clippy::too_many_arguments)]
-fn build_babysitter_auto_spawn(
-    home: &Home,
-    overlay: &DispatchGovernanceOverlay,
-    dispatch_override: Option<&GovernancePatch>,
-    task_id: &str,
-    implementer: &StageWorker,
-    worktree: &FsPath,
-    task_sandbox_permissions: Option<&SandboxAllowlist>,
-    driver_defaults: &DriverDefaults,
-) -> Result<Option<BabysitterAutoSpawn>, ApiError> {
-    let Some(address) = implementer.babysitter.as_ref() else {
-        return Ok(None);
-    };
-    validate_supported_pair(&address.mode, &address.harness).map_err(ApiError::bad_request)?;
-    validate_address_harness_args(&address.harness, &address.harness_args)
-        .map_err(ApiError::bad_request)?;
-    let gov = resolve_address_governance(
-        WorkerKind::Babysitter,
-        &address.harness,
-        overlay,
-        dispatch_override,
-    );
-    let missing_skills = gov
-        .linked_skills
-        .iter()
-        .filter(|skill| {
-            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
-                .is_none()
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    if let Some(skill) = missing_skills.first() {
-        return Err(ApiError::bad_request(format!(
-            "unresolved slot skills.{skill} on babysitter address"
-        )));
-    }
-    let worker_id =
-        compatibility_worker_id(WorkerKind::Babysitter, &address.mode, &address.harness);
-    let resolved_sandbox =
-        SandboxAllowlist::resolve(task_sandbox_permissions, gov.sandbox_permissions.as_ref());
-    let babysitter = StageWorker {
-        id: worker_id.clone(),
-        kind: WorkerKind::Babysitter,
-        driver: address.mode.trim().to_string(),
-        harness: address.harness.trim().to_string(),
-        linked_skills: gov.linked_skills,
-        missing_skills,
-        babysitter: None,
-        max_iterations: gov.max_iterations,
-        context_budget_chars: gov.context_budget_chars,
-        applicable_states: gov.applicable_states,
-        stall_timeout_secs: gov.stall_timeout_secs,
-        max_run_duration_secs: gov.max_run_duration_secs,
-        sandbox_permissions: Some(resolved_sandbox.clone()),
-        harness_args: address.harness_args.clone(),
-    };
-    let Some(_driver) = resolve_launch_driver(&babysitter.driver, &babysitter.harness) else {
-        return Err(ApiError::bad_request(format!(
-            "unsupported babysitter driver/harness pair {}/{}",
-            babysitter.driver, babysitter.harness
-        )));
-    };
-    let mut values = SlotValues::new();
-    values.insert("task.id".to_string(), task_id.to_string());
-    values.insert("worker.id".to_string(), worker_id.clone());
-    values.insert("worker.kind".to_string(), "babysitter".to_string());
-    values.insert("run.id".to_string(), "pending".to_string());
-    values.insert("run.iteration_count".to_string(), "0".to_string());
-    values.insert("run.previous_state".to_string(), "none".to_string());
-    if let Some(max_iterations) = babysitter.max_iterations {
-        values.insert("run.max_iterations".to_string(), max_iterations.to_string());
-    }
-    if let Some(context_budget_chars) = babysitter.context_budget_chars {
-        values.insert(
-            "run.context_budget_chars".to_string(),
-            context_budget_chars.to_string(),
-        );
-    }
-    values.insert("skills.all".to_string(), skills_manifest(home)?);
-    hydrate_skill_slots(home, &babysitter, &mut values)?;
-    let req = crate::prompt_compiler::PromptCompileRequest {
-        project: None,
-        mode: Some("babysitter".to_string()),
-        worker: Some(worker_id.clone()),
-        harness: Some(babysitter.harness.clone()),
-        renderer: None,
-        reason: Some(format!("babysitter for {task_id}")),
-        context_overrides: BTreeMap::new(),
-        values,
-    };
-    let compiled = crate::prompt_compiler::compile_prompt_spec(home, "babysitter", req)
-        .map_err(|e| content_list_error(e, "babysitter prompt spec"))?;
-    if crate::prompt_compiler::has_error(&compiled.diagnostics) {
-        let messages = compiled
-            .diagnostics
-            .iter()
-            .filter(|diag| diag.level == "error")
-            .map(|diag| diag.message.as_str())
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(ApiError::bad_request(format!(
-            "babysitter prompt compile failed: {messages}"
-        )));
-    }
-    enforce_context_budget_chars(
-        compiled.text.chars().count(),
-        babysitter.context_budget_chars,
-        "babysitter spawn",
-    )?;
-    let bundle = format!(
-        "orgasmic compiled prompt\nbabysitter: {}\ntask: {}\nprompt_spec: {}\n\n{}\n",
-        worker_id,
-        task_id,
-        compiled.spec.id,
-        compiled.text.trim()
-    );
-    let driver_config = stage_driver_config_with_overrides(
-        &babysitter,
-        worktree,
-        worktree,
-        None,
-        &bundle,
-        DriverOverrides {
-            provider: None,
-            model: address.model.clone(),
-            credential_mode: None,
-            effort: address.effort.clone(),
-        },
-        task_sandbox_permissions,
-        driver_defaults,
-        None,
-    );
-    Ok(Some(BabysitterAutoSpawn {
-        worker_id,
-        mode: babysitter.driver,
-        harness: babysitter.harness,
-        driver_config,
-        stall_timeout_secs: babysitter.stall_timeout_secs,
-        max_run_duration_secs: babysitter.max_run_duration_secs,
-        applicable_states: babysitter.applicable_states,
-        linked_skills: babysitter.linked_skills,
-        sandbox_permissions: Some(resolved_sandbox),
-        max_iterations: babysitter.max_iterations,
-        context_budget_chars: babysitter.context_budget_chars,
-        harness_args: babysitter.harness_args,
-    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -5445,8 +5252,8 @@ impl DispatchEndpointKind {
     fn run_kind(self) -> RunKind {
         // Reviewer dispatches are normal worker runs in the supervisor. The
         // dispatched role is passed separately to the run summary; the driver
-        // runtime kind stays non-babysitter so they have the same tool surface
-        // as implementers.
+        // runtime kind stays `Worker`, so reviewers and implementers share the
+        // same tool surface.
         RunKind::Worker
     }
 }
@@ -5486,8 +5293,6 @@ struct SpawnWorkerRequest<'a> {
     dispatch_kind: Option<&'a str>,
     /// Task-heading sandbox override, when known for this spawn.
     task_sandbox_permissions: Option<SandboxAllowlist>,
-    /// Per-dispatch governance override (babysitter resolution + limits).
-    dispatch_governance: Option<GovernancePatch>,
 }
 
 struct SpawnWorkerResult {
@@ -5561,7 +5366,6 @@ async fn spawn_worker_run(
         worker_id: worker.id.clone(),
         project_id: Some(req.project_id.to_string()),
         worktree: Some(req.worktree_path.to_path_buf()),
-        babysitter_target: None,
     };
     let preflight = driver.preflight(&preflight_ctx, &driver_config).await;
     if let Some(reason) = preflight.rejects_dispatch() {
@@ -5589,26 +5393,6 @@ async fn spawn_worker_run(
     let session_path = project_sessions_dir(req.project_root_path)
         .join(format!("dispatch-{fragment}-{kind}-{timestamp}.jsonl"));
 
-    let babysitter = if req.run_kind == RunKind::Worker {
-        match build_babysitter_auto_spawn(
-            &state.home,
-            &state.dispatch_governance,
-            req.dispatch_governance.as_ref(),
-            req.task_id,
-            &worker,
-            req.worktree_path,
-            req.task_sandbox_permissions.as_ref(),
-            &state.driver_defaults,
-        ) {
-            Ok(babysitter) => babysitter,
-            Err(error) => {
-                return Err(SpawnWorkerFailure { error });
-            }
-        }
-    } else {
-        None
-    };
-
     let acquire = match state
         .supervisor
         .acquire(
@@ -5625,24 +5409,22 @@ async fn spawn_worker_run(
                 dispatch_attempt_token: req.dispatch_attempt_token.map(str::to_string),
                 session_path: session_path.clone(),
                 driver_config,
-                babysitter_target: None,
-                // Only the persistent hot-session artifactor (rmux) spawn
+                // Only the persistent hot-session artifactor (tmux) spawn
                 // opts into idle release; every other dispatch (one-shot
                 // implementer/reviewer/etc.) stays exempt. Mirrors the same
                 // `persistent` condition `stage_driver_config_with_overrides`
-                // uses to flag the rmux driver_config as persistent. That
+                // uses to flag the tmux driver_config as persistent. That
                 // same condition must disable stall for these runs too, or
                 // the 600s stall pre-empts the 900s idle window and the run
                 // is still released before idle ever gets a chance to fire.
                 stall_timeout_secs: (worker.kind == WorkerKind::Artifactor
-                    && worker.driver == "rmux")
+                    && worker.driver == "tmux")
                     .then_some(0)
                     .or(worker.stall_timeout_secs),
                 max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: (worker.kind == WorkerKind::Artifactor
-                    && worker.driver == "rmux")
+                    && worker.driver == "tmux")
                     .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
-                babysitter,
                 applicable_states: worker.applicable_states.clone(),
                 max_iterations: worker.max_iterations,
                 planned_identity: None,
@@ -5792,7 +5574,6 @@ async fn post_task_dispatch(
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             task_sandbox_permissions,
-            dispatch_governance: req.governance.clone(),
         },
     )
     .await
@@ -5864,7 +5645,7 @@ async fn post_task_dispatch(
 #[derive(Debug, Default, Deserialize)]
 pub struct LeaseReleaseRequest {
     /// Lease kind to clear; `implementer` (default, covers all dispatch
-    /// kinds — see `DispatchEndpointKind::run_kind`) or `babysitter`.
+    /// kinds — see `DispatchEndpointKind::run_kind`).
     #[serde(default)]
     pub kind: Option<String>,
 }
@@ -6670,7 +6451,6 @@ async fn post_task_lease_release(
         // but a lease left behind by a historical architector run must still be
         // clearable by name rather than answering 400.
         "implementer" | "reviewer" | "architector" => RunKind::Worker,
-        "babysitter" => RunKind::Babysitter,
         other => return Err(ApiError::bad_request(format!("unknown lease kind {other}"))),
     };
     match state
@@ -7412,7 +7192,7 @@ fn dispatch_last_summary_from_session(envelopes: &[SessionEnvelope]) -> String {
             _ => {}
         }
     }
-    // rmux/tmux `release(reason)` synthesize a `RunComplete { summary: reason }`
+    // tmux `release(reason)` synthesizes a `RunComplete { summary: reason }`
     // when they tear down a run that never emitted its own terminal event (e.g.
     // stall detector / operator stop). That sentinel is not a worker report:
     // when the run_complete summary merely echoes the release reason, drop it
@@ -7435,7 +7215,7 @@ fn dispatch_last_summary_from_session(envelopes: &[SessionEnvelope]) -> String {
         .unwrap_or_default()
 }
 
-/// Streaming transcripts (notably rmux, which accumulates the whole rendered
+/// Streaming transcripts can be large, and the worker's report is always at the
 /// scrollback here) can be large, and the worker's report is always at the
 /// tail. Cap the fallback summary to its last [`DISPATCH_SUMMARY_TAIL_BYTES`] on
 /// a char boundary so last.txt stays bounded while still carrying the report.
@@ -7703,7 +7483,6 @@ pub(crate) fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome 
                     finalize_admitted = true;
                 }
             }
-            SessionEventKind::BabysitterSummary => {}
         }
     }
     if let Some(reason) = sticky_failure.or(pending_failure) {
@@ -8386,14 +8165,11 @@ pub struct RecoveryAction {
 }
 
 /// Recovery surface a successful recover opens.
-fn recovery_target_for(run_kind: Option<RunKind>, worker_id: &str) -> &'static str {
+fn recovery_target_for(_run_kind: Option<RunKind>, worker_id: &str) -> &'static str {
     if worker_id == "manager" || worker_id.starts_with("manager") {
         "manager"
     } else {
-        match run_kind {
-            Some(RunKind::Babysitter) => "worker",
-            _ => "worker",
-        }
+        "worker"
     }
 }
 
@@ -9647,7 +9423,7 @@ fn build_recovery_prompt(
             let ty = env.event.get("type").and_then(Value::as_str);
             // Heartbeats and pane-activity signals are liveness pings, not
             // work; counting them inflates the "driver events recorded" figure
-            // on long quiet runs (and on every rmux run).
+            // on long quiet pane runs.
             if ty == Some("heartbeat") || ty == Some("pane_activity") {
                 continue;
             }
@@ -10296,13 +10072,7 @@ async fn post_run_recover(
         } else {
             None
         };
-        let kind = meta
-            .as_ref()
-            .map(|m| match m.kind {
-                RunKind::Worker => "worker".to_string(),
-                RunKind::Babysitter => "babysitter".to_string(),
-            })
-            .unwrap_or_else(|| "worker".to_string());
+        let kind = "worker".to_string();
         let spec = PendingRecoveryClaimSpec {
             project_id: project_id.clone(),
             origin_run_id: id.clone(),
@@ -10343,7 +10113,6 @@ async fn post_run_recover(
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 idle_timeout_secs: None,
-                babysitter_target: None,
                 cleanup_on_failure: false,
             },
         };
@@ -10877,7 +10646,6 @@ async fn execute_run_recover_action(
                         recovery_run_options.stall_timeout_secs,
                         recovery_run_options.max_run_duration_secs,
                         recovery_run_options.idle_timeout_secs,
-                        recovery_run_options.babysitter_target.clone(),
                     )
                     .await;
                 acquire
@@ -10894,11 +10662,9 @@ async fn execute_run_recover_action(
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config,
-                    babysitter_target: recovery_run_options.babysitter_target.clone(),
                     stall_timeout_secs: recovery_run_options.stall_timeout_secs,
                     max_run_duration_secs: recovery_run_options.max_run_duration_secs,
                     idle_timeout_secs: recovery_run_options.idle_timeout_secs,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity,
@@ -11233,8 +10999,8 @@ type RunMetaFields = (
 
 /// Extract a [`BootReattachCandidate`] from a bounded lifecycle scan of a
 /// session JSONL if the run is non-terminal and carries both an `Acquire` and a
-/// `RunMeta` lifecycle event. Returns `None` for terminal runs, babysitters
-/// (derived, not reattached), runs missing the metadata (pre-`RunMeta`
+/// `RunMeta` lifecycle event. Returns `None` for terminal runs, runs missing
+/// the metadata (pre-`RunMeta`
 /// sessions), and scans whose unread middle makes the answer unprovable.
 ///
 /// orgasmic:TASK-7QM8M — the input is a [`SessionLifecycleScan`], not whole-file
@@ -11417,9 +11183,8 @@ fn boot_reattach_candidate(
         driver_config,
     ) = meta?;
     let kind = match kind_str.as_str() {
-        // Babysitters watch another run; they are re-derived, not reattached.
-        "babysitter" => return None,
-        _ => RunKind::Worker,
+        "worker" | "implementer" => RunKind::Worker,
+        _ => return None,
     };
 
     Some(BootReattachCandidate {
@@ -12074,7 +11839,7 @@ async fn classify_session_files(
     }
     // Every external probe starts while its session is classified. Resolve all
     // of them against one deadline only after the durable scan is complete:
-    // one hanging handle cannot starve a later healthy tmux/rmux proof, and N
+    // one hanging handle cannot starve a later healthy tmux proof, and N
     // hanging handles still add at most one bounded wait to the endpoint.
     metrics.attach_probes_started = attach_probes.len() as u64;
     let attach_deadline = tokio::time::Instant::now() + RECOVERY_ATTACH_PROBE_BUDGET;
@@ -12501,14 +12266,13 @@ fn start_current_boot_attach_probe(
         worker_id: meta.worker_id,
         project_id: None,
         worktree: None,
-        babysitter_target: None,
     };
     let task = spawn_driver_attach_probe(driver, ctx, attach_limit.clone());
     AttachProbeStart::Pending { driver_id, task }
 }
 
 fn driver_supports_recovery_attach(driver_id: &str) -> bool {
-    driver_id == "tmux-tui" || driver_id.starts_with("tmux/") || driver_id.starts_with("rmux/")
+    driver_id == "tmux-tui" || driver_id.starts_with("tmux/")
 }
 
 fn spawn_driver_attach_probe(
@@ -13183,7 +12947,6 @@ fn run_kind_from_lifecycle(kind: &str) -> Option<RunKind> {
         // "implementer" is the pre-rename spelling still present in old
         // persisted session JSONLs.
         "worker" | "implementer" => Some(RunKind::Worker),
-        "babysitter" => Some(RunKind::Babysitter),
         _ => None,
     }
 }
@@ -18041,7 +17804,7 @@ async fn post_artifact_submit(
 
 /// After a successful `artifact submit`, finish the artifactor terminal for
 /// the exact run id carried from the atomic begin (TASK-ARZGD). Hot-session
-/// rmux runs stay live with the declaration already installed by commit;
+/// persistent tmux runs stay live with the declaration already installed by commit;
 /// one-shot transports release immediately with the tombstone.
 // orgasmic:TASK-S52X9,TASK-ARZGD
 async fn prepare_artifactor_submit_terminal(
@@ -18099,7 +17862,7 @@ async fn release_artifactor_run_after_submit(state: &ApiState, run_id: &str) {
         // Commit already resolved a deferred drain/cancel — nothing left.
         return;
     };
-    if run.driver == "rmux" {
+    if run.driver == "tmux" {
         // Hot-session: commit already installed the durable declaration.
         return;
     }
@@ -18678,8 +18441,8 @@ impl<'a> ArtifactLaunchCleanupGuard<'a> {
 /// artifactor worker, modeled on `post_manager_launch`'s direct
 /// `supervisor.acquire` pattern (synthetic task_id, `RunKind::Worker`, no
 /// task heading) but reusing `spawn_worker_run`'s shared plumbing so the run
-/// gets a real compiled-prompt bundle, session file, and (if configured)
-/// babysitter, exactly like a CLI dispatch.
+/// gets a real compiled-prompt bundle and session file, exactly like a CLI
+/// dispatch.
 ///
 /// A second generate/regenerate on the same artifact while one runs is
 /// refused by the lease itself (`spawn_worker_run` maps
@@ -18746,7 +18509,6 @@ async fn launch_artifact_generation(
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             task_sandbox_permissions: None,
-            dispatch_governance: governance.cloned(),
         },
     )
     .await
@@ -19781,13 +19543,14 @@ mod release_task_tracker_tests {
 // how a suite reports a tool present while its tests silently do not run it.
 pub(crate) mod tests {
     use super::*;
+    use std::process::Stdio;
     use std::time::Duration;
 
     use futures::{SinkExt as _, StreamExt as _};
     use orgasmic_drivers::{
-        modes::rmux::test_tooling::{
-            live_session_guard, rmux_session_names, shared_rmux_session_names,
-            skip_test_if_missing, test_environment_lock, LiveSessionGuard,
+        test_tooling::{
+            live_session_guard, skip_test_if_missing, test_environment_lock, tmux_session_names,
+            LiveSessionGuard,
         },
         HarnessEventAdapter,
     };
@@ -19984,7 +19747,6 @@ pub(crate) mod tests {
             harness: renderer.to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -20541,36 +20303,6 @@ pub(crate) mod tests {
             .trim()
             .to_string()
     }
-
-    async fn wait_for_run_not_live(
-        client: &reqwest::Client,
-        addr: &std::net::SocketAddr,
-        token: &str,
-        run_id: &str,
-    ) {
-        use std::time::Instant;
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while Instant::now() < deadline {
-            let recovery: serde_json::Value = client
-                .get(format!("http://{addr}/api/recovery/status"))
-                .bearer_auth(token)
-                .send()
-                .await
-                .expect("recovery status")
-                .json()
-                .await
-                .expect("recovery status json");
-            let still_live = recovery["live_runs"]
-                .as_array()
-                .is_some_and(|runs| runs.iter().any(|run| run["run_id"] == run_id));
-            if !still_live {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        panic!("run {run_id} still live after timeout");
-    }
-
     async fn connect_ws(addr: std::net::SocketAddr, token: &str, topic: &str) -> TestWs {
         let url = format!("ws://{addr}/api/ws?topic={topic}");
         let mut req = url.into_client_request().unwrap();
@@ -20684,7 +20416,7 @@ pub(crate) mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
-                    // orgasmic:task_K4G1D — the rmux arm completes an existing
+                    // orgasmic:task_K4G1D — the tmux arm completes an existing
                     // rule (derive the transport from the protocol) rather than
                     // adding a parallel seeding path beside it.
                     // orgasmic:task_3NJ9K — the non-mux arm seeded `stdio`,
@@ -20694,20 +20426,14 @@ pub(crate) mod tests {
                     // holding one.
                     transport: if protocol_version.starts_with("tmux") {
                         "tmux".into()
-                    } else if protocol_version.starts_with("rmux") {
-                        "rmux".into()
                     } else {
                         crate::driver_resolution::STUB_MODE.into()
                     },
-                    harness: Some(
-                        if protocol_version.starts_with("tmux")
-                            || protocol_version.starts_with("rmux")
-                        {
-                            "claude".into()
-                        } else {
-                            crate::driver_resolution::STUB_HARNESS.to_string()
-                        },
-                    ),
+                    harness: Some(if protocol_version.starts_with("tmux") {
+                        "claude".into()
+                    } else {
+                        crate::driver_resolution::STUB_HARNESS.to_string()
+                    }),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.to_path_buf()),
                     last_path: None,
@@ -21246,7 +20972,7 @@ pub(crate) mod tests {
                     "phase": "acquire",
                     "task_id": "TASK-ABSENT",
                     "kind": "worker",
-                    "worker_id": "implementer-claude-rmux",
+                    "worker_id": "implementer-claude-tmux",
                 }),
             },
             SessionEnvelope {
@@ -21258,7 +20984,7 @@ pub(crate) mod tests {
                 kind: SessionEventKind::Lifecycle,
                 event: json!({
                     "phase": "run_meta",
-                    "transport": "rmux",
+                    "transport": "tmux",
                     "harness": "claude",
                     "requires_worker_finalize": false,
                     "last_path": null,
@@ -21281,7 +21007,7 @@ pub(crate) mod tests {
                 kind: SessionEventKind::Lifecycle,
                 event: json!({
                     "phase": "run_meta",
-                    "transport": "rmux",
+                    "transport": "tmux",
                     "harness": "claude",
                     "role": "implementer",
                     "requires_worker_finalize": true,
@@ -21403,15 +21129,6 @@ pub(crate) mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: orgasmic_drivers::BabysitterRequest,
-        ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
-            Err(orgasmic_drivers::DriverError::Unsupported(
-                "babysitter_action",
-            ))
-        }
-
         async fn release(&mut self, _reason: &str) -> Result<(), orgasmic_drivers::DriverError> {
             Ok(())
         }
@@ -21505,11 +21222,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -21568,11 +21283,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -21651,11 +21364,9 @@ pub(crate) mod tests {
                         dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
-                        babysitter_target: None,
                         stall_timeout_secs: Some(0),
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
-                        babysitter: None,
                         applicable_states: Vec::new(),
                         max_iterations: None,
                         planned_identity: None,
@@ -21689,7 +21400,7 @@ pub(crate) mod tests {
                 Query(artifact_query("proj")),
                 Json(ArtifactRegenerateRequest {
                     extra_prompt: Some("must not overlap".into()),
-                    mode: Some("rmux".into()),
+                    mode: Some("tmux".into()),
                     harness: Some("claude".into()),
                     ..Default::default()
                 }),
@@ -21833,11 +21544,9 @@ pub(crate) mod tests {
                         dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
-                        babysitter_target: None,
                         stall_timeout_secs: Some(0),
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
-                        babysitter: None,
                         applicable_states: Vec::new(),
                         max_iterations: None,
                         planned_identity: None,
@@ -21896,11 +21605,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -21947,11 +21654,9 @@ pub(crate) mod tests {
                     session_path: project_sessions_dir(&project_root)
                         .join("claimed-terminal.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -22119,11 +21824,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: project_sessions_dir(&project_root).join("claim-blocker.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -22626,11 +22329,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -22806,11 +22507,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -22918,15 +22617,6 @@ pub(crate) mod tests {
             })
         }
 
-        async fn babysitter_action(
-            &mut self,
-            _req: orgasmic_drivers::BabysitterRequest,
-        ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
-            Err(orgasmic_drivers::DriverError::Unsupported(
-                "babysitter_action",
-            ))
-        }
-
         async fn send_input(
             &mut self,
             req: orgasmic_drivers::UserInputRequest,
@@ -22987,11 +22677,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path,
                     driver_config: orgasmic_drivers::adapters::cursor_acp::simulated_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -23076,11 +22764,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: home.sessions().join("unsupported-runtime.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -23150,7 +22836,7 @@ pub(crate) mod tests {
                     "phase": "acquire",
                     "task_id": "TASK-0SADP",
                     "kind": "worker",
-                    "worker_id": "implementer-claude-rmux"
+                    "worker_id": "implementer-claude-tmux"
                 }),
             )
             .unwrap();
@@ -23159,7 +22845,7 @@ pub(crate) mod tests {
                 SessionEventKind::Lifecycle,
                 json!({
                     "phase": "run_meta",
-                    "transport": "rmux",
+                    "transport": "tmux",
                     "harness": "claude",
                     "worktree": project_root,
                     "driver_config": {}
@@ -23233,7 +22919,7 @@ pub(crate) mod tests {
                 SessionEventKind::Lifecycle,
                 json!({
                     "phase": "run_meta",
-                    "transport": "rmux",
+                    "transport": "tmux",
                     "harness": "custom",
                     "worktree": project_root,
                     "driver_config": {}
@@ -23264,7 +22950,7 @@ pub(crate) mod tests {
                 AcquireRequest {
                     task_id: "TASK-REVIEW-RUN".into(),
                     kind: RunKind::Worker,
-                    worker_id: "reviewer-claude-rmux".into(),
+                    worker_id: "reviewer-claude-tmux".into(),
                     role: "reviewer".into(),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(home.source()),
@@ -23273,11 +22959,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: home.sessions().join("reviewer-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -23316,11 +23000,9 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-restart-guard.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
-                    babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -23456,7 +23138,7 @@ pub(crate) mod tests {
             serde_json::to_value(Lifecycle::Acquire {
                 task_id: task_id.into(),
                 kind: "worker".into(),
-                worker_id: "implementer-claude-rmux".into(),
+                worker_id: "implementer-claude-tmux".into(),
             })
             .unwrap(),
             &mut out,
@@ -23464,7 +23146,7 @@ pub(crate) mod tests {
         push(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
-                transport: "rmux".into(),
+                transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some(project_id.into()),
                 worktree: Some(worktree.to_path_buf()),
@@ -24339,7 +24021,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             report.reclaimable_by_driver.keys().collect::<Vec<_>>(),
-            vec!["rmux/claude"],
+            vec!["tmux/claude"],
             "accounting is reported by driver+harness"
         );
         assert!(report
@@ -24416,7 +24098,7 @@ pub(crate) mod tests {
         let meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
-                transport: "rmux".into(),
+                transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
@@ -24426,7 +24108,7 @@ pub(crate) mod tests {
                 role: None,
                 requires_worker_finalize: None,
                 credential_mode: None,
-                driver_config: json!({"system_wide": true}),
+                driver_config: json!({"persistent": true}),
             })
             .unwrap(),
         );
@@ -24449,9 +24131,9 @@ pub(crate) mod tests {
         .expect("candidate");
         assert_eq!(candidate.run_id, "run-reattach");
         assert_eq!(candidate.task_id, "manager.launch:orgasmic");
-        assert_eq!(candidate.transport, "rmux");
+        assert_eq!(candidate.transport, "tmux");
         assert_eq!(candidate.harness.as_deref(), Some("claude"));
-        assert_eq!(candidate.driver_config["system_wide"], json!(true));
+        assert_eq!(candidate.driver_config["persistent"], json!(true));
         // Pre-upgrade / non-dispatch RunMeta carries no artifact paths — boot
         // reattach must still succeed, just without a completion watcher.
         assert!(candidate.last_path.is_none());
@@ -24460,7 +24142,7 @@ pub(crate) mod tests {
         let invalid_argv_meta = env(
             SessionEventKind::Lifecycle,
             serde_json::to_value(Lifecycle::RunMeta {
-                transport: "rmux".into(),
+                transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
@@ -24524,7 +24206,7 @@ pub(crate) mod tests {
         let acquire = env(serde_json::to_value(Lifecycle::Acquire {
             task_id: "TASK-QRTT8".into(),
             kind: "implementer".into(),
-            worker_id: "implementer-claude-rmux".into(),
+            worker_id: "implementer-claude-tmux".into(),
         })
         .unwrap());
         let path = PathBuf::from("/tmp/run-qrtt8.jsonl");
@@ -24534,7 +24216,7 @@ pub(crate) mod tests {
         // reattach: the mode is recorded evidence, not an input to `reattach`.
         for credential_mode in [None, Some("native_login"), Some("bare_api_key")] {
             let meta = env(serde_json::to_value(Lifecycle::RunMeta {
-                transport: "rmux".into(),
+                transport: "tmux".into(),
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
@@ -24544,7 +24226,7 @@ pub(crate) mod tests {
                 role: Some("implementer".into()),
                 requires_worker_finalize: Some(true),
                 credential_mode: credential_mode.map(str::to_string),
-                driver_config: json!({"system_wide": true}),
+                driver_config: json!({"persistent": true}),
             })
             .unwrap());
             let candidate = boot_reattach_candidate_from_scan(
@@ -24561,11 +24243,11 @@ pub(crate) mod tests {
             // The reattach material survives intact, not just the `Some`.
             assert_eq!(candidate.run_id, "run-qrtt8");
             assert_eq!(candidate.task_id, "TASK-QRTT8");
-            assert_eq!(candidate.transport, "rmux");
+            assert_eq!(candidate.transport, "tmux");
             assert_eq!(candidate.harness.as_deref(), Some("claude"));
             assert_eq!(candidate.role.as_deref(), Some("implementer"));
             assert_eq!(candidate.requires_worker_finalize, Some(true));
-            assert_eq!(candidate.driver_config["system_wide"], json!(true));
+            assert_eq!(candidate.driver_config["persistent"], json!(true));
         }
     }
 
@@ -24573,7 +24255,7 @@ pub(crate) mod tests {
     /// that never reached `Supervisor::reattach` before. The class that exists
     /// in production TODAY is `stdio`/`claude` — the one path that writes
     /// `credential_mode: Some(_)` (the mux drivers all write `None`; see
-    /// `modes/tmux.rs` and `modes/rmux.rs`). Its runtime is a child of the
+    /// `modes/tmux.rs`). Its runtime is a child of the
     /// daemon process, so after a restart there is nothing to attach to.
     ///
     /// This asserts the newly-reachable path declines SAFELY: the candidate is
@@ -24774,7 +24456,6 @@ pub(crate) mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 idle_timeout_secs: None,
-                babysitter_target: None,
                 cleanup_on_failure: false,
             },
         };
@@ -25129,7 +24810,7 @@ pub(crate) mod tests {
                 role: Some("terminal".into()),
                 requires_worker_finalize: Some(false),
                 credential_mode: None,
-                driver_config: json!({"system_wide": true}),
+                driver_config: json!({"persistent": true}),
             })
             .unwrap(),
             &mut out,
@@ -25205,7 +24886,7 @@ pub(crate) mod tests {
                 boot_id: "boot-old".into(),
             },
             "manager.launch:proj",
-            "rmux",
+            "tmux",
             1024 * 1024,
             false,
         );
@@ -25344,7 +25025,7 @@ pub(crate) mod tests {
                 boot_id: "boot-old".into(),
             },
             "manager.launch:proj",
-            "rmux",
+            "tmux",
             4 * 1024 * 1024,
             false,
         );
@@ -25369,7 +25050,7 @@ pub(crate) mod tests {
                  the end of the file",
             );
         assert_eq!(candidate.runtime_id, "rt-live-app");
-        assert_eq!(candidate.transport, "rmux");
+        assert_eq!(candidate.transport, "tmux");
         assert_eq!(candidate.task_id, "manager.launch:proj");
         assert_eq!(
             candidates.len(),
@@ -25405,7 +25086,7 @@ pub(crate) mod tests {
             &path,
             &identity,
             "manager.launch:proj",
-            "rmux",
+            "tmux",
             1024 * 1024,
             false,
         );
@@ -25423,7 +25104,7 @@ pub(crate) mod tests {
             &path,
             &identity,
             "manager.launch:proj",
-            "rmux",
+            "tmux",
             1024 * 1024,
             false,
         );
@@ -25518,7 +25199,7 @@ pub(crate) mod tests {
                     boot_id: "boot-old".into(),
                 },
                 &format!("TASK-M{index:04}"),
-                "rmux",
+                "tmux",
                 32 * 1024,
                 index + 1 < SMALL_SESSIONS,
             );
@@ -25530,7 +25211,7 @@ pub(crate) mod tests {
                 runtime_id: format!("rt-huge-{index}"),
                 boot_id: "boot-old".into(),
             };
-            append_bulky_run_segment(&path, &identity, "manager.launch:proj", "rmux", 0, false);
+            append_bulky_run_segment(&path, &identity, "manager.launch:proj", "tmux", 0, false);
             let block = transcript_block(&identity);
             let mut file = std::fs::OpenOptions::new()
                 .append(true)
@@ -25601,317 +25282,6 @@ pub(crate) mod tests {
             "boot reattach must inspect a small fraction of transcript bytes"
         );
     }
-
-    // orgasmic:TASK-AK6EM
-    // ---------------------------------------------------------------------
-    // Each of the three reattach shapes reaches `Supervisor::reattach` with
-    // the worktree it wants to occupy, so each is fenced by a held close
-    // guard. `Supervisor::reattach` is the one door (see `admission`), and
-    // these tests are what proves each call site actually walks through it.
-    // ---------------------------------------------------------------------
-
-    /// Writes an interrupted, genuinely reattachable run over `worktree` and
-    /// starts the `mode` session that makes it live.
-    // orgasmic:task_JGHNC — parameterized over the multiplexer per K4G1D. The
-    // fencing these fixtures feed is a property of the close guard, not of a
-    // multiplexer, and a fixture that can only be built from tmux takes the
-    // whole shape out of every worker-run suite.
-    fn seed_live_interrupted_run(
-        mode: MuxMode,
-        live: &orgasmic_drivers::modes::rmux::test_tooling::LiveSessionGuard,
-        project_root: &FsPath,
-        worktree: &FsPath,
-        task_id: &str,
-    ) -> (RuntimeIdentity, MuxSessionGuard, PathBuf) {
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let identity = RuntimeIdentity {
-            run_id: format!("run-fence-{}-{suffix}", mode.id()),
-            runtime_id: format!("rt-{suffix}"),
-            boot_id: "boot-before-restart".into(),
-        };
-        let session_name = mode.session_name(&identity);
-        let guard = mode.start_detached_session(&session_name, live);
-
-        let session_path =
-            project_sessions_dir(project_root).join(format!("{}.jsonl", identity.run_id));
-        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
-        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
-            .expect("open session writer");
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::Acquire {
-                    task_id: task_id.into(),
-                    kind: "implementer".into(),
-                    worker_id: "implementer-claude-rmux".into(),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::RunMeta {
-                    transport: mode.id().into(),
-                    harness: Some("claude".into()),
-                    project_id: Some("orgasmic".into()),
-                    worktree: Some(worktree.to_path_buf()),
-                    last_path: None,
-                    stdout_path: None,
-                    dispatch_attempt_token: None,
-                    role: Some("implementer".into()),
-                    requires_worker_finalize: Some(true),
-                    credential_mode: None,
-                    driver_config: json!({}),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::DriverEvent,
-                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
-                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
-                // writer now REFUSES a pane `text_chunk` outright. This fixture
-                // used to persist one, which is a shape neither the real drivers
-                // nor the writer can produce; it models the real one instead.
-                serde_json::to_value(DriverEvent::PaneActivity {
-                    seq: 0,
-                    bytes: "## Report\nfenced reattach fixture".len() as u64,
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        drop(writer);
-        (identity, guard, session_path)
-    }
-
-    fn close_guard_params(task_id: &str, worktree: &FsPath) -> DispatchCloseGuardParams {
-        DispatchCloseGuardParams {
-            project_id: "orgasmic".into(),
-            task_id: task_id.into(),
-            kind: RunKind::Worker,
-            branch: "task-fence-impl".into(),
-            worktree_path: worktree.to_path_buf(),
-            dispatch_attempt_token: None,
-            last_path: None,
-            stdout_path: None,
-            // This process is the holder, and it is alive for the whole test.
-            owner_pid: Some(std::process::id()),
-            releasing_run_id: None,
-            owned_run_ids: Vec::new(),
-        }
-    }
-
-    async fn reserve_guard(state: &ApiState, task_id: &str, worktree: &FsPath) -> String {
-        match state
-            .supervisor
-            .reserve_dispatch_close(&close_guard_params(task_id, worktree))
-            .await
-        {
-            DispatchCloseGuardOutcome::Reserved { guard_id, .. } => guard_id,
-            other => panic!("close guard must be reserved for this fixture: {other:?}"),
-        }
-    }
-
-    /// Shape 3 of 3: boot rehydration.
-    ///
-    /// Injection: remove the reservation check from `Inner::admit_live_run` (or
-    /// stop passing `worktree` from `Supervisor::reattach`) and the run below is
-    /// rehydrated into a worktree a destructive close is holding.
-    // orgasmic:task_JGHNC
-    async fn assert_boot_rehydration_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        let worktree = tmp.path().join("worktrees/task-boot-fence");
-        std::fs::create_dir_all(&worktree).unwrap();
-        seed_project(&home, &project_root, "orgasmic");
-        let (identity, _mux, _session_path) = seed_live_interrupted_run(
-            mode,
-            &live_guard,
-            &project_root,
-            &worktree,
-            "TASK-BOOT-FENCE",
-        );
-
-        let state = direct_stage_test_state(home).await;
-        let guard_id = reserve_guard(&state, "TASK-BOOT-FENCE", &worktree).await;
-
-        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
-        assert!(
-            !state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == identity.run_id),
-            "{test_name}: boot rehydration must not admit a run into a worktree \
-             a close guard holds [{}]",
-            mode.diagnostic()
-        );
-
-        // The fixture really is reattachable — without the guard the very same
-        // boot rehydration installs it.
-        state.supervisor.finish_dispatch_close(&guard_id).await;
-        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
-        assert!(
-            state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == identity.run_id),
-            "{test_name}: the fixture must rehydrate once the guard is released, \
-             or the test above proves nothing [{}]",
-            mode.diagnostic()
-        );
-        let _ = state
-            .supervisor
-            .release(
-                &identity.run_id,
-                "test cleanup",
-                orgasmic_core::ReleaseOutcome::Completed,
-            )
-            .await;
-    }
-
-    #[tokio::test]
-    async fn boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        assert_boot_rehydration_is_fenced_by_a_close_guard(
-            MuxMode::Tmux,
-            "boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds",
-        )
-        .await;
-    }
-
-    // orgasmic:task_JGHNC
-    #[tokio::test]
-    async fn boot_rehydration_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        assert_boot_rehydration_is_fenced_by_a_close_guard(
-            MuxMode::Rmux,
-            "boot_rehydration_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
-        )
-        .await;
-    }
-
-    /// Shape 1 of 3: the explicit `reattach_tmux` recovery action — a legacy
-    /// action id that covers both multiplexers, which is why this shape is run
-    /// through both (orgasmic:task_JGHNC).
-    async fn assert_explicit_reattach_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        // A real dispatch worktree is a checkout of the project, and
-        // `RecoveredRun.worktree` is only exposed for one whose own
-        // `.orgasmic/project.org` names the same project.
-        let worktree = tmp.path().join("worktrees/task-explicit-fence");
-        std::fs::create_dir_all(worktree.join(".orgasmic")).unwrap();
-        seed_project(&home, &project_root, "orgasmic");
-        write(
-            worktree.join(".orgasmic/project.org"),
-            "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
-        );
-        let (identity, _mux, _session_path) = seed_live_interrupted_run(
-            mode,
-            &live_guard,
-            &project_root,
-            &worktree,
-            "TASK-EXPLICIT-FENCE",
-        );
-
-        let state = direct_stage_test_state(home).await;
-        let guard_id = reserve_guard(&state, "TASK-EXPLICIT-FENCE", &worktree).await;
-
-        let request = RunRecoverRequest {
-            action: Some("reattach_tmux".into()),
-            project: Some("orgasmic".into()),
-            request_id: Some("req-explicit-fence".into()),
-            force_inert: None,
-            mode: None,
-            harness: None,
-        };
-        let refused = post_run_recover(
-            State(state.clone()),
-            Path(identity.run_id.clone()),
-            Json(request),
-        )
-        .await
-        .expect_err("reattach_tmux must be refused while a close guard holds the worktree");
-        assert!(
-            refused.message.contains("cleanup"),
-            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
-            refused.message,
-            mode.diagnostic()
-        );
-        assert!(
-            state.supervisor.snapshot().await.runs.is_empty(),
-            "{test_name}: a refused reattach must leave no live run behind [{}]",
-            mode.diagnostic()
-        );
-
-        state.supervisor.finish_dispatch_close(&guard_id).await;
-        let admitted = post_run_recover(
-            State(state.clone()),
-            Path(identity.run_id.clone()),
-            Json(RunRecoverRequest {
-                action: Some("reattach_tmux".into()),
-                project: Some("orgasmic".into()),
-                request_id: Some("req-explicit-fence-2".into()),
-                force_inert: None,
-                mode: None,
-                harness: None,
-            }),
-        )
-        .await
-        .expect("the same action is admitted once the guard is released");
-        assert_eq!(
-            admitted.run_id,
-            identity.run_id,
-            "{test_name} [{}]",
-            mode.diagnostic()
-        );
-        let _ = state
-            .supervisor
-            .release(
-                &identity.run_id,
-                "test cleanup",
-                orgasmic_core::ReleaseOutcome::Completed,
-            )
-            .await;
-    }
-
-    #[tokio::test]
-    async fn explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        assert_explicit_reattach_is_fenced_by_a_close_guard(
-            MuxMode::Tmux,
-            "explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
-        )
-        .await;
-    }
-
-    // orgasmic:task_JGHNC
-    #[tokio::test]
-    async fn explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        assert_explicit_reattach_is_fenced_by_a_close_guard(
-            MuxMode::Rmux,
-            "explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
-        )
-        .await;
-    }
-
     /// TASK-95SGV.1 reviewer gap 2: the ordinary dispatch acquire path used to
     /// collapse `CleanupInProgress` into a generic 500 alongside every other
     /// acquire error, hiding the guard id, owner pid and owner liveness the
@@ -26057,7 +25427,6 @@ pub(crate) mod tests {
             harness: stub_harness.into(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -26083,7 +25452,6 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
-                dispatch_governance: None,
             },
         )
         .await
@@ -26183,7 +25551,6 @@ pub(crate) mod tests {
             harness: "hermes".into(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -26209,7 +25576,6 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
-                dispatch_governance: None,
             },
         )
         .await;
@@ -26324,13 +25690,11 @@ pub(crate) mod tests {
                     dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
-                    babysitter_target: None,
                     // Every sweep off: the incident's run was invisible to all
                     // of them, and the point is that a *manager* can end it.
                     stall_timeout_secs: Some(0),
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: Some(0),
-                    babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
                     planned_identity: None,
@@ -26622,525 +25986,6 @@ pub(crate) mod tests {
         assert_eq!(abandon_error.status, StatusCode::NOT_FOUND);
         assert!(abandon_error.message.contains("is not live"));
     }
-
-    /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the
-    /// one that can install a *replacement* id the close's record does not
-    /// name, which is why fencing by worktree rather than by id is the point.
-    async fn assert_pending_plan_reattach_existing_is_fenced(mode: MuxMode, test_name: &str) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        let worktree = tmp.path().join("worktrees/task-pending-fence");
-        std::fs::create_dir_all(&worktree).unwrap();
-        seed_project(&home, &project_root, "orgasmic");
-        let origin_path = write_failed_recoverable_session(
-            &project_root,
-            "run-pending-fence-origin",
-            "protocol_end_without_finalize",
-            false,
-        );
-        let replacement_path =
-            project_sessions_dir(&project_root).join("recover-pending-fence.jsonl");
-
-        let spec = PendingRecoveryClaimSpec {
-            project_id: "orgasmic".into(),
-            origin_run_id: "run-pending-fence-origin".into(),
-            request_id: "req-pending-fence".into(),
-            origin_session_path: origin_path,
-            replacement_session_path: replacement_path,
-            boot_id: "boot-pending-fence".into(),
-            action: "start_recovery_run".into(),
-            target: "worker".into(),
-            draft_prompt: Some("pending fence draft".into()),
-            force_inert: true,
-            task_id: "TASK-PENDING-FENCE".into(),
-            kind: "worker".into(),
-            worker_id: "implementer-claude-stream-json".into(),
-            role: "implementer".into(),
-            requires_worker_finalize: true,
-            transport: mode.id().into(),
-            harness: Some("claude".into()),
-            driver_config: json!({"force_inert": true, "harness": "claude"}),
-            worktree: Some(worktree.clone()),
-            last_path: None,
-            stdout_path: None,
-            planned_native_runtime: None,
-            run_options: RecoveryRunOptions {
-                stall_timeout_secs: None,
-                max_run_duration_secs: None,
-                idle_timeout_secs: None,
-                babysitter_target: None,
-                cleanup_on_failure: false,
-            },
-        };
-        let plan = plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
-        // The planned replacement's mux session is alive: this is the crash
-        // replay that reattaches an *existing* runtime rather than spawning.
-        let planned_session = mode.session_name(&plan.planned_identity);
-        let _planned_guard = mode.start_detached_session(&planned_session, &live_guard);
-
-        let state = direct_stage_test_state(home).await;
-        let _guard_id = reserve_guard(&state, "TASK-PENDING-FENCE", &worktree).await;
-
-        let refused = post_run_recover(
-            State(state.clone()),
-            Path("run-pending-fence-origin".to_string()),
-            Json(RunRecoverRequest {
-                action: Some("start_recovery_run".into()),
-                project: Some("orgasmic".into()),
-                request_id: Some("req-pending-fence".into()),
-                force_inert: Some(true),
-                mode: None,
-                harness: None,
-            }),
-        )
-        .await
-        .expect_err("a crash-replay reattach must not enter a guarded worktree");
-        assert!(
-            refused.message.contains("cleanup"),
-            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
-            refused.message,
-            mode.diagnostic()
-        );
-        assert!(
-            state.supervisor.snapshot().await.runs.is_empty(),
-            "{test_name}: a refused crash replay must leave no live replacement \
-             behind [{}]",
-            mode.diagnostic()
-        );
-    }
-
-    #[tokio::test]
-    async fn pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree() {
-        assert_pending_plan_reattach_existing_is_fenced(
-            MuxMode::Tmux,
-            "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
-        )
-        .await;
-    }
-
-    // orgasmic:task_JGHNC
-    #[tokio::test]
-    async fn pending_plan_reattach_existing_rmux_is_fenced_out_of_a_guarded_worktree() {
-        assert_pending_plan_reattach_existing_is_fenced(
-            MuxMode::Rmux,
-            "pending_plan_reattach_existing_rmux_is_fenced_out_of_a_guarded_worktree",
-        )
-        .await;
-    }
-
-    /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
-    /// on boot reattach. Without worker finalize, the watcher must not
-    /// synthesize completion artifacts from session scrollback. Drives the real
-    /// `reattach_live_runs_on_boot` path against a genuinely live tmux session
-    /// — simulating the restart with a second, independent
-    /// `ApiState`/`Supervisor` that never acquired the run itself — then
-    /// releases the run and asserts no artifact is synthesized.
-    async fn assert_boot_reattach_respawns_completion_watcher(mode: MuxMode, test_name: &str) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
-
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let identity = RuntimeIdentity {
-            run_id: format!("run-reattach-watcher-{}-{suffix}", mode.id()),
-            runtime_id: format!("rt-{suffix}"),
-            boot_id: "boot-before-restart".into(),
-        };
-        let session_name = mode.session_name(&identity);
-        let _guard = mode.start_detached_session(&session_name, &live_guard);
-
-        let session_path =
-            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
-        let last_path = tmp.path().join("last.txt");
-        let stdout_path = tmp.path().join("stdout.log");
-        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
-            .expect("open session writer");
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::Acquire {
-                    task_id: "TASK-567JG-REATTACH".into(),
-                    kind: "implementer".into(),
-                    worker_id: "implementer-claude-rmux".into(),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::RunMeta {
-                    transport: mode.id().into(),
-                    harness: Some("claude".into()),
-                    project_id: Some("orgasmic".into()),
-                    worktree: Some(project_root.clone()),
-                    last_path: Some(last_path.clone()),
-                    stdout_path: Some(stdout_path.clone()),
-                    dispatch_attempt_token: None,
-                    role: Some("implementer".into()),
-                    requires_worker_finalize: Some(true),
-                    credential_mode: None,
-                    driver_config: json!({}),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::DriverEvent,
-                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
-                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
-                // writer now REFUSES a pane `text_chunk` outright. This fixture
-                // used to persist one, which is a shape neither the real drivers
-                // nor the writer can produce; it models the real one instead.
-                serde_json::to_value(DriverEvent::PaneActivity {
-                    seq: 0,
-                    bytes: "## Report\nboot reattach watcher smoke".len() as u64,
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        drop(writer);
-
-        // A fresh Supervisor/ApiState never acquired this run — standing in
-        // for the post-restart daemon boot.
-        seed_project(&home, &project_root, "orgasmic");
-        let state = direct_stage_test_state(home).await;
-        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
-        assert!(
-            state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == identity.run_id),
-            "{test_name}: run should be rehydrated into the post-restart \
-             supervisor [{}]",
-            mode.diagnostic()
-        );
-
-        state
-            .supervisor
-            .release(
-                &identity.run_id,
-                "test cleanup",
-                orgasmic_core::ReleaseOutcome::Completed,
-            )
-            .await
-            .expect("release reattached run");
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        assert!(
-            !last_path.exists(),
-            "{test_name}: release without worker finalize must not synthesize \
-             last.txt via the respawned watcher [{}]",
-            mode.diagnostic()
-        );
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
-        assert_boot_reattach_respawns_completion_watcher(
-            MuxMode::Tmux,
-            "boot_reattach_respawns_dispatch_completion_watcher_without_artifacts",
-        )
-        .await;
-    }
-
-    // orgasmic:task_JGHNC
-    #[tokio::test]
-    async fn boot_reattach_rmux_respawns_dispatch_completion_watcher_without_artifacts() {
-        assert_boot_reattach_respawns_completion_watcher(
-            MuxMode::Rmux,
-            "boot_reattach_rmux_respawns_dispatch_completion_watcher_without_artifacts",
-        )
-        .await;
-    }
-
-    /// Every tx this test could possibly care about, from both ledgers a
-    /// recorded tx can land in (the home ledger and the project's own), so the
-    /// assertion never passes or fails on ledger routing.
-    fn all_recorded_tx_text(home: &Home, project_root: &FsPath) -> String {
-        let mut text = String::new();
-        for dir in [home.tx(), project_root.join(".orgasmic").join("tx")] {
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                if let Ok(body) = std::fs::read_to_string(entry.path()) {
-                    text.push_str(&body);
-                }
-            }
-        }
-        text
-    }
-
-    /// TASK-KPMFK: a live STAGE must keep its completion watcher across a
-    /// daemon restart.
-    ///
-    /// `post_stage` holds `stage`/`target` and completion ownership ONLY in the
-    /// in-process `StageCompletion` task, which dies with the daemon process.
-    /// Boot reattach respawns only `DispatchCompletion`, and only when both
-    /// `last_path` and `stdout_path` were persisted. A stage run carries
-    /// `last_path: Some` and `stdout_path: None` (`post_stage`), so it lands in
-    /// the partial-artifact warning branch and no stage watcher is recreated:
-    /// a later worker finalize is persisted but no `<stage>.completed` or
-    /// `<stage>.failed` tx is ever emitted, and `stage_outcome_from_session` is
-    /// never called at all.
-    ///
-    /// Drives the real `reattach_live_runs_on_boot` path against a genuinely
-    /// live mux session, with a second, independent `ApiState`/`Supervisor`
-    /// standing in for the post-restart daemon boot — then finalizes the run
-    /// the way its worker would and REQUIRES the terminal tx.
-    ///
-    /// The stage identity is read from the session JSONL as raw JSON on
-    /// purpose: this test states the durable on-disk contract boot recovery
-    /// must honour, and stays readable by a daemon that predates the typed
-    /// event.
-    ///
-    /// `credential_mode` is the run's persisted credential mode (TASK-QRTT8).
-    /// It is inert to everything this helper drives — but only once
-    /// `boot_reattach_candidate` binds the field instead of matching it
-    /// against `None`. Before that fix a `Some(_)` here dropped the run before
-    /// it was ever a candidate, so the stage watcher KPMFK respawns was
-    /// unreachable for the whole class.
-    async fn assert_boot_reattach_respawns_stage_completion_watcher(
-        mode: MuxMode,
-        stage: &str,
-        role: &str,
-        credential_mode: Option<&str>,
-        test_name: &str,
-    ) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
-
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let identity = RuntimeIdentity {
-            run_id: format!("run-kpmfk-{stage}-{}-{suffix}", mode.id()),
-            runtime_id: format!("rt-{suffix}"),
-            boot_id: "boot-before-restart".into(),
-        };
-        let session_name = mode.session_name(&identity);
-        let _guard = mode.start_detached_session(&session_name, &live_guard);
-
-        let session_path =
-            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
-        // The exact shape `post_stage` persists: a stage last_path under
-        // `.orgasmic/tmp/stage/`, and NEVER a stdout_path.
-        let last_path = project_root
-            .join(".orgasmic")
-            .join("tmp")
-            .join("stage")
-            .join(format!("{stage}-20260729T000000-last.txt"));
-        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
-            .expect("open session writer");
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::Acquire {
-                    task_id: "TASK-KPMFK-STAGE".into(),
-                    kind: "worker".into(),
-                    worker_id: format!("{role}-codex-rmux"),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                serde_json::to_value(Lifecycle::RunMeta {
-                    transport: mode.id().into(),
-                    harness: Some("claude".into()),
-                    project_id: Some("orgasmic".into()),
-                    worktree: Some(project_root.clone()),
-                    last_path: Some(last_path.clone()),
-                    stdout_path: None,
-                    dispatch_attempt_token: None,
-                    role: Some(role.into()),
-                    requires_worker_finalize: Some(true),
-                    credential_mode: credential_mode.map(str::to_string),
-                    driver_config: json!({}),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-        writer
-            .append(
-                SessionEventKind::Lifecycle,
-                json!({ "phase": "stage_meta", "stage": stage }),
-            )
-            .unwrap();
-        drop(writer);
-
-        // A fresh Supervisor/ApiState never acquired this run — standing in
-        // for the post-restart daemon boot.
-        let state = direct_stage_test_state(home.clone()).await;
-        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
-        assert!(
-            state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == identity.run_id),
-            "{test_name}: stage run should be rehydrated into the post-restart \
-             supervisor [{}]",
-            mode.diagnostic()
-        );
-
-        // What `orgasmic dispatch finalize` does on the stage path: an
-        // authoritative worker-declared release.
-        state
-            .supervisor
-            .release_with_finalization(
-                &identity.run_id,
-                "worker finalize for TASK-KPMFK-STAGE",
-                orgasmic_core::ReleaseOutcome::Completed,
-                true,
-                None,
-            )
-            .await
-            .expect("worker finalize release of the reattached stage run");
-
-        let completed_tx = format!("{stage}.completed");
-        let failed_tx = format!("{stage}.failed");
-        let deadline = std::time::Instant::now() + Duration::from_secs(20);
-        while std::time::Instant::now() < deadline {
-            let ledger = all_recorded_tx_text(&home, &project_root);
-            if ledger.contains(&completed_tx) || ledger.contains(&failed_tx) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        state.writer.shutdown().await;
-
-        let ledger = all_recorded_tx_text(&home, &project_root);
-        assert!(
-            ledger.contains(&completed_tx),
-            "{test_name}: a {stage} stage that is live across a daemon restart \
-             must still emit its terminal tx ({completed_tx}) once its worker \
-             finalizes [{}]; ledger:\n{ledger}",
-            mode.diagnostic()
-        );
-        assert!(
-            !ledger.contains(&failed_tx),
-            "{test_name}: a worker-finalized {stage} stage must not be recorded \
-             as {failed_tx} [{}]; ledger:\n{ledger}",
-            mode.diagnostic()
-        );
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_respawns_grill_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Tmux,
-            "grill",
-            "griller",
-            None,
-            "boot_reattach_respawns_grill_stage_completion_watcher",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_respawns_plan_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Tmux,
-            "plan",
-            "planner",
-            None,
-            "boot_reattach_respawns_plan_stage_completion_watcher",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_rmux_respawns_grill_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Rmux,
-            "grill",
-            "griller",
-            None,
-            "boot_reattach_rmux_respawns_grill_stage_completion_watcher",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn boot_reattach_rmux_respawns_plan_stage_completion_watcher() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Rmux,
-            "plan",
-            "planner",
-            None,
-            "boot_reattach_rmux_respawns_plan_stage_completion_watcher",
-        )
-        .await;
-    }
-
-    /// TASK-QRTT8 × TASK-KPMFK: the stage-watcher respawn is only as reachable
-    /// as `boot_reattach_candidate`. A stage run whose `RunMeta` carries a
-    /// resolved `credential_mode` was dropped by the refutable pattern before
-    /// any of KPMFK's work could run — same session, same live mux, same
-    /// worker finalize, and no terminal tx ever, because the run was not a
-    /// candidate at all.
-    ///
-    /// Identical to the `grill` case above in every respect but the one field.
-    /// Nothing on this path reads the mode; the assertion is that the mode's
-    /// mere presence no longer decides whether the run exists to boot
-    /// recovery. That is what makes this a regression test for the pattern
-    /// shape rather than for any credential behaviour.
-    #[tokio::test]
-    async fn boot_reattach_rmux_respawns_stage_watcher_for_a_credential_resolving_run() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Rmux,
-            "grill",
-            "griller",
-            Some("native_login"),
-            "boot_reattach_rmux_respawns_stage_watcher_for_a_credential_resolving_run",
-        )
-        .await;
-    }
-
-    /// The tmux twin of the case above. Skips inside an orgasmic worker, where
-    /// `tmux` on PATH is a symlink to `rmux` (`MuxMode::availability`).
-    #[tokio::test]
-    async fn boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run() {
-        assert_boot_reattach_respawns_stage_completion_watcher(
-            MuxMode::Tmux,
-            "grill",
-            "griller",
-            Some("bare_api_key"),
-            "boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run",
-        )
-        .await;
-    }
-
     /// TASK-KPMFK, production half: the stage identity boot recovery needs must
     /// actually be on disk after a REAL `POST /api/grill`. Without this, the
     /// recovery tests above would prove only that a hand-written session is
@@ -27235,7 +26080,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn external_manager_lease_is_free_after_restart_shaped_recovery() {
         // Daemon restart wipes the in-memory supervisor; an external
-        // registration has no `attach()` support (unlike tmux/rmux managers),
+        // registration has no `attach()` support (unlike tmux managers),
         // so boot reattach must skip it rather than resurrect the lease —
         // re-registration is the only recovery path (dec_3Y2E1).
         let tmp = tempfile::tempdir().unwrap();
@@ -27921,7 +26766,7 @@ pub(crate) mod tests {
                 serde_json::to_value(Lifecycle::Acquire {
                     task_id: "TASK-ORPHAN".into(),
                     kind: "implementer".into(),
-                    worker_id: "implementer-claude-rmux".into(),
+                    worker_id: "implementer-claude-tmux".into(),
                 })
                 .unwrap(),
             )
@@ -28367,7 +27212,7 @@ pub(crate) mod tests {
                 SessionEventKind::DriverEvent,
                 serde_json::to_value(DriverEvent::DriverError {
                     fatal: true,
-                    message: "rmux pane exited by signal 15; equivalent shell exit code 143".into(),
+                    message: "tmux pane exited by signal 15; equivalent shell exit code 143".into(),
                 })
                 .unwrap(),
             )
@@ -28552,7 +27397,7 @@ pub(crate) mod tests {
         let err = resolve_addressed_stage_worker(
             &home,
             WorkerKind::Implementer,
-            "tmux",
+            "stdio",
             "custom",
             Vec::new(),
             &DispatchGovernanceOverlay::default(),
@@ -28572,7 +27417,7 @@ pub(crate) mod tests {
         let worker = resolve_addressed_stage_worker(
             &home,
             WorkerKind::Implementer,
-            "rmux",
+            "tmux",
             "custom",
             args.clone(),
             &DispatchGovernanceOverlay::default(),
@@ -28625,38 +27470,6 @@ pub(crate) mod tests {
         assert!(err
             .message
             .contains("harness_args are only valid for custom harness"));
-    }
-
-    #[test]
-    fn addressed_kinds_resolve_without_worker_templates() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let overlay = DispatchGovernanceOverlay::default();
-        for kind in [
-            WorkerKind::Implementer,
-            WorkerKind::Reviewer,
-            WorkerKind::Griller,
-            WorkerKind::Planner,
-            WorkerKind::Artifactor,
-            WorkerKind::Babysitter,
-        ] {
-            resolve_addressed_stage_worker(
-                &home,
-                kind,
-                "stdio",
-                "codex",
-                Vec::new(),
-                &overlay,
-                None,
-            )
-            .unwrap_or_else(|err| {
-                panic!(
-                    "{kind:?} should resolve without worker templates: {}",
-                    err.message
-                )
-            });
-        }
     }
 
     #[test]
@@ -28758,35 +27571,6 @@ pub(crate) mod tests {
         assert!(contract.requires_worker_finalize);
     }
 
-    #[tokio::test]
-    async fn manager_launch_rejects_harness_args_on_builtin_harness() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "proj-manager");
-        let state = direct_stage_test_state(home).await;
-
-        let err = post_manager_launch(
-            State(state),
-            Json(ManagerLaunchRequest {
-                project_id: "proj-manager".into(),
-                mode: "rmux".into(),
-                harness: "claude".into(),
-                model: None,
-                effort: None,
-                harness_args: vec!["--smuggle".into()],
-                system_wide: false,
-            }),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        assert!(err
-            .message
-            .contains("harness_args are only valid for custom harness"));
-    }
-
     #[test]
     fn dispatch_tx_preserves_verbatim_model_and_effort_bytes() {
         let model = "  Composer-2.5-FAST  ".to_string();
@@ -28827,7 +27611,6 @@ pub(crate) mod tests {
             harness: crate::driver_resolution::STUB_HARNESS.to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -28859,7 +27642,6 @@ pub(crate) mod tests {
                 origin: "cli_dispatch",
                 dispatch_kind: Some("implementer"),
                 task_sandbox_permissions: None,
-                dispatch_governance: None,
             },
         )
         .await
@@ -28900,7 +27682,6 @@ pub(crate) mod tests {
             harness: "claude".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -28968,7 +27749,6 @@ pub(crate) mod tests {
             harness: "cursor-agent".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -29045,7 +27825,6 @@ pub(crate) mod tests {
             worker_id: "implementer-cursor-agent-subprocess-stream-json".into(),
             project_id: Some("proj".into()),
             worktree: Some(PathBuf::from("/tmp/worktree")),
-            babysitter_target: None,
         };
         let config = DriverConfig::from_value(json!({
             "model": "  Composer-2.5-FAST  ",
@@ -29233,7 +28012,6 @@ pub(crate) mod tests {
             harness: "codex".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -29270,7 +28048,6 @@ pub(crate) mod tests {
             harness: "cursor-agent".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -29319,7 +28096,6 @@ pub(crate) mod tests {
             harness: "hermes".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -29405,7 +28181,6 @@ pub(crate) mod tests {
             harness: "codex".to_string(),
             linked_skills: Vec::new(),
             missing_skills: Vec::new(),
-            babysitter: None,
             max_iterations: None,
             context_budget_chars: None,
             applicable_states: Vec::new(),
@@ -29517,375 +28292,6 @@ pub(crate) mod tests {
         assert_eq!(status["delayed_projects"], serde_json::json!({}));
         assert_eq!(status["failed_projects"], serde_json::json!({}));
     }
-
-    struct TmuxSessionGuard(String);
-
-    impl Drop for TmuxSessionGuard {
-        fn drop(&mut self) {
-            let _ = orgasmic_drivers::modes::tmux::tmux_command()
-                .args(["kill-session", "-t", &self.0])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-    }
-
-    // orgasmic:task_JGHNC
-    /// Is a *real* tmux on PATH — the gate every tmux-mode test in this binary
-    /// passes through?
-    ///
-    /// Named `real_` because the distinction is the whole point. The former
-    /// `tmux_on_path` asked only whether a PATH lookup of `tmux` succeeded, and
-    /// inside an orgasmic worker it always does: rmux prepends a shim directory
-    /// in which `tmux` is a symlink to `rmux`. Measured 2026-07-29 in a worker,
-    /// on this very binary: all seven tests this gated ran, and the owned
-    /// server they created landed in `/private/tmp/rmux-501/`. They reported
-    /// tmux and executed rmux, in every worker-run suite.
-    ///
-    /// So the gate is [`tmux_mode_availability_for`] (TASK-K4G1D) applied to
-    /// the same PATH lookup the drivers do — one rule, so a tmux-mode test and
-    /// the tmux availability of the parameterized [`MuxMode::Tmux`] arm cannot
-    /// disagree about what counts as tmux.
-    fn real_tmux_on_path() -> bool {
-        // orgasmic:TASK-0RCRY
-        // Every tmux-gated test in this binary gates on this, so this is where
-        // the run claims the server it owns — before any fixture session is
-        // created. Without it a fixture lands on whichever server the
-        // environment selects: the operator's own on a dev box, and inside an
-        // orgasmic worker (where `tmux` on PATH is a symlink to `rmux`) the
-        // rmux server hosting live worker panes.
-        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
-        tmux_mode_availability_for(which_binary("tmux").as_deref()).is_ok()
-    }
-
-    // orgasmic:task_JGHNC
-    /// The gate the tmux-mode tests share refuses the rmux shim.
-    ///
-    /// [`tmux_mode_rejects_an_rmux_shim_resolved_as_tmux`] proves the *rule*;
-    /// this proves the *wiring* — that the function the tmux-gated tests
-    /// actually call is that rule and not a bare PATH lookup. Without it the
-    /// two can drift apart silently, which is exactly the state this task
-    /// found: a strict rule sitting next to seven tests that did not use it.
-    ///
-    /// PATH is repointed at a synthetic shim shaped like rmux's, so the proof
-    /// is the same on every host, needs neither multiplexer, and starts no
-    /// session. The owned-server claim is made *before* the repoint, so this
-    /// test can never decide which server the rest of the binary owns.
-    #[test]
-    fn the_tmux_gate_the_daemon_tests_share_refuses_a_shimmed_tmux() {
-        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
-        let mut env = TestEnvGuard::acquire_blocking();
-        let tmp = tempfile::tempdir().unwrap();
-
-        let rmux = tmp.path().join("rmux");
-        write_executable_stub(&rmux);
-        let shim_dir = tmp.path().join("shim-bin");
-        std::fs::create_dir_all(&shim_dir).unwrap();
-        std::os::unix::fs::symlink(&rmux, shim_dir.join("tmux")).unwrap();
-        env.prepend_path(&shim_dir);
-        assert!(
-            !real_tmux_on_path(),
-            "the gate every tmux-mode daemon test shares must refuse a PATH \
-             whose tmux is the rmux shim: which_binary(tmux) = {:?}",
-            which_binary("tmux")
-        );
-
-        // Positive control: the gate is not simply always false. A tmux ahead
-        // of the shim, that really is tmux, is accepted.
-        let real_dir = tmp.path().join("real-bin");
-        std::fs::create_dir_all(&real_dir).unwrap();
-        write_executable_stub(&real_dir.join("tmux"));
-        env.prepend_path(&real_dir);
-        assert!(
-            real_tmux_on_path(),
-            "a tmux resolved ahead of the shim that is not rmux must be \
-             accepted: which_binary(tmux) = {:?}",
-            which_binary("tmux")
-        );
-    }
-
-    // orgasmic:task_JGHNC
-    /// A file `which` will hand back: present, and executable.
-    /// Reuses the suite-wide warmed inode (TASK-STWVB) so PATH stubs do not
-    /// each pay a Gatekeeper first-exec.
-    fn write_executable_stub(path: &FsPath) {
-        crate::test_fixtures::link_shared_test_executable(path);
-    }
-
-    // orgasmic:task_K4G1D
-    /// The terminal-multiplexer mode a mux-dependent daemon test runs under.
-    ///
-    /// A test that exercises one mux cannot distinguish three different
-    /// defects: ours, the multiplexer's, and the deadline's. Running the same
-    /// assertions through both modes turns "is rmux at fault" into a reading:
-    /// red under rmux only indicts rmux, red under both indicts our code, green
-    /// under both indicts the deadline.
-    ///
-    /// The mode is carried in the *test name* rather than looped over inside
-    /// one test, because a loop reports `<test> failed` and leaves which
-    /// iteration to guesswork — cargo already prints the name, so a per-mode
-    /// test names the mode for free, and the two arms stay independently
-    /// runnable, which is what makes a differential result reproducible.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum MuxMode {
-        Tmux,
-        Rmux,
-    }
-
-    impl MuxMode {
-        /// The `SUPPORTED` transport id, and the word every failure message
-        /// from a parameterized test is built around.
-        fn id(self) -> &'static str {
-            match self {
-                MuxMode::Tmux => "tmux",
-                MuxMode::Rmux => "rmux",
-            }
-        }
-
-        /// The session name the driver's own reattach probe will look for.
-        /// Taken from the driver, never rebuilt here: a test that invents the
-        /// name proves nothing about the path production takes.
-        fn session_name(self, identity: &RuntimeIdentity) -> String {
-            match self {
-                MuxMode::Tmux => orgasmic_drivers::modes::tmux::tmux_session_name(identity),
-                MuxMode::Rmux => orgasmic_drivers::modes::rmux::rmux_session_name(identity),
-            }
-        }
-
-        /// The `Ready` protocol version this mode's driver really emits, so a
-        /// seeded session file is the one the driver would have written.
-        fn ready_protocol(self) -> &'static str {
-            match self {
-                MuxMode::Tmux => "tmux-tui/1",
-                MuxMode::Rmux => "rmux-smoke/1",
-            }
-        }
-
-        /// Whether this mode can actually be exercised, and — when it cannot —
-        /// why, in the words a reader needs to act on it.
-        ///
-        /// The tmux answer is [`tmux_mode_availability_for`], the same rule
-        /// [`real_tmux_on_path`] gates every other tmux-mode test in this
-        /// binary on (TASK-JGHNC widened it there; when this was written those
-        /// seven still trusted a bare PATH lookup and so ran rmux).
-        /// Inside an orgasmic worker `tmux` on PATH is a symlink to `rmux`
-        /// (`.orgasmic/gotchas.org`, measured under TASK-0RCRY: `tmux -V` says
-        /// 3.4 while the real binary is 3.6a), so a run that trusts PATH would
-        /// compare rmux against rmux and report the two modes agreeing. That is
-        /// the one result this parameterization must never be able to
-        /// manufacture, so a shimmed tmux counts as *absent*.
-        fn availability(self) -> Result<(), String> {
-            match self {
-                MuxMode::Tmux => {
-                    // orgasmic:TASK-0RCRY — claim the owned server before any
-                    // session is created on it.
-                    orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
-                    tmux_mode_availability_for(which_binary("tmux").as_deref())
-                }
-                MuxMode::Rmux => {
-                    if orgasmic_drivers::modes::rmux::probe_rmux_binary().found {
-                        Ok(())
-                    } else {
-                        Err("no rmux binary".to_string())
-                    }
-                }
-            }
-        }
-
-        /// Which binary and which server this mode is about to drive. Every
-        /// assertion in a parameterized test carries it, because
-        /// `tmux new-session failed: server exited unexpectedly` is true and
-        /// useless when the interesting part is *whose* server (TASK-0RCRY).
-        fn diagnostic(self) -> String {
-            match self {
-                MuxMode::Tmux => format!(
-                    "mode=tmux binary={:?} {}",
-                    which_binary("tmux"),
-                    orgasmic_drivers::modes::tmux::tmux_server_selection()
-                ),
-                MuxMode::Rmux => format!(
-                    "mode=rmux binary={:?} (default rmux endpoint)",
-                    orgasmic_drivers::modes::rmux::probe_rmux_binary().path
-                ),
-            }
-        }
-
-        /// Start a detached session this mode's driver will find live, and hand
-        /// back the guard that reaps it on every exit path including a panic.
-        ///
-        /// `live` is the test's own [`live_session_guard`]: rmux sessions are
-        /// reaped through it by exact name, so nothing here can reach a session
-        /// this test did not create.
-        fn start_detached_session(
-            self,
-            name: &str,
-            live: &orgasmic_drivers::modes::rmux::test_tooling::LiveSessionGuard,
-        ) -> MuxSessionGuard {
-            let started = match self {
-                MuxMode::Tmux => orgasmic_drivers::modes::tmux::tmux_command()
-                    .args(["new-session", "-d", "-s", name, "sleep", "60"])
-                    .status()
-                    .map(|status| status.success())
-                    .unwrap_or(false),
-                MuxMode::Rmux => {
-                    live.owns_session(name);
-                    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-                    probe
-                        .path
-                        .filter(|_| probe.found)
-                        .map(|binary| {
-                            Command::new(binary)
-                                .args(["new-session", "-d", "-s", name, "sleep", "60"])
-                                .status()
-                                .map(|status| status.success())
-                                .unwrap_or(false)
-                        })
-                        .unwrap_or(false)
-                }
-            };
-            assert!(
-                started,
-                "{} test session should start [{}]",
-                self.id(),
-                self.diagnostic()
-            );
-            match self {
-                MuxMode::Tmux => MuxSessionGuard::Tmux(TmuxSessionGuard(name.to_string())),
-                MuxMode::Rmux => MuxSessionGuard::Rmux,
-            }
-        }
-    }
-
-    // orgasmic:task_K4G1D
-    /// Reaps a [`MuxMode::start_detached_session`] session. The rmux arm is a
-    /// unit because the test's `live_session_guard` already owns that name.
-    enum MuxSessionGuard {
-        #[allow(dead_code)] // held only for the inner guard's Drop
-        Tmux(TmuxSessionGuard),
-        Rmux,
-    }
-
-    // orgasmic:task_K4G1D
-    /// Is the binary a PATH lookup of `tmux` landed on really tmux?
-    ///
-    /// Split from [`MuxMode::availability`] — the same split TASK-0RCRY made
-    /// for `tmux_socket_args_for` — so the property "a shimmed tmux is refused"
-    /// is provable without mutating process-global `PATH` while other tests are
-    /// spawning real mux clients.
-    ///
-    /// rmux installs a shim directory ahead of a worker's `PATH` in which
-    /// `tmux` is a symlink to `rmux` (`.orgasmic/gotchas.org`; `tmux -V` lies
-    /// and prints 3.4). Following the symlink is the only reliable tell, and it
-    /// matters more here than anywhere else in this binary: a tmux arm that
-    /// silently ran rmux would compare rmux against rmux and report the two
-    /// modes agreeing, which is the one answer this parameterization exists to
-    /// make impossible to manufacture.
-    pub(crate) fn tmux_mode_availability_for(resolved: Option<&FsPath>) -> Result<(), String> {
-        let Some(resolved) = resolved else {
-            return Err("no tmux on PATH".to_string());
-        };
-        let real = std::fs::canonicalize(resolved).unwrap_or_else(|_| resolved.to_path_buf());
-        if real.file_name().and_then(|name| name.to_str()) == Some("rmux") {
-            return Err(format!(
-                "tmux on PATH ({}) is the rmux shim ({}); a genuine tmux-mode run needs the \
-                 real binary resolved ahead of the shim",
-                resolved.display(),
-                real.display()
-            ));
-        }
-        Ok(())
-    }
-
-    // orgasmic:task_K4G1D
-    #[test]
-    fn tmux_mode_rejects_an_rmux_shim_resolved_as_tmux() {
-        let tmp = tempfile::tempdir().unwrap();
-        let rmux = tmp.path().join("rmux");
-        std::fs::write(&rmux, "").unwrap();
-        let shim = tmp.path().join("shim-dir/tmux");
-        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&rmux, &shim).unwrap();
-
-        let err = tmux_mode_availability_for(Some(&shim))
-            .expect_err("a tmux that is really rmux must not count as tmux available");
-        assert!(err.contains("is the rmux shim"), "{err}");
-
-        let real = tmp.path().join("real-dir/tmux");
-        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-        std::fs::write(&real, "").unwrap();
-        assert_eq!(tmux_mode_availability_for(Some(&real)), Ok(()));
-        assert!(tmux_mode_availability_for(None).is_err());
-    }
-
-    // orgasmic:TASK-FJCE9
-    /// The rule above is copied once, into `orgasmic_drivers::modes::tmux`, and
-    /// this is the copy's drift guard.
-    ///
-    /// Why a copy exists at all: this one is `pub(crate)` inside a
-    /// `#[cfg(test)]` module, and an integration-test crate
-    /// (`tests/recovery_fault_restart.rs`, which drives real tmux and killed
-    /// sessions on whatever server `PATH` selected — TASK-FJCE9) cannot import
-    /// either. TASK-VJ633 owns collapsing the two into one canonical home in
-    /// `orgasmic_drivers`; until then this test is what makes "two copies"
-    /// safe. It lives here, beside the canonical rule, so editing that rule
-    /// without editing the copy fails in the file being edited.
-    #[test]
-    fn daemon_and_driver_tmux_strictness_agree() {
-        let tmp = tempfile::tempdir().unwrap();
-        let rmux = tmp.path().join("rmux");
-        std::fs::write(&rmux, "").unwrap();
-        let shim = tmp.path().join("shim-dir/tmux");
-        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&rmux, &shim).unwrap();
-        let real = tmp.path().join("real-dir/tmux");
-        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
-        std::fs::write(&real, "").unwrap();
-        let absent = tmp.path().join("nowhere/tmux");
-
-        for resolved in [
-            None,
-            Some(shim.as_path()),
-            Some(real.as_path()),
-            Some(absent.as_path()),
-        ] {
-            assert_eq!(
-                tmux_mode_availability_for(resolved).is_ok(),
-                orgasmic_drivers::modes::tmux::tmux_mode_availability_for(resolved).is_ok(),
-                "the daemon's tmux strictness rule and its orgasmic_drivers copy \
-                 disagree about {resolved:?}; TASK-VJ633 collapses them, until then \
-                 both must be edited together"
-            );
-        }
-    }
-
-    /// Resolve a binary the way the drivers do — through PATH — and report
-    /// where it landed rather than just whether it exists.
-    fn which_binary(binary: &str) -> Option<PathBuf> {
-        let out = Command::new("which").arg(binary).output().ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        (!path.is_empty()).then(|| PathBuf::from(path))
-    }
-
-    /// Skip-and-say-so for a mux mode, in the shape the rest of this binary
-    /// already uses. Returns `true` when the caller must return early; the
-    /// binary-level `required_test_tooling_is_present` sentinel is what turns a
-    /// missing mux into a suite failure, so a skip here is never silent.
-    fn skip_mux_mode_if_unavailable(test_name: &str, mode: MuxMode) -> bool {
-        match mode.availability() {
-            Ok(()) => false,
-            Err(reason) => {
-                eprintln!(
-                    "skipping {test_name}: mode {} unusable: {reason}",
-                    mode.id()
-                );
-                skip_test_if_missing(test_name, &[(mode.id(), false)])
-            }
-        }
-    }
-
     #[tokio::test]
     async fn tmux_ws_mock_streams_and_echoes_send_keys() {
         // Held from the top: the first half asserts the *absence* of the mock
@@ -33120,7 +31526,6 @@ pub(crate) mod tests {
             worker_id: "test-hanging-attach".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         };
         let ready_driver = Box::new(ImmediateNonReattachableDriver);
         let ready_ctx = DriverContext {
@@ -33134,7 +31539,6 @@ pub(crate) mod tests {
             worker_id: "test-ready-attach".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         };
         let attach_limit = Arc::new(tokio::sync::Semaphore::new(2));
         let hanging_task =
@@ -33191,7 +31595,6 @@ pub(crate) mod tests {
                 worker_id: "test-capped-attach".into(),
                 project_id: None,
                 worktree: None,
-                babysitter_target: None,
             };
             probes.push(spawn_driver_attach_probe(driver, ctx, limit.clone()));
         }
@@ -33233,7 +31636,6 @@ pub(crate) mod tests {
             worker_id: "test-cancelled-attach".into(),
             project_id: None,
             worktree: None,
-            babysitter_target: None,
         };
         let task = spawn_driver_attach_probe(driver, ctx, Arc::new(tokio::sync::Semaphore::new(1)));
         tokio::task::yield_now().await;
@@ -33246,114 +31648,6 @@ pub(crate) mod tests {
         })
         .await
         .expect("dropping an inventory must abort and drop every pending attach probe");
-    }
-
-    // orgasmic:task_K4G1D
-    /// The attach-proof assertions, run once per multiplexer.
-    ///
-    /// A live session of `mode` exists; the driver for that mode must prove a
-    /// live runtime handle, and the run must come back `reattached` with
-    /// `reattach_tmux` (a legacy action id — it covers both multiplexers) as
-    /// the first offered recovery. Nothing here is mode-specific except which
-    /// binary starts the session and which transport the session file records,
-    /// which is precisely what makes a divergence between the two arms a
-    /// statement about the multiplexer rather than about the test.
-    async fn assert_recovery_reattaches_mux_session(
-        mode: MuxMode,
-        test_name: &str,
-        live_guard: &LiveSessionGuard,
-    ) -> Option<String> {
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return None;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let identity = RuntimeIdentity {
-            run_id: format!("run-{}-{suffix}", mode.id()),
-            runtime_id: format!("rt-{suffix}"),
-            boot_id: "boot-test".into(),
-        };
-        let session_name = mode.session_name(&identity);
-        let _guard = mode.start_detached_session(&session_name, live_guard);
-        let project_root = tmp.path().join("proj");
-        write_nonterminal_session(
-            &project_root,
-            identity.clone(),
-            mode.ready_protocol(),
-            "manager-tmux-tui",
-        );
-
-        let (recovered, _inventory) = classify_session_files(
-            &home,
-            None,
-            "boot-test",
-            &[],
-            std::slice::from_ref(&project_root),
-            &crate::run_catalog::RunCatalog::new(),
-            None,
-            TerminalWindow::unbounded(),
-        )
-        .await;
-
-        let run = recovered
-            .iter()
-            .find(|run| run.run_id == identity.run_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "{test_name}: no recovered run for {} [{}]",
-                    identity.run_id,
-                    mode.diagnostic()
-                )
-            });
-        assert_eq!(
-            run.classification,
-            "reattached",
-            "[{}] reason: {}",
-            mode.diagnostic(),
-            run.reason
-        );
-        assert!(
-            run.reason.contains("proved live runtime handle"),
-            "[{}] reason: {}",
-            mode.diagnostic(),
-            run.reason
-        );
-        // Regression (dec_052): a live older-boot mux session prefers
-        // reattach_tmux as the first recovery action.
-        assert_eq!(
-            run.recovery_actions.first().map(|a| a.kind.as_str()),
-            Some("reattach_tmux"),
-            "live older-boot {} must prefer reattach_tmux: {:?} [{}]",
-            mode.id(),
-            run.recovery_actions,
-            mode.diagnostic()
-        );
-        Some(session_name)
-    }
-
-    #[tokio::test]
-    async fn recovery_reattaches_tmux_session_when_handle_exists() {
-        let live_guard = live_session_guard();
-        assert_recovery_reattaches_mux_session(
-            MuxMode::Tmux,
-            "recovery_reattaches_tmux_session_when_handle_exists",
-            &live_guard,
-        )
-        .await;
-    }
-
-    // orgasmic:task_K4G1D
-    #[tokio::test]
-    async fn recovery_reattaches_rmux_session_when_handle_exists() {
-        const TEST_NAME: &str = "recovery_reattaches_rmux_session_when_handle_exists";
-        if skip_mux_mode_if_unavailable(TEST_NAME, MuxMode::Rmux) {
-            return;
-        }
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        assert_recovery_reattaches_mux_session(MuxMode::Rmux, TEST_NAME, &live_guard).await;
     }
 
     #[tokio::test]
@@ -33679,151 +31973,6 @@ pub(crate) mod tests {
             let _ = running.shutdown.send(());
             let _ = running.join.await;
         }
-    }
-
-    // orgasmic:task_JGHNC
-    /// A Failed tombstone never offers reattach — even while a session of
-    /// `mode` for that very runtime is alive. The tombstone is the subject;
-    /// the multiplexer is the temptation, and both multiplexers tempt equally.
-    async fn assert_failed_terminal_with_live_mux_never_offers_reattach(
-        mode: MuxMode,
-        test_name: &str,
-    ) {
-        let live_guard = live_session_guard();
-        if skip_mux_mode_if_unavailable(test_name, mode) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let run_id = format!("run-failed-live-{}-{suffix}", mode.id());
-        let identity = RuntimeIdentity {
-            run_id: run_id.clone(),
-            runtime_id: format!("rt-{suffix}"),
-            boot_id: "boot-test".into(),
-        };
-        let session_name = mode.session_name(&identity);
-        let _guard = mode.start_detached_session(&session_name, &live_guard);
-        let session_path = write_nonterminal_session(
-            &project_root,
-            identity,
-            mode.ready_protocol(),
-            "manager-tmux-tui",
-        );
-        {
-            let mut writer = orgasmic_core::SessionWriter::open(
-                &session_path,
-                RuntimeIdentity {
-                    run_id: run_id.clone(),
-                    runtime_id: format!("rt-{suffix}"),
-                    boot_id: "boot-test".into(),
-                },
-            )
-            .unwrap();
-            writer
-                .append(
-                    SessionEventKind::Lifecycle,
-                    serde_json::to_value(Lifecycle::Release {
-                        reason: "driver error".into(),
-                        outcome: ReleaseOutcome::Failed,
-                        finalized_by_worker: false,
-                    })
-                    .unwrap(),
-                )
-                .unwrap();
-        }
-        let failed_path = session_path;
-        let original_bytes = std::fs::read(&failed_path).unwrap();
-
-        let (recovered, _inventory) = classify_session_files(
-            &home,
-            None,
-            "boot-test",
-            &[],
-            std::slice::from_ref(&project_root),
-            &crate::run_catalog::RunCatalog::new(),
-            None,
-            TerminalWindow::unbounded(),
-        )
-        .await;
-        let run = recovered
-            .iter()
-            .find(|run| run.run_id == run_id)
-            .expect("failed session classifies");
-        assert_eq!(
-            run.classification,
-            "failed_recoverable",
-            "{test_name} [{}]",
-            mode.diagnostic()
-        );
-        assert!(
-            !run.recovery_actions
-                .iter()
-                .any(|action| action.kind == "reattach_tmux"),
-            "{test_name}: Failed tombstone must never offer reattach_tmux \
-             (the legacy action id covers both multiplexers): {:?} [{}]",
-            run.recovery_actions,
-            mode.diagnostic()
-        );
-        assert!(run
-            .recovery_actions
-            .iter()
-            .any(|action| action.kind == "start_recovery_run"));
-
-        let after_status_bytes = std::fs::read(&failed_path).unwrap();
-        assert_eq!(
-            original_bytes, after_status_bytes,
-            "Failed origin JSONL must remain byte-for-byte unchanged after status discovery"
-        );
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(format!("http://{}/api/runs/{run_id}/recover", running.addr))
-            .bearer_auth(&token)
-            .json(&json!({
-                "action": "reattach_tmux",
-                "project": "orgasmic",
-                "request_id": "task-a6fgf-failed-reattach-block",
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-        let after_post_bytes = std::fs::read(&failed_path).unwrap();
-        assert_eq!(
-            original_bytes, after_post_bytes,
-            "Failed origin JSONL must remain byte-for-byte unchanged after explicit reattach POST"
-        );
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
-    #[tokio::test]
-    async fn failed_terminal_with_live_tmux_never_offers_reattach() {
-        assert_failed_terminal_with_live_mux_never_offers_reattach(
-            MuxMode::Tmux,
-            "failed_terminal_with_live_tmux_never_offers_reattach",
-        )
-        .await;
-    }
-
-    // orgasmic:task_JGHNC
-    #[tokio::test]
-    async fn failed_terminal_with_live_rmux_never_offers_reattach() {
-        assert_failed_terminal_with_live_mux_never_offers_reattach(
-            MuxMode::Rmux,
-            "failed_terminal_with_live_rmux_never_offers_reattach",
-        )
-        .await;
     }
 
     fn native_runtime_envelope(
@@ -34879,7 +33028,6 @@ pub(crate) mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
                 idle_timeout_secs: None,
-                babysitter_target: None,
                 cleanup_on_failure: false,
             },
         };
@@ -35375,54 +33523,6 @@ pub(crate) mod tests {
         assert!(args.contains(&"--fork-session".to_string()));
         assert!(pinned.revalidate());
     }
-
-    fn seed_argv_capture_trusted_claude_layout(
-        home_root: &FsPath,
-        trusted_log: &FsPath,
-        projects_dir: &FsPath,
-        fork_id: &str,
-        cwd: &FsPath,
-    ) -> PinnedClaudeExecutable {
-        // A real resumable Claude session already has its cwd-scoped provider
-        // directory. The driver now retains that directory before releasing
-        // the pane, so the production-shaped fixture must seed it too.
-        std::fs::create_dir_all(projects_dir).unwrap();
-        let versions = home_root.join(".local/share/claude/versions");
-        std::fs::create_dir_all(&versions).unwrap();
-        let target = versions.join("2.1.217");
-        crate::test_fixtures::link_shared_test_executable(&target);
-        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-capture");
-        crate::test_fixtures::write_linked_fixture_value(&target, "trusted-log", trusted_log);
-        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
-        crate::test_fixtures::write_linked_fixture_text(&target, "fork-id", fork_id);
-        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
-        let entry = home_root.join(".local/bin/claude");
-        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
-        if entry.exists() {
-            std::fs::remove_file(&entry).ok();
-        }
-        std::os::unix::fs::symlink(&target, &entry).unwrap();
-        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
-            .expect("argv-capture trusted claude layout")
-    }
-
-    #[cfg(unix)]
-    fn seed_malicious_path_claude_shim(shim_dir: &FsPath, malicious_log: &FsPath) {
-        std::fs::create_dir_all(shim_dir).unwrap();
-        let shim = shim_dir.join("claude");
-        crate::test_fixtures::link_shared_test_executable(&shim);
-        crate::test_fixtures::write_linked_fixture_text(&shim, "orgasmic-mode", "malicious-claude");
-        crate::test_fixtures::write_linked_fixture_value(&shim, "malicious-log", malicious_log);
-    }
-
-    #[cfg(unix)]
-    fn seed_test_pinned_exec_wrapper(home: &Home) {
-        let wrapper = home.bin_orgasmic();
-        crate::test_fixtures::link_shared_test_executable(&wrapper);
-        // Loud failure if production stops passing __exec-pinned (TASK-STWVB).
-        crate::test_fixtures::write_linked_fixture_text(&wrapper, "orgasmic-pinned-wrapper", "1");
-    }
-
     // orgasmic:TASK-5HBST
     /// The one way this binary's tests may touch the process environment.
     ///
@@ -35485,259 +33585,6 @@ pub(crate) mod tests {
             }
         }
     }
-
-    fn seed_two_recovery_claude(
-        home_root: &FsPath,
-        argv_log: &FsPath,
-        counter: &FsPath,
-        projects_dir: &FsPath,
-        cwd: &FsPath,
-    ) -> PinnedClaudeExecutable {
-        std::fs::create_dir_all(projects_dir).unwrap();
-        let versions = home_root.join(".local/share/claude/versions");
-        std::fs::create_dir_all(&versions).unwrap();
-        let target = versions.join("2.1.217");
-        crate::test_fixtures::link_shared_test_executable(&target);
-        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-chain");
-        crate::test_fixtures::write_linked_fixture_value(&target, "argv-log", argv_log);
-        crate::test_fixtures::write_linked_fixture_value(&target, "counter", counter);
-        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
-        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
-        let entry = home_root.join(".local/bin/claude");
-        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
-        std::os::unix::fs::symlink(&target, &entry).unwrap();
-        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
-            .expect("two-recovery trusted Claude")
-    }
-
-    #[tokio::test]
-    async fn production_resume_native_fork_uses_pinned_claude_not_path_shim() {
-        // Lock order is flock-then-environment: this test starts a real daemon
-        // and repoints process-global `HOME` and `PATH` for its whole body.
-        let _live_guard = live_session_guard();
-        let mut env = TestEnvGuard::acquire().await;
-        // orgasmic:task_JGHNC — the gate is real, and stays. This test starts
-        // no session itself, so the dependency is easy to doubt; measured
-        // 2026-07-29 by running it with neither tmux nor rmux resolvable, the
-        // recovery run the daemon starts is transport=tmux and its driver came
-        // up `"inert":true,"inert_reason":"tmux_missing"`, so the fork id under
-        // assertion is never proven. The pinned Claude executable is launched
-        // *inside a mux pane*; the mux is a real dependency of the assertion.
-        if skip_test_if_missing(
-            "production_resume_native_fork_uses_pinned_claude_not_path_shim",
-            &[("tmux", real_tmux_on_path())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let user_home = tmp.path().join("user-home");
-        std::fs::create_dir_all(&user_home).unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        seed_test_pinned_exec_wrapper(&home);
-        env.set("HOME", &user_home);
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        std::fs::remove_file(home.bin().join("claude")).ok();
-        write_failed_recoverable_session(
-            &project_root,
-            "run-path-shim-recover",
-            "stall_timeout_exceeded",
-            true,
-        );
-        let trusted_log = tmp.path().join("trusted-argv.log");
-        let malicious_log = tmp.path().join("malicious-argv.log");
-        let cwd = project_root.canonicalize().unwrap();
-        let projects_slug = orgasmic_drivers::transcript_finder::encode_claude_project_slug(&cwd);
-        let projects_dir = user_home.join(".claude/projects").join(projects_slug);
-        let pinned = seed_argv_capture_trusted_claude_layout(
-            &user_home,
-            &trusted_log,
-            &projects_dir,
-            "fork-path-shim-proven",
-            &cwd,
-        );
-        let shim_dir = tmp.path().join("malicious-path");
-        seed_malicious_path_claude_shim(&shim_dir, &malicious_log);
-        env.prepend_path(&shim_dir);
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        assert!(
-            pin_trusted_claude_binary(&home).is_some(),
-            "daemon must pin trusted Claude at boot"
-        );
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(format!(
-                "http://{}/api/runs/run-path-shim-recover/recover",
-                running.addr
-            ))
-            .bearer_auth(&token)
-            .json(&json!({
-                "action": "resume_native_fork",
-                "project": "orgasmic",
-                "request_id": "task-3teda-path-shim",
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert!(
-            resp.status().is_success(),
-            "resume_native_fork recover: {}",
-            resp.status()
-        );
-        let body: serde_json::Value = resp.json().await.unwrap();
-        let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        let mut session_raw = String::new();
-        while std::time::Instant::now() < deadline {
-            session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
-            if session_raw.contains("fork-path-shim-proven") {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        assert!(
-            session_raw.contains("fork-path-shim-proven"),
-            "native runtime must record proven fork id: {session_raw}"
-        );
-        assert!(
-            session_raw.contains(&pinned.target_path.to_string_lossy().to_string()),
-            "native runtime must use pinned trusted executable: {session_raw}"
-        );
-        let trusted_argv = std::fs::read_to_string(&trusted_log).unwrap_or_default();
-        assert!(
-            trusted_argv.contains("--resume"),
-            "trusted child must receive resume argv: {trusted_argv}"
-        );
-        assert!(
-            !malicious_log.exists(),
-            "malicious PATH shim must never execute"
-        );
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
-    #[tokio::test]
-    async fn two_recovery_chain_second_resume_uses_first_fork_session_id() {
-        // Lock order is flock-then-environment, as above.
-        let _live_guard = live_session_guard();
-        let mut env = TestEnvGuard::acquire().await;
-        // orgasmic:task_JGHNC — same measured dependency as
-        // `production_resume_native_fork_uses_pinned_claude_not_path_shim`:
-        // with no mux resolvable both recoveries come up inert
-        // (`inert_reason: tmux_missing`) and neither fork id is ever persisted.
-        if skip_test_if_missing(
-            "two_recovery_chain_second_resume_uses_first_fork_session_id",
-            &[("tmux", real_tmux_on_path())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let user_home = tmp.path().join("user-home");
-        std::fs::create_dir_all(&user_home).unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        seed_test_pinned_exec_wrapper(&home);
-        env.set("HOME", &user_home);
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        std::fs::remove_file(home.bin().join("claude")).ok();
-        let cwd = project_root.canonicalize().unwrap();
-        let projects_slug = orgasmic_drivers::transcript_finder::encode_claude_project_slug(&cwd);
-        let projects_dir = user_home.join(".claude/projects").join(projects_slug);
-        let argv_log = tmp.path().join("chain-argv.log");
-        let counter = tmp.path().join("chain-counter");
-        seed_two_recovery_claude(&user_home, &argv_log, &counter, &projects_dir, &cwd);
-        write_failed_recoverable_session(
-            &project_root,
-            "run-chain-origin",
-            "stall_timeout_exceeded",
-            true,
-        );
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .unwrap();
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-
-        let first = client
-            .post(format!(
-                "http://{}/api/runs/run-chain-origin/recover",
-                running.addr
-            ))
-            .bearer_auth(&token)
-            .json(&json!({
-                "action": "resume_native_fork",
-                "project": "orgasmic",
-                "request_id": "task-3teda-chain-first",
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert!(
-            first.status().is_success(),
-            "first recover: {}",
-            first.status()
-        );
-        let first_body: serde_json::Value = first.json().await.unwrap();
-        let first_run_id = first_body["run_id"].as_str().unwrap().to_string();
-        let first_fork_id = "fork-chain-first";
-        let first_session = PathBuf::from(first_body["session_path"].as_str().unwrap());
-        let first_raw = std::fs::read_to_string(&first_session).unwrap();
-        assert!(
-            first_raw.contains(first_fork_id),
-            "first recovery must persist the discovered fork session id: {first_raw}"
-        );
-        wait_for_run_not_live(&client, &running.addr, &token, &first_run_id).await;
-
-        let second = client
-            .post(format!(
-                "http://{}/api/runs/{first_run_id}/recover",
-                running.addr
-            ))
-            .bearer_auth(&token)
-            .json(&json!({
-                "action": "resume_native_fork",
-                "project": "orgasmic",
-                "request_id": "task-3teda-chain-second",
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert!(
-            second.status().is_success(),
-            "second recover: {}",
-            second.status()
-        );
-        let second_body: serde_json::Value = second.json().await.unwrap();
-        let second_session = PathBuf::from(second_body["session_path"].as_str().unwrap());
-        let second_raw = std::fs::read_to_string(&second_session).unwrap();
-        assert!(
-            second_raw.contains("fork-chain-second"),
-            "second recovery must persist its newly discovered fork id: {second_raw}"
-        );
-        let argv = std::fs::read_to_string(&argv_log).unwrap();
-        let launches: Vec<_> = argv.lines().collect();
-        assert_eq!(launches.len(), 2, "two production Claude launches: {argv}");
-        assert!(
-            launches[1].contains("--resume fork-chain-first --fork-session"),
-            "second recovery must resume the actual first fork: {argv}"
-        );
-        assert!(
-            !launches[1].contains("native-run-chain-origin"),
-            "second recovery must not resume the original native id: {argv}"
-        );
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
     #[tokio::test]
     async fn resume_native_fork_recovery_starts_idle_without_auto_prompt_send() {
         // orgasmic:TASK-R28CP — native resume/fork must not auto-send the
@@ -35903,61 +33750,6 @@ pub(crate) mod tests {
         let _ = running.join.await;
     }
 
-    #[tokio::test]
-    async fn manager_drivers_catalog_includes_rmux_with_separate_mode_binary() {
-        let Json(resp) = get_manager_drivers().await;
-        // rmux is surfaced in the catalog with the same harnesses as tmux.
-        let rmux = resp
-            .drivers
-            .iter()
-            .find(|d| d.mode == "rmux" && d.harness == "codex")
-            .expect("rmux/codex driver present in catalog");
-        assert_eq!(rmux.mode_label, "rmux");
-        // Full harness parity with tmux (claude, codex, cursor-agent, hermes).
-        let rmux_harnesses: std::collections::BTreeSet<&str> = resp
-            .drivers
-            .iter()
-            .filter(|d| d.mode == "rmux")
-            .map(|d| d.harness.as_str())
-            .collect();
-        assert!(
-            ["claude", "codex", "cursor-agent", "hermes"]
-                .iter()
-                .all(|h| rmux_harnesses.contains(h)),
-            "rmux must offer the same harnesses as tmux, got {rmux_harnesses:?}"
-        );
-        // rmux carries a SEPARATE mode-level binary requirement, checked
-        // independently of the harness binary (acceptance criterion).
-        assert!(
-            rmux.mode_binary.is_some(),
-            "rmux must report a mode binary distinct from the harness binary"
-        );
-        assert!(
-            rmux.mode_installed.is_some(),
-            "rmux mode binary install status must be reported"
-        );
-    }
-
-    #[tokio::test]
-    async fn manager_drivers_catalog_omits_mode_binary_for_plain_modes() {
-        let Json(resp) = get_manager_drivers().await;
-        // tmux (and other modes without an extra binary) report no mode_binary.
-        let tmux = resp
-            .drivers
-            .iter()
-            .find(|d| d.mode == "tmux")
-            .expect("tmux driver present");
-        assert!(
-            tmux.mode_binary.is_none(),
-            "plain modes must not advertise a separate mode binary"
-        );
-        assert!(tmux.mode_installed.is_none());
-    }
-
-    // `mode_binary_status_only_tracks_rmux` moved with the function it covers,
-    // to `orgasmic_drivers::catalog::tests` (TASK-JQARS). The two route tests
-    // above still assert what this endpoint reports.
-
     // ── artifact round-trip (TASK-ZEFEY acceptance) ───────────────────────────
 
     fn artifact_query(project: &str) -> ArtifactQuery {
@@ -36064,7 +33856,7 @@ pub(crate) mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: None,
-                mode: Some("rmux".into()),
+                mode: Some("tmux".into()),
                 harness: Some("claude".into()),
                 ..Default::default()
             }),
@@ -37135,80 +34927,107 @@ pub(crate) mod tests {
             "tx log must not record a resolution that failed to write"
         );
     }
-
-    // ── artifact generation launch (TASK-2ZQSB acceptance) ───────────────────
-
-    /// Creates the explicit custom-harness address used by artifact tests: a
-    /// minimal interactive script that stays live and accepts `send_input`
-    /// followups (hot-session regenerate path). Skips when rmux is unavailable
-    /// — same pattern as orgasmic-drivers rmux live tests.
-    fn seed_test_artifactor_harness(_home: &Home) -> Vec<String> {
-        vec![
-            crate::test_fixtures::shared_test_executable()
-                .display()
-                .to_string(),
-            "artifact-ready".into(),
-        ]
-    }
-
-    fn rmux_available_for_test() -> bool {
-        orgasmic_drivers::modes::rmux::probe_rmux_binary().found
-    }
-
-    // orgasmic:task_SZJ2B
-    /// The isolation every artifact-generation test takes before it drives a
-    /// real `Supervisor::acquire`, and the reason the family is safe to run on
-    /// a machine that is also hosting live dispatch.
-    ///
-    /// These tests launch the production rmux path with a production run id, so
-    /// what they create is a session named exactly like a dispatched worker's:
-    /// `orgasmic-rmux-run-<...>`. Unpinned, that session lands on whichever
-    /// server the environment selects — inside an orgasmic worker, the server
-    /// hosting live dispatch panes, where the manager reaped one such orphan on
-    /// 2026-07-29. `own_rmux_server_for_tests` moves the whole family onto a
-    /// server this test process started, so nothing it creates can reach the
-    /// shared one.
-    ///
-    /// It also closes the registration window, which the owned server alone
-    /// does not: `live_guard.owns(&run_id)` can only run *after* the awaited
-    /// call that already created the session, so an `Err` (the `.expect` panics
-    /// with the id unknown to the guard) or a cancelled future leaks it.
-    /// `owns_runs_on` needs no run id and goes in first.
-    ///
-    /// Call it immediately after `live_session_guard()` and hold the returned
-    /// value for the whole test: it carries the environment lock, and the lock
-    /// order in this workspace is flock-then-environment. The lock is not
-    /// reentrant — a test that also wants a [`TestEnvGuard`] must not take both.
     #[cfg(unix)]
-    async fn claim_owned_rmux_endpoint(
+    async fn claim_owned_tmux_endpoint(
         live_guard: &LiveSessionGuard,
     ) -> tokio::sync::MutexGuard<'static, ()> {
         let environment = test_environment_lock().lock().await;
-        let server = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests();
-        live_guard.owns_runs_on(server);
+        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
+        live_guard.owns_all_tmux_sessions();
         environment
     }
 
     /// No socket-root override exists off unix, so there is no owned server to
     /// claim; the family runs against whatever endpoint the SDK resolves.
     #[cfg(not(unix))]
-    async fn claim_owned_rmux_endpoint(
+    async fn claim_owned_tmux_endpoint(
         _live_guard: &LiveSessionGuard,
     ) -> tokio::sync::MutexGuard<'static, ()> {
         test_environment_lock().lock().await
     }
 
-    /// Like `seed_test_artifactor_harness` but the harness sleeps before showing
-    /// its composer prompt so an immediate followup hits the busy gate.
-    fn seed_busy_artifactor_harness(_home: &Home) -> Vec<String> {
-        vec![
-            crate::test_fixtures::shared_test_executable()
-                .display()
-                .to_string(),
-            "artifact-busy".into(),
-        ]
+    fn real_tmux_on_path() -> bool {
+        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
+        Command::new("tmux")
+            .arg("-V")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
+    fn tmux_available_for_test() -> bool {
+        real_tmux_on_path()
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum MuxMode {
+        Tmux,
+    }
+
+    impl MuxMode {
+        fn id(self) -> &'static str {
+            "tmux"
+        }
+
+        fn session_name(self, identity: &RuntimeIdentity) -> String {
+            orgasmic_drivers::modes::tmux::tmux_session_name(identity)
+        }
+
+        fn ready_protocol(self) -> &'static str {
+            "tmux-tui/1"
+        }
+
+        fn availability(self) -> Result<(), String> {
+            real_tmux_on_path()
+                .then_some(())
+                .ok_or_else(|| "tmux is not available".to_string())
+        }
+
+        fn diagnostic(self) -> String {
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        }
+
+        fn start_detached_session(self, name: &str, live: &LiveSessionGuard) -> TmuxSessionGuard {
+            live.owns_session(name);
+            let started = orgasmic_drivers::modes::tmux::tmux_command()
+                .args(["new-session", "-d", "-s", name, "sleep", "60"])
+                .status()
+                .is_ok_and(|status| status.success());
+            assert!(
+                started,
+                "tmux test session should start [{}]",
+                self.diagnostic()
+            );
+            TmuxSessionGuard(name.to_string())
+        }
+    }
+
+    struct TmuxSessionGuard(String);
+
+    impl Drop for TmuxSessionGuard {
+        fn drop(&mut self) {
+            let _ = orgasmic_drivers::modes::tmux::tmux_command()
+                .args(["kill-session", "-t", &self.0])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
+    fn skip_mux_mode_if_unavailable(test_name: &str, mode: MuxMode) -> bool {
+        match mode.availability() {
+            Ok(()) => false,
+            Err(reason) => {
+                eprintln!(
+                    "skipping {test_name}: mode {} unusable: {reason}",
+                    mode.id()
+                );
+                skip_test_if_missing(test_name, &[(mode.id(), false)])
+            }
+        }
+    }
     // orgasmic:task_SZJ2B
     /// The durable half of TASK-SZJ2B: a thirteenth artifact-generation test
     /// cannot be added without the isolation the twelve now take.
@@ -37220,13 +35039,13 @@ pub(crate) mod tests {
     /// so this test does not match its own source (the
     /// `start_recovery_run_never_uses_placeholder_shell` convention).
     #[test]
-    fn every_artifact_generation_test_claims_the_owned_rmux_endpoint() {
+    fn every_artifact_generation_test_claims_the_owned_tmux_endpoint() {
         let source = include_str!("api.rs");
         let seeds = [
             ["seed_test", "artifactor_harness("].join("_"),
             ["seed_busy", "artifactor_harness("].join("_"),
         ];
-        let claim = ["claim_owned", "rmux_endpoint(&live_guard)"].join("_");
+        let claim = ["claim_owned", "tmux_endpoint(&live_guard)"].join("_");
 
         const HEAD: &str = "\n    async fn ";
         let mut checked = Vec::new();
@@ -37246,9 +35065,9 @@ pub(crate) mod tests {
             };
             assert!(
                 body.find(&claim).is_some_and(|claim_at| claim_at < seed_at),
-                "{name} drives a real rmux run without first claiming the process-owned \
-                 endpoint: it creates a production-named orgasmic-rmux-run-* session on the \
-                 SHARED rmux server, the one hosting live dispatch panes"
+                "{name} drives a real tmux run without first claiming the process-owned \
+                 endpoint: it creates a production-named orgasmic-tmux-run-* session on the \
+                 SHARED tmux server, the one hosting live dispatch panes"
             );
             checked.push(name);
         }
@@ -37269,15 +35088,6 @@ pub(crate) mod tests {
         assert!(title.chars().count() <= 81, "{title}");
         assert!(title.ends_with('…'), "{title}");
     }
-
-    fn open_comment_count_for_node(artifacts: &[ArtifactSummary], node_id: &str) -> usize {
-        artifacts
-            .iter()
-            .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == node_id))
-            .map(|artifact| artifact.open_comment_count)
-            .sum()
-    }
-
     #[test]
     fn artifact_org_content_renders_empty_subject_nodes_property() {
         let org = artifact_org_content("ART-ABC", "Title", &[], "prompt", 0, "regenerating");
@@ -37396,18 +35206,10 @@ pub(crate) mod tests {
         assert!(out.contains("[CID-abc12345] reviewer@test.com (anchor: {}; resolves: -; reply-to: -; resolved: false): tighten the copy"));
         assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; reply-to: CID-abc12345; resolved: true): already addressed"));
     }
-
-    fn launch_address_from_artifact_org(art_dir: &FsPath) -> ArtifactLaunchAddress {
-        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let file = OrgFile::parse(org, "artifact.org").unwrap();
-        artifacts::parse_artifact_launch_address(file.headings.first().unwrap())
-            .expect("artifact.org must carry a launch address")
-    }
-
     #[test]
     fn resolve_artifact_launch_address_reuses_saved_when_regenerate_override_absent() {
         let saved = ArtifactLaunchAddress {
-            mode: "rmux".into(),
+            mode: "tmux".into(),
             harness: "claude".into(),
             harness_args: vec!["--flag".into()],
             model: Some("saved-model".into()),
@@ -37451,7 +35253,7 @@ pub(crate) mod tests {
         );
 
         let saved = ArtifactLaunchAddress {
-            mode: "rmux".into(),
+            mode: "tmux".into(),
             harness: "claude".into(),
             harness_args: vec![],
             model: Some("old-model".into()),
@@ -37465,11 +35267,11 @@ pub(crate) mod tests {
     #[test]
     fn artifact_address_override_from_regenerate_clear_default_fields() {
         let body = ArtifactRegenerateRequest {
-            mode: Some("rmux".into()),
+            mode: Some("tmux".into()),
             ..Default::default()
         };
         let override_addr = artifact_address_override_from_regenerate(&body).unwrap();
-        assert_eq!(override_addr.mode, "rmux");
+        assert_eq!(override_addr.mode, "tmux");
         assert_eq!(override_addr.harness, "");
         assert!(override_addr.harness_args.is_empty());
         assert_eq!(override_addr.model, None);
@@ -37483,7 +35285,7 @@ pub(crate) mod tests {
             effort: Some("high".into()),
         };
         let resolved = resolve_artifact_launch_address(Some(override_addr), Some(saved)).unwrap();
-        assert_eq!(resolved.mode, "rmux");
+        assert_eq!(resolved.mode, "tmux");
         assert_eq!(resolved.harness, "");
         assert!(resolved.harness_args.is_empty());
         assert_eq!(resolved.model, None);
@@ -37500,7 +35302,7 @@ pub(crate) mod tests {
 :ID:               ART-LEG1
 :STATE:            submitted
 :VERSION:          1
-:LAUNCH_MODE:      rmux
+:LAUNCH_MODE:      tmux
 :LAUNCH_HARNESS:   claude
 :LAUNCH_HARNESS_ARGS: ["--legacy"]
 :LAUNCH_MODEL:     legacy-model
@@ -37522,1274 +35324,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let resp = post_artifact_generate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactGenerateRequest {
-                nodes: vec!["TASK-PRE".to_string()],
-                prompt: "Draft a wireframe for the login flow".to_string(),
-                mode: "rmux".into(),
-                harness: "custom".into(),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("generate should succeed");
-
-        // TASK-Z3093: hand the live run to the guard before the first
-        // assertion that can panic. The trailing `release` below stays — it is
-        // the production path under test — but it is no longer the only reap.
-        live_guard.owns(&resp.0.run_id);
-
-        let art_id = resp.0.artifact_id.clone();
-        assert!(art_id.starts_with("ART-"), "{art_id}");
-        assert!(!resp.0.run_id.is_empty());
-
-        let art_dir = artifact_dir(&project_root, &art_id);
-        let summary = load_artifact(&art_dir).expect("artifact.org readable");
-        assert_eq!(summary.state, "regenerating");
-        assert_eq!(summary.version, 0);
-        assert_eq!(summary.subject_nodes, vec!["TASK-PRE".to_string()]);
-        assert!(art_dir.join("reviews.org").exists());
-
-        let snapshot = state.supervisor.snapshot().await;
-        assert!(snapshot.runs.iter().any(|r| r.run_id == resp.0.run_id));
-        assert!(snapshot
-            .runs
-            .iter()
-            .any(|r| r.task_id == format!("artifact.generate:{art_id}")));
-
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        let tx = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(tx.contains("artifact.created"));
-        assert!(tx.contains(&art_id));
-
-        let _ = state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_generate_with_empty_nodes_succeeds_end_to_end() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let resp = post_artifact_generate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactGenerateRequest {
-                nodes: vec![],
-                prompt: "Grill this idea before any decision exists".to_string(),
-                mode: "rmux".into(),
-                harness: "custom".into(),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("generate with empty nodes should succeed");
-        live_guard.owns(&resp.0.run_id);
-
-        let art_id = resp.0.artifact_id.clone();
-        assert!(art_id.starts_with("ART-"), "{art_id}");
-        assert!(!resp.0.run_id.is_empty());
-
-        let art_dir = artifact_dir(&project_root, &art_id);
-        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let file = OrgFile::parse(org, "artifact.org").unwrap();
-        assert_eq!(
-            file.headings
-                .first()
-                .and_then(|h| h.property("SUBJECT_NODES")),
-            Some("")
-        );
-
-        let summary = load_artifact(&art_dir).expect("artifact.org readable");
-        assert_eq!(summary.state, "regenerating");
-        assert_eq!(summary.version, 0);
-        assert!(summary.subject_nodes.is_empty());
-
-        let list = get_artifacts(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-        )
-        .await
-        .expect("list should include node-less artifact");
-        assert!(
-            list.0.iter().any(|artifact| artifact.id == art_id),
-            "node-less artifact must appear in the global list: {list:?}"
-        );
-
-        let _ = state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_generate_empty_nodes_excluded_from_node_rollups() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let attached_id = "ART-ATTCH";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(attached_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>attached</RichText>\n".into(),
-                title: Some("Attached".into()),
-                subject_nodes: Some(vec!["TASK-PRE".into()]),
-                prompt: Some("Attached prompt".into()),
-            }),
-        )
-        .await
-        .expect("attached submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(attached_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "needs work".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: Some("reviewer@test.com".into()),
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let rollup_before = open_comment_count_for_node(
-            &get_artifacts(
-                State(state.clone()),
-                Extension(Identity::Admin),
-                Query(artifact_query("test-proj")),
-            )
-            .await
-            .expect("list before generate")
-            .0,
-            "TASK-PRE",
-        );
-        assert_eq!(rollup_before, 1);
-
-        let resp = post_artifact_generate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactGenerateRequest {
-                nodes: vec![],
-                prompt: "Prompt-only artifact".to_string(),
-                mode: "rmux".into(),
-                harness: "custom".into(),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("generate with empty nodes should succeed");
-        live_guard.owns(&resp.0.run_id);
-
-        let _ = state.index.refresh_project("test-proj").await;
-        let artifacts = get_artifacts(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-        )
-        .await
-        .expect("list after generate")
-        .0;
-        assert_eq!(artifacts.len(), 2);
-
-        let nodeless = artifacts
-            .iter()
-            .find(|artifact| artifact.id == resp.0.artifact_id)
-            .expect("node-less artifact listed globally");
-        assert!(nodeless.subject_nodes.is_empty());
-
-        assert_eq!(open_comment_count_for_node(&artifacts, "TASK-PRE"), 1);
-        assert!(
-            !artifacts
-                .iter()
-                .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == "TASK-PRE"))
-                .any(|artifact| artifact.id == resp.0.artifact_id),
-            "node-less artifact must not appear in TASK-PRE rollups"
-        );
-
-        let _ = state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_on_nodeless_artifact_succeeds() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-NDES0";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Nodeless".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Prompt-only artifact".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let subject_context = assemble_artifact_context(&state, "test-proj", &[]).await;
-        assert!(subject_context.is_empty());
-
-        let resp = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("tighten the prose".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("regenerate on node-less artifact should succeed");
-        live_guard.owns(&resp.0.run_id);
-        assert!(!resp.0.run_id.is_empty());
-
-        let art_dir = artifact_dir(&project_root, art_id);
-        let summary = load_artifact(&art_dir).unwrap();
-        assert_eq!(summary.state, "regenerating");
-        assert!(summary.subject_nodes.is_empty());
-
-        let _ = state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "post_artifact_regenerate_hot_path_reuses_live_run_id",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-HTSS1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Hot session".into()),
-                subject_nodes: Some(vec!["TASK-PRE".into()]),
-                prompt: Some("Initial prompt".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let fb_resp = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "round 1 feedback".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: Some("reviewer@test.com".into()),
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-        let cid1 = fb_resp.0["cid"].as_str().unwrap().to_string();
-
-        let first = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("first pass".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                governance: Some(GovernancePatch {
-                    stall_timeout_secs: Some(120),
-                    max_run_duration_secs: Some(120),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("first regenerate should succeed (cold spawn)");
-        live_guard.owns(&first.0.run_id);
-
-        let art_dir = artifact_dir(&project_root, art_id);
-        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
-
-        // Simulate round 1 completing: submit v2 while the hot session stays live.
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v2</RichText>\n".into(),
-                title: None,
-                subject_nodes: None,
-                prompt: None,
-            }),
-        )
-        .await
-        .expect("submit v2 should succeed");
-        assert_eq!(load_artifact(&art_dir).unwrap().version, 2);
-
-        let fb2 = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "round 2 feedback".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: Some("reviewer@test.com".into()),
-            }),
-        )
-        .await
-        .expect("round 2 feedback should succeed");
-        let cid2 = fb2.0["cid"].as_str().unwrap().to_string();
-
-        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
-
-        // Wait for the harness to finish the first dispatch and show its
-        // composer prompt before routing round 2 via send_input.
-        let second = {
-            let mut last_err = None;
-            let mut resp = None;
-            for _ in 0..40 {
-                match post_artifact_regenerate(
-                    State(state.clone()),
-                    Extension(Identity::Admin),
-                    Path(art_id.to_string()),
-                    Query(artifact_query("test-proj")),
-                    Json(ArtifactRegenerateRequest {
-                        extra_prompt: Some("second pass".into()),
-                        mode: Some("rmux".into()),
-                        harness: Some("custom".into()),
-                        harness_args: harness_args.clone(),
-                        ..Default::default()
-                    }),
-                )
-                .await
-                {
-                    Ok(ok) => {
-                        resp = Some(ok);
-                        break;
-                    }
-                    Err(err) if err.status == StatusCode::CONFLICT => {
-                        last_err = Some(err);
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                    }
-                    Err(err) => panic!("unexpected regenerate error: {err:?}"),
-                }
-            }
-            resp.unwrap_or_else(|| {
-                panic!(
-                    "second regenerate should route via send_input (hot path): {:?}",
-                    last_err
-                )
-            })
-        };
-        assert_eq!(
-            second.0.run_id, first.0.run_id,
-            "two consecutive rounds must reuse one run_id"
-        );
-        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
-
-        let detail = load_artifact_detail(&art_dir, None, true).unwrap();
-        for cid in [cid1, cid2] {
-            let comment = detail
-                .comments
-                .iter()
-                .find(|c| c.cid == cid)
-                .expect("comment present");
-            assert!(comment.consumed, "{comment:?}");
-        }
-
-        let tx_after = std::fs::read_to_string(
-            project_root
-                .join(".orgasmic/tx")
-                .join(format!("{}.org", Utc::now().format("%Y-%m"))),
-        )
-        .unwrap_or_default();
-        assert!(tx_after.contains("artifact.regenerated"));
-        assert_ne!(
-            reviews_before,
-            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
-        );
-
-        let session_path = state
-            .supervisor
-            .snapshot()
-            .await
-            .runs
-            .iter()
-            .find(|run| run.run_id == first.0.run_id)
-            .map(|run| run.session_path.clone())
-            .expect("live artifactor run after round-2 regenerate");
-        let pre_release = std::fs::read_to_string(&session_path).unwrap_or_default();
-        assert!(
-            !pre_release.contains("protocol_end_without_finalize"),
-            "round-2 hot path must not false-fail before final release: {pre_release}"
-        );
-        state
-            .supervisor
-            .release_with_finalization(
-                &first.0.run_id,
-                "artifact_submitted",
-                ReleaseOutcome::Completed,
-                true,
-                None,
-            )
-            .await
-            .expect("declaration-aware final release");
-
-        let session_body = std::fs::read_to_string(&session_path).unwrap_or_default();
-        assert!(
-            session_body.contains("artifact_submitted"),
-            "round-2 hot path must preserve the v2 submit declaration through final release: {session_body}"
-        );
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_busy_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-BSYH1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Busy harness".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "needs work".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let first = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("first pass".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("first regenerate should succeed");
-        live_guard.owns(&first.0.run_id);
-
-        // Real prior submit on the live artifactor run (TASK-ARZGD).
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1 submitted</RichText>\n".into(),
-                title: Some("Busy harness".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Submitted round".into()),
-            }),
-        )
-        .await
-        .expect("live-run submit should install prior declaration");
-
-        let art_dir = artifact_dir(&project_root, art_id);
-        let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
-        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
-        let tx_path = project_root
-            .join(".orgasmic/tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
-        let session_path = state
-            .supervisor
-            .snapshot()
-            .await
-            .runs
-            .iter()
-            .find(|run| run.run_id == first.0.run_id)
-            .map(|run| run.session_path.clone())
-            .expect("live artifactor after prior submit");
-
-        // Harness is mid-turn until the dispatch prompt is consumed and the
-        // composer prompt reappears — followup must be refused with no durable
-        // mutation (arch_045Q0.1 ordering). regenerate_in_flight must restore
-        // the prior declaration atomically (TASK-ARZGD P3).
-        let err = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("too soon".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect_err("followup while harness busy must be refused");
-        assert_eq!(err.status, StatusCode::CONFLICT);
-
-        assert_eq!(
-            std::fs::read_to_string(art_dir.join("artifact.org")).unwrap(),
-            org_before
-        );
-        assert_eq!(
-            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap(),
-            reviews_before
-        );
-        assert_eq!(
-            std::fs::read_to_string(&tx_path).unwrap_or_default(),
-            tx_before
-        );
-        let pre_end = std::fs::read_to_string(&session_path).unwrap_or_default();
-        assert!(
-            !pre_end.contains("protocol_end_without_finalize"),
-            "busy reject must not false-fail the prior submitted round: {pre_end}"
-        );
-
-        // Natural end of the hot session — prior declaration is the tombstone.
-        state
-            .supervisor
-            .release_with_finalization(
-                &first.0.run_id,
-                "artifact_submitted",
-                ReleaseOutcome::Completed,
-                true,
-                None,
-            )
-            .await
-            .expect("prior declaration must still be releasable after busy reject");
-        let body = std::fs::read_to_string(&session_path).unwrap_or_default();
-        let submitted = body.matches("artifact_submitted").count();
-        assert!(
-            submitted >= 1,
-            "exactly one artifact_submitted Completed tombstone expected: {body}"
-        );
-        assert!(
-            !body.contains("protocol_end_without_finalize"),
-            "natural end after busy reject must not false-Fail: {body}"
-        );
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "post_artifact_regenerate_cold_spawns_after_forgotten_run",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-CDRS1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Restart path".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "round 1".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let first = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("first round".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("first regenerate should cold-spawn");
-        let first_run_id = first.0.run_id.clone();
-        live_guard.owns(&first_run_id);
-
-        // Simulate daemon restart: drop the first supervisor and boot fresh state.
-        state
-            .supervisor
-            .release(&first_run_id, "simulate restart", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-        let cold_state = direct_stage_test_state(home.clone()).await;
-
-        let _ = post_artifact_submit(
-            State(cold_state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v2</RichText>\n".into(),
-                title: None,
-                subject_nodes: None,
-                prompt: None,
-            }),
-        )
-        .await
-        .expect("submit v2 after restart");
-
-        let _ = post_artifact_add_comment(
-            State(cold_state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "after restart".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let resp = post_artifact_regenerate(
-            State(cold_state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("post-restart".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("regenerate should cold-spawn when no live holder");
-        live_guard.owns(&resp.0.run_id);
-        assert!(!resp.0.run_id.is_empty());
-        assert_ne!(
-            resp.0.run_id, first_run_id,
-            "post-restart regenerate must spawn a fresh run"
-        );
-        assert_eq!(
-            load_artifact(&artifact_dir(&project_root, art_id))
-                .unwrap()
-                .state,
-            "regenerating"
-        );
-
-        let _ = cold_state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-RE2S1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Saved address".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "needs another pass".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let saved = ArtifactLaunchAddress {
-            mode: "rmux".into(),
-            harness: "custom".into(),
-            harness_args: harness_args.clone(),
-            model: Some("saved-model".into()),
-            effort: Some("high".into()),
-        };
-        let first = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("first round".into()),
-                mode: Some(saved.mode.clone()),
-                harness: Some(saved.harness.clone()),
-                harness_args: saved.harness_args.clone(),
-                model: saved.model.clone(),
-                effort: saved.effort.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("first regenerate should persist launch address");
-        live_guard.owns(&first.0.run_id);
-        let art_dir = artifact_dir(&project_root, art_id);
-        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
-
-        state
-            .supervisor
-            .release(
-                &first.0.run_id,
-                "simulate restart",
-                ReleaseOutcome::Completed,
-            )
-            .await
-            .unwrap();
-        let cold_state = direct_stage_test_state(home.clone()).await;
-
-        let resp = post_artifact_regenerate(
-            State(cold_state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("cold reuse".into()),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("cold regenerate with empty address must reuse saved launch address");
-        live_guard.owns(&resp.0.run_id);
-        assert!(!resp.0.run_id.is_empty());
-        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
-
-        let _ = cold_state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-RE2P1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Replace address".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "change transport".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let first = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("first round".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                model: Some("old-model".into()),
-                effort: Some("high".into()),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("first regenerate should succeed");
-        live_guard.owns(&first.0.run_id);
-        let art_dir = artifact_dir(&project_root, art_id);
-
-        state
-            .supervisor
-            .release(
-                &first.0.run_id,
-                "simulate restart",
-                ReleaseOutcome::Completed,
-            )
-            .await
-            .unwrap();
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let snapshot = state.supervisor.snapshot().await;
-            if !snapshot
-                .runs
-                .iter()
-                .any(|run| run.task_id == format!("artifact.generate:{art_id}"))
-            {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "released run must leave supervisor before cold relaunch"
-            );
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-
-        let cold_state = direct_stage_test_state(home.clone()).await;
-        assert!(
-            cold_state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .all(|run| run.task_id != format!("artifact.generate:{art_id}")),
-            "fresh ApiState must not inherit live artifact runs from prior boot"
-        );
-
-        let replacement = ArtifactLaunchAddress {
-            mode: "rmux".into(),
-            harness: "custom".into(),
-            harness_args: harness_args.clone(),
-            model: Some("new-model".into()),
-            effort: None,
-        };
-        let resp = post_artifact_regenerate(
-            State(cold_state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("replace whole launch record".into()),
-                mode: Some(replacement.mode.clone()),
-                harness: Some(replacement.harness.clone()),
-                harness_args: replacement.harness_args.clone(),
-                model: replacement.model.clone(),
-                effort: replacement.effort.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("cold regenerate with override must replace launch address");
-        live_guard.owns(&resp.0.run_id);
-        assert!(!resp.0.run_id.is_empty());
-        assert_ne!(
-            resp.0.run_id, first.0.run_id,
-            "post-release regenerate must cold-spawn a fresh run"
-        );
-        let persisted = launch_address_from_artifact_org(&art_dir);
-        assert_eq!(persisted, replacement);
-        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
-            .unwrap()
-            .contains("old-model"));
-        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
-            .unwrap()
-            .contains(":LAUNCH_EFFORT:"));
-
-        let _ = cold_state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn launch_artifact_generation_persistence_failure_releases_run() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "launch_artifact_generation_persistence_failure_releases_run",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-FA1M1";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Launch cleanup".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "trigger cold launch".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        std::fs::remove_file(&tx_path).ok();
-        std::fs::create_dir(&tx_path).unwrap();
-
-        // TASK-Z3093: this is the one artifactor test whose run id never
-        // reaches the test body — the launch fails before `post_artifact_...`
-        // returns one — so it cannot register a run with the guard up front.
-        // Diff the live session list instead: under the live-session flock no
-        // other test binary can spawn one, so anything new here is this call's.
-        let sessions_before = rmux_session_names();
-
-        let result = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("should fail to persist".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await;
-        assert!(result.is_err(), "tx sabotage must fail launch persistence");
-
-        let snapshot = state.supervisor.snapshot().await;
-        assert!(
-            !snapshot
-                .runs
-                .iter()
-                .any(|run| run.task_id == format!("artifact.generate:{art_id}")),
-            "persistence failure must release the acquired run: {snapshot:?}"
-        );
-
-        let survivors = rmux_session_names()
-            .into_iter()
-            .filter(|name| !sessions_before.contains(name))
-            .collect::<Vec<_>>();
-        // Hand any survivor to the guard before asserting, so a regression here
-        // fails loudly without also leaking the session it just caught.
-        for name in &survivors {
-            live_guard.owns_session(name);
-        }
-        assert!(
-            survivors.is_empty(),
-            "releasing the run on persistence failure must also reap its rmux \
-             session; these survived: {survivors:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(
-            "artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round",
-            &[("rmux", rmux_available_for_test())],
-        ) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let art_id = "ART-RVRT2";
-        let _ = post_artifact_submit(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactSubmitRequest {
-                content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Revert v1".into()),
-                subject_nodes: Some(vec![]),
-                prompt: Some("Initial".into()),
-            }),
-        )
-        .await
-        .expect("submit v1 should succeed");
-
-        let _ = post_artifact_add_comment(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactCommentRequest {
-                message: "round 2 feedback".into(),
-                anchor: None,
-                resolution_target: None,
-                reply_to: None,
-                author: None,
-            }),
-        )
-        .await
-        .expect("feedback should succeed");
-
-        let regen = post_artifact_regenerate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("round 2".into()),
-                mode: Some("rmux".into()),
-                harness: Some("custom".into()),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("regenerate should succeed");
-        live_guard.owns(&regen.0.run_id);
-
-        let art_dir = artifact_dir(&project_root, art_id);
-        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
-        assert_eq!(load_artifact(&art_dir).unwrap().version, 1);
-
-        state
-            .supervisor
-            .release(
-                &regen.0.run_id,
-                "test: session died mid-round-2",
-                ReleaseOutcome::Failed,
-            )
-            .await
-            .unwrap();
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let summary = load_artifact(&art_dir).unwrap();
-            if summary.state == "submitted" && summary.version == 1 {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "watcher did not revert to submitted@v1 in time; state={} version={}",
-                summary.state,
-                summary.version
-            );
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    }
-
-    #[tokio::test]
     async fn post_artifact_generate_reverts_to_failed_when_transport_is_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -38805,7 +35339,7 @@ pub(crate) mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
-                mode: "tmux".into(),
+                mode: "stdio".into(),
                 harness: "custom".into(),
                 ..Default::default()
             }),
@@ -38852,7 +35386,7 @@ pub(crate) mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: None,
-                mode: Some("tmux".into()),
+                mode: Some("stdio".into()),
                 harness: Some("custom".into()),
                 ..Default::default()
             }),
@@ -38866,144 +35400,6 @@ pub(crate) mod tests {
         let summary = load_artifact(&art_dir).unwrap();
         assert_eq!(summary.state, "submitted");
         assert_eq!(summary.version, 1);
-    }
-
-    #[tokio::test]
-    async fn artifact_release_watcher_reverts_regenerating_state_when_run_ends_without_submit() {
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let resp = post_artifact_generate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactGenerateRequest {
-                nodes: vec!["TASK-PRE".to_string()],
-                prompt: "test".to_string(),
-                mode: "rmux".into(),
-                harness: "custom".into(),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("generate should succeed");
-        live_guard.owns(&resp.0.run_id);
-        let art_id = resp.0.artifact_id.clone();
-        let art_dir = artifact_dir(&project_root, &art_id);
-
-        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
-
-        // Simulate the run ending (crash/timeout/manual release) without ever
-        // calling `orgasmic artifact submit`.
-        state
-            .supervisor
-            .release(
-                &resp.0.run_id,
-                "test: simulate crash",
-                ReleaseOutcome::Failed,
-            )
-            .await
-            .unwrap();
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let summary = load_artifact(&art_dir).unwrap();
-            if summary.state == "failed" {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "watcher did not revert regenerating state in time; state={}",
-                summary.state
-            );
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-
-        let tx_path = project_root
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{}.org", Utc::now().format("%Y-%m")));
-        let tx = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(tx.contains("artifact.generation.failed"));
-    }
-
-    // orgasmic:task_SZJ2B
-    /// The behavioural half: a real generate, bracketed by read-only listings
-    /// of the SHARED rmux server, proving the session it created went to the
-    /// owned server and nothing of this test's making reached the shared one.
-    ///
-    /// The bracket is filtered to this run's own id on purpose. A dispatched
-    /// worker really can start on the shared server while this runs — one was
-    /// live throughout the work that added this test — and a bare
-    /// before/after diff would call that a leak. Nothing here ever kills a
-    /// name it read from the shared listing.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn artifact_generation_lands_no_session_on_the_shared_rmux_server() {
-        const TEST: &str = "artifact_generation_lands_no_session_on_the_shared_rmux_server";
-        let live_guard = live_session_guard();
-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
-        if skip_test_if_missing(TEST, &[("rmux", rmux_available_for_test())]) {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("myproject");
-        seed_project(&home, &project_root, "test-proj");
-        let harness_args = seed_test_artifactor_harness(&home);
-        let state = direct_stage_test_state(home.clone()).await;
-
-        let shared_before = shared_rmux_session_names();
-        let resp = post_artifact_generate(
-            State(state.clone()),
-            Extension(Identity::Admin),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactGenerateRequest {
-                nodes: vec!["TASK-PRE".to_string()],
-                prompt: "prove the session lands on the owned server".to_string(),
-                mode: "rmux".into(),
-                harness: "custom".into(),
-                harness_args: harness_args.clone(),
-                ..Default::default()
-            }),
-        )
-        .await
-        .expect("generate should succeed");
-        live_guard.owns(&resp.0.run_id);
-        let run_id = resp.0.run_id.clone();
-
-        let owned = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests()
-            .session_names();
-        assert!(
-            owned.iter().any(|name| name.contains(&run_id)),
-            "the run's session must be live on the owned rmux server; it holds {owned:?}"
-        );
-
-        let shared_after = shared_rmux_session_names();
-        let leaked = shared_after
-            .iter()
-            .filter(|name| name.contains(&run_id))
-            .collect::<Vec<_>>();
-        assert!(
-            leaked.is_empty(),
-            "artifact generation put {leaked:?} on the SHARED rmux server, which hosts live \
-             dispatch panes (it held {} session(s) before this test)",
-            shared_before.len()
-        );
-
-        let _ = state
-            .supervisor
-            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
     }
 
     // ---- authorization wiring (arch_Z8CW2 / dec_KF2MR) ---------------------
@@ -39892,5 +36288,2698 @@ pub(crate) mod tests {
             resolve_dispatch_branch_oid(root, "cleanup-candidate").unwrap(),
             Some(replacement)
         );
+    }
+
+    #[tokio::test]
+    async fn manager_launch_rejects_harness_args_on_builtin_harness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-manager");
+        let state = direct_stage_test_state(home).await;
+
+        let err = post_manager_launch(
+            State(state),
+            Json(ManagerLaunchRequest {
+                project_id: "proj-manager".into(),
+                mode: "tmux".into(),
+                harness: "claude".into(),
+                model: None,
+                effort: None,
+                harness_args: vec!["--smuggle".into()],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err
+            .message
+            .contains("harness_args are only valid for custom harness"));
+    }
+
+    fn seed_argv_capture_trusted_claude_layout(
+        home_root: &FsPath,
+        trusted_log: &FsPath,
+        projects_dir: &FsPath,
+        fork_id: &str,
+        cwd: &FsPath,
+    ) -> PinnedClaudeExecutable {
+        // A real resumable Claude session already has its cwd-scoped provider
+        // directory. The driver now retains that directory before releasing
+        // the pane, so the production-shaped fixture must seed it too.
+        std::fs::create_dir_all(projects_dir).unwrap();
+        let versions = home_root.join(".local/share/claude/versions");
+        std::fs::create_dir_all(&versions).unwrap();
+        let target = versions.join("2.1.217");
+        crate::test_fixtures::link_shared_test_executable(&target);
+        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-capture");
+        crate::test_fixtures::write_linked_fixture_value(&target, "trusted-log", trusted_log);
+        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
+        crate::test_fixtures::write_linked_fixture_text(&target, "fork-id", fork_id);
+        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
+        let entry = home_root.join(".local/bin/claude");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        if entry.exists() {
+            std::fs::remove_file(&entry).ok();
+        }
+        std::os::unix::fs::symlink(&target, &entry).unwrap();
+        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
+            .expect("argv-capture trusted claude layout")
+    }
+
+    #[cfg(unix)]
+    fn seed_malicious_path_claude_shim(shim_dir: &FsPath, malicious_log: &FsPath) {
+        std::fs::create_dir_all(shim_dir).unwrap();
+        let shim = shim_dir.join("claude");
+        crate::test_fixtures::link_shared_test_executable(&shim);
+        crate::test_fixtures::write_linked_fixture_text(&shim, "orgasmic-mode", "malicious-claude");
+        crate::test_fixtures::write_linked_fixture_value(&shim, "malicious-log", malicious_log);
+    }
+
+    #[cfg(unix)]
+    fn seed_test_pinned_exec_wrapper(home: &Home) {
+        let wrapper = home.bin_orgasmic();
+        crate::test_fixtures::link_shared_test_executable(&wrapper);
+        // Loud failure if production stops passing __exec-pinned (TASK-STWVB).
+        crate::test_fixtures::write_linked_fixture_text(&wrapper, "orgasmic-pinned-wrapper", "1");
+    }
+
+    fn seed_two_recovery_claude(
+        home_root: &FsPath,
+        argv_log: &FsPath,
+        counter: &FsPath,
+        projects_dir: &FsPath,
+        cwd: &FsPath,
+    ) -> PinnedClaudeExecutable {
+        std::fs::create_dir_all(projects_dir).unwrap();
+        let versions = home_root.join(".local/share/claude/versions");
+        std::fs::create_dir_all(&versions).unwrap();
+        let target = versions.join("2.1.217");
+        crate::test_fixtures::link_shared_test_executable(&target);
+        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-chain");
+        crate::test_fixtures::write_linked_fixture_value(&target, "argv-log", argv_log);
+        crate::test_fixtures::write_linked_fixture_value(&target, "counter", counter);
+        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
+        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
+        let entry = home_root.join(".local/bin/claude");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &entry).unwrap();
+        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
+            .expect("two-recovery trusted Claude")
+    }
+
+    #[tokio::test]
+    async fn production_resume_native_fork_uses_pinned_claude_not_path_shim() {
+        // Lock order is flock-then-environment: this test starts a real daemon
+        // and repoints process-global `HOME` and `PATH` for its whole body.
+        let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
+        // orgasmic:task_JGHNC — the gate is real, and stays. This test starts
+        // no session itself, so the dependency is easy to doubt; measured
+        // 2026-07-29 by running it with neither tmux nor tmux resolvable, the
+        // recovery run the daemon starts is transport=tmux and its driver came
+        // up `"inert":true,"inert_reason":"tmux_missing"`, so the fork id under
+        // assertion is never proven. The pinned Claude executable is launched
+        // *inside a mux pane*; the mux is a real dependency of the assertion.
+        if skip_test_if_missing(
+            "production_resume_native_fork_uses_pinned_claude_not_path_shim",
+            &[("tmux", real_tmux_on_path())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        seed_test_pinned_exec_wrapper(&home);
+        env.set("HOME", &user_home);
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::remove_file(home.bin().join("claude")).ok();
+        write_failed_recoverable_session(
+            &project_root,
+            "run-path-shim-recover",
+            "stall_timeout_exceeded",
+            true,
+        );
+        let trusted_log = tmp.path().join("trusted-argv.log");
+        let malicious_log = tmp.path().join("malicious-argv.log");
+        let cwd = project_root.canonicalize().unwrap();
+        let projects_slug = orgasmic_drivers::transcript_finder::encode_claude_project_slug(&cwd);
+        let projects_dir = user_home.join(".claude/projects").join(projects_slug);
+        let pinned = seed_argv_capture_trusted_claude_layout(
+            &user_home,
+            &trusted_log,
+            &projects_dir,
+            "fork-path-shim-proven",
+            &cwd,
+        );
+        let shim_dir = tmp.path().join("malicious-path");
+        seed_malicious_path_claude_shim(&shim_dir, &malicious_log);
+        env.prepend_path(&shim_dir);
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        assert!(
+            pin_trusted_claude_binary(&home).is_some(),
+            "daemon must pin trusted Claude at boot"
+        );
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!(
+                "http://{}/api/runs/run-path-shim-recover/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "request_id": "task-3teda-path-shim",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "resume_native_fork recover: {}",
+            resp.status()
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut session_raw = String::new();
+        while std::time::Instant::now() < deadline {
+            session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+            if session_raw.contains("fork-path-shim-proven") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(
+            session_raw.contains("fork-path-shim-proven"),
+            "native runtime must record proven fork id: {session_raw}"
+        );
+        assert!(
+            session_raw.contains(&pinned.target_path.to_string_lossy().to_string()),
+            "native runtime must use pinned trusted executable: {session_raw}"
+        );
+        let trusted_argv = std::fs::read_to_string(&trusted_log).unwrap_or_default();
+        assert!(
+            trusted_argv.contains("--resume"),
+            "trusted child must receive resume argv: {trusted_argv}"
+        );
+        assert!(
+            !malicious_log.exists(),
+            "malicious PATH shim must never execute"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn two_recovery_chain_second_resume_uses_first_fork_session_id() {
+        // Lock order is flock-then-environment, as above.
+        let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
+        // orgasmic:task_JGHNC — same measured dependency as
+        // `production_resume_native_fork_uses_pinned_claude_not_path_shim`:
+        // with no mux resolvable both recoveries come up inert
+        // (`inert_reason: tmux_missing`) and neither fork id is ever persisted.
+        if skip_test_if_missing(
+            "two_recovery_chain_second_resume_uses_first_fork_session_id",
+            &[("tmux", real_tmux_on_path())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        seed_test_pinned_exec_wrapper(&home);
+        env.set("HOME", &user_home);
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::remove_file(home.bin().join("claude")).ok();
+        let cwd = project_root.canonicalize().unwrap();
+        let projects_slug = orgasmic_drivers::transcript_finder::encode_claude_project_slug(&cwd);
+        let projects_dir = user_home.join(".claude/projects").join(projects_slug);
+        let argv_log = tmp.path().join("chain-argv.log");
+        let counter = tmp.path().join("chain-counter");
+        seed_two_recovery_claude(&user_home, &argv_log, &counter, &projects_dir, &cwd);
+        write_failed_recoverable_session(
+            &project_root,
+            "run-chain-origin",
+            "stall_timeout_exceeded",
+            true,
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .unwrap();
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+
+        let first = client
+            .post(format!(
+                "http://{}/api/runs/run-chain-origin/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "request_id": "task-3teda-chain-first",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            first.status().is_success(),
+            "first recover: {}",
+            first.status()
+        );
+        let first_body: serde_json::Value = first.json().await.unwrap();
+        let first_run_id = first_body["run_id"].as_str().unwrap().to_string();
+        let first_fork_id = "fork-chain-first";
+        let first_session = PathBuf::from(first_body["session_path"].as_str().unwrap());
+        let first_raw = std::fs::read_to_string(&first_session).unwrap();
+        assert!(
+            first_raw.contains(first_fork_id),
+            "first recovery must persist the discovered fork session id: {first_raw}"
+        );
+        wait_for_run_not_live(&client, &running.addr, &token, &first_run_id).await;
+
+        let second = client
+            .post(format!(
+                "http://{}/api/runs/{first_run_id}/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "request_id": "task-3teda-chain-second",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            second.status().is_success(),
+            "second recover: {}",
+            second.status()
+        );
+        let second_body: serde_json::Value = second.json().await.unwrap();
+        let second_session = PathBuf::from(second_body["session_path"].as_str().unwrap());
+        let second_raw = std::fs::read_to_string(&second_session).unwrap();
+        assert!(
+            second_raw.contains("fork-chain-second"),
+            "second recovery must persist its newly discovered fork id: {second_raw}"
+        );
+        let argv = std::fs::read_to_string(&argv_log).unwrap();
+        let launches: Vec<_> = argv.lines().collect();
+        assert_eq!(launches.len(), 2, "two production Claude launches: {argv}");
+        assert!(
+            launches[1].contains("--resume fork-chain-first --fork-session"),
+            "second recovery must resume the actual first fork: {argv}"
+        );
+        assert!(
+            !launches[1].contains("native-run-chain-origin"),
+            "second recovery must not resume the original native id: {argv}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    // ── artifact generation launch (TASK-2ZQSB acceptance) ───────────────────
+
+    /// Creates the explicit custom-harness address used by artifact tests: a
+    /// minimal interactive script that stays live and accepts `send_input`
+    /// followups (hot-session regenerate path). Skips when tmux is unavailable
+    /// — same pattern as orgasmic-drivers tmux live tests.
+    fn seed_test_artifactor_harness(_home: &Home) -> Vec<String> {
+        vec![
+            crate::test_fixtures::shared_test_executable()
+                .display()
+                .to_string(),
+            "artifact-ready".into(),
+        ]
+    }
+
+    /// Like `seed_test_artifactor_harness` but the harness sleeps before showing
+    /// its composer prompt so an immediate followup hits the busy gate.
+    fn seed_busy_artifactor_harness(_home: &Home) -> Vec<String> {
+        vec![
+            crate::test_fixtures::shared_test_executable()
+                .display()
+                .to_string(),
+            "artifact-busy".into(),
+        ]
+    }
+
+    fn open_comment_count_for_node(artifacts: &[ArtifactSummary], node_id: &str) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == node_id))
+            .map(|artifact| artifact.open_comment_count)
+            .sum()
+    }
+
+    fn launch_address_from_artifact_org(art_dir: &FsPath) -> ArtifactLaunchAddress {
+        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        artifacts::parse_artifact_launch_address(file.headings.first().unwrap())
+            .expect("artifact.org must carry a launch address")
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "Draft a wireframe for the login flow".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("generate should succeed");
+
+        // TASK-Z3093: hand the live run to the guard before the first
+        // assertion that can panic. The trailing `release` below stays — it is
+        // the production path under test — but it is no longer the only reap.
+        live_guard.owns(&resp.0.run_id);
+
+        let art_id = resp.0.artifact_id.clone();
+        assert!(art_id.starts_with("ART-"), "{art_id}");
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, &art_id);
+        let summary = load_artifact(&art_dir).expect("artifact.org readable");
+        assert_eq!(summary.state, "regenerating");
+        assert_eq!(summary.version, 0);
+        assert_eq!(summary.subject_nodes, vec!["TASK-PRE".to_string()]);
+        assert!(art_dir.join("reviews.org").exists());
+
+        let snapshot = state.supervisor.snapshot().await;
+        assert!(snapshot.runs.iter().any(|r| r.run_id == resp.0.run_id));
+        assert!(snapshot
+            .runs
+            .iter()
+            .any(|r| r.task_id == format!("artifact.generate:{art_id}")));
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx = std::fs::read_to_string(&tx_path).unwrap();
+        assert!(tx.contains("artifact.created"));
+        assert!(tx.contains(&art_id));
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_with_empty_nodes_succeeds_end_to_end() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec![],
+                prompt: "Grill this idea before any decision exists".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("generate with empty nodes should succeed");
+        live_guard.owns(&resp.0.run_id);
+
+        let art_id = resp.0.artifact_id.clone();
+        assert!(art_id.starts_with("ART-"), "{art_id}");
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, &art_id);
+        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        assert_eq!(
+            file.headings
+                .first()
+                .and_then(|h| h.property("SUBJECT_NODES")),
+            Some("")
+        );
+
+        let summary = load_artifact(&art_dir).expect("artifact.org readable");
+        assert_eq!(summary.state, "regenerating");
+        assert_eq!(summary.version, 0);
+        assert!(summary.subject_nodes.is_empty());
+
+        let list = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list should include node-less artifact");
+        assert!(
+            list.0.iter().any(|artifact| artifact.id == art_id),
+            "node-less artifact must appear in the global list: {list:?}"
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_empty_nodes_excluded_from_node_rollups() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let attached_id = "ART-ATTCH";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(attached_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>attached</RichText>\n".into(),
+                title: Some("Attached".into()),
+                subject_nodes: Some(vec!["TASK-PRE".into()]),
+                prompt: Some("Attached prompt".into()),
+            }),
+        )
+        .await
+        .expect("attached submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(attached_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "needs work".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let rollup_before = open_comment_count_for_node(
+            &get_artifacts(
+                State(state.clone()),
+                Extension(Identity::Admin),
+                Query(artifact_query("test-proj")),
+            )
+            .await
+            .expect("list before generate")
+            .0,
+            "TASK-PRE",
+        );
+        assert_eq!(rollup_before, 1);
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec![],
+                prompt: "Prompt-only artifact".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("generate with empty nodes should succeed");
+        live_guard.owns(&resp.0.run_id);
+
+        let _ = state.index.refresh_project("test-proj").await;
+        let artifacts = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list after generate")
+        .0;
+        assert_eq!(artifacts.len(), 2);
+
+        let nodeless = artifacts
+            .iter()
+            .find(|artifact| artifact.id == resp.0.artifact_id)
+            .expect("node-less artifact listed globally");
+        assert!(nodeless.subject_nodes.is_empty());
+
+        assert_eq!(open_comment_count_for_node(&artifacts, "TASK-PRE"), 1);
+        assert!(
+            !artifacts
+                .iter()
+                .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == "TASK-PRE"))
+                .any(|artifact| artifact.id == resp.0.artifact_id),
+            "node-less artifact must not appear in TASK-PRE rollups"
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_on_nodeless_artifact_succeeds() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-NDES0";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Nodeless".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Prompt-only artifact".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let subject_context = assemble_artifact_context(&state, "test-proj", &[]).await;
+        assert!(subject_context.is_empty());
+
+        let resp = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("tighten the prose".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("regenerate on node-less artifact should succeed");
+        live_guard.owns(&resp.0.run_id);
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        let summary = load_artifact(&art_dir).unwrap();
+        assert_eq!(summary.state, "regenerating");
+        assert!(summary.subject_nodes.is_empty());
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "post_artifact_regenerate_hot_path_reuses_live_run_id",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-HTSS1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Hot session".into()),
+                subject_nodes: Some(vec!["TASK-PRE".into()]),
+                prompt: Some("Initial prompt".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let fb_resp = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "round 1 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+        let cid1 = fb_resp.0["cid"].as_str().unwrap().to_string();
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first pass".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                governance: Some(GovernancePatch {
+                    stall_timeout_secs: Some(120),
+                    max_run_duration_secs: Some(120),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed (cold spawn)");
+        live_guard.owns(&first.0.run_id);
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        // Simulate round 1 completing: submit v2 while the hot session stays live.
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v2</RichText>\n".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit v2 should succeed");
+        assert_eq!(load_artifact(&art_dir).unwrap().version, 2);
+
+        let fb2 = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "round 2 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("round 2 feedback should succeed");
+        let cid2 = fb2.0["cid"].as_str().unwrap().to_string();
+
+        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+
+        // Wait for the harness to finish the first dispatch and show its
+        // composer prompt before routing round 2 via send_input.
+        let second = {
+            let mut last_err = None;
+            let mut resp = None;
+            for _ in 0..40 {
+                match post_artifact_regenerate(
+                    State(state.clone()),
+                    Extension(Identity::Admin),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("test-proj")),
+                    Json(ArtifactRegenerateRequest {
+                        extra_prompt: Some("second pass".into()),
+                        mode: Some("tmux".into()),
+                        harness: Some("custom".into()),
+                        harness_args: harness_args.clone(),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                {
+                    Ok(ok) => {
+                        resp = Some(ok);
+                        break;
+                    }
+                    Err(err) if err.status == StatusCode::CONFLICT => {
+                        last_err = Some(err);
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    Err(err) => panic!("unexpected regenerate error: {err:?}"),
+                }
+            }
+            resp.unwrap_or_else(|| {
+                panic!(
+                    "second regenerate should route via send_input (hot path): {:?}",
+                    last_err
+                )
+            })
+        };
+        assert_eq!(
+            second.0.run_id, first.0.run_id,
+            "two consecutive rounds must reuse one run_id"
+        );
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        let detail = load_artifact_detail(&art_dir, None, true).unwrap();
+        for cid in [cid1, cid2] {
+            let comment = detail
+                .comments
+                .iter()
+                .find(|c| c.cid == cid)
+                .expect("comment present");
+            assert!(comment.consumed, "{comment:?}");
+        }
+
+        let tx_after = std::fs::read_to_string(
+            project_root
+                .join(".orgasmic/tx")
+                .join(format!("{}.org", Utc::now().format("%Y-%m"))),
+        )
+        .unwrap_or_default();
+        assert!(tx_after.contains("artifact.regenerated"));
+        assert_ne!(
+            reviews_before,
+            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
+        );
+
+        let session_path = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor run after round-2 regenerate");
+        let pre_release = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_release.contains("protocol_end_without_finalize"),
+            "round-2 hot path must not false-fail before final release: {pre_release}"
+        );
+        state
+            .supervisor
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("declaration-aware final release");
+
+        let session_body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            session_body.contains("artifact_submitted"),
+            "round-2 hot path must preserve the v2 submit declaration through final release: {session_body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_busy_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-BSYH1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Busy harness".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "needs work".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first pass".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed");
+        live_guard.owns(&first.0.run_id);
+
+        // Real prior submit on the live artifactor run (TASK-ARZGD).
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1 submitted</RichText>\n".into(),
+                title: Some("Busy harness".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Submitted round".into()),
+            }),
+        )
+        .await
+        .expect("live-run submit should install prior declaration");
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+        let tx_path = project_root
+            .join(".orgasmic/tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
+        let session_path = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor after prior submit");
+
+        // Harness is mid-turn until the dispatch prompt is consumed and the
+        // composer prompt reappears — followup must be refused with no durable
+        // mutation (arch_045Q0.1 ordering). regenerate_in_flight must restore
+        // the prior declaration atomically (TASK-ARZGD P3).
+        let err = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("too soon".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect_err("followup while harness busy must be refused");
+        assert_eq!(err.status, StatusCode::CONFLICT);
+
+        assert_eq!(
+            std::fs::read_to_string(art_dir.join("artifact.org")).unwrap(),
+            org_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap(),
+            reviews_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tx_path).unwrap_or_default(),
+            tx_before
+        );
+        let pre_end = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_end.contains("protocol_end_without_finalize"),
+            "busy reject must not false-fail the prior submitted round: {pre_end}"
+        );
+
+        // Natural end of the hot session — prior declaration is the tombstone.
+        state
+            .supervisor
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("prior declaration must still be releasable after busy reject");
+        let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        let submitted = body.matches("artifact_submitted").count();
+        assert!(
+            submitted >= 1,
+            "exactly one artifact_submitted Completed tombstone expected: {body}"
+        );
+        assert!(
+            !body.contains("protocol_end_without_finalize"),
+            "natural end after busy reject must not false-Fail: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_spawns_after_forgotten_run",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-CDRS1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Restart path".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "round 1".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should cold-spawn");
+        let first_run_id = first.0.run_id.clone();
+        live_guard.owns(&first_run_id);
+
+        // Simulate daemon restart: drop the first supervisor and boot fresh state.
+        state
+            .supervisor
+            .release(&first_run_id, "simulate restart", ReleaseOutcome::Completed)
+            .await
+            .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
+
+        let _ = post_artifact_submit(
+            State(cold_state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v2</RichText>\n".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit v2 after restart");
+
+        let _ = post_artifact_add_comment(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "after restart".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let resp = post_artifact_regenerate(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("post-restart".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("regenerate should cold-spawn when no live holder");
+        live_guard.owns(&resp.0.run_id);
+        assert!(!resp.0.run_id.is_empty());
+        assert_ne!(
+            resp.0.run_id, first_run_id,
+            "post-restart regenerate must spawn a fresh run"
+        );
+        assert_eq!(
+            load_artifact(&artifact_dir(&project_root, art_id))
+                .unwrap()
+                .state,
+            "regenerating"
+        );
+
+        let _ = cold_state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RE2S1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Saved address".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "needs another pass".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let saved = ArtifactLaunchAddress {
+            mode: "tmux".into(),
+            harness: "custom".into(),
+            harness_args: harness_args.clone(),
+            model: Some("saved-model".into()),
+            effort: Some("high".into()),
+        };
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+                mode: Some(saved.mode.clone()),
+                harness: Some(saved.harness.clone()),
+                harness_args: saved.harness_args.clone(),
+                model: saved.model.clone(),
+                effort: saved.effort.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should persist launch address");
+        live_guard.owns(&first.0.run_id);
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
+
+        state
+            .supervisor
+            .release(
+                &first.0.run_id,
+                "simulate restart",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_regenerate(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("cold reuse".into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("cold regenerate with empty address must reuse saved launch address");
+        live_guard.owns(&resp.0.run_id);
+        assert!(!resp.0.run_id.is_empty());
+        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
+
+        let _ = cold_state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RE2P1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Replace address".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "change transport".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                model: Some("old-model".into()),
+                effort: Some("high".into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed");
+        live_guard.owns(&first.0.run_id);
+        let art_dir = artifact_dir(&project_root, art_id);
+
+        state
+            .supervisor
+            .release(
+                &first.0.run_id,
+                "simulate restart",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = state.supervisor.snapshot().await;
+            if !snapshot
+                .runs
+                .iter()
+                .any(|run| run.task_id == format!("artifact.generate:{art_id}"))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "released run must leave supervisor before cold relaunch"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let cold_state = direct_stage_test_state(home.clone()).await;
+        assert!(
+            cold_state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.task_id != format!("artifact.generate:{art_id}")),
+            "fresh ApiState must not inherit live artifact runs from prior boot"
+        );
+
+        let replacement = ArtifactLaunchAddress {
+            mode: "tmux".into(),
+            harness: "custom".into(),
+            harness_args: harness_args.clone(),
+            model: Some("new-model".into()),
+            effort: None,
+        };
+        let resp = post_artifact_regenerate(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("replace whole launch record".into()),
+                mode: Some(replacement.mode.clone()),
+                harness: Some(replacement.harness.clone()),
+                harness_args: replacement.harness_args.clone(),
+                model: replacement.model.clone(),
+                effort: replacement.effort.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("cold regenerate with override must replace launch address");
+        live_guard.owns(&resp.0.run_id);
+        assert!(!resp.0.run_id.is_empty());
+        assert_ne!(
+            resp.0.run_id, first.0.run_id,
+            "post-release regenerate must cold-spawn a fresh run"
+        );
+        let persisted = launch_address_from_artifact_org(&art_dir);
+        assert_eq!(persisted, replacement);
+        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+            .unwrap()
+            .contains("old-model"));
+        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+            .unwrap()
+            .contains(":LAUNCH_EFFORT:"));
+
+        let _ = cold_state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn launch_artifact_generation_persistence_failure_releases_run() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "launch_artifact_generation_persistence_failure_releases_run",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-FA1M1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Launch cleanup".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "trigger cold launch".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        std::fs::remove_file(&tx_path).ok();
+        std::fs::create_dir(&tx_path).unwrap();
+
+        // TASK-Z3093: this is the one artifactor test whose run id never
+        // reaches the test body — the launch fails before `post_artifact_...`
+        // returns one — so it cannot register a run with the guard up front.
+        // Diff the live session list instead: under the live-session flock no
+        // other test binary can spawn one, so anything new here is this call's.
+        let sessions_before = tmux_session_names();
+
+        let result = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("should fail to persist".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert!(result.is_err(), "tx sabotage must fail launch persistence");
+
+        let snapshot = state.supervisor.snapshot().await;
+        assert!(
+            !snapshot
+                .runs
+                .iter()
+                .any(|run| run.task_id == format!("artifact.generate:{art_id}")),
+            "persistence failure must release the acquired run: {snapshot:?}"
+        );
+
+        let survivors = tmux_session_names()
+            .into_iter()
+            .filter(|name| !sessions_before.contains(name))
+            .collect::<Vec<_>>();
+        // Hand any survivor to the guard before asserting, so a regression here
+        // fails loudly without also leaking the session it just caught.
+        for name in &survivors {
+            live_guard.owns_session(name);
+        }
+        assert!(
+            survivors.is_empty(),
+            "releasing the run on persistence failure must also reap its tmux \
+             session; these survived: {survivors:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(
+            "artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round",
+            &[("tmux", tmux_available_for_test())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RVRT2";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Revert v1".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit v1 should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "round 2 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let regen = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("round 2".into()),
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("regenerate should succeed");
+        live_guard.owns(&regen.0.run_id);
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+        assert_eq!(load_artifact(&art_dir).unwrap().version, 1);
+
+        state
+            .supervisor
+            .release(
+                &regen.0.run_id,
+                "test: session died mid-round-2",
+                ReleaseOutcome::Failed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let summary = load_artifact(&art_dir).unwrap();
+            if summary.state == "submitted" && summary.version == 1 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher did not revert to submitted@v1 in time; state={} version={}",
+                summary.state,
+                summary.version
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn artifact_release_watcher_reverts_regenerating_state_when_run_ends_without_submit() {
+        let live_guard = live_session_guard();
+        let _tmux = claim_owned_tmux_endpoint(&live_guard).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "test".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("generate should succeed");
+        live_guard.owns(&resp.0.run_id);
+        let art_id = resp.0.artifact_id.clone();
+        let art_dir = artifact_dir(&project_root, &art_id);
+
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        // Simulate the run ending (crash/timeout/manual release) without ever
+        // calling `orgasmic artifact submit`.
+        state
+            .supervisor
+            .release(
+                &resp.0.run_id,
+                "test: simulate crash",
+                ReleaseOutcome::Failed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let summary = load_artifact(&art_dir).unwrap();
+            if summary.state == "failed" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher did not revert regenerating state in time; state={}",
+                summary.state
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx = std::fs::read_to_string(&tx_path).unwrap();
+        assert!(tx.contains("artifact.generation.failed"));
+    }
+
+    async fn wait_for_run_not_live(
+        client: &reqwest::Client,
+        addr: &std::net::SocketAddr,
+        token: &str,
+        run_id: &str,
+    ) {
+        use std::time::Instant;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            let recovery: serde_json::Value = client
+                .get(format!("http://{addr}/api/recovery/status"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .expect("recovery status")
+                .json()
+                .await
+                .expect("recovery status json");
+            let still_live = recovery["live_runs"]
+                .as_array()
+                .is_some_and(|runs| runs.iter().any(|run| run["run_id"] == run_id));
+            if !still_live {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("run {run_id} still live after timeout");
+    }
+
+    // orgasmic:TASK-AK6EM
+    // ---------------------------------------------------------------------
+    // Each of the three reattach shapes reaches `Supervisor::reattach` with
+    // the worktree it wants to occupy, so each is fenced by a held close
+    // guard. `Supervisor::reattach` is the one door (see `admission`), and
+    // these tests are what proves each call site actually walks through it.
+    // ---------------------------------------------------------------------
+
+    /// Writes an interrupted, genuinely reattachable run over `worktree` and
+    /// starts the `mode` session that makes it live.
+    // orgasmic:task_JGHNC — parameterized over the multiplexer per K4G1D. The
+    // fencing these fixtures feed is a property of the close guard, not of a
+    // multiplexer, and a fixture that can only be built from tmux takes the
+    // whole shape out of every worker-run suite.
+    fn seed_live_interrupted_run(
+        mode: MuxMode,
+        live: &LiveSessionGuard,
+        project_root: &FsPath,
+        worktree: &FsPath,
+        task_id: &str,
+    ) -> (RuntimeIdentity, TmuxSessionGuard, PathBuf) {
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-fence-{}-{suffix}", mode.id()),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let guard = mode.start_detached_session(&session_name, live);
+
+        let session_path =
+            project_sessions_dir(project_root).join(format!("{}.jsonl", identity.run_id));
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: task_id.into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-tmux".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: mode.id().into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(worktree.to_path_buf()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
+                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
+                // writer now REFUSES a pane `text_chunk` outright. This fixture
+                // used to persist one, which is a shape neither the real drivers
+                // nor the writer can produce; it models the real one instead.
+                serde_json::to_value(DriverEvent::PaneActivity {
+                    seq: 0,
+                    bytes: "## Report\nfenced reattach fixture".len() as u64,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+        (identity, guard, session_path)
+    }
+
+    fn close_guard_params(task_id: &str, worktree: &FsPath) -> DispatchCloseGuardParams {
+        DispatchCloseGuardParams {
+            project_id: "orgasmic".into(),
+            task_id: task_id.into(),
+            kind: RunKind::Worker,
+            branch: "task-fence-impl".into(),
+            worktree_path: worktree.to_path_buf(),
+            dispatch_attempt_token: None,
+            last_path: None,
+            stdout_path: None,
+            // This process is the holder, and it is alive for the whole test.
+            owner_pid: Some(std::process::id()),
+            releasing_run_id: None,
+            owned_run_ids: Vec::new(),
+        }
+    }
+
+    async fn reserve_guard(state: &ApiState, task_id: &str, worktree: &FsPath) -> String {
+        match state
+            .supervisor
+            .reserve_dispatch_close(&close_guard_params(task_id, worktree))
+            .await
+        {
+            DispatchCloseGuardOutcome::Reserved { guard_id, .. } => guard_id,
+            other => panic!("close guard must be reserved for this fixture: {other:?}"),
+        }
+    }
+
+    /// Shape 3 of 3: boot rehydration.
+    ///
+    /// Injection: remove the reservation check from `Inner::admit_live_run` (or
+    /// stop passing `worktree` from `Supervisor::reattach`) and the run below is
+    /// rehydrated into a worktree a destructive close is holding.
+    // orgasmic:task_JGHNC
+    async fn assert_boot_rehydration_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let worktree = tmp.path().join("worktrees/task-boot-fence");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        let (identity, _mux, _session_path) = seed_live_interrupted_run(
+            mode,
+            &live_guard,
+            &project_root,
+            &worktree,
+            "TASK-BOOT-FENCE",
+        );
+
+        let state = direct_stage_test_state(home).await;
+        let guard_id = reserve_guard(&state, "TASK-BOOT-FENCE", &worktree).await;
+
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            !state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "{test_name}: boot rehydration must not admit a run into a worktree \
+             a close guard holds [{}]",
+            mode.diagnostic()
+        );
+
+        // The fixture really is reattachable — without the guard the very same
+        // boot rehydration installs it.
+        state.supervisor.finish_dispatch_close(&guard_id).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "{test_name}: the fixture must rehydrate once the guard is released, \
+             or the test above proves nothing [{}]",
+            mode.diagnostic()
+        );
+        let _ = state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_boot_rehydration_is_fenced_by_a_close_guard(
+            MuxMode::Tmux,
+            "boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
+    /// Shape 1 of 3: the explicit `reattach_tmux` recovery action.
+    async fn assert_explicit_reattach_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        // A real dispatch worktree is a checkout of the project, and
+        // `RecoveredRun.worktree` is only exposed for one whose own
+        // `.orgasmic/project.org` names the same project.
+        let worktree = tmp.path().join("worktrees/task-explicit-fence");
+        std::fs::create_dir_all(worktree.join(".orgasmic")).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        write(
+            worktree.join(".orgasmic/project.org"),
+            "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
+        );
+        let (identity, _mux, _session_path) = seed_live_interrupted_run(
+            mode,
+            &live_guard,
+            &project_root,
+            &worktree,
+            "TASK-EXPLICIT-FENCE",
+        );
+
+        let state = direct_stage_test_state(home).await;
+        let guard_id = reserve_guard(&state, "TASK-EXPLICIT-FENCE", &worktree).await;
+
+        let request = RunRecoverRequest {
+            action: Some("reattach_tmux".into()),
+            project: Some("orgasmic".into()),
+            request_id: Some("req-explicit-fence".into()),
+            force_inert: None,
+            mode: None,
+            harness: None,
+        };
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path(identity.run_id.clone()),
+            Json(request),
+        )
+        .await
+        .expect_err("reattach_tmux must be refused while a close guard holds the worktree");
+        assert!(
+            refused.message.contains("cleanup"),
+            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
+            refused.message,
+            mode.diagnostic()
+        );
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "{test_name}: a refused reattach must leave no live run behind [{}]",
+            mode.diagnostic()
+        );
+
+        state.supervisor.finish_dispatch_close(&guard_id).await;
+        let admitted = post_run_recover(
+            State(state.clone()),
+            Path(identity.run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some("reattach_tmux".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-explicit-fence-2".into()),
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect("the same action is admitted once the guard is released");
+        assert_eq!(
+            admitted.run_id,
+            identity.run_id,
+            "{test_name} [{}]",
+            mode.diagnostic()
+        );
+        let _ = state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await;
+    }
+
+    #[tokio::test]
+    async fn explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_explicit_reattach_is_fenced_by_a_close_guard(
+            MuxMode::Tmux,
+            "explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
+    /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the
+    /// one that can install a *replacement* id the close's record does not
+    /// name, which is why fencing by worktree rather than by id is the point.
+    async fn assert_pending_plan_reattach_existing_is_fenced(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let worktree = tmp.path().join("worktrees/task-pending-fence");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        let origin_path = write_failed_recoverable_session(
+            &project_root,
+            "run-pending-fence-origin",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let replacement_path =
+            project_sessions_dir(&project_root).join("recover-pending-fence.jsonl");
+
+        let spec = PendingRecoveryClaimSpec {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-pending-fence-origin".into(),
+            request_id: "req-pending-fence".into(),
+            origin_session_path: origin_path,
+            replacement_session_path: replacement_path,
+            boot_id: "boot-pending-fence".into(),
+            action: "start_recovery_run".into(),
+            target: "worker".into(),
+            draft_prompt: Some("pending fence draft".into()),
+            force_inert: true,
+            task_id: "TASK-PENDING-FENCE".into(),
+            kind: "worker".into(),
+            worker_id: "implementer-claude-stream-json".into(),
+            role: "implementer".into(),
+            requires_worker_finalize: true,
+            transport: mode.id().into(),
+            harness: Some("claude".into()),
+            driver_config: json!({"force_inert": true, "harness": "claude"}),
+            worktree: Some(worktree.clone()),
+            last_path: None,
+            stdout_path: None,
+            planned_native_runtime: None,
+            run_options: RecoveryRunOptions {
+                stall_timeout_secs: None,
+                max_run_duration_secs: None,
+                idle_timeout_secs: None,
+                cleanup_on_failure: false,
+            },
+        };
+        let plan = plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
+        // The planned replacement's mux session is alive: this is the crash
+        // replay that reattaches an *existing* runtime rather than spawning.
+        let planned_session = mode.session_name(&plan.planned_identity);
+        let _planned_guard = mode.start_detached_session(&planned_session, &live_guard);
+
+        let state = direct_stage_test_state(home).await;
+        let _guard_id = reserve_guard(&state, "TASK-PENDING-FENCE", &worktree).await;
+
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path("run-pending-fence-origin".to_string()),
+            Json(RunRecoverRequest {
+                action: Some("start_recovery_run".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-pending-fence".into()),
+                force_inert: Some(true),
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("a crash-replay reattach must not enter a guarded worktree");
+        assert!(
+            refused.message.contains("cleanup"),
+            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
+            refused.message,
+            mode.diagnostic()
+        );
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "{test_name}: a refused crash replay must leave no live replacement \
+             behind [{}]",
+            mode.diagnostic()
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree() {
+        assert_pending_plan_reattach_existing_is_fenced(
+            MuxMode::Tmux,
+            "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
+        )
+        .await;
+    }
+
+    /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
+    /// on boot reattach. Without worker finalize, the watcher must not
+    /// synthesize completion artifacts from session scrollback. Drives the real
+    /// `reattach_live_runs_on_boot` path against a genuinely live tmux session
+    /// — simulating the restart with a second, independent
+    /// `ApiState`/`Supervisor` that never acquired the run itself — then
+    /// releases the run and asserts no artifact is synthesized.
+    async fn assert_boot_reattach_respawns_completion_watcher(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-reattach-watcher-{}-{suffix}", mode.id()),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
+
+        let session_path =
+            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
+        let last_path = tmp.path().join("last.txt");
+        let stdout_path = tmp.path().join("stdout.log");
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-567JG-REATTACH".into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-tmux".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: mode.id().into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: Some(last_path.clone()),
+                    stdout_path: Some(stdout_path.clone()),
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                // orgasmic:TASK-FZB6T.3 — a PANE transport's driver traffic is a
+                // `PaneActivity` byte COUNT (dec_WDR5K item 7), and the session
+                // writer now REFUSES a pane `text_chunk` outright. This fixture
+                // used to persist one, which is a shape neither the real drivers
+                // nor the writer can produce; it models the real one instead.
+                serde_json::to_value(DriverEvent::PaneActivity {
+                    seq: 0,
+                    bytes: "## Report\nboot reattach watcher smoke".len() as u64,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in
+        // for the post-restart daemon boot.
+        seed_project(&home, &project_root, "orgasmic");
+        let state = direct_stage_test_state(home).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "{test_name}: run should be rehydrated into the post-restart \
+             supervisor [{}]",
+            mode.diagnostic()
+        );
+
+        state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await
+            .expect("release reattached run");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            !last_path.exists(),
+            "{test_name}: release without worker finalize must not synthesize \
+             last.txt via the respawned watcher [{}]",
+            mode.diagnostic()
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
+        assert_boot_reattach_respawns_completion_watcher(
+            MuxMode::Tmux,
+            "boot_reattach_respawns_dispatch_completion_watcher_without_artifacts",
+        )
+        .await;
+    }
+
+    /// Every tx this test could possibly care about, from both ledgers a
+    /// recorded tx can land in (the home ledger and the project's own), so the
+    /// assertion never passes or fails on ledger routing.
+    fn all_recorded_tx_text(home: &Home, project_root: &FsPath) -> String {
+        let mut text = String::new();
+        for dir in [home.tx(), project_root.join(".orgasmic").join("tx")] {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if let Ok(body) = std::fs::read_to_string(entry.path()) {
+                    text.push_str(&body);
+                }
+            }
+        }
+        text
+    }
+
+    /// TASK-KPMFK: a live STAGE must keep its completion watcher across a
+    /// daemon restart.
+    ///
+    /// `post_stage` holds `stage`/`target` and completion ownership ONLY in the
+    /// in-process `StageCompletion` task, which dies with the daemon process.
+    /// Boot reattach respawns only `DispatchCompletion`, and only when both
+    /// `last_path` and `stdout_path` were persisted. A stage run carries
+    /// `last_path: Some` and `stdout_path: None` (`post_stage`), so it lands in
+    /// the partial-artifact warning branch and no stage watcher is recreated:
+    /// a later worker finalize is persisted but no `<stage>.completed` or
+    /// `<stage>.failed` tx is ever emitted, and `stage_outcome_from_session` is
+    /// never called at all.
+    ///
+    /// Drives the real `reattach_live_runs_on_boot` path against a genuinely
+    /// live mux session, with a second, independent `ApiState`/`Supervisor`
+    /// standing in for the post-restart daemon boot — then finalizes the run
+    /// the way its worker would and REQUIRES the terminal tx.
+    ///
+    /// The stage identity is read from the session JSONL as raw JSON on
+    /// purpose: this test states the durable on-disk contract boot recovery
+    /// must honour, and stays readable by a daemon that predates the typed
+    /// event.
+    ///
+    /// `credential_mode` is the run's persisted credential mode (TASK-QRTT8).
+    /// It is inert to everything this helper drives — but only once
+    /// `boot_reattach_candidate` binds the field instead of matching it
+    /// against `None`. Before that fix a `Some(_)` here dropped the run before
+    /// it was ever a candidate, so the stage watcher KPMFK respawns was
+    /// unreachable for the whole class.
+    async fn assert_boot_reattach_respawns_stage_completion_watcher(
+        mode: MuxMode,
+        stage: &str,
+        role: &str,
+        credential_mode: Option<&str>,
+        test_name: &str,
+    ) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-kpmfk-{stage}-{}-{suffix}", mode.id()),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
+
+        let session_path =
+            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
+        // The exact shape `post_stage` persists: a stage last_path under
+        // `.orgasmic/tmp/stage/`, and NEVER a stdout_path.
+        let last_path = project_root
+            .join(".orgasmic")
+            .join("tmp")
+            .join("stage")
+            .join(format!("{stage}-20260729T000000-last.txt"));
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-KPMFK-STAGE".into(),
+                    kind: "worker".into(),
+                    worker_id: format!("{role}-codex-tmux"),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: mode.id().into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: Some(last_path.clone()),
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some(role.into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: credential_mode.map(str::to_string),
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({ "phase": "stage_meta", "stage": stage }),
+            )
+            .unwrap();
+        drop(writer);
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in
+        // for the post-restart daemon boot.
+        let state = direct_stage_test_state(home.clone()).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "{test_name}: stage run should be rehydrated into the post-restart \
+             supervisor [{}]",
+            mode.diagnostic()
+        );
+
+        // What `orgasmic dispatch finalize` does on the stage path: an
+        // authoritative worker-declared release.
+        state
+            .supervisor
+            .release_with_finalization(
+                &identity.run_id,
+                "worker finalize for TASK-KPMFK-STAGE",
+                orgasmic_core::ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("worker finalize release of the reattached stage run");
+
+        let completed_tx = format!("{stage}.completed");
+        let failed_tx = format!("{stage}.failed");
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            let ledger = all_recorded_tx_text(&home, &project_root);
+            if ledger.contains(&completed_tx) || ledger.contains(&failed_tx) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        state.writer.shutdown().await;
+
+        let ledger = all_recorded_tx_text(&home, &project_root);
+        assert!(
+            ledger.contains(&completed_tx),
+            "{test_name}: a {stage} stage that is live across a daemon restart \
+             must still emit its terminal tx ({completed_tx}) once its worker \
+             finalizes [{}]; ledger:\n{ledger}",
+            mode.diagnostic()
+        );
+        assert!(
+            !ledger.contains(&failed_tx),
+            "{test_name}: a worker-finalized {stage} stage must not be recorded \
+             as {failed_tx} [{}]; ledger:\n{ledger}",
+            mode.diagnostic()
+        );
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_grill_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "grill",
+            "griller",
+            None,
+            "boot_reattach_respawns_grill_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_plan_stage_completion_watcher() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "plan",
+            "planner",
+            None,
+            "boot_reattach_respawns_plan_stage_completion_watcher",
+        )
+        .await;
+    }
+
+    /// Credential-resolving runs restore the same stage watcher on tmux.
+    #[tokio::test]
+    async fn boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run() {
+        assert_boot_reattach_respawns_stage_completion_watcher(
+            MuxMode::Tmux,
+            "grill",
+            "griller",
+            Some("bare_api_key"),
+            "boot_reattach_respawns_stage_watcher_for_a_credential_resolving_run",
+        )
+        .await;
+    }
+
+    // orgasmic:task_K4G1D
+    /// The attach-proof assertions for tmux.
+    ///
+    /// A live session of `mode` exists; the driver for that mode must prove a
+    /// live runtime handle, and the run must come back `reattached` with
+    /// `reattach_tmux` as the first offered recovery.
+    async fn assert_recovery_reattaches_mux_session(
+        mode: MuxMode,
+        test_name: &str,
+        live_guard: &LiveSessionGuard,
+    ) -> Option<String> {
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return None;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-{}-{suffix}", mode.id()),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-test".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, live_guard);
+        let project_root = tmp.path().join("proj");
+        write_nonterminal_session(
+            &project_root,
+            identity.clone(),
+            mode.ready_protocol(),
+            "manager-tmux-tui",
+        );
+
+        let (recovered, _inventory) = classify_session_files(
+            &home,
+            None,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
+
+        let run = recovered
+            .iter()
+            .find(|run| run.run_id == identity.run_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{test_name}: no recovered run for {} [{}]",
+                    identity.run_id,
+                    mode.diagnostic()
+                )
+            });
+        assert_eq!(
+            run.classification,
+            "reattached",
+            "[{}] reason: {}",
+            mode.diagnostic(),
+            run.reason
+        );
+        assert!(
+            run.reason.contains("proved live runtime handle"),
+            "[{}] reason: {}",
+            mode.diagnostic(),
+            run.reason
+        );
+        // Regression (dec_052): a live older-boot mux session prefers
+        // reattach_tmux as the first recovery action.
+        assert_eq!(
+            run.recovery_actions.first().map(|a| a.kind.as_str()),
+            Some("reattach_tmux"),
+            "live older-boot {} must prefer reattach_tmux: {:?} [{}]",
+            mode.id(),
+            run.recovery_actions,
+            mode.diagnostic()
+        );
+        Some(session_name)
+    }
+
+    #[tokio::test]
+    async fn recovery_reattaches_tmux_session_when_handle_exists() {
+        let live_guard = live_session_guard();
+        assert_recovery_reattaches_mux_session(
+            MuxMode::Tmux,
+            "recovery_reattaches_tmux_session_when_handle_exists",
+            &live_guard,
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    /// A Failed tombstone never offers reattach — even while a session of
+    /// `mode` for that very runtime is alive. The tombstone is authoritative.
+    async fn assert_failed_terminal_with_live_mux_never_offers_reattach(
+        mode: MuxMode,
+        test_name: &str,
+    ) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let run_id = format!("run-failed-live-{}-{suffix}", mode.id());
+        let identity = RuntimeIdentity {
+            run_id: run_id.clone(),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-test".into(),
+        };
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
+        let session_path = write_nonterminal_session(
+            &project_root,
+            identity,
+            mode.ready_protocol(),
+            "manager-tmux-tui",
+        );
+        {
+            let mut writer = orgasmic_core::SessionWriter::open(
+                &session_path,
+                RuntimeIdentity {
+                    run_id: run_id.clone(),
+                    runtime_id: format!("rt-{suffix}"),
+                    boot_id: "boot-test".into(),
+                },
+            )
+            .unwrap();
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    serde_json::to_value(Lifecycle::Release {
+                        reason: "driver error".into(),
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let failed_path = session_path;
+        let original_bytes = std::fs::read(&failed_path).unwrap();
+
+        let (recovered, _inventory) = classify_session_files(
+            &home,
+            None,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
+            TerminalWindow::unbounded(),
+        )
+        .await;
+        let run = recovered
+            .iter()
+            .find(|run| run.run_id == run_id)
+            .expect("failed session classifies");
+        assert_eq!(
+            run.classification,
+            "failed_recoverable",
+            "{test_name} [{}]",
+            mode.diagnostic()
+        );
+        assert!(
+            !run.recovery_actions
+                .iter()
+                .any(|action| action.kind == "reattach_tmux"),
+            "{test_name}: Failed tombstone must never offer reattach_tmux: {:?} [{}]",
+            run.recovery_actions,
+            mode.diagnostic()
+        );
+        assert!(run
+            .recovery_actions
+            .iter()
+            .any(|action| action.kind == "start_recovery_run"));
+
+        let after_status_bytes = std::fs::read(&failed_path).unwrap();
+        assert_eq!(
+            original_bytes, after_status_bytes,
+            "Failed origin JSONL must remain byte-for-byte unchanged after status discovery"
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{}/api/runs/{run_id}/recover", running.addr))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "reattach_tmux",
+                "project": "orgasmic",
+                "request_id": "task-a6fgf-failed-reattach-block",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let after_post_bytes = std::fs::read(&failed_path).unwrap();
+        assert_eq!(
+            original_bytes, after_post_bytes,
+            "Failed origin JSONL must remain byte-for-byte unchanged after explicit reattach POST"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_with_live_tmux_never_offers_reattach() {
+        assert_failed_terminal_with_live_mux_never_offers_reattach(
+            MuxMode::Tmux,
+            "failed_terminal_with_live_tmux_never_offers_reattach",
+        )
+        .await;
     }
 }

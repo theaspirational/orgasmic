@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
-use orgasmic_drivers::modes::rmux::test_tooling::{
+use orgasmic_drivers::test_tooling::{
     assert_required_test_tooling, report_billed_tests, skip_test_if_missing,
     skip_unless_billing_allowed, ToolRequirement,
 };
@@ -126,7 +126,6 @@ fn ctx() -> DriverContext {
         worker_id: "mock".into(),
         project_id: None,
         worktree: None,
-        babysitter_target: None,
     }
 }
 
