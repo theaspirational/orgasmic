@@ -2367,6 +2367,7 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
     test_hooks::record_scan();
     let slug = project_tx_slug(project_id);
     let mut max_seen = 0_u32;
+    let mut entries_scanned = 0_usize;
     if tx_dir.is_dir() {
         let dir_entries =
             std::fs::read_dir(tx_dir).with_context(|| format!("read {}", tx_dir.display()))?;
@@ -2408,12 +2409,25 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
                     continue;
                 }
             };
+            entries_scanned += entries.len();
             for entry in entries {
                 if let Some(seq) = project_tx_sequence(&entry.tx_id, &slug) {
                     max_seen = max_seen.max(seq);
                 }
             }
         }
+    }
+    // A populated ledger whose ids all fail the slug/format match means the
+    // sequence is about to restart at 1 — usually an id-format or project-id
+    // drift, and worth a loud trace before any collision-shaped surprise.
+    if max_seen == 0 && entries_scanned > 0 {
+        warn!(
+            project = %project_id,
+            slug = %slug,
+            dir = %tx_dir.display(),
+            entries = entries_scanned,
+            "no ledger entry matched the project tx id format; sequence restarts at 1"
+        );
     }
     Ok(max_seen)
 }
@@ -2437,12 +2451,15 @@ fn project_tx_sequence(tx_id: &str, slug: &str) -> Option<u32> {
     let date = parts.next()?;
     let got_slug = parts.next()?;
     let seq = parts.next()?;
+    // Sequences are minted `{:04}`, so beyond 9999 the field is 5+ digits.
+    // Requiring exactly 4 made those ids invisible to a cold rescan, which
+    // would restart the counter and mint a duplicate tx id after a restart.
     if parts.next().is_some()
         || prefix != "tx"
         || date.len() != 8
         || !date.chars().all(|c| c.is_ascii_digit())
         || got_slug != slug
-        || seq.len() != 4
+        || seq.len() < 4
         || !seq.chars().all(|c| c.is_ascii_digit())
     {
         return None;
@@ -2952,6 +2969,30 @@ mod tests {
         e.project = Some("orgasmic".into());
         e.reason = Some("test".into());
         e
+    }
+
+    #[test]
+    fn project_tx_sequence_survives_the_five_digit_rollover() {
+        assert_eq!(
+            project_tx_sequence("tx-20260814-orgasmic-9999", "orgasmic"),
+            Some(9999)
+        );
+        assert_eq!(
+            project_tx_sequence("tx-20260814-orgasmic-10000", "orgasmic"),
+            Some(10000)
+        );
+        assert_eq!(
+            project_tx_sequence("tx-20260814-orgasmic-123", "orgasmic"),
+            None
+        );
+        assert_eq!(
+            project_tx_sequence("tx-20260814-other-0001", "orgasmic"),
+            None
+        );
+        assert_eq!(
+            project_tx_sequence("tx-20260814T093806Z-abcd1234", "orgasmic"),
+            None
+        );
     }
 
     #[tokio::test]

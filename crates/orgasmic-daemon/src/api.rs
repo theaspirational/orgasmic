@@ -13507,6 +13507,7 @@ async fn post_org_file(
     Json(req): Json<OrgFileWriteRequest>,
 ) -> Result<Json<OrgFileResponse>, ApiError> {
     let rel = validate_org_edit_path(&req.path)?;
+    reject_ledger_rewrite(&rel)?;
     let rel_str = rel.to_string_lossy().to_string();
     OrgFile::parse(req.contents.clone(), rel_str.clone())
         .map_err(|e| org_input_parse_error(FsPath::new(&rel_str), e))?;
@@ -13574,6 +13575,19 @@ fn validate_org_edit_path(path: &str) -> Result<PathBuf, ApiError> {
         ));
     }
     Ok(rel)
+}
+
+/// The generic org-file rewrite surface must never touch an append-only
+/// ledger: a whole-file rewrite can silently erase committed history that the
+/// writer's append path goes to great lengths to keep durable. Reads stay
+/// open; only `post_org_file` calls this.
+fn reject_ledger_rewrite(rel: &FsPath) -> Result<(), ApiError> {
+    if rel.starts_with(".orgasmic/tx") {
+        return Err(ApiError::bad_request(
+            "org file path is an append-only tx ledger; append entries through the tx surface instead of rewriting the file",
+        ));
+    }
+    Ok(())
 }
 
 fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
@@ -19583,6 +19597,16 @@ pub(crate) mod tests {
     type TestWs = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
+
+    #[test]
+    fn org_file_rewrite_refuses_tx_ledger_paths() {
+        reject_ledger_rewrite(FsPath::new(".orgasmic/tx/2026-08.org"))
+            .expect_err("tx ledger rewrite must be refused");
+        reject_ledger_rewrite(FsPath::new(".orgasmic/decisions.org"))
+            .expect("non-ledger org file must stay writable");
+        reject_ledger_rewrite(FsPath::new("docs/adr/adr-0001.org"))
+            .expect("adr must stay writable");
+    }
 
     fn write(path: PathBuf, contents: &str) {
         if let Some(parent) = path.parent() {
