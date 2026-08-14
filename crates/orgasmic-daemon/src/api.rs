@@ -2248,7 +2248,8 @@ fn provision_recovery_last_path(session_path: &FsPath, prior_run_id: &str) -> Pa
 
 #[derive(Debug, Deserialize)]
 pub struct TaskCommentRequest {
-    pub actor: String,
+    #[serde(default)]
+    pub actor: Option<String>,
     pub body: String,
     #[serde(default)]
     pub run_id: Option<String>,
@@ -2272,14 +2273,24 @@ async fn post_task_comment(
     Query(q): Query<GraphQuery>,
     Json(req): Json<TaskCommentRequest>,
 ) -> Result<Json<TaskCommentResponse>, ApiError> {
-    if req.actor.trim().is_empty() {
-        return Err(ApiError::bad_request("comment actor is required"));
-    }
     if req.body.trim().is_empty() {
         return Err(ApiError::bad_request("comment body is required"));
     }
-    let (located, _) =
-        resolve_authorized_task(&state, &identity, &task_id, q.project.as_deref()).await?;
+    let (located, _) = resolve_authorized_task(
+        &state,
+        &identity,
+        &task_id,
+        q.project.as_deref(),
+        Action::TasksComment,
+    )
+    .await?;
+    // Mirror artifact comments: member attribution comes from the authenticated
+    // session and cannot be spoofed by a request body. Admin scripts may still
+    // provide an explicit actor; omitting it falls back to the daemon actor.
+    let actor = match identity.member_name() {
+        Some(name) => Some(name.to_string()),
+        None => req.actor.filter(|value| !value.trim().is_empty()),
+    };
     let mut extra = vec![("BODY".to_string(), escape_property_value(&req.body))];
     if let Some(run_id) = req.run_id.filter(|value| !value.trim().is_empty()) {
         extra.push(("RUN_ID".to_string(), run_id));
@@ -2294,7 +2305,7 @@ async fn post_task_comment(
         &state,
         ApiTxRequest {
             ty: "comment".to_string(),
-            actor: Some(req.actor),
+            actor,
             project: Some(located.project_id),
             task: Some(task_id),
             target: None,
@@ -2313,8 +2324,14 @@ async fn get_task_activity(
     Path(task_id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::ActivityEntry>>, ApiError> {
-    let (located, snap) =
-        resolve_authorized_task(&state, &identity, &task_id, q.project.as_deref()).await?;
+    let (located, snap) = resolve_authorized_task(
+        &state,
+        &identity,
+        &task_id,
+        q.project.as_deref(),
+        Action::TasksRead,
+    )
+    .await?;
     let entries = snap
         .projects
         .get(&located.project_id)
@@ -2355,8 +2372,14 @@ async fn post_task_subtask(
     if req.title.trim().is_empty() {
         return Err(ApiError::bad_request("subtask title is required"));
     }
-    let (located, snap) =
-        resolve_authorized_task(&state, &identity, &parent_id, q.project.as_deref()).await?;
+    let (located, snap) = resolve_authorized_task(
+        &state,
+        &identity,
+        &parent_id,
+        q.project.as_deref(),
+        Action::TasksRead,
+    )
+    .await?;
     let project = snap
         .projects
         .get(&located.project_id)
@@ -15698,11 +15721,11 @@ async fn resolve_authorized_task(
     identity: &Identity,
     task_id: &str,
     project: Option<&str>,
+    action: Action,
 ) -> Result<(LocatedTask, IndexSnapshot), ApiError> {
     if let Some(project_id) = project {
         let (_, snap) =
-            resolve_authorized_project(state, identity, Some(project_id), Action::TasksRead)
-                .await?;
+            resolve_authorized_project(state, identity, Some(project_id), action).await?;
         let loaded = select_loaded_project(&snap, project_id)?;
         if !loaded.tasks.iter().any(|task| task.id == task_id) {
             return Err(ApiError::not_found("task not found"));
@@ -15719,7 +15742,7 @@ async fn resolve_authorized_task(
     let project_ids = catalog
         .board
         .iter()
-        .filter(|entry| authz::require(identity, Some(&entry.id), Action::TasksRead).is_ok())
+        .filter(|entry| authz::require(identity, Some(&entry.id), action).is_ok())
         .map(|entry| entry.id.clone())
         .collect::<Vec<_>>();
     drop(catalog);
@@ -35461,7 +35484,7 @@ pub(crate) mod tests {
             Path("TASK-001".into()),
             Query(graph_query("proj-b")),
             Json(TaskCommentRequest {
-                actor: "alice".into(),
+                actor: Some("alice".into()),
                 body: "must not reach proj-b".into(),
                 run_id: None,
                 artifacts: Vec::new(),
@@ -35512,6 +35535,48 @@ pub(crate) mod tests {
             ProjectLoadState::Unloaded,
             "legacy lookup must not scan an ungranted project"
         );
+    }
+
+    #[tokio::test]
+    async fn task_comments_use_member_session_attribution_and_refresh_activity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let state = direct_catalog_test_state(home).await;
+        let id = member(&[("proj-a", "viewer")]);
+
+        let _ = post_task_comment(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("TASK-001".into()),
+            Query(graph_query("proj-a")),
+            Json(TaskCommentRequest {
+                actor: Some("spoofed-name".into()),
+                body: "Please check the fallback.".into(),
+                run_id: None,
+                artifacts: Vec::new(),
+                in_reply_to: None,
+                request_id: None,
+            }),
+        )
+        .await
+        .expect("viewer may comment on a visible task");
+
+        let activity = get_task_activity(
+            State(state),
+            Extension(id),
+            Path("TASK-001".into()),
+            Query(graph_query("proj-a")),
+        )
+        .await
+        .expect("activity refreshes after the comment");
+        assert_eq!(activity.0.len(), 1);
+        assert_eq!(activity.0[0].actor, "alice");
+        assert_eq!(activity.0[0].kind, crate::index::ActivityKind::Comment);
+        assert_eq!(activity.0[0].body, "Please check the fallback.");
     }
 
     #[tokio::test]
