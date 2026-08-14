@@ -4593,3 +4593,115 @@ Do not fold TASK-T7KSH's unbounded =rmux -V= probe into this work. Treat a share
 - A constant change that makes the child deadline exceed the outer timeout fails a deterministic test or compile-time assertion.
 - The recovery fixture proves session containment at its owned rmux endpoint.
 - Focused supervisor and API tests pass serially under load.
+
+* BACKLOG TASK-AP971 Wayfinder map — unified per-node schema (dec_E01MC)    :wayfinder_map:
+:PROPERTIES:
+:ID: TASK-AP971
+:END:
+
+** Destination
+Every design decision needed to implement dec_E01MC (unified per-node directory schema: node kernel, journals, regeneration) is resolved and recorded. The map is done when an implementation-ready, dependency-ordered task chain exists that build agents can execute without further design input.
+** Notes
+Anchor decision: dec_E01MC. Build order already decided there: extract the kernel from artifacts (the working instance), migrate tasks first, then decisions/glossary/gotchas, then descriptor shipping.
+Migration stance (owner, 2026-08-14): cheap cut-over, not backfill — migrate live main things (tasks) only; dispatch-records/ and tx/ history stay put as read-only archive; new writes go to the new schema from cutover day.
+Skills per ticket type: /grilling + /domain-modeling for grilling tickets, /prototype for prototype tickets, /research for research tickets.
+Tracker adapter: .orgasmic/conventions/wayfinder.org (orgasmic IS the tracker; tickets are subtasks of this map).
+Standing preference: minimize framework overhead; owner wants short plain-language summaries.
+** Decisions so far
+- tx and state-file dependency inventory (TASK-AP971.4) — [[file:../dispatch-records/tx-20260814-orgasmic-6093/tx-dependency-inventory.md][inventory]]: ~254 touchpoints; recovery_claim.rs has zero (premise corrected — recovery tx logic is in api.rs/manager.rs); top risks: writer one-ledger invariant vs atomic multi-journal appends, dispatch-open fold needs an index or a tx/-resident dispatch ledger BEFORE the split (now TASK-AP971.11), non-recursive collect_tx_dir silently empties the activity feed; favourable: the activity projection is file-order independent.
+** Not yet specified
+- UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
+- CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary
+- Conventions / prompt-studio updates that reference tasks/<state>.org paths
+- project-scaffold + hub shipping changes for the new layout
+- Home-ledger / multi-project implications of the tx split
+- Folding wayfinder itself into orgasmic as a native agent (owner intent, separate effort)
+** Out of scope
+- Implementing the refactor itself — this map ends at the implementation-ready task chain
+
+* BACKLOG TASK-AP971.1 Journal entry schema    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.1
+:END:
+
+** Question
+What exactly is one journal.org entry? Event vocabulary (comment, comment.edit, comment.delete, state change, regenerate, dispatch events), drawer shape, single-line vs body prose, and how it relates to today's tx entry grammar (shipped/schema/tx.org).
+Also decide the intra-node directory layout (owner input 2026-08-14): NOT flat — journal entries (especially comments) may carry attachments, so reserve nested subdirs from day one, e.g. tasks/TASK-X/{node.org, journal.org, attachments/<entry-id>/, dispatches/<n>/}. Decide the reserved names, how a journal entry references its attachment files, and what the kernel guarantees about unknown extra files/dirs in a node dir (ignore? lint?).
+
+* BACKLOG TASK-AP971.2 Node type descriptor format    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.2
+:END:
+
+** Question
+What does a shipped node-type descriptor declare (required properties, allowed states, regenerate prompt template, UI labeling), where does it live in shipped/, and how does the daemon treat a collection directory with no descriptor?
+
+* BACKLOG TASK-AP971.3 ID scheme and type-aware minting    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.3
+:END:
+
+** Question
+One mint, many prefixes: keep existing styles (TASK-XXXXX, dec_XXXXX, term_...) or normalize? How are dir names derived from ids, and what does the mint need to become type-aware?
+
+* BACKLOG TASK-AP971.5 tx split semantics    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.5
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.4 TASK-AP971.11
+:END:
+
+** Question
+Which event types stay in the project-level monthly tx/ ledger vs move to per-node journals? What happens to recovery-claim machinery and the activity feed that lean on tx today?
+
+* BACKLOG TASK-AP971.6 Kernel extraction boundary    :wf_prototype:
+:PROPERTIES:
+:ID: TASK-AP971.6
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.2
+:END:
+
+** Question
+Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
+
+* BACKLOG TASK-AP971.7 Incremental refresh design    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.7
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.5
+:END:
+
+** Question
+Per-node watcher granularity, apply-own-write projection (no full rescan on comment), and the derived cross-project activity feed. Kills the current full-reparse-per-mutation behaviour (index.rs load_project).
+
+* BACKLOG TASK-AP971.8 Derived read views    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.8
+:END:
+
+** Question
+Humans lose the one-file glossary/backlog view when nodes become dirs. What compiled read views exist (glossary, board), when are they generated, where do they live, and are they gitignored?
+
+* BACKLOG TASK-AP971.9 Migration plan    :wf_prototype:
+:PROPERTIES:
+:ID: TASK-AP971.9
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
+:END:
+
+** Question
+Scope a CHEAP cut-over migration, not a full backfill (owner decision 2026-08-14): migrate only the live main things — task headings/bodies into per-task dirs — and from cutover day simply write new things to the new schema. Do NOT move dispatch-records/ content; do NOT backfill historical tx entries into journals; tx/ history stays as a read-only archive.
+Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze as archive files — and if frozen, does the indexer still parse them read-only so DEPENDS_ON/IMPLEMENTS/graph lints keep resolving old task ids (else the dangling-edge lint goes red or blind)? (b) does the activity projection read both sources (old tx + new journals) forever, or only post-cutover journals? (c) what marks the cutover (version stamp in project.org?). Prototype the migrator for whatever subset survives this scoping, on real .orgasmic data.
+
+* BACKLOG TASK-AP971.10 Regeneration generalization    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.10
+:DEPENDS_ON: TASK-AP971.2
+:END:
+
+** Question
+Per-type regenerate prompts and the universal consume-on-regenerate rule. What does regenerate even mean for a task or a decision (vs a glossary term or artifact)?
+
+* BACKLOG TASK-AP971.11 Dispatch-open discovery: dedicated ledger or index    :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.11
+:END:
+
+** Question
+'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.

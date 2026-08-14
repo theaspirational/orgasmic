@@ -1,0 +1,63 @@
+#+title: wayfinder
+#+orgasmic_version: 1
+
+* Convention: wayfinder maps on orgasmic
+
+This repo tracks work in its own =.orgasmic= — there is no external issue
+tracker. The =wayfinder= skill (=~/.claude/skills/wayfinder/=) plans large
+foggy efforts as a map of decision tickets; this convention maps its
+vocabulary onto orgasmic verbs. Skills that ask for an "issue tracker"
+(wayfinder, to-tickets, triage, to-spec) use orgasmic tasks as issues.
+
+Future intent (owner): fold wayfinder into orgasmic natively — an orgasmic
+agent or part of the =/orgasmic= skill — since =.orgasmic= is the tracker.
+Until then this convention is the adapter. Run all =orgasmic= commands from
+the repo root (cwd resolves the project; a worktree cwd reports stale state).
+
+** Mapping
+
+- The map :: an orgasmic task tagged =wayfinder_map=, state =backlog= for its
+  whole life (it is an index, not work). Its body holds the map sections
+  (=** Destination=, =** Notes=, =** Decisions so far=, =** Not yet
+  specified=, =** Out of scope=) — edit via =orgasmic node body=.
+- Tickets :: subtasks of the map (=TASK-<map>.<n>=, id grammar is the
+  parentage). Type label = org tag: =wf_research=, =wf_prototype=,
+  =wf_grilling=, =wf_task=.
+- Claim :: move the ticket to =in_progress= (the tx actor records who).
+  Unclaimed = =backlog=/=todo= with no active run.
+- Blocking :: =:DEPENDS_ON:= drawer property, space-separated task ids —
+  native graph edges; query =orgasmic graph edges --node <id> --relation
+  DEPENDS_ON=. Unblocked when every target is =done=.
+- Frontier :: open (=backlog=/=todo=) subtasks of the map, not
+  =in_progress=, all =DEPENDS_ON= targets =done=.
+- Resolve :: write the answer as a =** Resolution= section in the ticket's
+  own body (=orgasmic node body=), add a one-line =comment= tx
+  (=orgasmic tx record --type comment --task <id> --reason "…"=; tx values
+  are single-line, long prose lives in the body), move the ticket to
+  =done=, append one line to the map's =** Decisions so far=.
+- Out of scope :: move the ticket to =cancelled= and add one line to the
+  map's =** Out of scope=.
+- Refer by name :: ticket title (id in parentheses), never a bare id.
+- Assets :: multi-line evidence (research findings, inventories, prototypes'
+  notes) goes in =.orgasmic/dispatch-records/<resolution-tx-id>/<name>.md= —
+  the TASK-QGWK7 evidence pattern: keyed by the tx that produced it, tracked,
+  non-org so the indexer ignores it. Link it from the ticket's
+  =** Resolution=. Never paste large content into tx entries (single-line
+  drawers) or ticket bodies (bloats state files). After dec_E01MC lands, NEW
+  evidence goes into the per-task directory instead; existing
+  dispatch-records stay put as read-only archive (cheap cut-over, no
+  backfill).
+
+** Triage vocabulary (no separate labels)
+
+Orgasmic lifecycle states play the triage roles — do not invent labels:
+=needs-triage= → =backlog=; =ready-for-agent=/=ready-for-human= → =todo=
+(tags =for_agent=/=for_human= if routing matters); =needs-info= → open a
+question via =orgasmic question=, task stays =backlog=; =wontfix= →
+=cancelled=.
+
+** Domain docs (no docs/adr, no CONTEXT.md)
+
+Decisions live in =decisions.org= (=dec_XXXXX=, =orgasmic decision=);
+terminology lives in =glossary.org= (=orgasmic glossary=). Skills that want
+ADRs or a context glossary use these.

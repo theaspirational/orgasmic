@@ -30,7 +30,8 @@ Cargo.lock.bak
 # IDE / OS
 .DS_Store
 .idea
-.vscode
+.vscode/*
+!.vscode/settings.json
 .vorg.db
 *.swp
 
