@@ -2586,3 +2586,4 @@ The authoritative gate is one complete local release certification run on a clea
 
 ** Consequences
 Targeted worker gates remain fast feedback but never imply certification. Any source, base, certifier, or toolchain change invalidates reuse. GitHub trusts a status posted by a repository writer rather than independently executing tests. Missing or failed status blocks merge and stable publication.
+

@@ -34864,3 +34864,30 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-13 Thu 23:02:12 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260813-orgasmic-6071
+:TIME:         [2026-08-13 Thu 23:02:12]
+:TYPE:         graph.decision.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_7RMZJ
+:NODE_ID:      dec_7RMZJ
+:END:
+
+* TX 2026-08-13 Thu 23:13:16 graph.decision.deleted orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260813-orgasmic-6072
+:TIME:         [2026-08-13 Thu 23:13:16]
+:TYPE:         graph.decision.deleted
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       deleted decision node dec_7RMZJ
+:NODE_ID:      dec_7RMZJ
+:END:
