@@ -75,7 +75,7 @@ npm run dev   # vite on 127.0.0.1
 ```
 
 The dev server proxies `^/api` (HTTP + WebSocket upgrades) to the daemon at
-`http://127.0.0.1:8739` — override with `ORGASMIC_DAEMON_URL`. When
+`http://127.0.0.1:4848` — override with `ORGASMIC_DAEMON_URL`. When
 `ORGASMIC_DEV_TOKEN` is set, the proxy injects `Authorization: Bearer …` on both.
 A navigation-fallback middleware serves `index.html` for SPA routes, and
 `ORGASMIC_UI_BASE_PATH` sets the app base path.

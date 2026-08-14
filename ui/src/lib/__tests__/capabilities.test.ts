@@ -45,6 +45,7 @@ const viewer: Me = {
         'project.read',
         'graph.read',
         'tasks.read',
+        'tasks.comment',
         'sessions.watch',
         'artifacts.read',
         'artifacts.comment',
@@ -62,6 +63,7 @@ describe('meCan', () => {
 
   it('a null snapshot is treated as admin (pre-/me bearer flow)', () => {
     expect(meCan(null, 'orgasmic', 'tasks.read')).toBe(true);
+    expect(meCan(null, 'orgasmic', 'tasks.comment')).toBe(true);
   });
 
   it('artifacts-only member: true for artifacts, false for graph/tasks/sessions', () => {

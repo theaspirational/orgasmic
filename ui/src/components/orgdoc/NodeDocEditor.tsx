@@ -158,6 +158,7 @@ export function NodeDocEditor({
   onOpenNode,
   mode,
   apiKind,
+  onDocumentChange,
 }: {
   projectId: string;
   nodeId: string;
@@ -168,6 +169,7 @@ export function NodeDocEditor({
   /** Explicit layer selector for the node API. Required for ids whose owning
    *  `.org` file the daemon can't infer from the id prefix (e.g. project). */
   apiKind?: string;
+  onDocumentChange?: (document: OrgNodeDoc | null) => void;
 }) {
   const refreshBump = useRefreshBump();
   const resource = useResource(
@@ -182,6 +184,10 @@ export function NodeDocEditor({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    onDocumentChange?.(baseline);
+  }, [baseline, onDocumentChange]);
 
   // (Re)initialize the draft whenever the document's identity or version
   // changes — initial load, or an external/post-409 reload.

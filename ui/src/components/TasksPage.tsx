@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type MouseEvent,
   type PointerEvent,
   type ReactElement,
@@ -18,7 +17,6 @@ import {
   List,
   User,
 } from 'lucide-react';
-import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -28,7 +26,6 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { useTaskRuns, type TaskRunMatch } from '@/hooks/useTaskRuns';
 import { fetchProject } from '@/lib/api';
-import { copyText } from '@/lib/clipboard';
 import { useQueryState } from '@/lib/routing';
 import { getString, setString } from '@/lib/storage';
 import type { LifecycleStage, TaskSummary, TasksLayout } from '@/lib/types';
@@ -40,6 +37,7 @@ import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
 import { ErrorPanel } from './Primitives';
+import { NestedTreeRow } from './NestedTreeRow';
 import { TaskAgentBadges } from './TaskAgentBadges';
 import { KANBAN_COLUMNS, kanbanStage } from './kanbanUtils';
 import {
@@ -54,7 +52,6 @@ type ForTask = (taskId: string) => TaskRunMatch;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_CANCEL_PX = 8;
 const TASK_LIST_PAGE_SIZE = 10;
-const TASK_TREE_MAX_VISUAL_DEPTH = 6;
 
 function taskStageCollapsedKey(projectId: string, stage: string): string {
   return `tasks:list-stage-collapsed:${projectId}:${stage}`;
@@ -487,15 +484,6 @@ function TaskStageSection({
   );
 }
 
-type TaskTreeIndentStyle = CSSProperties & {
-  '--task-row-left-mobile': string;
-  '--task-row-left-desktop': string;
-  '--task-toggle-left-mobile': string;
-  '--task-toggle-left-desktop': string;
-  '--task-guide-left-mobile': string;
-  '--task-guide-left-desktop': string;
-};
-
 function TaskTreeItem({
   projectId,
   sectionStage,
@@ -526,16 +514,6 @@ function TaskTreeItem({
       ? collapseState.collapsed
       : readStoredTaskCollapsed(projectId, task.id);
   const longPress = useTaskLongPress(task.id, longPressEnabled, onSelectTask);
-  const visualDepth = Math.min(depth, TASK_TREE_MAX_VISUAL_DEPTH);
-  const parentVisualDepth = Math.max(0, visualDepth - 1);
-  const indentStyle: TaskTreeIndentStyle = {
-    '--task-row-left-mobile': `${2.25 + visualDepth * 0.75}rem`,
-    '--task-row-left-desktop': `${2.75 + visualDepth * 1.25}rem`,
-    '--task-toggle-left-mobile': `${0.5 + visualDepth * 0.75}rem`,
-    '--task-toggle-left-desktop': `${0.75 + visualDepth * 1.25}rem`,
-    '--task-guide-left-mobile': `${1.25 + parentVisualDepth * 0.75}rem`,
-    '--task-guide-left-desktop': `${1.5 + parentVisualDepth * 1.25}rem`,
-  };
   const childrenId = `task-children-${projectId}-${task.id}`;
   const childCount = children.length;
 
@@ -552,98 +530,58 @@ function TaskTreeItem({
     setString(storageKey, String(collapseState.collapsed));
   }, [collapseState, storageKey]);
 
-  const onCopyTaskId = useCallback(
-    (event: MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void copyText(task.id)
-        .then(() => toast.success(`Copied ${task.id}`))
-        .catch(() => toast.error(`Could not copy ${task.id}`));
-    },
-    [task.id],
-  );
-
   return (
-      <li className="border-t first:border-t-0">
-        <div className="relative" style={indentStyle}>
-          {depth > 0 ? (
-            <span
-              aria-hidden
-              className="pointer-events-none absolute top-0 h-[2.125rem] w-3/4 rounded-bl-sm border-b border-l border-border/70 left-[var(--task-guide-left-mobile)] sm:left-[var(--task-guide-left-desktop)] sm:w-5"
-            />
-          ) : null}
-          {hasChildren ? (
-            <button
-              type="button"
-              onClick={() =>
-                setCollapseState((current) => ({
-                  collapsed:
-                    current.storageKey === storageKey
-                      ? !current.collapsed
-                      : !readStoredTaskCollapsed(projectId, task.id),
-                  storageKey,
-                }))
-              }
-              aria-expanded={!collapsed}
-              aria-controls={childrenId}
-              aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${task.title}`}
-              className="absolute top-[1.375rem] z-10 flex size-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 left-[var(--task-toggle-left-mobile)] sm:left-[var(--task-toggle-left-desktop)]"
-            >
-              {collapsed ? (
-                <ChevronRight className="size-3.5" />
-              ) : (
-                <ChevronDown className="size-3.5" />
-              )}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onCopyTaskId}
-            className="absolute top-2 z-10 inline-flex h-4 origin-top-left scale-[0.55] items-center rounded-sm border bg-background px-1 font-mono text-[10px] leading-none text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 left-[var(--task-row-left-mobile)] sm:left-[var(--task-row-left-desktop)]"
-            aria-label={`Copy task id ${task.id}`}
-            title="Copy task id"
-          >
-            {task.id}
-          </button>
-          <button
-            type="button"
-            {...longPress}
-            onClick={() => onSelectTask(task.id)}
-            className="flex min-h-[3.75rem] w-full items-start gap-3 pb-2.5 pr-5 pt-7 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none pl-[var(--task-row-left-mobile)] sm:pb-2.5 sm:pr-6 sm:pt-7 sm:pl-[var(--task-row-left-desktop)]"
-          >
-            <span className="min-w-0 flex-1 whitespace-normal break-words text-sm leading-snug">
-              {task.title}
-            </span>
-            <TaskMetaChips
-              task={task}
-              hideOnSmall
-              hasLiveRun={match.running.length > 0}
-              showParent={false}
+    <li>
+      <NestedTreeRow
+        depth={depth}
+        nodeId={task.id}
+        nodeKind="task"
+        title={task.title}
+        hasChildren={hasChildren}
+        expanded={!collapsed}
+        childrenId={childrenId}
+        toggleLabel={`${collapsed ? 'Expand' : 'Collapse'} ${task.title}`}
+        onToggle={() =>
+          setCollapseState((current) => ({
+            collapsed:
+              current.storageKey === storageKey
+                ? !current.collapsed
+                : !readStoredTaskCollapsed(projectId, task.id),
+            storageKey,
+          }))
+        }
+        onOpen={() => onSelectTask(task.id)}
+        openLabel={`Open ${task.id}: ${task.title}`}
+        openProps={longPress}
+        meta={
+          <TaskMetaChips
+            task={task}
+            hideOnSmall
+            hasLiveRun={match.running.length > 0}
+            showParent={false}
+            sectionStage={sectionStage}
+            childCount={childCount}
+          />
+        }
+        corner={<TaskAgentBadges match={match} />}
+      />
+      {hasChildren && !collapsed ? (
+        <ul id={childrenId}>
+          {children.map((child) => (
+            <TaskTreeItem
+              key={child.task.id}
+              projectId={projectId}
               sectionStage={sectionStage}
-              childCount={childCount}
+              node={child}
+              depth={depth + 1}
+              onSelectTask={onSelectTask}
+              longPressEnabled={longPressEnabled}
+              forTask={forTask}
             />
-          </button>
-          <div className="absolute right-4 top-2 sm:right-6">
-            <TaskAgentBadges match={match} />
-          </div>
-        </div>
-        {hasChildren && !collapsed ? (
-          <ul id={childrenId}>
-            {children.map((child) => (
-              <TaskTreeItem
-                key={child.task.id}
-                projectId={projectId}
-                sectionStage={sectionStage}
-                node={child}
-                depth={depth + 1}
-                onSelectTask={onSelectTask}
-                longPressEnabled={longPressEnabled}
-                forTask={forTask}
-              />
-            ))}
-          </ul>
-        ) : null}
-      </li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 

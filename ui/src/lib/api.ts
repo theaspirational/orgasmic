@@ -148,10 +148,11 @@ export function fetchTaskActivity(projectId: string, taskId: string): Promise<Ac
 }
 
 export function postTaskComment(
+  projectId: string,
   taskId: string,
   body: TaskCommentRequest,
 ): Promise<unknown> {
-  return post(`/tasks/${encodeURIComponent(taskId)}/comments`, {
+  return post(`/tasks/${encodeURIComponent(taskId)}/comments${q(projectId)}`, {
     ...body,
     request_id: requestId(`comment-${taskId}`),
   });
@@ -392,6 +393,20 @@ export function postOrgNodeEdit(
     base_version: body.baseVersion,
     ops: body.ops,
     request_id: requestId(`org-node-${id}`),
+  });
+}
+
+export function postOrgNodeDelete(
+  id: string,
+  body: { baseVersion: string },
+  project?: string | null,
+  kind?: string,
+): Promise<{ id: string; changed: Record<string, string>; tx_id: string }> {
+  return post(`/org/node/${encodeURIComponent(id)}/delete`, {
+    project,
+    kind,
+    base_version: body.baseVersion,
+    request_id: requestId(`org-node-delete-${id}`),
   });
 }
 

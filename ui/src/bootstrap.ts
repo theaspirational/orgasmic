@@ -467,7 +467,7 @@ void start();
 const style = document.createElement('style');
 // Theme tokens mirror the daemon-served UI's actual themes (src/styles.css):
 // `paper` (light) and `black-paper` (dark) — warm cream / warm dark-brown with
-// a faint grid, teal accent in light and tan accent in dark, same Geist face.
+// teal accent in light and tan accent in dark, same Geist face.
 // The bootstrap webview is a separate origin from the daemon UI, so it can't
 // read the app's saved theme preference — it follows the OS like the app's
 // default `system` mode, with the identical token values so the screens match.
@@ -492,7 +492,6 @@ style.textContent = `
     --accent: oklch(0.88 0.032 78);
     --border: oklch(0.81 0.021 78);
     --ring: oklch(0.48 0.11 198);
-    --grid-line: oklch(0.78 0.026 78 / 0.22);
     --radius: 0.5rem;
     --sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -513,7 +512,6 @@ style.textContent = `
       --accent: #ba977d;
       --border: rgb(232 220 212 / 0.18);
       --ring: #ba977d;
-      --grid-line: rgb(186 151 125 / 0.08);
     }
   }
   * {
@@ -530,10 +528,6 @@ style.textContent = `
     padding: calc(1.5rem + var(--safe-top)) calc(1.5rem + var(--safe-right))
       calc(1.5rem + var(--safe-bottom)) calc(1.5rem + var(--safe-left));
     background-color: var(--background);
-    background-image:
-      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-    background-size: 18px 18px;
   }
   .runtime-panel {
     width: min(30rem, calc(100vw - 3rem));

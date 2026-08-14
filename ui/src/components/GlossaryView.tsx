@@ -15,7 +15,6 @@ import { useResource } from '@/lib/useResource';
 import { GenerateArtifactDialog } from './GenerateArtifactDialog';
 import { ErrorPanel, PageHeader } from './Primitives';
 import { NodeListView } from './node-views/NodeListView';
-import { NodeModal } from './node-views/NodeModal';
 import { firstSentence } from './node-views/orgNodes';
 
 type GlossarySearch = AppSearch & {
@@ -178,11 +177,6 @@ export function GlossaryView({ projectId }: { projectId: string }) {
         }}
         nodes={[...selected]}
         nodeLabels={[...selected].map((id) => (glossary.data ?? []).find((item) => item.id === id)?.canonical ?? id)}
-      />
-      <NodeModal
-        projectId={projectId}
-        nodeKind="glossary"
-        seed={{ glossary: glossary.data ?? null }}
       />
     </div>
   );

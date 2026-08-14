@@ -16,7 +16,7 @@ function isSpaNavigation(pathname: string): boolean {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const daemon = env.ORGASMIC_DAEMON_URL ?? 'http://127.0.0.1:8739';
+  const daemon = env.ORGASMIC_DAEMON_URL ?? 'http://127.0.0.1:4848';
   const devToken = env.ORGASMIC_DEV_TOKEN ?? '';
   const appBase = env.ORGASMIC_UI_BASE_PATH || '/';
 

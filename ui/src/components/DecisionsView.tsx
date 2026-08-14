@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight, Plus, Sparkles } from 'lucide-react';
+import { Plus, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,14 +12,14 @@ import { appendDrawerStack, routeSearch, searchList, type AppSearch } from '@/li
 import type { DecisionSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
+import { OrgInlineText } from '@/lib/orgBody';
 
-import { CopyIdBadge } from './CopyIdBadge';
 import { GenerateArtifactDialog } from './GenerateArtifactDialog';
+import { NestedTreeRow } from './NestedTreeRow';
 import { ErrorPanel, PageHeader } from './Primitives';
+import { decisionRowPresentation } from './decisionPresentation';
 import { NodeListView } from './node-views/NodeListView';
-import { NodeModal } from './node-views/NodeModal';
 import { TagFilterInput } from './node-views/TagFilterInput';
-import { firstSentence } from './node-views/orgNodes';
 
 const DECISIONS_LIST_ID = 'decisions-list-region';
 
@@ -297,9 +297,10 @@ export function DecisionsView({ projectId }: { projectId: string }) {
         getId={(row) => row.decision.id}
         search={query}
         onSearchChange={setQuery}
-        onSelect={selectMode ? toggleSelected : openNode}
         loading={decisions.loading}
         listId={DECISIONS_LIST_ID}
+        rowClassName="p-0"
+        listClassName="divide-y-0 p-2"
         filters={
           <>
             <TagFilterInput
@@ -355,90 +356,95 @@ export function DecisionsView({ projectId }: { projectId: string }) {
         renderRow={(row) => {
           const decision = row.decision;
           const collapsedRow = collapsed.has(decision.id);
-          const decisionText = firstSentence(decision.preview) || decision.title || decision.id;
+          const presentation = decisionRowPresentation(decision);
           const decisionTags = decision.tags ?? [];
           return (
-            <div
+            <NestedTreeRow
+              depth={row.depth}
+              nodeId={decision.id}
+              nodeKind="decision"
+              title={presentation.title}
+              secondary={
+                presentation.preview ? (
+                  <OrgInlineText source={presentation.preview} interactive={false} compact />
+                ) : null
+              }
               className={cn(
-                'grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center',
-                row.ghost && 'opacity-70',
+                row.ghost && 'text-muted-foreground',
                 row.context && 'opacity-80',
               )}
-            >
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: row.depth ? row.depth * 28 : 0 }}>
-                  {row.collapsible ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="-ml-2 size-7 shrink-0"
-                      aria-label={`${collapsedRow ? 'Expand' : 'Collapse'} ${decision.title || decision.id}`}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleCollapsed(decision.id);
-                      }}
+              titleAdornment={
+                <>
+                  {row.context ? (
+                    <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+                      context
+                    </Badge>
+                  ) : null}
+                  {decision.superseded ? (
+                    <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+                      superseded
+                    </Badge>
+                  ) : null}
+                </>
+              }
+              meta={
+                <div className="hidden max-w-80 items-center gap-1 overflow-hidden sm:flex">
+                  {decisionTags.slice(0, 2).map((tag) => (
+                    <Badge
+                      key={tag}
+                      variant="outline"
+                      className="h-5 px-1.5 text-[10px] text-muted-foreground"
                     >
-                      {collapsedRow ? <ChevronRight /> : <ChevronDown />}
-                    </Button>
-                  ) : (
-                    <span className="size-7 shrink-0" aria-hidden="true" />
-                  )}
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <CopyIdBadge
-                        value={decision.id}
-                        className="h-4 w-fit origin-top-left scale-[0.65] rounded-sm px-1 text-[10px] leading-none"
-                      />
-                      {row.context ? <Badge variant="secondary" className="h-4 scale-[0.85] origin-left text-[10px]">context</Badge> : null}
-                      {decision.superseded ? <Badge variant="outline" className="h-4 scale-[0.85] origin-left text-[10px]">superseded</Badge> : null}
-                    </div>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <p className="truncate text-sm font-medium">{decisionText}</p>
-                    </div>
-                    <p className="truncate text-xs text-muted-foreground">{decision.title || decision.id}</p>
-                  </div>
+                      {tag}
+                    </Badge>
+                  ))}
+                  {decisionTags.length > 2 ? (
+                    <Badge
+                      variant="outline"
+                      className="h-5 px-1.5 text-[10px] text-muted-foreground"
+                      aria-label={`${decisionTags.length - 2} more tags: ${decisionTags.slice(2).join(', ')}`}
+                    >
+                      +{decisionTags.length - 2}
+                    </Badge>
+                  ) : null}
+                  {row.childCount > 0 ? (
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">
+                      {row.childCount} child{row.childCount === 1 ? '' : 'ren'}
+                    </Badge>
+                  ) : null}
                 </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5 md:justify-end">
-                {decisionTags.map((tag) => (
-                  <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">
-                    {tag}
-                  </Badge>
-                ))}
-                {row.childCount > 0 ? (
-                  <Badge variant="secondary" className="hidden sm:inline-flex">
-                    {row.childCount} child{row.childCount === 1 ? '' : 'ren'}
-                  </Badge>
-                ) : null}
-              </div>
-            </div>
+              }
+              action={
+                selectMode ? (
+                  <Checkbox
+                    checked={selected.has(decision.id)}
+                    onCheckedChange={() => toggleSelected(decision.id)}
+                    aria-label={`Select ${decision.title || decision.id}`}
+                  />
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="hidden text-muted-foreground opacity-0 transition-opacity group-hover/tree-row:opacity-100 group-focus-within/tree-row:opacity-100 motion-reduce:transition-none sm:inline-flex"
+                    disabled={creatingUnder === decision.id}
+                    aria-label={`Add sub-decision to ${decision.title || decision.id}`}
+                    title="Add sub-decision"
+                    onClick={() => void addSubDecision(decision.id)}
+                  >
+                    <Plus />
+                  </Button>
+                )
+              }
+              hasChildren={row.collapsible}
+              expanded={!collapsedRow}
+              toggleLabel={`${collapsedRow ? 'Expand' : 'Collapse'} ${decision.title || decision.id}`}
+              onToggle={() => toggleCollapsed(decision.id)}
+              onOpen={() => (selectMode ? toggleSelected(decision.id) : openNode(decision.id))}
+              openLabel={`${selectMode ? 'Select' : 'Open'} ${decision.id}: ${presentation.title}`}
+            />
           );
         }}
-        renderActionZone={(row) => (
-          <div className="flex items-center gap-1.5">
-            {selectMode ? (
-              <Checkbox
-                checked={selected.has(row.decision.id)}
-                onCheckedChange={() => toggleSelected(row.decision.id)}
-                aria-label={`Select ${row.decision.title || row.decision.id}`}
-              />
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="hidden sm:inline-flex"
-                disabled={creatingUnder === row.decision.id}
-                onClick={() => void addSubDecision(row.decision.id)}
-              >
-                <Plus />
-                Add sub-decision
-              </Button>
-            )}
-          </div>
-        )}
       />
       <GenerateArtifactDialog
         projectId={projectId}
@@ -456,11 +462,6 @@ export function DecisionsView({ projectId }: { projectId: string }) {
         }}
         nodes={[...selected]}
         nodeLabels={[...selected].map((id) => (decisions.data ?? []).find((item) => item.id === id)?.title ?? id)}
-      />
-      <NodeModal
-        projectId={projectId}
-        nodeKind="decision"
-        seed={{ decisions: decisions.data ?? null }}
       />
     </div>
   );
