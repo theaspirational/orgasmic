@@ -18,6 +18,8 @@ export function NodeListView<T>({
   loading = false,
   listId,
   emptyLabel = 'No nodes.',
+  rowClassName,
+  listClassName,
 }: {
   /** Accessible name for the list region (the visible page title lives in PageHeader). */
   ariaLabel: string;
@@ -32,6 +34,8 @@ export function NodeListView<T>({
   loading?: boolean;
   listId?: string;
   emptyLabel?: ReactNode;
+  rowClassName?: string;
+  listClassName?: string;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -78,7 +82,7 @@ export function NodeListView<T>({
         ) : items.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-muted-foreground">{emptyLabel}</div>
         ) : (
-          <ul className="divide-y">
+          <ul className={cn('divide-y', listClassName)}>
             {items.map((item) => {
               const id = getId(item);
               const actionZone = renderActionZone?.(item);
@@ -98,6 +102,7 @@ export function NodeListView<T>({
                       'flex w-full items-center px-4 py-3 text-left transition-colors focus-visible:bg-muted/40 focus-visible:outline-none',
                       onSelect && 'hover:bg-muted/40',
                       actionZone && 'pr-14 sm:pr-44',
+                      rowClassName,
                     )}
                   >
                     {renderRow(item)}

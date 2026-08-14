@@ -129,7 +129,7 @@ describe('parse-error coverage', () => {
     await waitFor(() => expect(mocks.fetchParseErrorsWithCoverage).toHaveBeenCalledTimes(2));
   });
 
-  it('surfaces partial coverage in notifications without forcing a scan while polling', async () => {
+  it('keeps partial parse-error coverage out of notifications and the unread count', async () => {
     render(
       <NotificationBell
         projectId={null}
@@ -138,13 +138,14 @@ describe('parse-error coverage', () => {
       />,
     );
 
-    const bell = await screen.findByRole('button', { name: 'Notifications: 1 unread' });
+    const bell = await screen.findByRole('button', { name: 'Notifications' });
     expect(mocks.loadFullParseErrorCoverage).not.toHaveBeenCalled();
     fireEvent.click(bell);
 
-    expect(await screen.findByText('Parse-error coverage is partial')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Load full coverage' }));
-    await waitFor(() => expect(mocks.loadFullParseErrorCoverage).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('No parse errors.')).toBeInTheDocument();
+    expect(screen.queryByText('Parse-error coverage is partial')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load full coverage' })).not.toBeInTheDocument();
+    expect(mocks.loadFullParseErrorCoverage).not.toHaveBeenCalled();
   });
 
   it('names projects skipped by an explicit partial coverage load', async () => {
@@ -179,7 +180,7 @@ describe('parse-error coverage', () => {
       />,
     );
 
-    const bell = await screen.findByRole('button', { name: 'Notifications: 2 unread' });
+    const bell = await screen.findByRole('button', { name: 'Notifications: 1 unread' });
     fireEvent.click(bell);
     expect(await screen.findByText('Activity coverage is partial')).toBeInTheDocument();
     expect(screen.getByText('Failed project ledgers: blocked.')).toBeInTheDocument();

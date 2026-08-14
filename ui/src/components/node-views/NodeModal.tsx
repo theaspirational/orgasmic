@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';
+import { ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,13 +21,16 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchDecisions, fetchGlossary } from '@/lib/api';
+import type { OrgNodeDoc } from '@/lib/orgdoc/types';
 import { appendDrawerStack, routeSearch, searchList, withDrawerStack, type AppSearch } from '@/lib/searchState';
 import type { DecisionSummary, GlossarySummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
 import { CopyIdBadge } from '../CopyIdBadge';
 import { GenerateArtifactDialog } from '../GenerateArtifactDialog';
+import { PeekBackButton } from '../PeekBackButton';
 import { inferNodeKind, shortPath, type NodeKind } from './orgNodes';
+import { NodeDeleteControl } from './NodeDeleteControl';
 
 // Summaries for every editable node kind, so the modal can resolve cross-kind chip labels,
 // autocomplete, and breadcrumb titles while the per-node editor fetches its own
@@ -153,9 +156,11 @@ export function NodeModal({
   );
   const trail = stack;
   const [mode, setMode] = useState<'view' | 'edit'>('view');
+  const [activeDocument, setActiveDocument] = useState<OrgNodeDoc | null>(null);
 
   useEffect(() => {
     setMode('view');
+    setActiveDocument(null);
   }, [activeId]);
 
   const pushNode = useCallback((id: string) => {
@@ -212,14 +217,20 @@ export function NodeModal({
       onPopTo={popToTrailIndex}
       onOpenNode={pushNode}
       onToggleMode={() => setMode((current) => (current === 'edit' ? 'view' : 'edit'))}
+      activeDocument={activeDocument}
+      onDocumentChange={setActiveDocument}
+      onDeleted={closeRoute}
     />
   );
 
   if (isMobile) {
     return (
-      <Sheet open={open} onOpenChange={(next) => !next && popFrame()}>
-        <SheetContent side="right" className="w-full p-0 sm:max-w-none md:max-w-[44rem]">
-          <SheetHeader className="border-b pr-12">
+      <Sheet open={open} onOpenChange={(next) => !next && closeRoute()}>
+        <SheetContent
+          side="right"
+          className="gap-0 p-0 data-[side=right]:w-full sm:max-w-none md:max-w-[44rem]"
+        >
+          <SheetHeader className="sr-only">
             <SheetTitle>{title}</SheetTitle>
             <SheetDescription>{description}</SheetDescription>
           </SheetHeader>
@@ -230,7 +241,7 @@ export function NodeModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && popFrame()}>
+    <Dialog open={open} onOpenChange={(next) => !next && closeRoute()}>
       <DialogContent className="grid h-[min(90vh,46rem)] w-[min(96vw,72rem)] max-w-none grid-rows-[auto_1fr] gap-0 overflow-hidden p-0 sm:max-w-none">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">{description}</DialogDescription>
@@ -253,6 +264,9 @@ function NodeModalContent({
   onPopTo,
   onOpenNode,
   onToggleMode,
+  activeDocument,
+  onDocumentChange,
+  onDeleted,
 }: {
   projectId: string;
   activeId: string | null;
@@ -266,47 +280,54 @@ function NodeModalContent({
   onPopTo: (index: number) => void;
   onOpenNode: (id: string) => void;
   onToggleMode: () => void;
+  activeDocument: OrgNodeDoc | null;
+  onDocumentChange: (document: OrgNodeDoc | null) => void;
+  onDeleted: () => void;
 }) {
   const directory = useMemo<NodeDirectory>(() => buildDirectory(data), [data]);
+  const { isMember } = useMe();
 
   if (loading) {
     return (
-      <div className="flex flex-col gap-3 p-5">
-        <Skeleton className="h-6 w-48" />
-        <Skeleton className="h-64" />
-      </div>
+      <>
+        <div className="flex items-center gap-3 border-b px-5 py-4 pr-12">
+          <PeekBackButton depth={breadcrumbs.length} onBack={onBack} />
+          <Skeleton className="h-6 w-48" />
+        </div>
+        <div className="p-5">
+          <Skeleton className="h-64" />
+        </div>
+      </>
     );
   }
   if (error) {
     return (
-      <div className="p-5 text-sm text-destructive">
-        {error instanceof Error ? error.message : String(error)}
-      </div>
+      <>
+        <div className="flex items-center gap-3 border-b px-5 py-4 pr-12">
+          <PeekBackButton depth={breadcrumbs.length} onBack={onBack} />
+          <h2 className="text-base font-semibold">Unable to load item</h2>
+        </div>
+        <div className="p-5 text-sm text-destructive">
+          {error instanceof Error ? error.message : String(error)}
+        </div>
+      </>
     );
   }
   if (!activeId || !data) return null;
   const title = nodeTitle(activeKind, activeId, data);
-  const hiddenStackCount = Math.max(0, breadcrumbs.length - 1);
   const parentTrail = activeKind === 'decision' ? decisionParentTrail(activeId, data.decisions) : [];
+  const activeDecision = activeKind === 'decision'
+    ? data.decisions.find((decision) => decision.id === activeId)
+    : undefined;
+  const baseVersion = activeDocument?.id === activeId
+    ? activeDocument.source.base_version
+    : null;
 
   return (
     <>
-      <div className="flex items-start gap-3 border-b px-5 py-4 pr-12">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className="hidden sm:inline-flex"
-          onClick={onBack}
-          aria-label="Back"
-        >
-          <ArrowLeft />
-        </Button>
-        <Button type="button" variant="ghost" size="sm" className="sm:hidden" onClick={onBack}>
-          <ArrowLeft />
-          Back{hiddenStackCount > 0 ? ` (${hiddenStackCount} more)` : ''}
-        </Button>
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-start gap-3 border-b px-5 py-4 pr-12 sm:flex-nowrap">
+        <PeekBackButton depth={breadcrumbs.length} onBack={onBack} />
+        <div className="order-3 min-w-0 w-full sm:order-none sm:w-auto sm:flex-1">
           {breadcrumbs.length > 1 ? (
             <nav className="mb-2 hidden flex-wrap items-center gap-1 text-xs text-muted-foreground sm:flex" aria-label="Drawer stack">
               {breadcrumbs.map((id, index) => (
@@ -350,19 +371,31 @@ function NodeModalContent({
           ) : null}
           <h2 className="mt-1 text-base font-semibold leading-snug">{title}</h2>
         </div>
-        <Button
-          type="button"
-          variant={mode === 'edit' ? 'default' : 'outline'}
-          size="sm"
-          className="shrink-0"
-          onClick={onToggleMode}
-          aria-pressed={mode === 'edit'}
-        >
-          {mode === 'edit' ? <Eye /> : <Pencil />}
-          {mode === 'edit' ? 'View' : 'Edit'}
-        </Button>
+        <div className="order-2 ml-auto flex shrink-0 items-center gap-1 sm:order-none sm:ml-0">
+          <Button
+            type="button"
+            variant={mode === 'edit' ? 'default' : 'outline'}
+            size="sm"
+            onClick={onToggleMode}
+            aria-pressed={mode === 'edit'}
+          >
+            {mode === 'edit' ? <Eye data-icon="inline-start" /> : <Pencil data-icon="inline-start" />}
+            {mode === 'edit' ? 'View' : 'Edit'}
+          </Button>
+          {!isMember ? (
+            <NodeDeleteControl
+              projectId={projectId}
+              id={activeId}
+              kind={activeKind}
+              title={title}
+              baseVersion={baseVersion}
+              childCount={activeDecision?.children?.length ?? 0}
+              onDeleted={onDeleted}
+            />
+          ) : null}
+        </div>
       </div>
-      <ScrollArea className="min-h-0">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="grid gap-5 p-5 md:grid-cols-[1fr_16rem]">
           <div className="min-w-0">
             <NodeDocEditor
@@ -372,6 +405,7 @@ function NodeModalContent({
               directory={directory}
               onOpenNode={onOpenNode}
               mode={mode}
+              onDocumentChange={onDocumentChange}
             />
           </div>
           <Aside projectId={projectId} id={activeId} kind={activeKind} data={data} onOpenNode={onOpenNode} />

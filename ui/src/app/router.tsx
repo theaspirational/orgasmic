@@ -15,15 +15,8 @@ import { RunsView } from '@/components/RunsView';
 import { SettingsView } from '@/components/SettingsView';
 import { StatusView } from '@/components/StatusView';
 import { TasksPage } from '@/components/TasksPage';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 import { fetchProjects } from '@/lib/api';
+import { withEntityPeek } from '@/lib/entityPeek';
 import { routeSearch } from '@/lib/searchState';
 import { DEFAULT_TAB_VIEW, getSnapshot as getTabsSnapshot } from '@/lib/tabsStore';
 import type { Me, ProjectCatalogEntry } from '@/lib/types';
@@ -52,10 +45,6 @@ const OrgView = lazy(() =>
 const PromptStudioView = lazy(() =>
   import('@/components/PromptStudioView').then((module) => ({ default: module.PromptStudioView })),
 );
-const TaskDialog = lazy(() =>
-  import('@/components/TaskDialog').then((module) => ({ default: module.TaskDialog })),
-);
-
 const LAST_PROJECT_KEYS = ['orgasmic.lastProject', 'orgasmic.active_project'];
 const DEFAULT_PROJECT_ID = 'orgasmic';
 
@@ -106,7 +95,7 @@ type SearchRecord = Record<string, unknown>;
 type ManagerSearchSize = 'peek' | 'workbench' | 'focus';
 type ActivityRange = 'today' | '7d' | '30d' | 'custom' | 'all';
 type DrawerSearch = { drawer_stack?: string[] };
-type RootSearch = { manager?: ManagerSearchSize };
+type RootSearch = DrawerSearch & { manager?: ManagerSearchSize; peek_task?: string };
 type DecisionsSearch = DrawerSearch & { tag?: string[]; q?: string };
 type GlossarySearch = DrawerSearch & { q?: string };
 type TasksLayoutSearch = 'list' | 'kanban';
@@ -195,42 +184,6 @@ function tasksSearch(raw: SearchRecord): TasksSearch {
   };
 }
 
-function TaskDialogChunkFallback({
-  taskId,
-  onClose,
-}: {
-  taskId: string;
-  onClose: () => void;
-}) {
-  return (
-    <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent
-        showCloseButton
-        className="grid h-[min(90vh,46rem)] w-[min(96vw,80rem)] max-w-none grid-rows-[auto_1fr] gap-0 overflow-hidden p-0 sm:max-w-none"
-      >
-        <DialogHeader className="border-b px-5 py-4 pr-12">
-          <DialogDescription className="font-mono text-xs">{taskId}</DialogDescription>
-          <DialogTitle className="text-base font-semibold leading-snug sm:text-lg">
-            Loading task
-          </DialogTitle>
-        </DialogHeader>
-        <div className="grid min-h-0 grid-cols-1 md:grid-cols-[16rem_minmax(0,1fr)_18rem]">
-          <div className="hidden border-r bg-muted/20 p-3 md:block">
-            <Skeleton className="h-8" />
-          </div>
-          <div className="flex flex-col gap-4 px-5 py-5">
-            <Skeleton className="h-4 w-40" />
-            <Skeleton className="h-24" />
-          </div>
-          <div className="hidden border-l bg-muted/20 p-3 lg:block">
-            <Skeleton className="h-20" />
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function activitySearch(raw: SearchRecord): ActivitySearch {
   const types = readStringList(raw.types);
   const actors = readStringList(raw.actors);
@@ -270,7 +223,12 @@ function stringifyAppSearch(search: SearchRecord): string {
 const rootRoute = createRootRoute({
   validateSearch: (raw: SearchRecord): RootSearch => {
     const manager = readManager(raw.manager);
-    return manager ? { manager } : {};
+    const peekTask = readOptionalString(raw.peek_task);
+    return {
+      ...drawerSearch(raw),
+      ...(manager ? { manager } : {}),
+      ...(peekTask ? { peek_task: peekTask } : {}),
+    };
   },
   component: AppShell,
 });
@@ -369,12 +327,7 @@ const projectOverviewRoute = createRoute({
         projectId={projectId}
         onSelectTask={(taskId) => {
           void navigate({
-            to: '/projects/$projectId/tasks',
-            params: { projectId },
-            search: routeSearch((prev) => ({
-              ...prev,
-              task: taskId,
-            })),
+            search: routeSearch((prev) => withEntityPeek(prev, taskId)),
           });
         }}
       />
@@ -447,69 +400,22 @@ const tasksRoute = createRoute({
   validateSearch: tasksSearch,
   component: function TasksRoute() {
     const { projectId } = projectRoute.useParams();
-    const { task } = tasksRoute.useSearch();
     const navigate = tasksRoute.useNavigate();
     rememberProject(projectId);
     return (
-      <>
-        <TasksPage
-          projectId={projectId}
-          onSelectTask={(nextTaskId) => {
-            void navigate({
-              to: '/projects/$projectId/tasks',
-              params: { projectId },
-              search: routeSearch((prev) => ({
-                ...prev,
-                task: nextTaskId,
-              })),
-            });
-          }}
-        />
-        {task ? (
-          <Suspense
-            fallback={
-              <TaskDialogChunkFallback
-                taskId={task}
-                onClose={() => {
-                  void navigate({
-                    to: '/projects/$projectId/tasks',
-                    params: { projectId },
-                    search: routeSearch((prev) => ({
-                      ...prev,
-                      task: undefined,
-                    })),
-                  });
-                }}
-              />
-            }
-          >
-            <TaskDialog
-              projectId={projectId}
-              taskId={task}
-              onClose={() => {
-                void navigate({
-                  to: '/projects/$projectId/tasks',
-                  params: { projectId },
-                  search: routeSearch((prev) => ({
-                    ...prev,
-                    task: undefined,
-                  })),
-                });
-              }}
-              onSelectTask={(nextTaskId) => {
-                void navigate({
-                  to: '/projects/$projectId/tasks',
-                  params: { projectId },
-                  search: routeSearch((prev) => ({
-                    ...prev,
-                    task: nextTaskId,
-                  })),
-                });
-              }}
-            />
-          </Suspense>
-        ) : null}
-      </>
+      <TasksPage
+        projectId={projectId}
+        onSelectTask={(nextTaskId) => {
+          void navigate({
+            to: '/projects/$projectId/tasks',
+            params: { projectId },
+            search: routeSearch((prev) => ({
+              ...prev,
+              task: nextTaskId,
+            })),
+          });
+        }}
+      />
     );
   },
 });

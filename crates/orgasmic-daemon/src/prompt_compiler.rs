@@ -775,14 +775,33 @@ fn render_reference_pack(intro: &str, path: &Path, source: Option<&str>) -> Stri
 }
 
 fn latest_org_file(dir: &Path) -> Option<PathBuf> {
+    // Only monthly ledger files (`YYYY-MM.org`) qualify: letters sort after
+    // digits, so any stray `.org` in tx/ (a future dispatch ledger, a stale
+    // scratch file) would lexicographically shadow every real month and hand
+    // the worker an arbitrary file as its telemetry source.
     let mut paths = std::fs::read_dir(dir)
         .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("org"))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_monthly_ledger_name)
+        })
         .collect::<Vec<_>>();
     paths.sort();
     paths.pop()
+}
+
+fn is_monthly_ledger_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".org") else {
+        return false;
+    };
+    let bytes = stem.as_bytes();
+    bytes.len() == 7
+        && bytes[4] == b'-'
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..].iter().all(u8::is_ascii_digit)
 }
 
 fn hydrate_dynamic_slots(
@@ -1182,6 +1201,28 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn latest_org_file_ignores_non_monthly_ledger_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("2026-07.org"), "");
+        write(&tmp.path().join("2026-08.org"), "");
+        write(&tmp.path().join("dispatch.org"), "");
+        write(&tmp.path().join("notes.md"), "");
+        assert_eq!(
+            latest_org_file(tmp.path()),
+            Some(tmp.path().join("2026-08.org"))
+        );
+    }
+
+    #[test]
+    fn monthly_ledger_name_filter_is_exact() {
+        assert!(is_monthly_ledger_name("2026-08.org"));
+        assert!(!is_monthly_ledger_name("dispatch.org"));
+        assert!(!is_monthly_ledger_name("2026-8.org"));
+        assert!(!is_monthly_ledger_name("2026-08.txt"));
+        assert!(!is_monthly_ledger_name("x2026-08.org"));
     }
 
     fn seed_spec(home: &Home, id: &str, extra: &str, role: &str) {

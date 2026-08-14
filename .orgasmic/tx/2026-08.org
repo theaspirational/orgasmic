@@ -34864,3 +34864,465 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-08-13 Thu 23:02:12 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260813-orgasmic-6071
+:TIME:         [2026-08-13 Thu 23:02:12]
+:TYPE:         graph.decision.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_7RMZJ
+:NODE_ID:      dec_7RMZJ
+:END:
+
+* TX 2026-08-13 Thu 23:13:16 graph.decision.deleted orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260813-orgasmic-6072
+:TIME:         [2026-08-13 Thu 23:13:16]
+:TYPE:         graph.decision.deleted
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       deleted decision node dec_7RMZJ
+:NODE_ID:      dec_7RMZJ
+:END:
+
+* TX 2026-08-14 Fri 08:34:05 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6073
+:TIME:         [2026-08-14 Fri 08:34:05]
+:TYPE:         graph.decision.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_E01MC
+:NODE_ID:      dec_E01MC
+:END:
+
+* TX 2026-08-14 Fri 09:16:11 task.created TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6074
+:TIME:         [2026-08-14 Fri 09:16:11]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       chart execution planning for dec_E01MC
+:END:
+
+* TX 2026-08-14 Fri 09:16:24 task.created TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6075
+:TIME:         [2026-08-14 Fri 09:16:24]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:25 task.created TASK-AP971.2
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6076
+:TIME:         [2026-08-14 Fri 09:16:25]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:25 task.created TASK-AP971.3
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6077
+:TIME:         [2026-08-14 Fri 09:16:25]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:26 task.created TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6078
+:TIME:         [2026-08-14 Fri 09:16:26]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:26 task.created TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6079
+:TIME:         [2026-08-14 Fri 09:16:26]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:38 task.created TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6080
+:TIME:         [2026-08-14 Fri 09:16:38]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:38 task.created TASK-AP971.7
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6081
+:TIME:         [2026-08-14 Fri 09:16:38]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:38 task.created TASK-AP971.8
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6082
+:TIME:         [2026-08-14 Fri 09:16:38]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.8
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:39 task.created TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6083
+:TIME:         [2026-08-14 Fri 09:16:39]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:39 task.created TASK-AP971.10
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6084
+:TIME:         [2026-08-14 Fri 09:16:39]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.10
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder ticket
+:END:
+
+* TX 2026-08-14 Fri 09:16:45 task.property_updated TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6085
+:TIME:         [2026-08-14 Fri 09:16:45]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder blocking edges
+:DEPENDS_ON:   TASK-AP971.1 TASK-AP971.4
+:END:
+
+* TX 2026-08-14 Fri 09:16:46 task.property_updated TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6086
+:TIME:         [2026-08-14 Fri 09:16:46]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder blocking edges
+:DEPENDS_ON:   TASK-AP971.1 TASK-AP971.2
+:END:
+
+* TX 2026-08-14 Fri 09:16:46 task.property_updated TASK-AP971.7
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6087
+:TIME:         [2026-08-14 Fri 09:16:46]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder blocking edges
+:DEPENDS_ON:   TASK-AP971.1 TASK-AP971.5
+:END:
+
+* TX 2026-08-14 Fri 09:16:46 task.property_updated TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6088
+:TIME:         [2026-08-14 Fri 09:16:46]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder blocking edges
+:DEPENDS_ON:   TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
+:END:
+
+* TX 2026-08-14 Fri 09:16:47 task.property_updated TASK-AP971.10
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6089
+:TIME:         [2026-08-14 Fri 09:16:47]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.10
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       wayfinder blocking edges
+:DEPENDS_ON:   TASK-AP971.2
+:END:
+
+* TX 2026-08-14 Fri 09:17:01 task.state_transitioned TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6090
+:TIME:         [2026-08-14 Fri 09:17:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       claimed: research subagent dispatched from wayfinder charting session
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-14 Fri 09:22:26 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6091
+:TIME:         [2026-08-14 Fri 09:22:26]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 09:38:06 task.edited TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6092
+:TIME:         [2026-08-14 Fri 09:38:06]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-AP971.4
+:NODE_ID:      TASK-AP971.4
+:END:
+
+* TX 2026-08-14 Fri 09:38:06 comment TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6093
+:TIME:         [2026-08-14 Fri 09:38:06]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:REASON:       resolved: inventory at docs/research/tx-dependency-inventory.md — ~254 touchpoints; recovery_claim.rs zero (premise corrected); top risks: writer one-ledger invariant, unscoped dispatch fold, non-recursive collect_tx_dir
+:END:
+
+* TX 2026-08-14 Fri 09:38:06 task.state_transitioned TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6094
+:TIME:         [2026-08-14 Fri 09:38:06]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       wayfinder ticket resolved; see Resolution section
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-14 Fri 09:38:15 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6095
+:TIME:         [2026-08-14 Fri 09:38:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 09:47:37 task.edited TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6096
+:TIME:         [2026-08-14 Fri 09:47:37]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-AP971.4
+:NODE_ID:      TASK-AP971.4
+:END:
+
+* TX 2026-08-14 Fri 09:47:37 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6097
+:TIME:         [2026-08-14 Fri 09:47:37]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 09:48:33 task.created TASK-AP971.11
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6098
+:TIME:         [2026-08-14 Fri 09:48:33]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.11
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       graduated from TASK-AP971.4 findings
+:END:
+
+* TX 2026-08-14 Fri 09:48:33 task.property_updated TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6099
+:TIME:         [2026-08-14 Fri 09:48:33]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       tx split semantics needs the dispatch-discovery decision first
+:DEPENDS_ON:   TASK-AP971.1 TASK-AP971.4 TASK-AP971.11
+:END:
+
+* TX 2026-08-14 Fri 09:51:15 task.edited TASK-AP971.4
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6100
+:TIME:         [2026-08-14 Fri 09:51:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.4
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-AP971.4
+:NODE_ID:      TASK-AP971.4
+:END:
+
+* TX 2026-08-14 Fri 09:51:15 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6101
+:TIME:         [2026-08-14 Fri 09:51:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 09:55:43 task.edited TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6102
+:TIME:         [2026-08-14 Fri 09:55:43]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.9
+:NODE_ID:      TASK-AP971.9
+:END:
+
+* TX 2026-08-14 Fri 09:55:43 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6103
+:TIME:         [2026-08-14 Fri 09:55:43]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 10:24:45 task.edited TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6104
+:TIME:         [2026-08-14 Fri 10:24:45]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.1
+:NODE_ID:      TASK-AP971.1
+:END:

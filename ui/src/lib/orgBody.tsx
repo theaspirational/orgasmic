@@ -19,51 +19,60 @@ type OrgBlock =
 
 function parseInlines(source: string): OrgInline[] {
   const out: OrgInline[] = [];
-  let rest = source;
-  while (rest.length > 0) {
+  const pushText = (value: string) => {
+    if (!value) return;
+    const previous = out.at(-1);
+    if (previous?.kind === 'text') {
+      previous.value += value;
+    } else {
+      out.push({ kind: 'text', value });
+    }
+  };
+  const isBoundary = (value: string | undefined) =>
+    value == null || /[\s()[\]{}'"“”‘’.,!?;:<>—–-]/.test(value);
+  const delimitedAt = (index: number, marker: '*' | '/' | '=' | '~') => {
+    if (!isBoundary(source[index - 1])) return null;
+    const first = source[index + 1];
+    if (!first || /\s/.test(first) || first === marker) return null;
+    const end = source.indexOf(marker, index + 1);
+    if (end < 0 || /\s/.test(source[end - 1]!) || !isBoundary(source[end + 1])) return null;
+    return { value: source.slice(index + 1, end), end: end + 1 };
+  };
+
+  let index = 0;
+  while (index < source.length) {
+    const rest = source.slice(index);
     const labeled = /^\[\[([^\]]+)\]\[([^\]]+)\]\]/.exec(rest);
     if (labeled) {
       out.push({ kind: 'link', target: labeled[1]!, label: labeled[2]! });
-      rest = rest.slice(labeled[0].length);
+      index += labeled[0].length;
       continue;
     }
     const plain = /^\[\[([^\]]+)\]\]/.exec(rest);
     if (plain) {
       out.push({ kind: 'link', target: plain[1]! });
-      rest = rest.slice(plain[0].length);
+      index += plain[0].length;
       continue;
     }
-    const tilde = /^~([^~\n]+)~/.exec(rest);
-    if (tilde) {
-      out.push({ kind: 'code', value: tilde[1]! });
-      rest = rest.slice(tilde[0].length);
-      continue;
+
+    const marker = source[index];
+    if (marker === '*' || marker === '/' || marker === '=' || marker === '~') {
+      const delimited = delimitedAt(index, marker);
+      if (delimited) {
+        out.push(
+          marker === '*'
+            ? { kind: 'bold', value: delimited.value }
+            : marker === '/'
+              ? { kind: 'italic', value: delimited.value }
+              : { kind: 'code', value: delimited.value },
+        );
+        index = delimited.end;
+        continue;
+      }
     }
-    const equals = /^=([^=\n]+)=/.exec(rest);
-    if (equals) {
-      out.push({ kind: 'code', value: equals[1]! });
-      rest = rest.slice(equals[0].length);
-      continue;
-    }
-    const bold = /^\*([^*\n]+)\*/.exec(rest);
-    if (bold) {
-      out.push({ kind: 'bold', value: bold[1]! });
-      rest = rest.slice(bold[0].length);
-      continue;
-    }
-    const italic = /^\/([^/\n]+)\//.exec(rest);
-    if (italic) {
-      out.push({ kind: 'italic', value: italic[1]! });
-      rest = rest.slice(italic[0].length);
-      continue;
-    }
-    const next = rest.search(/(\[\[|\*[^*\n]+\*|\/[^/\n]+\/|=([^=\n]+)=|~[^~\n]+~)/);
-    if (next <= 0) {
-      out.push({ kind: 'text', value: rest });
-      break;
-    }
-    out.push({ kind: 'text', value: rest.slice(0, next) });
-    rest = rest.slice(next);
+
+    pushText(source[index]!);
+    index += 1;
   }
   return out;
 }
@@ -72,44 +81,106 @@ function parseBlocks(source: string): OrgBlock[] {
   const trimmed = source.trim();
   if (!trimmed) return [];
   const blocks: OrgBlock[] = [];
-  const parts = trimmed.split(/\n\s*\n/);
-  for (const part of parts) {
-    const block = part.trim();
-    if (!block) continue;
-    const quote = /^#\+begin_quote\n([\s\S]*?)\n#\+end_quote$/i.exec(block);
-    if (quote) {
-      blocks.push({ kind: 'quote', blocks: parseBlocks(quote[1]!) });
+  const lines = trimmed.split('\n');
+  let paragraphLines: string[] = [];
+  let listItems: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) return;
+    blocks.push({ kind: 'paragraph', inlines: parseInlines(paragraphLines.join(' ')) });
+    paragraphLines = [];
+  };
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    blocks.push({ kind: 'list', items: listItems.map(parseInlines) });
+    listItems = [];
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const content = line.trim();
+    if (!content) {
+      flushParagraph();
+      flushList();
       continue;
     }
-    const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
-    if (lines.length > 0 && lines.every((line) => line.startsWith('- '))) {
-      blocks.push({
-        kind: 'list',
-        items: lines.map((line) => parseInlines(line.slice(2))),
-      });
+
+    if (/^#\+begin_quote$/i.test(content)) {
+      const end = lines.findIndex(
+        (candidate, candidateIndex) =>
+          candidateIndex > index && /^#\+end_quote$/i.test(candidate.trim()),
+      );
+      if (end >= 0) {
+        flushParagraph();
+        flushList();
+        blocks.push({ kind: 'quote', blocks: parseBlocks(lines.slice(index + 1, end).join('\n')) });
+        index = end;
+        continue;
+      }
+    }
+
+    const listItem = /^\s*-\s+(.+)$/.exec(line);
+    if (listItem) {
+      flushParagraph();
+      listItems.push(listItem[1]!.trim());
       continue;
     }
-    blocks.push({ kind: 'paragraph', inlines: parseInlines(block.replace(/\n/g, ' ')) });
+
+    if (listItems.length > 0 && /^\s+/.test(line)) {
+      listItems[listItems.length - 1] = `${listItems.at(-1)} ${content}`;
+      continue;
+    }
+
+    flushList();
+    paragraphLines.push(content);
   }
+  flushParagraph();
+  flushList();
   return blocks;
 }
 
-function renderInline(inline: OrgInline, key: number, ctx: RichCtx): ReactNode {
+function renderInline(
+  inline: OrgInline,
+  key: number,
+  ctx: RichCtx,
+  interactive = true,
+  compact = false,
+): ReactNode {
   switch (inline.kind) {
     case 'text':
-      return <Fragment key={key}>{decorateText(inline.value, ctx)}</Fragment>;
+      return (
+        <Fragment key={key}>
+          {interactive ? decorateText(inline.value, ctx) : inline.value}
+        </Fragment>
+      );
     case 'bold':
       return <strong key={key}>{inline.value}</strong>;
     case 'italic':
       return <em key={key}>{inline.value}</em>;
     case 'code':
       return (
-        <code key={key} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.9em] text-muted-foreground">
+        <code
+          key={key}
+          className={cn(
+            'font-mono text-muted-foreground',
+            compact
+              ? 'rounded-sm bg-muted/70 px-0.5 py-0 align-baseline'
+              : 'rounded bg-muted px-1 py-0.5 text-[0.9em]',
+          )}
+          style={compact ? { fontSize: 'inherit', lineHeight: 'inherit' } : undefined}
+        >
           {inline.value}
         </code>
       );
     case 'link': {
       const label = inline.label ?? inline.target;
+      if (!interactive) {
+        return (
+          <span key={key} className="text-primary underline decoration-dotted underline-offset-2">
+            {label}
+          </span>
+        );
+      }
       if (/^https?:\/\//i.test(inline.target)) {
         return (
           <a key={key} href={inline.target} className="text-primary underline-offset-2 hover:underline">
@@ -124,6 +195,25 @@ function renderInline(inline: OrgInline, key: number, ctx: RichCtx): ReactNode {
       );
     }
   }
+}
+
+export function OrgInlineText({
+  source,
+  interactive = true,
+  compact = false,
+}: {
+  source: string;
+  interactive?: boolean;
+  compact?: boolean;
+}) {
+  const ctx = useRichText();
+  return (
+    <Fragment>
+      {parseInlines(source).map((inline, index) =>
+        renderInline(inline, index, ctx, interactive, compact),
+      )}
+    </Fragment>
+  );
 }
 
 function renderBlock(block: OrgBlock, key: number, ctx: RichCtx): ReactNode {

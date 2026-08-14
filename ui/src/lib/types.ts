@@ -168,7 +168,9 @@ export type ActivityEntry = {
 };
 
 export type TaskCommentRequest = {
-  actor: string;
+  /** Optional admin scripting override. Member comments are always stamped
+   * from the authenticated session and the UI intentionally omits this. */
+  actor?: string;
   body: string;
   run_id?: string | null;
   artifacts?: string[];
@@ -687,6 +689,7 @@ export type MemberCapability =
   | 'project.read'
   | 'graph.read'
   | 'tasks.read'
+  | 'tasks.comment'
   | 'sessions.watch'
   | 'sessions.interact'
   | 'artifacts.read'

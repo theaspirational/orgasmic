@@ -23,7 +23,14 @@ export function CopyIdBadge({
     event.preventDefault();
     event.stopPropagation();
     void copyText(value)
-      .then(() => toast.success(`Copied ${value}`))
+      .then(() =>
+        toast.success(`Copied ${value}`, {
+          cancel: {
+            label: 'Dismiss',
+            onClick: () => undefined,
+          },
+        }),
+      )
       .catch(() => toast.error(`Could not copy ${value}`));
   }
 

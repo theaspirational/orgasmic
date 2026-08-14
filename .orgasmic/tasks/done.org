@@ -32424,3 +32424,15 @@ request that SUCCEEDED server-side).
   it.
 - Injection per TCTTD standard.
 
+* DONE TASK-AP971.4 tx and state-file dependency inventory :wf_research:
+:PROPERTIES:
+:ID: TASK-AP971.4
+:END:
+
+** Question
+Inventory every reader and writer of .orgasmic/tx/ and .orgasmic/tasks/<state>.org across the daemon (index, activity, recovery_claim, writer), CLI, conventions, and UI — so the tx-split decision knows its full blast radius. AFK research; findings land as a markdown asset linked here.
+** Resolution
+Inventory delivered as evidence keyed by the resolution comment tx (TASK-QGWK7 pattern): [[file:../dispatch-records/tx-20260814-orgasmic-6093/tx-dependency-inventory.md][.orgasmic/dispatch-records/tx-20260814-orgasmic-6093/tx-dependency-inventory.md]] (verified against main at 862d166). ~254 direct touchpoints: api.rs ~50, rest of daemon 63, CLI 38, core 44 (it defines both path families), CLI tests ~135 sites via 14 helpers, shipped/ 29, ui/ 13 (12 indirect via projections), drivers and src-tauri zero.
+Premise corrections: recovery_claim.rs has ZERO tx/state-file touchpoints — the tx-heavy recovery logic lives in api.rs (7542-7575, 17600-19010) and manager.rs scan_dispatches (9463-9498).
+Top risks for the split: (1) writer.rs one-ledger invariant — atomic multi-journal appends need a redesigned transaction primitive (process_tx_batch is the closest model); (2) dispatch-open state is discovered by folding the whole tx dir with three safety gates on top — needs a real index or a project-level dispatch ledger that stays in tx/, landed BEFORE journals split (graduated to TASK-AP971.11); (3) iter_task_file_paths full scans back the identity lints and two shell gates, all four degrade silently; (4) tx_destination has no node parameter — best seam, hard cutover; (5) collect_tx_dir is non-recursive — journals in subdirs silently vanish from the activity feed. Favourable: build_activity_index sorts by (time, tx_id), so the projection has no file-order dependency and per-node reads get simpler. Early decides: denylist ledger paths in the org-edit endpoint; make project_tx_sequence and latest_org_file fail loudly.
+

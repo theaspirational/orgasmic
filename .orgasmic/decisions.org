@@ -2586,3 +2586,30 @@ The authoritative gate is one complete local release certification run on a clea
 
 ** Consequences
 Targeted worker gates remain fast feedback but never imply certification. Any source, base, certifier, or toolchain change invalidates reuse. GitHub trusts a status posted by a repository writer rather than independently executing tests. Missing or failed status blocks merge and stable publication.
+
+
+* dec_E01MC Unified per-node directory schema: node kernel, journals, and regeneration for every node type
+:PROPERTIES:
+:DECIDED_AT: 2026-08-14
+:ID: dec_E01MC
+:SOURCE: design session 2026-08-14 (comment latency + brief retention + schema fragmentation review)
+:END:
+
+** Context
+Task knowledge is fragmented across surfaces with different lifecycles: the heading lives in a per-state file (tasks/done.org is 2.4 MB and reparsed on every refresh), events and comments live in monthly tx/ ledgers (~100k lines, all reparsed per mutation, and the HTTP response waits for that scan — the felt comment latency), worker reports live in dispatch-records/, and briefs die in gitignored tmp/. Comments cannot be edited or deleted, and the compiled dispatch prompt is not preserved at all. Meanwhile artifacts already model the wanted shape: one directory per entity (artifacts/ART-XXXXX/ with artifact.org + reviews.org) and a regenerate mechanic that compiles the node plus open comments into a fresh-agent prompt, then marks those comments consumed. The project currently has no external users, so a schema migration is cheap.
+
+** Decision
+Generalize the artifact pattern into a uniform node kernel for every existing and future node type.
+
+Layout: each node is a directory .orgasmic/<collection>/<ID>/ containing node.org (the current content: one heading plus properties) and journal.org (append-only events: comments with IN_REPLY_TO, comment edits and deletes as tombstone entries, state changes, regenerations). Collections: tasks/, decisions/, glossary/, gotchas/, conventions/, artifacts/, and future ones such as problems/ and initiatives/.
+
+Kernel rules (type-agnostic): typed id prefixes name the directory; node.org holds only the current version — git history holds prior versions and the journal records that and why a regeneration happened; comments are first-class project knowledge, versioned with the repo, and feed the node's regeneration prompt; regeneration universally consumes open comments (the artifact mechanic, unchanged).
+
+Type extensibility: a node type is declared by a shipped data descriptor (required properties, allowed states, regeneration prompt template, UI labeling), not daemon code — shipping a new type is shipping one descriptor file. Unknown collections still get generic indexing, comments, and journals. Type-specific extras are additional files inside the node directory (tasks gain dispatches/<n>/ holding brief, compiled prompt, report, and stdout — replacing dispatch-records/ and disposable tmp briefs); the kernel stays ignorant of them.
+
+Ledger split: node-scoped events move into each node's journal; monthly tx/ retains only project-level events. The cross-project activity feed becomes a derived daemon projection. Refresh becomes incremental per changed node directory instead of a full project rescan per mutation.
+
+Migration is a one-shot converter from state files, tx/, and dispatch-records/ into node directories. Build order: extract the kernel from the working artifact code (not a new abstraction ported back), migrate tasks first as the proving ground, then decisions/glossary/gotchas, then descriptor shipping.
+
+** Consequences
+One directory tells a node's whole story (git log on the path is the retro). Briefs and compiled prompts become durable. A state change is a property edit in a small file, not a move between growing files; done.org and per-mutation full scans disappear, fixing comment latency at the root. Comment edit/delete falls out as journal entries. Adding a future node type needs no daemon release for the basics. Costs: reading a whole collection now needs derived read views (directories are truth, views are throwaway); indexer, writer, CLI, prompt compiler, and conventions all change, so the refactor lands in stages behind the migrator; tiny nodes (glossary terms) pay a directory of overhead in exchange for per-node comments and regeneration.

@@ -8,6 +8,15 @@ codex implementers in their worktrees (which auto-read repo `AGENTS.md`). Each
 entry names the symptom/evidence, the cause, and the fix; transient entries also
 carry an exit condition and the task expected to make them obsolete.
 
+** VS Code Sync fails with "would clobber existing tag" on nightly/stable
+Publish scripts force-move the rolling channel tags (=nightly=, =stable=,
+=apps-nightly=, =apps-stable=) via =git push -f origin "$HEAD_SHA:refs/tags/$TAG"=
+(=scripts/publish-runtime.sh=). VS Code / Cursor Sync runs =git pull --tags=, and
+Git refuses to overwrite the stale local tag, aborting the whole sync even though
+the branch fetch succeeded. Workspace setting =git.pullTags= false in
+=.vscode/settings.json= stops Sync from fetching tags. To refresh local channel
+tags on purpose: =git fetch --force --tags=. Durable invariant.
+
 ** Org TODO-keyword recognition is an allowlist, not "uppercase token"
 The app-owned Org parser must only recognise the per-kind state-machine states
 declared in `shipped/schema/state-machine.org` as TODO keywords. Otherwise

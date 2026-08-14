@@ -21,8 +21,8 @@ describe('DialogContent close button', () => {
     );
 
     const close = screen.getByRole('button', { name: 'Close' });
-    expect(close).toHaveClass('active:not-aria-[haspopup]:translate-y-0');
-    expect(close).not.toHaveClass('active:not-aria-[haspopup]:translate-y-px');
+    expect(close).toHaveClass('active:brightness-95');
+    expect(close.className).not.toMatch(/active:.*translate/);
 
     fireEvent.click(close);
     expect(onOpenChange).toHaveBeenCalledWith(false);

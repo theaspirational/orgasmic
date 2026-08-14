@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
 import {
   BookOpen,
@@ -57,6 +57,13 @@ import {
   savedUpdateChannel,
 } from '@/lib/appUpdate';
 import { routeSearch } from '@/lib/searchState';
+import {
+  backEntityPeek,
+  closeEntityPeek,
+  getEntityPeek,
+  isTaskNodeId,
+  pushEntityPeek,
+} from '@/lib/entityPeek';
 import { THEME_OPTIONS, useTheme, type ThemePreference } from '@/lib/theme';
 import { setUnauthorizedHandler } from '@/lib/transport';
 import type { DaemonEvent, ViewName, WsConnectionState } from '@/lib/types';
@@ -70,6 +77,12 @@ import { RunDock } from './manager/RunDock';
 import { RunDockProvider } from '@/lib/runDock';
 import { NotificationBell } from './notifications/NotificationBell';
 import { ProjectTabs } from './ProjectTabs';
+import { TaskDialogChunkFallback } from './TaskDialogChunkFallback';
+import { NodeModal } from './node-views/NodeModal';
+
+const TaskDialog = lazy(() =>
+  import('@/components/TaskDialog').then((module) => ({ default: module.TaskDialog })),
+);
 
 type ProjectPage =
   | 'decisions'
@@ -107,10 +120,10 @@ const PRIMARY: NavItem[] = [
   { page: 'decisions', label: 'Decisions', icon: GitCommitHorizontal, to: '/projects/$projectId/decisions' },
   { page: 'tasks', label: 'Tasks', icon: ListChecks, to: '/projects/$projectId/tasks' },
   { page: 'glossary', label: 'Glossary', icon: BookOpen, to: '/projects/$projectId/glossary' },
+  { page: 'artifacts', label: 'Artifacts', icon: FileStack, to: '/projects/$projectId/artifacts' },
 ];
 
 const MORE: NavItem[] = [
-  { page: 'artifacts', label: 'Artifacts', icon: FileStack, to: '/projects/$projectId/artifacts' },
   { page: 'prompts', label: 'Prompts', icon: FileCode2, to: '/projects/$projectId/prompts' },
   { page: 'activity', label: 'Activity', icon: LayoutList, to: '/projects/$projectId/activity' },
 ];
@@ -160,6 +173,10 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useRouterState({ select: (state) => state.location });
   const pathname = location.pathname;
+  const entityPeek = getEntityPeek(pathname, location.search ?? {});
+  const activeEntityId = entityPeek?.activeId ?? null;
+  const entityHistoryDepth = entityPeek?.stack.length ?? 0;
+  const activeEntityIsTask = isTaskNodeId(activeEntityId);
   const { activeProjectId } = useActiveProject();
   const projectId = activeProjectId;
   const page = pageFromPath(pathname);
@@ -256,16 +273,35 @@ export function AppShell() {
     (taskId: string) => {
       if (!projectId) return;
       void navigate({
-        to: '/projects/$projectId/tasks',
-        params: { projectId },
-        search: routeSearch((prev) => ({
-          ...prev,
-          task: taskId,
-        })),
+        search: routeSearch((prev) => pushEntityPeek(pathname, prev, taskId)),
       });
     },
-    [navigate, projectId],
+    [navigate, pathname, projectId],
   );
+
+  const openPeekEntity = useCallback(
+    (id: string) => {
+      void navigate({
+        search: routeSearch((prev) => pushEntityPeek(pathname, prev, id)),
+      });
+    },
+    [navigate, pathname],
+  );
+
+  const backFromPeek = useCallback(() => {
+    if (!entityPeek) return;
+    void navigate({
+      search: routeSearch((prev) => backEntityPeek(pathname, prev)),
+    });
+  }, [entityPeek, navigate, pathname]);
+
+  const closeEntityPeekRoute = useCallback(() => {
+    if (!entityPeek) return;
+    void navigate({
+      search: routeSearch((prev) => closeEntityPeek(pathname, prev)),
+      replace: true,
+    });
+  }, [entityPeek, navigate, pathname]);
 
   return (
     <TooltipProvider>
@@ -387,6 +423,33 @@ export function AppShell() {
             {needsToken ? null : <Outlet />}
           </div>
         </SidebarInset>
+        {!needsToken && projectId && activeEntityId && activeEntityIsTask ? (
+          <Suspense
+            fallback={
+              <TaskDialogChunkFallback
+                taskId={activeEntityId}
+                historyDepth={entityHistoryDepth}
+                onBack={backFromPeek}
+                onClose={closeEntityPeekRoute}
+              />
+            }
+          >
+            <TaskDialog
+              projectId={projectId}
+              taskId={activeEntityId}
+              historyDepth={entityHistoryDepth}
+              onBack={backFromPeek}
+              onClose={closeEntityPeekRoute}
+              onSelectTask={openPeekEntity}
+            />
+          </Suspense>
+        ) : null}
+        {!needsToken && projectId && activeEntityId && !activeEntityIsTask ? (
+          <NodeModal
+            projectId={projectId}
+            nodeKind={activeEntityId.startsWith('dec_') ? 'decision' : 'glossary'}
+          />
+        ) : null}
         {/* The run dock is an admin/manager surface — it polls admin-only
             manager + runs state, so members never mount it (a member's
             read-only session viewing is a separate, not-yet-exposed surface). */}

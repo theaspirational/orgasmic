@@ -18,6 +18,7 @@ pub enum Action {
     ProjectRead,
     GraphRead,
     TasksRead,
+    TasksComment,
     SessionsWatch,
     SessionsInteract,
     ArtifactsRead,
@@ -28,10 +29,11 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::ProjectRead,
         Action::GraphRead,
         Action::TasksRead,
+        Action::TasksComment,
         Action::SessionsWatch,
         Action::SessionsInteract,
         Action::ArtifactsRead,
@@ -49,6 +51,7 @@ pub fn action_name(action: Action) -> &'static str {
         Action::ProjectRead => "project.read",
         Action::GraphRead => "graph.read",
         Action::TasksRead => "tasks.read",
+        Action::TasksComment => "tasks.comment",
         Action::SessionsWatch => "sessions.watch",
         Action::SessionsInteract => "sessions.interact",
         Action::ArtifactsRead => "artifacts.read",
@@ -72,6 +75,7 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ProjectRead,
             GraphRead,
             TasksRead,
+            TasksComment,
             SessionsWatch,
             ArtifactsRead,
             ArtifactsComment,
@@ -80,6 +84,7 @@ pub fn role_capabilities(role: &str) -> &'static [Action] {
             ProjectRead,
             GraphRead,
             TasksRead,
+            TasksComment,
             SessionsWatch,
             ArtifactsRead,
             ArtifactsComment,
@@ -273,6 +278,7 @@ mod tests {
         assert!(require(&viewer, Some("p"), Action::ArtifactsGenerate).is_err());
         assert!(require(&editor, Some("p"), Action::ArtifactsGenerate).is_ok());
         assert!(require(&viewer, Some("p"), Action::TasksRead).is_ok());
+        assert!(require(&viewer, Some("p"), Action::TasksComment).is_ok());
     }
 
     #[test]
@@ -282,6 +288,7 @@ mod tests {
         assert!(require(&id, Some("p"), Action::ArtifactsComment).is_ok());
         assert!(require(&id, Some("p"), Action::GraphRead).is_err());
         assert!(require(&id, Some("p"), Action::TasksRead).is_err());
+        assert!(require(&id, Some("p"), Action::TasksComment).is_err());
         assert!(require(&id, Some("p"), Action::SessionsWatch).is_err());
     }
 

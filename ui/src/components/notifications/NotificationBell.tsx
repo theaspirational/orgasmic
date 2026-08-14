@@ -10,7 +10,6 @@ import {
   fetchParseErrorsWithCoverage,
   fetchTx,
   fetchTxWithCoverage,
-  loadFullParseErrorCoverage,
 } from '@/lib/api';
 import type { DaemonEvent, ParseError, QuestionEntry, TxRecord, ViewName } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
@@ -223,37 +222,6 @@ export function NotificationBell({
         },
         onDismiss: () => dismiss(`parse:${parseErrorKey(error)}`),
       }));
-
-    if (parseErrors.data && parseErrors.data.coverage.state !== 'complete') {
-      parseErrorRows.unshift({
-        key: 'parse-coverage-partial',
-        title: 'Parse-error coverage is partial',
-        detail: parseErrors.data?.coverage.detail
-          ?? 'Identity diagnostics remain unloaded for one or more projects.',
-        actionLabel: 'Load full coverage',
-        actionIcon: 'reload',
-        onAction: () => {
-          void (async () => {
-            try {
-              const result = await loadFullParseErrorCoverage();
-              const skipped = Object.keys(result.coverage.failures);
-              if (skipped.length > 0) {
-                toast.warning(`Parse-error coverage loaded partially: ${result.errors.length}`, {
-                  description: `Skipped projects: ${skipped.join(', ')}`,
-                });
-              } else {
-                toast.success(`Full parse-error coverage loaded: ${result.errors.length}`);
-              }
-              await parseErrors.refresh();
-            } catch (err) {
-              toast.error('Full coverage failed', {
-                description: err instanceof Error ? err.message : String(err),
-              });
-            }
-          })();
-        },
-      });
-    }
 
     return { coverage, questions, parseErrors: parseErrorRows };
   }, [

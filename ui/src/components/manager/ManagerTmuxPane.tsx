@@ -370,6 +370,7 @@ export function ManagerTmuxPane({
       <div
         ref={hostRef}
         className="min-h-0 flex-1 overflow-hidden p-2"
+        data-contained-wheel-passthrough=""
         onMouseDownCapture={() => {
           termRef.current?.focus();
         }}

@@ -1,8 +1,10 @@
 import { createContext, Fragment, useContext, useMemo, type ReactNode } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 
+import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchGlossary } from '@/lib/api';
-import { appendDrawerStack, routeSearch } from '@/lib/searchState';
+import { pushEntityPeek } from '@/lib/entityPeek';
+import { routeSearch } from '@/lib/searchState';
 import { useResource } from '@/lib/useResource';
 
 /**
@@ -51,8 +53,10 @@ export function RichTextProvider({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const refresh = useRefreshToken();
   const glossary = useResource(
-    `richtext-glossary:${projectId ?? 'none'}`,
+    `richtext-glossary:${projectId ?? 'none'}:${refresh}`,
     () => fetchGlossary(projectId!),
     { enabled: Boolean(projectId) && canReadGraph },
   );
@@ -61,26 +65,14 @@ export function RichTextProvider({
     if (!projectId) return null;
 
     const openEntity = (token: string) => {
-      if (/^TASK-/.test(token)) {
-        void navigate({
-          to: '/projects/$projectId/tasks',
-          params: { projectId },
-          search: routeSearch((prev) => ({ ...prev, task: token })),
-        });
-      } else if (/^dec_/.test(token)) {
-        void navigate({
-          to: '/projects/$projectId/decisions',
-          params: { projectId },
-          search: routeSearch((prev) => appendDrawerStack(prev, token)),
-        });
-      }
+      void navigate({
+        search: routeSearch((prev) => pushEntityPeek(pathname, prev, token)),
+      });
     };
 
     const openGlossary = (id: string) => {
       void navigate({
-        to: '/projects/$projectId/glossary',
-        params: { projectId },
-        search: routeSearch((prev) => appendDrawerStack(prev, id)),
+        search: routeSearch((prev) => pushEntityPeek(pathname, prev, id)),
       });
     };
 
@@ -100,7 +92,7 @@ export function RichTextProvider({
     const glossaryPattern = phrases.length > 0 ? phrases.map(escapeRegExp).join('|') : null;
 
     return { openEntity, openGlossary, glossaryPattern, glossaryLookup: lookup };
-  }, [projectId, navigate, glossary.data]);
+  }, [projectId, navigate, pathname, glossary.data]);
 
   return <RichTextContext.Provider value={value}>{children}</RichTextContext.Provider>;
 }

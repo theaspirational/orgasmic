@@ -22,9 +22,23 @@ function scrollableWheelTarget(event: WheelEvent, boundary: HTMLElement): HTMLEl
   return null;
 }
 
+function hasContainedWheelPassthrough(event: WheelEvent, boundary: HTMLElement): boolean {
+  let node = event.target;
+  while (node instanceof HTMLElement && node !== boundary) {
+    if (node.hasAttribute('data-contained-wheel-passthrough')) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
 /** Block scroll chaining from `boundary` to ancestors (e.g. the page behind a dock). */
 export function handleContainedWheelCapture(event: WheelEvent, boundary: HTMLElement): void {
-  if (scrollableWheelTarget(event, boundary)) return;
+  if (
+    hasContainedWheelPassthrough(event, boundary) ||
+    scrollableWheelTarget(event, boundary)
+  ) {
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
 }
