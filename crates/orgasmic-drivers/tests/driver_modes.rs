@@ -7,7 +7,7 @@ use futures::{SinkExt, StreamExt};
 use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
 use orgasmic_drivers::test_tooling::{
     assert_required_test_tooling, report_billed_tests, skip_test_if_missing,
-    skip_unless_billing_allowed, ToolRequirement,
+    skip_unless_billing_allowed, test_environment_lock, ToolRequirement,
 };
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, ClaudeAdapter, CodexAdapter, CodexAppserverDriver,
@@ -1642,6 +1642,7 @@ async fn adapter_fixtures_cover_public_harness_event_shapes() {
     // whether the `claude` binary is on PATH on the host running the suite.
     // The real-wire gate fix (TASK-099) changed the default to real when the
     // binary is detectable; ORGASMIC_DRIVER_SIMULATE=1 is the explicit opt-in.
+    let _environment = test_environment_lock().lock().await;
     std::env::set_var("ORGASMIC_DRIVER_SIMULATE", "1");
     let mut claude = ClaudeAdapter::new();
     let claude_request = claude
@@ -2140,6 +2141,7 @@ async fn installed_harnesses_answer_their_own_readiness_probe() {
         },
     ];
 
+    let _environment = test_environment_lock().lock().await;
     let mut exercised = 0;
     for case in cases {
         if skip_test_if_missing(
