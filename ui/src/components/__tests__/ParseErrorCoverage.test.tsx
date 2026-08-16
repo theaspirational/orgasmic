@@ -41,7 +41,7 @@ const partial = {
   errors: [],
   coverage: {
     state: 'partial' as const,
-    detail: 'partial; ready=1/2; markers=0/2; marker_unloaded=[one,two]',
+    detail: 'partial; ready=1/2; unloaded=[one,two]',
     failures: {},
   },
 };
@@ -50,7 +50,7 @@ const complete = {
   errors: [],
   coverage: {
     state: 'complete' as const,
-    detail: 'complete; ready=2/2; markers=2/2',
+    detail: 'complete; ready=2/2; unloaded=[]; loading=[]; failed=[]',
     failures: {},
   },
 };
@@ -153,8 +153,8 @@ describe('parse-error coverage', () => {
       errors: [],
       coverage: {
         state: 'partial',
-        detail: 'partial; marker_unloaded=[blocked]',
-        failures: { blocked: 'filesystem scan timed out' },
+        detail: 'partial; ready=1/2; unloaded=[]; loading=[]; failed=[blocked]',
+        failures: { blocked: '' },
       },
     });
     render(<StatusView />);

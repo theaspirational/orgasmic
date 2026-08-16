@@ -98,17 +98,10 @@ fn seed_project(project_root: &Path) {
 
 async fn parse_error_messages(running_addr: &str, token: &str) -> Vec<String> {
     let client = reqwest::Client::new();
-    let marker_response = client
-        .get(format!(
-            "http://{running_addr}/api/graph/markers/dispatch-layout"
-        ))
-        .bearer_auth(token)
-        .send()
-        .await
-        .expect("load identity projection");
-    assert!(marker_response.status().is_success());
     let resp = client
-        .get(format!("http://{running_addr}/api/graph/parse-errors"))
+        .get(format!(
+            "http://{running_addr}/api/graph/parse-errors?full=true"
+        ))
         .bearer_auth(token)
         .send()
         .await

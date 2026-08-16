@@ -416,16 +416,8 @@ async fn daemon_create_verbs_emit_heading_tokens_without_identity_lint() {
     let tasks = std::fs::read_to_string(project_root.join(".orgasmic/tasks/backlog.org")).unwrap();
     assert!(tasks.contains(&format!("* BACKLOG {task_id} Tokened task")));
 
-    let marker_response = client
-        .get(format!("{base}/api/graph/markers/id-mint"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert!(marker_response.status().is_success());
-
     let errors: Vec<serde_json::Value> = client
-        .get(format!("{base}/api/graph/parse-errors"))
+        .get(format!("{base}/api/graph/parse-errors?full=true"))
         .bearer_auth(&token)
         .send()
         .await

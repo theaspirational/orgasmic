@@ -824,7 +824,6 @@ pub fn router(state: ApiState) -> Router {
         )
         .route("/grill", post(post_grill))
         .route("/plan", post(post_plan))
-        .route("/graph/markers/:node_id", get(get_graph_markers))
         .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
         // Artifact store (arch_ARSPJ / TASK-ZEFEY)
         .route("/artifacts", get(get_artifacts))
@@ -891,7 +890,6 @@ const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
     ("GET", "/tasks/:id/activity"),
     ("GET", "/graph/nodes"),
     ("GET", "/graph/edges"),
-    ("GET", "/graph/markers/:node_id"),
     ("GET", "/decisions"),
     ("GET", "/decisions/:id"),
     ("GET", "/glossary"),
@@ -13817,16 +13815,39 @@ fn parse_error_views(snap: &IndexSnapshot) -> Vec<ParseErrorView> {
         .collect()
 }
 
-async fn get_parse_errors(State(state): State<ApiState>) -> Response {
+#[derive(Debug, Deserialize)]
+pub struct ParseErrorsQuery {
+    /// Explicit whole-board coverage request: materialize every registered
+    /// project's core projection before reading the parse-error view, so
+    /// identity diagnostics (duplicate ids, malformed mints, dangling
+    /// references) reflect all projects rather than only loaded ones.
+    /// Per-project load failures are surfaced through the coverage header's
+    /// `failed=[...]` segment.
+    #[serde(default)]
+    pub full: bool,
+}
+
+async fn get_parse_errors(
+    State(state): State<ApiState>,
+    Query(q): Query<ParseErrorsQuery>,
+) -> Response {
+    if q.full {
+        let project_ids: Vec<String> = state
+            .index
+            .snapshot()
+            .await
+            .board
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        for project_id in project_ids {
+            if let Err(error) = state.index.ensure_project_loaded(&project_id).await {
+                tracing::warn!("full parse-error coverage skipped project {project_id}: {error}");
+            }
+        }
+    }
     let snap = state.index.snapshot().await;
     let ready = snap.project_ids_in_state(ProjectLoadState::Ready);
-    let marker_ready = snap.project_ids_with_markers_loaded();
-    let marker_unloaded = snap
-        .board
-        .iter()
-        .filter(|entry| !marker_ready.contains(&entry.id))
-        .map(|entry| entry.id.clone())
-        .collect::<Vec<_>>();
     let unloaded = snap.project_ids_in_state(ProjectLoadState::Unloaded);
     let loading = snap.project_ids_in_state(ProjectLoadState::Loading);
     let delayed = snap.project_ids_in_state(ProjectLoadState::Delayed);
@@ -13840,18 +13861,15 @@ async fn get_parse_errors(State(state): State<ApiState>) -> Response {
         format!("; delayed=[{}]", coverage_project_ids(&delayed))
     };
     let coverage = format!(
-        "{}; ready={}/{}; markers={}/{}; unloaded=[{}]; marker_unloaded=[{}]; loading=[{}]{}; failed=[{}]",
-        if ready.len() == snap.board.len() && marker_ready.len() == snap.board.len() {
+        "{}; ready={}/{}; unloaded=[{}]; loading=[{}]{}; failed=[{}]",
+        if ready.len() == snap.board.len() {
             "complete"
         } else {
             "partial"
         },
         ready.len(),
         snap.board.len(),
-        marker_ready.len(),
-        snap.board.len(),
         coverage_project_ids(&unloaded),
-        coverage_project_ids(&marker_unloaded),
         coverage_project_ids(&loading),
         delayed_segment,
         coverage_project_ids(&failed),
@@ -13931,11 +13949,6 @@ async fn force_reindex_project(state: &ApiState, project_id: &str) -> Result<(),
         .map_err(|error| {
             ApiError::unavailable(format!("project {project_id} reindex failed: {error}"))
         })?;
-    state
-        .index
-        .ensure_project_markers_loaded(project_id)
-        .await
-        .map_err(|error| ApiError::unavailable(format!("marker reindex failed: {error}")))?;
     state
         .index
         .ensure_project_artifacts_loaded(project_id)
@@ -14190,83 +14203,6 @@ fn graph_relation_filter(
             "unknown graph edge relation {other:?}"
         ))),
     }
-}
-
-#[derive(Debug, Serialize)]
-pub struct MarkerFilesResponse {
-    pub node_id: String,
-    pub files: Vec<PathBuf>,
-    pub projects: BTreeMap<String, usize>,
-    pub failures: BTreeMap<String, String>,
-}
-
-async fn get_graph_markers(
-    State(state): State<ApiState>,
-    Extension(identity): Extension<Identity>,
-    Path(node_id): Path<String>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<MarkerFilesResponse>, ApiError> {
-    let catalog = state.index.snapshot().await;
-    let scoped = q.project.is_some();
-    let project_ids = if let Some(project_id) = q.project.as_deref() {
-        let project_id = select_catalog_project_id(&catalog, Some(project_id))?;
-        authz::require(&identity, Some(&project_id), Action::GraphRead)?;
-        vec![project_id]
-    } else {
-        catalog
-            .board
-            .iter()
-            .filter(|entry| authz::require(&identity, Some(&entry.id), Action::GraphRead).is_ok())
-            .map(|entry| entry.id.clone())
-            .collect::<Vec<_>>()
-    };
-    drop(catalog);
-    let mut covered_projects = Vec::new();
-    let mut failures = BTreeMap::new();
-    for project_id in project_ids {
-        match state.index.ensure_project_markers_loaded(&project_id).await {
-            Ok(()) => covered_projects.push(project_id),
-            Err(error) if scoped => {
-                return Err(ApiError::unavailable(format!(
-                    "project {project_id} marker coverage failed: {error}"
-                )));
-            }
-            Err(error) => {
-                failures.insert(project_id, error);
-            }
-        }
-    }
-    let snap = state.index.snapshot().await;
-    let projects = covered_projects
-        .iter()
-        .filter_map(|project_id| {
-            snap.projects.get(project_id).map(|project| {
-                (
-                    project_id.clone(),
-                    project
-                        .markers
-                        .get(&node_id)
-                        .map(Vec::len)
-                        .unwrap_or_default(),
-                )
-            })
-        })
-        .collect();
-    let files = covered_projects
-        .iter()
-        .filter_map(|project_id| snap.projects.get(project_id))
-        .filter_map(|project| project.markers.get(&node_id))
-        .flatten()
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    Ok(Json(MarkerFilesResponse {
-        files,
-        node_id,
-        projects,
-        failures,
-    }))
 }
 
 async fn get_decisions(
@@ -20634,7 +20570,6 @@ pub(crate) mod tests {
             subtasks: BTreeMap::new(),
             activity_index: BTreeMap::new(),
             graph,
-            markers: BTreeMap::new(),
             last_loaded_at: None,
             artifacts: Vec::new(),
         }
@@ -29475,8 +29410,8 @@ pub(crate) mod tests {
         );
         assert_eq!(response.projects.get("second"), Some(&0));
         assert!(
-            state.index.refresh_status().await.scans_total >= scans_before + 4,
-            "the second project core + marker + artifact scans were not attempted"
+            state.index.refresh_status().await.scans_total >= scans_before + 2,
+            "the second project core + artifact scans were not attempted"
         );
         assert_eq!(
             state.index.snapshot().await.project_loads["second"].generation,
@@ -29485,7 +29420,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn full_marker_coverage_returns_later_successes_and_per_project_failures() {
+    async fn full_parse_error_coverage_returns_later_successes_and_per_project_failures() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -29508,31 +29443,33 @@ pub(crate) mod tests {
         let state = direct_catalog_test_state(home).await;
         state.index.fail_next_refresh();
 
-        let Json(response) = get_graph_markers(
+        let response = get_parse_errors(
             State(state.clone()),
-            Extension(Identity::Admin),
-            Path("TASK-COVERED".to_string()),
-            Query(GraphQuery { project: None }),
+            Query(ParseErrorsQuery { full: true }),
         )
-        .await
-        .expect("full marker coverage should return partial results");
+        .await;
 
+        let coverage = response
+            .headers()
+            .get("x-orgasmic-project-coverage")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         assert!(
-            response.failures.contains_key("first"),
-            "{:?}",
-            response.failures
+            coverage.starts_with("partial; ready=1/2; unloaded=[]; loading=[]; failed=[first]"),
+            "{coverage}"
         );
-        assert!(
-            !response.failures.contains_key("second"),
-            "{:?}",
-            response.failures
-        );
-        assert_eq!(response.projects.get("second"), Some(&1));
-        assert!(!response.projects.contains_key("first"));
-        assert_eq!(response.files, vec![PathBuf::from("src/covered.rs")]);
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body.as_array().map(Vec::len), Some(0));
         let snapshot = state.index.snapshot().await;
         assert_eq!(
-            snapshot.project_ids_with_markers_loaded(),
+            snapshot.project_ids_in_state(ProjectLoadState::Ready),
             vec!["second".to_string()]
         );
         assert_eq!(
@@ -29789,7 +29726,7 @@ pub(crate) mod tests {
         seed_project(&home, &project_root, "proj-é");
         let state = direct_test_state(home, false).await;
 
-        let response = get_parse_errors(State(state)).await;
+        let response = get_parse_errors(State(state), Query(ParseErrorsQuery { full: false })).await;
         let coverage = response
             .headers()
             .get("x-orgasmic-project-coverage")
@@ -36226,62 +36163,6 @@ pub(crate) mod tests {
         assert_eq!(activity.0[0].actor, "alice");
         assert_eq!(activity.0[0].kind, crate::index::ActivityKind::Comment);
         assert_eq!(activity.0[0].body, "Please check the fallback.");
-    }
-
-    #[tokio::test]
-    async fn authz_projectless_marker_lookup_covers_only_granted_projects() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let root_a = tmp.path().join("proj-a");
-        let root_b = tmp.path().join("proj-b");
-        seed_two_projects(&home, &root_a, &root_b);
-        write(
-            root_a.join("src/allowed.rs"),
-            "// orgasmic:TASK-AUTHZ-MARKER\n",
-        );
-        write(
-            root_b.join("src/forbidden.rs"),
-            "// orgasmic:TASK-AUTHZ-MARKER\n",
-        );
-        let state = direct_catalog_test_state(home).await;
-        let id = member(&[("proj-a", "viewer")]);
-
-        let forbidden = get_graph_markers(
-            State(state.clone()),
-            Extension(id.clone()),
-            Path("TASK-AUTHZ-MARKER".into()),
-            Query(graph_query("proj-b")),
-        )
-        .await;
-        assert_eq!(
-            forbidden.err().map(|error| error.status),
-            Some(StatusCode::FORBIDDEN)
-        );
-        assert_eq!(
-            state.index.snapshot().await.project_loads["proj-b"].state,
-            ProjectLoadState::Unloaded
-        );
-
-        let markers = get_graph_markers(
-            State(state.clone()),
-            Extension(id),
-            Path("TASK-AUTHZ-MARKER".into()),
-            Query(GraphQuery { project: None }),
-        )
-        .await
-        .expect("member marker lookup");
-        assert_eq!(markers.0.files, vec![PathBuf::from("src/allowed.rs")]);
-        let snap = state.index.snapshot().await;
-        assert_eq!(
-            snap.project_ids_with_markers_loaded(),
-            vec!["proj-a".to_string()]
-        );
-        assert_eq!(
-            snap.project_loads["proj-b"].state,
-            ProjectLoadState::Unloaded,
-            "global marker lookup must not scan an ungranted project"
-        );
     }
 
     /// An `artifacts`-role member reaches artifact + project-detail reads but is

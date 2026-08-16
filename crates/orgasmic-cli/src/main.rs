@@ -2509,12 +2509,6 @@ struct ParseErrorView {
     message: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct MarkerCoverageResponse {
-    #[serde(default)]
-    failures: std::collections::BTreeMap<String, String>,
-}
-
 /// Best-effort node/property attribution parsed out of a parse-error
 /// message. Covers the two dangling-reference detectors the daemon emits
 /// today (`identity_lint::lint_dangling_references` and
@@ -2547,17 +2541,15 @@ fn cmd_status_errors(home: &Home) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        // `status --errors` is an explicit full-coverage request. Marker
-        // discovery is intentionally not part of core project loading, so use
-        // the marker route to ensure that lazy projection before reading the
-        // parse-error view it contributes to.
-        let marker_coverage: MarkerCoverageResponse =
-            client.get_full_board("/graph/markers/__coverage__").await?;
-        for (project_id, error) in &marker_coverage.failures {
-            eprintln!("[warn] skipped project {project_id}: {error}");
-        }
+        // `status --errors` is an explicit full-coverage request: ask the
+        // daemon to materialize every registered project's core projection
+        // (`?full=true`) before reading the parse-error view. Skipped
+        // projects surface through the `failed=[...]` coverage segment.
         let (errors, coverage): (Vec<ParseErrorView>, Option<String>) = client
-            .get_with_header("/graph/parse-errors", "x-orgasmic-project-coverage")
+            .get_full_board_with_header(
+                "/graph/parse-errors?full=true",
+                "x-orgasmic-project-coverage",
+            )
             .await?;
         if let Some(coverage) = coverage.filter(|coverage| coverage.starts_with("partial;")) {
             eprintln!("[warn] parse-error coverage is {coverage}");
