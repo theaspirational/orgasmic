@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Send } from 'lucide-react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import { Loader2, Send } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -83,6 +90,7 @@ export function ManagerComposer({
   readyLabel = 'Enter sends. Shift+Enter adds a line. Arrow-up recalls the last send.',
   unavailableLabel,
   onSent,
+  controls,
 }: {
   runId: string | null;
   connectionState: TmuxPaneConnectionState;
@@ -92,6 +100,7 @@ export function ManagerComposer({
   readyLabel?: string;
   unavailableLabel?: string;
   onSent?: (sentAt: string) => void;
+  controls?: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
   const [history, setHistory] = useState<string[]>([]);
@@ -125,6 +134,7 @@ export function ManagerComposer({
     setDraft(initialDraft ?? '');
     setSendError(null);
     setSlashRange(null);
+    window.requestAnimationFrame(() => resizeTextarea(textareaRef.current));
   }, [initialDraft, runId]);
 
   useEffect(() => {
@@ -190,6 +200,7 @@ export function ManagerComposer({
       setDraft('');
       setSlashRange(null);
       setSendError(null);
+      window.requestAnimationFrame(() => resizeTextarea(textareaRef.current));
       onSent?.(sentAt);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
@@ -271,7 +282,7 @@ export function ManagerComposer({
 
   return (
     <form
-      className="flex h-full min-h-0 flex-col gap-2 bg-background p-3"
+      className="flex h-full min-h-0 flex-col overflow-visible rounded-xl border bg-card shadow-sm outline-none transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
@@ -280,14 +291,16 @@ export function ManagerComposer({
       <div className="relative min-h-0 flex-1">
         <textarea
           ref={textareaRef}
-          className="h-full min-h-0 w-full resize-none rounded-md border bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={placeholder}
+          className="max-h-40 min-h-20 w-full resize-none bg-transparent px-3.5 pb-2 pt-3 text-sm leading-relaxed outline-none placeholder:text-muted-foreground focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-60"
           value={draft}
-          rows={4}
+          rows={3}
           disabled={disabled}
           placeholder={placeholder}
           onChange={(event) => {
             const next = event.currentTarget.value;
             setDraft(next);
+            resizeTextarea(event.currentTarget);
             updateSlashRange(next, event.currentTarget.selectionStart);
           }}
           onClick={(event) => updateSlashRange(draft, event.currentTarget.selectionStart)}
@@ -302,7 +315,7 @@ export function ManagerComposer({
         />
         {slashSuggestionsOpen ? (
           <div
-            className="absolute bottom-2 left-2 right-2 z-50 overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg"
+            className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-lg"
             onMouseDown={(event) => event.preventDefault()}
           >
             <div className="flex items-center justify-between border-b px-2.5 py-1.5 text-xs text-muted-foreground">
@@ -357,8 +370,12 @@ export function ManagerComposer({
           </div>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+      {controls ? <div className="border-t px-3 py-2">{controls}</div> : null}
+      <div className="flex shrink-0 items-center gap-2 px-2.5 pb-2.5 pt-1">
+        <span
+          className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:block"
+          aria-live="polite"
+        >
           {disabled
             ? sendBusy
               ? 'Sending...'
@@ -367,12 +384,39 @@ export function ManagerComposer({
               : (unavailableLabel ?? 'No manager run attached.')
             : readyLabel}
         </span>
-        <Button type="button" size="sm" disabled={!canSubmit} onClick={() => void submit()}>
-          <Send className="size-3.5" />
-          {sendBusy ? 'Sending...' : 'Send'}
+        <span
+          className="min-w-0 flex-1 truncate text-xs text-muted-foreground sm:hidden"
+          aria-live="polite"
+        >
+          {sendBusy
+            ? 'Sending…'
+            : disabled
+              ? (unavailableLabel ?? 'Agent unavailable')
+              : 'Enter to send'}
+        </span>
+        <Button
+          type="button"
+          size="icon"
+          className="size-9"
+          aria-label={sendBusy ? 'Sending message' : 'Send message'}
+          title={sendBusy ? 'Sending message' : 'Send message'}
+          disabled={!canSubmit}
+          onClick={() => void submit()}
+        >
+          {sendBusy ? (
+            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Send className="size-4" />
+          )}
         </Button>
       </div>
-      {sendError ? <p className="text-xs text-destructive">{sendError}</p> : null}
+      {sendError ? <p className="px-3 pb-2.5 text-xs text-destructive">{sendError}</p> : null}
     </form>
   );
+}
+
+function resizeTextarea(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return;
+  textarea.style.height = 'auto';
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
 }

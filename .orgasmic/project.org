@@ -10,7 +10,7 @@
 orgasmic coordinates AI-agent work through repo-local plain-text state. This repository is also the seed project used to dogfood the orgasmic manager, decision graph, and later architecture pipeline.
 
 ** Operating Constraints
-- Greenfield bias: treat this project as greenfield until v0.0.1 ships, regardless of current state. Do not assume backward compatibility, legacy constraints, or incremental patching unless explicitly stated. Prioritize correctness, simplicity, and architectural integrity over stability of existing patterns; prefer clean designs even when they require refactoring or replacing components. Avoid fallbacks, shims, or compatibility layers as a default strategy — admit them only when explicitly required.
+- Greenfield bias: treat this project as greenfield until v0.1.0 ships, regardless of current state. Do not assume backward compatibility, legacy constraints, or incremental patching unless explicitly stated. Prioritize correctness, simplicity, and architectural integrity over stability of existing patterns; prefer clean designs even when they require refactoring or replacing components. Avoid fallbacks, shims, or compatibility layers as a default strategy — admit them only when explicitly required.
 - Keep current design authority in `.orgasmic/`.
 - Record durable rationale in `.orgasmic/decisions.org`; there is no separate ADR surface, no generated-ADR/snapshot/graph-reconcile machinery, and no semantic-hash/stale-propagation consistency engine. The architecture graph survives as an authored + materialized + React-Flow-visualized graph; the glossary as a plain authored doc. (Run/boot recovery + continuation is unrelated and fully retained.)
 - Treat `archive/21_05_26_init/spec.org` as historical provenance only.

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use orgasmic_core::home::Home;
 use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
 use orgasmic_core::{
-    project_sessions_dir, RuntimeIdentity, SessionLifecycleScan, SessionScanBudget,
+    mint_run_id, project_sessions_dir, RuntimeIdentity, SessionLifecycleScan, SessionScanBudget,
 };
 use orgasmic_drivers::modes::tmux::{
     observe_tmux_session, tmux_session_name, TmuxSessionObservation,
@@ -2900,12 +2900,7 @@ pub fn plan_pending_recovery_claim(
     if let Some(existing) = load_recovery_claim(home, &spec.project_id, &spec.origin_run_id)? {
         return Err(RecoveryClaimError::AlreadyClaimed(Box::new(existing)));
     }
-    let replacement_uuid = uuid::Uuid::new_v4();
-    let replacement_run_id = format!(
-        "run-{}-{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%S"),
-        replacement_uuid.simple()
-    );
+    let replacement_run_id = mint_run_id();
     let replacement_runtime_id = uuid::Uuid::new_v4().to_string();
     let planned_identity = RuntimeIdentity::planned(
         replacement_run_id.clone(),
@@ -4103,6 +4098,12 @@ mod tests {
         assert_eq!(plan.claim.status, RecoveryClaimStatus::Pending);
         assert_eq!(plan.claim.boot_id.as_deref(), Some("boot-new"));
         assert_eq!(plan.claim.force_inert, Some(false));
+        assert!(orgasmic_core::compact_run_id_token(&plan.claim.replacement_run_id).is_some());
+        assert!(plan
+            .claim
+            .planned_tmux_session
+            .as_deref()
+            .is_some_and(|session| session.starts_with("og_")));
 
         commit_recovery_claim(
             &home,

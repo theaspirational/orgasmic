@@ -14,11 +14,12 @@ import {
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchRecoveryInventory, isRunGoneError, postRunRelease } from '@/lib/api';
 import { useRunDock } from '@/lib/runDock';
-import { runTabTitle } from '@/lib/runLabels';
+import { isManagerRun, runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
 import { agentRuns, isExternalManagerRun } from './runDockLabels';
+import { isNativeChatRun } from './chatProviders';
 
 function recoveredTitle(run: RecoveredRun): string {
   // Recovered runs do not carry a task id in the recovery payload, so fall back
@@ -28,7 +29,7 @@ function recoveredTitle(run: RecoveredRun): string {
 }
 
 export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
-  const { openRun } = useRunDock();
+  const { openChat, openRun } = useRunDock();
   const runs = useResource('rundock-running-agents', fetchRecoveryInventory);
 
   const refresh = useCallback(() => {
@@ -66,6 +67,10 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
       toast.info('This manager runs outside orgasmic', {
         description: 'It registered itself; attach is unavailable. Use End to clear a stale registration.',
       });
+      return;
+    }
+    if (isManagerRun(run) && isNativeChatRun(run)) {
+      openChat();
       return;
     }
     openRun({ runId: run.run_id });

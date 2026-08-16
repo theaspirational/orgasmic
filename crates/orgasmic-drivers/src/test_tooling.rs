@@ -289,7 +289,7 @@ impl Drop for LiveSessionGuard {
                     }
                 }
                 OwnedTmuxSession::Run(run_id) => {
-                    let prefix = format!("orgasmic-{run_id}-");
+                    let prefix = crate::modes::tmux::tmux_session_prefix(&run_id);
                     for session in sessions.iter().filter(|name| name.starts_with(&prefix)) {
                         kill_tmux_session(session);
                     }

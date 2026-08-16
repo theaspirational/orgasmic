@@ -287,10 +287,21 @@ impl HarnessEventAdapter for StdioComposeAdapter {
         ctx: &DriverContext,
         config: &DriverConfig,
     ) -> Result<HarnessRequest, DriverError> {
-        let spawn = self.inner.stdio_spawn().ok_or(DriverError::Unsupported(
-            "stdio requires stdio_spawn adapter config",
-        ))?;
         let request = self.inner.compose_request(ctx, config)?;
+        // An adapter may already have composed the complete subprocess. The
+        // SDK provider host does this because its executable is resolved from
+        // the installed runtime/source checkout and its argv is provider- and
+        // session-specific. Requiring a second `stdio_spawn` description here
+        // rejected that valid request before Stdio could hand it to the plain
+        // subprocess runner.
+        let Some(spawn) = self.inner.stdio_spawn() else {
+            return match request {
+                HarnessRequest::Subprocess { .. } => Ok(request),
+                _ => Err(DriverError::Unsupported(
+                    "stdio requires stdio_spawn adapter config",
+                )),
+            };
+        };
         let (request, session_init) =
             compose_stdio_request(&spawn, ctx, config, self.inner.as_mut(), request)?;
         self.jsonrpc_session_init = session_init;

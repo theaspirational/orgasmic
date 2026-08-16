@@ -1,7 +1,25 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent,
+  type ReactNode,
+} from 'react';
+import { Bot, MoreHorizontal, Plus } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { postRunInput } from '@/lib/api';
-import { runUsesPtyTerminal } from '@/lib/runLabels';
+import { runDriverTag, runUsesPtyTerminal } from '@/lib/runLabels';
 import type { RunSummary } from '@/lib/types';
 
 import { ManagerChatTranscript } from './ManagerChatTranscript';
@@ -9,6 +27,7 @@ import { ManagerComposer } from './ManagerComposer';
 import type { TmuxPaneConnectionState, TmuxSendKeys } from './ManagerTmuxPane';
 import { ReadOnlySessionBar } from './ReadOnlySessionBar';
 import { RuntimeOptionsBar } from './RuntimeOptionsBar';
+import { chatProviderFromRun } from './chatProviders';
 
 const ManagerTmuxPane = lazy(() =>
   import('./ManagerTmuxPane').then((module) => ({ default: module.ManagerTmuxPane })),
@@ -34,12 +53,14 @@ export function RunSurface({
   initialSource,
   initialDraft,
   onPromptSent,
+  onNewChat,
   readOnly = false,
 }: {
   run: RunSummary;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  onNewChat?: () => void | Promise<void>;
   /** Members without sessions.interact watch the stream but cannot send. */
   readOnly?: boolean;
 }) {
@@ -47,25 +68,61 @@ export function RunSurface({
     return (
       <RunTmuxStack
         runId={run.run_id}
+        runtimeId={run.identity.runtime_id}
         initialDraft={initialDraft}
         onPromptSent={onPromptSent}
         readOnly={readOnly}
       />
     );
   }
+  const chatProvider = chatProviderFromRun(run);
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {!readOnly ? <RuntimeOptionsBar runId={run.run_id} /> : null}
-      <div className="min-h-0 flex-1">
-        <RunChatStack
-          runId={run.run_id}
-          initialSource={initialSource}
-          initialDraft={initialDraft}
-          onPromptSent={onPromptSent}
-          readOnly={readOnly}
-        />
-      </div>
-    </div>
+    <RunChatStack
+      runId={run.run_id}
+      initialSource={initialSource}
+      initialDraft={initialDraft}
+      onPromptSent={onPromptSent}
+      readOnly={readOnly}
+      composerControls={
+        readOnly ? null : (
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+            {chatProvider ? (
+              <>
+                <RuntimeOptionsBar runId={run.run_id} provider={chatProvider} />
+                {onNewChat ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Chat menu"
+                        title="Chat menu"
+                        className="text-muted-foreground"
+                      >
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" side="top" className="w-44">
+                      <DropdownMenuLabel>Conversation</DropdownMenuLabel>
+                      <DropdownMenuItem onSelect={() => void onNewChat()}>
+                        <Plus className="size-4" />
+                        New chat
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null}
+              </>
+            ) : (
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <Bot className="size-3.5 shrink-0" />
+                <span className="truncate">{runDriverTag(run, initialSource)}</span>
+              </span>
+            )}
+          </div>
+        )
+      }
+    />
   );
 }
 
@@ -75,12 +132,14 @@ function RunChatStack({
   initialDraft,
   onPromptSent,
   readOnly,
+  composerControls,
 }: {
   runId: string;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
   readOnly: boolean;
+  composerControls?: ReactNode;
 }) {
   const [pendingSince, setPendingSince] = useState<string | null>(null);
 
@@ -109,7 +168,7 @@ function RunChatStack({
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col bg-muted/20">
       <div className="min-h-0 flex-1">
         <ManagerChatTranscript
           runId={runId}
@@ -118,20 +177,23 @@ function RunChatStack({
           onPendingResolved={() => setPendingSince(null)}
         />
       </div>
-      <div className="min-h-[132px] border-t">
-        {readOnly ? (
-          <ReadOnlySessionBar />
-        ) : (
-          <ManagerComposer
-            runId={runId}
-            connectionState="open"
-            initialDraft={initialDraft}
-            placeholder="Send to agent"
-            readyLabel="Enter sends. Shift+Enter adds a line. Arrow-up recalls the last send."
-            onSend={handleSend}
-            onSent={handleSent}
-          />
-        )}
+      <div className="shrink-0 px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+        <div className="mx-auto w-full max-w-3xl">
+          {readOnly ? (
+            <ReadOnlySessionBar />
+          ) : (
+            <ManagerComposer
+              runId={runId}
+              connectionState="open"
+              initialDraft={initialDraft}
+              placeholder="Send to agent"
+              readyLabel="Enter to send · Shift+Enter for a new line · ↑ recalls last send"
+              onSend={handleSend}
+              onSent={handleSent}
+              controls={composerControls}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -139,11 +201,13 @@ function RunChatStack({
 
 function RunTmuxStack({
   runId,
+  runtimeId,
   initialDraft,
   onPromptSent,
   readOnly,
 }: {
   runId: string;
+  runtimeId: string;
   initialDraft?: string | null;
   onPromptSent: () => void;
   readOnly: boolean;
@@ -238,6 +302,7 @@ function RunTmuxStack({
         >
           <ManagerTmuxPane
             runId={runId}
+            runtimeId={runtimeId}
             onConnectionState={setConnState}
             onSendReady={handleSendReady}
             readOnly={readOnly}

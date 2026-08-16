@@ -13,6 +13,10 @@ Cargo.lock.bak
 /ui/bootstrap-dist
 /ui/.vite
 
+# Chat provider SDK host
+/provider-host/node_modules
+/provider-host/dist
+
 # Tauri build artifacts and generated sidecars
 /src-tauri/target
 /src-tauri/binaries/orgasmic-*

@@ -40,6 +40,80 @@ describe('TranscriptToolCard', () => {
     expect(screen.getByText('/repo')).toHaveAttribute('title', '/repo');
     expect(screen.getByText(/npm test/)).toBeInTheDocument();
     expect(screen.getByText(/226 tests passed/)).toBeInTheDocument();
+    expect(screen.getByText('Parameters').nextElementSibling).toHaveClass(
+      'max-h-64',
+      'overflow-auto',
+    );
+    expect(screen.getByText('Result').nextElementSibling).toHaveClass(
+      'max-h-80',
+      'overflow-auto',
+    );
+  });
+
+  it('renders canonical commands in the compact T3-style header', () => {
+    render(
+      <TranscriptToolCard
+        part={tool({
+          name: 'command_execution',
+          label: 'Ran command',
+          input: { command: 'orgasmic entry' },
+          output: 'ORGASMIC_ENTRY_FAST_V1 abc123',
+          summary: 'orgasmic entry',
+        })}
+      />,
+    );
+
+    const trigger = screen.getByRole('button', { name: /Ran command orgasmic entry/i });
+    expect(trigger).toBeInTheDocument();
+    expect(screen.queryByText(/ORGASMIC_ENTRY_FAST_V1/)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByText(/ORGASMIC_ENTRY_FAST_V1/)).toBeInTheDocument();
+  });
+
+  it('keeps a long command summary inside the tool header', () => {
+    const summary =
+      "rg -n 'capabilit|supports_.*input|input.*support|is_chat|chat_surface|RunSurfaceKind|surface' crates/orgasmic-core/src/session.rs crates/orgasmic-drivers/src/trait.rs";
+    render(
+      <TranscriptToolCard
+        part={tool({
+          name: 'command_execution',
+          label: 'Ran command',
+          summary,
+        })}
+      />,
+    );
+
+    const title = screen.getByText(`Ran command ${summary}`);
+    const trigger = screen.getByRole('button', { name: /Ran command rg -n/i });
+    expect(trigger).toHaveClass('min-w-0', 'text-left');
+    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate');
+    expect(title).toHaveAttribute('title', `Ran command ${summary}`);
+    expect(screen.getByText('Completed')).toHaveClass('shrink-0');
+  });
+
+  it('keeps fetched page output behind a compact activity row', () => {
+    const output = 'Providers | OpenCode — very large fetched page body';
+    render(
+      <TranscriptToolCard
+        part={tool({
+          name: 'web_search',
+          label: 'Fetched page',
+          input: { url: 'https://opencode.ai/docs/providers/' },
+          output,
+          summary: 'https://opencode.ai/docs/providers/',
+        })}
+      />,
+    );
+
+    const trigger = screen.getByRole('button', {
+      name: /Fetched page https:\/\/opencode\.ai\/docs\/providers\//i,
+    });
+    expect(trigger).toBeInTheDocument();
+    expect(screen.queryByText(output)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByText(output)).toBeInTheDocument();
   });
 
   it('opens errors by default and keeps the failed command output visible', () => {
@@ -50,6 +124,7 @@ describe('TranscriptToolCard', () => {
     );
 
     expect(screen.getAllByText('Error')).toHaveLength(2);
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.getByText('Tool returned an error.')).toBeInTheDocument();
     expect(screen.getByText('permission denied')).toBeInTheDocument();
   });

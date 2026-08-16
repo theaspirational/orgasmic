@@ -4,6 +4,7 @@ import {
   isRunDockEligible,
   runTabTitle,
 } from '@/lib/runLabels';
+import { compareRunIdsByLaunch } from '@/lib/runId';
 import type { RunSummary } from '@/lib/types';
 
 export function workerRunTabLabel(
@@ -61,11 +62,11 @@ export function agentRuns<T extends Pick<RunSummary, 'task_id' | 'harness' | 'cl
 }
 
 // The runs endpoint makes no ordering promise, but taskbar labels are positional
-// ("Terminal 2") and buttons must not swap places between refreshes. A run id
-// leads with its launch stamp (run-<YYYYMMDDTHHMMSS>-<uuid>), so ordering by it
-// is oldest-first and stays stable when two runs land in the same second.
+// ("Terminal 2") and buttons must not swap places between refreshes. Decode the
+// launch time from both compact ULIDs and historical timestamp+UUID ids; the id
+// itself remains the deterministic tie-breaker for same-millisecond launches.
 export function orderRunsByLaunch<T extends Pick<RunSummary, 'run_id'>>(runs: T[]): T[] {
-  return [...runs].sort((a, b) => a.run_id.localeCompare(b.run_id));
+  return [...runs].sort((a, b) => compareRunIdsByLaunch(a.run_id, b.run_id));
 }
 
 // Taskbar buttons carry the short task id; the full provider-qualified title

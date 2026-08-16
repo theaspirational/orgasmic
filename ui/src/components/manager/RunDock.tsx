@@ -17,11 +17,13 @@ import {
   fetchManagerState,
   fetchLiveRuns,
   isRunGoneError,
+  postManagerChatLaunch,
   postManagerLaunch,
+  postRunInput,
   postRunRelease,
 } from '@/lib/api';
 import { useContainedWheelRef } from '@/lib/containedWheel';
-import { useRunDock } from '@/lib/runDock';
+import { CHAT_TAB_ID, useRunDock } from '@/lib/runDock';
 import { dockHeightFromPointer } from '@/lib/runDockUtils';
 import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RunSummary } from '@/lib/types';
@@ -29,6 +31,11 @@ import { cn } from '@/lib/utils';
 import { useResource } from '@/lib/useResource';
 
 import { DockTaskbar, type TaskbarRunButton } from './DockTaskbar';
+import { ChatSetup } from './ChatSetup';
+import {
+  isNativeChatRun,
+  type ChatSelection,
+} from './chatProviders';
 import { RunningAgentsMenu } from './RunningAgentsMenu';
 import {
   isTerminalRun,
@@ -55,6 +62,7 @@ export function RunDock() {
     setHeight,
     setActiveTab,
     openRun,
+    openChat,
     replaceLiveRuns,
     minimize,
     closeTab,
@@ -153,11 +161,19 @@ export function RunDock() {
 
   const activeTab = tabs.find((tab) => tab.tabId === activeTabId) ?? null;
   const activeRun = activeTab ? runById.get(activeTab.runId) ?? null : null;
+  const chatRun = projectRuns.managers.find(isNativeChatRun) ?? null;
+  const occupiedManager = projectRuns.managers.find((run) => !isNativeChatRun(run)) ?? null;
+  const chatActive = activeTabId === CHAT_TAB_ID && open;
 
   const raiseLastTab = useCallback(() => {
+    if (activeTabId === CHAT_TAB_ID) {
+      openChat();
+      return;
+    }
     const target = activeTab ?? tabs[tabs.length - 1];
     if (target) openRun({ runId: target.runId });
-  }, [activeTab, openRun, tabs]);
+    else openChat();
+  }, [activeTab, activeTabId, openChat, openRun, tabs]);
 
   // Keyboard: Cmd/Ctrl+` toggles the dock; Escape minimizes an open dock.
   useEffect(() => {
@@ -264,6 +280,57 @@ export function RunDock() {
     }
   }
 
+  async function handleStartChat(selection: ChatSelection, message: string): Promise<boolean> {
+    if (readOnly) return false;
+    if (!activeProjectId) throw new Error('Select a project before starting chat.');
+    const result = await postManagerChatLaunch({
+      project_id: activeProjectId,
+      provider: selection.provider,
+      model: selection.model || null,
+      effort: selection.effort || null,
+      access: selection.access,
+      service_tier: selection.serviceTier || null,
+    });
+    const accepted = await postRunInput(result.run_id, message);
+    if (!accepted.accepted) {
+      throw new Error(accepted.message ?? 'Provider rejected the first message.');
+    }
+    await Promise.allSettled([manager.refresh(), runs.refresh()]);
+    return true;
+  }
+
+  async function handleNewChat() {
+    if (!chatRun || readOnly) return;
+    try {
+      await postRunRelease(chatRun.run_id);
+      toast.success('Ready for a new chat');
+    } catch (err) {
+      if (!isRunGoneError(err)) {
+        toast.error('Ending chat failed', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+    }
+    refresh();
+  }
+
+  async function handleEndOccupiedManager() {
+    if (!occupiedManager || readOnly) return;
+    try {
+      await postRunRelease(occupiedManager.run_id);
+      toast.success('Existing manager ended');
+    } catch (err) {
+      if (!isRunGoneError(err)) {
+        toast.error('Ending manager failed', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+    }
+    refresh();
+  }
+
   async function handleStopRun(button: TaskbarRunButton) {
     const terminal = button.kind === 'terminal';
     try {
@@ -310,16 +377,6 @@ export function RunDock() {
   // user was looking at.
   const taskbarButtons = useMemo<TaskbarRunButton[]>(() => {
     const buttons: TaskbarRunButton[] = [];
-    for (const run of projectRuns.managers) {
-      buttons.push({
-        tabId: run.run_id,
-        runId: run.run_id,
-        kind: 'manager',
-        label: 'Manager',
-        title: `${runTabTitle(run)} — ${run.run_id}`,
-        subState: run.sub_state,
-      });
-    }
     projectRuns.terminals.forEach((run, index) => {
       buttons.push({
         tabId: run.run_id,
@@ -343,7 +400,10 @@ export function RunDock() {
     // Only flag tabs as stale once the run list has actually loaded, or every
     // restored tab would flash as dead during the first fetch.
     if (runs.data) {
-      const known = new Set(buttons.map((button) => button.tabId));
+      const known = new Set([
+        ...buttons.map((button) => button.tabId),
+        ...projectRuns.managers.map((run) => run.run_id),
+      ]);
       for (const tab of tabs) {
         if (known.has(tab.tabId)) continue;
         buttons.push({
@@ -389,19 +449,47 @@ export function RunDock() {
         open={open}
         readOnly={readOnly}
         terminalBusy={terminalBusy}
+        chatActive={chatActive}
         buttons={taskbarButtons}
         activeTabId={activeTabId}
         onTerminalLaunch={() => void handleTerminalLaunch()}
+        onChatOpen={() => {
+          if (chatActive) minimize();
+          else openChat();
+        }}
         onSelect={handleSelectButton}
         onStop={(button) => void handleStopRun(button)}
         onDismiss={(button) => closeTab(button.tabId)}
         onMinimize={minimize}
+        onRestore={raiseLastTab}
         resizeHandlers={resizeHandlers}
         runningAgents={<RunningAgentsMenu projectId={activeProjectId} />}
       />
       {open ? (
         <div className="min-h-0 flex-1">
-          {activeRun ? (
+          {activeTabId === CHAT_TAB_ID ? (
+            chatRun ? (
+              <RunSurface
+                run={chatRun}
+                onPromptSent={() => {}}
+                onNewChat={handleNewChat}
+                readOnly={readOnly}
+              />
+            ) : occupiedManager ? (
+              <OccupiedManagerPanel
+                run={occupiedManager}
+                readOnly={readOnly}
+                onEnd={() => void handleEndOccupiedManager()}
+              />
+            ) : (
+              <ChatSetup
+                key={activeProjectId ?? 'no-project'}
+                projectId={activeProjectId}
+                readOnly={readOnly}
+                onStart={handleStartChat}
+              />
+            )
+          ) : activeRun ? (
             <RunSurface
               run={activeRun}
               initialDraft={activeTab?.draftPrompt}
@@ -418,6 +506,33 @@ export function RunDock() {
         </div>
       ) : null}
     </aside>
+  );
+}
+
+function OccupiedManagerPanel({
+  run,
+  readOnly,
+  onEnd,
+}: {
+  run: RunSummary;
+  readOnly: boolean;
+  onEnd: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="max-w-md">
+        <h2 className="text-lg font-semibold tracking-tight">Chat is currently unavailable</h2>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          {runTabTitle(run)} already owns this project’s manager session. End it before starting a
+          native Codex or Claude chat.
+        </p>
+      </div>
+      {!readOnly ? (
+        <Button type="button" variant="destructive" size="sm" onClick={onEnd}>
+          End existing manager
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

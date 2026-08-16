@@ -19,6 +19,9 @@ const OPEN_KEY = 'orgasmic.rundock.open.v1';
 const ACTIVE_TAB_KEY = 'orgasmic.rundock.active-tab.v1';
 const HEIGHT_KEY = 'orgasmic.rundock.height.v1';
 
+/** The project chat is a pinned dock surface rather than a disposable run tab. */
+export const CHAT_TAB_ID = 'chat';
+
 export type RunDockTab = {
   // Every tab — manager, terminal, worker — is keyed by its run id. The dock
   // has no special tab (dec_FBBT2's Manager tab was retired with the taskbar
@@ -47,6 +50,8 @@ type RunDockContextValue = {
   setActiveTab: (tabId: string) => void;
   /** Raise a run: select it and show the panel at the remembered height. */
   openRun: (options: OpenRunOptions) => void;
+  /** Raise the project's pinned native-provider chat surface. */
+  openChat: () => void;
   /** Replace the current live-run metadata used to guard dock eligibility. */
   replaceLiveRuns: (runs: RunSummary[]) => void;
   /** Collapse to the bare taskbar, keeping the active selection. */
@@ -204,7 +209,9 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
         // longer be raised; drop it so the dock restores collapsed rather than
         // onto an empty panel.
         setActiveTabIdState((current) =>
-          current && restored.some((tab) => tab.tabId === current) ? current : null,
+          current === CHAT_TAB_ID || (current && restored.some((tab) => tab.tabId === current))
+            ? current
+            : null,
         );
         if (restored.length === 0) return;
         setTabs((prev) => {
@@ -244,6 +251,12 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     [setActiveTabId],
   );
 
+  const openChat = useCallback(() => {
+    setActiveTabId(CHAT_TAB_ID);
+    setOpen(true);
+    if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '1');
+  }, [setActiveTabId]);
+
   const closeTab = useCallback(
     (tabId: string) => {
       // Closing detaches the UI only; it never stops or releases the run
@@ -275,6 +288,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setHeight,
       setActiveTab,
       openRun,
+      openChat,
       replaceLiveRuns,
       minimize,
       closeTab,
@@ -288,6 +302,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setHeight,
       setActiveTab,
       openRun,
+      openChat,
       replaceLiveRuns,
       minimize,
       closeTab,

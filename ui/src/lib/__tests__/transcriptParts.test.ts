@@ -70,6 +70,624 @@ const realCodexStartedItems: SessionEnvelope[] = [
 ];
 
 describe('normalizeTranscriptParts', () => {
+  it('renders canonical provider events without telemetry or duplicate terminal summaries', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'evt-1',
+            provider: 'claude',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            turnId: 'turn-1',
+            itemId: 'answer-1',
+            type: 'content.delta',
+            payload: { streamKind: 'assistant_text', delta: 'Done.' },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'evt-2',
+            provider: 'claude',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'account.rate-limits.updated',
+            payload: { rateLimits: { type: 'five_hour' } },
+          },
+        }),
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'evt-3',
+            provider: 'claude',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:02Z',
+            turnId: 'turn-1',
+            type: 'turn.completed',
+            payload: { state: 'completed' },
+          },
+        }),
+        event(4, { type: 'run_complete', summary: null }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({ type: 'text', role: 'assistant', text: 'Done.' }),
+    ]);
+  });
+
+  it('coalesces canonical streamed assistant deltas that do not carry an item id', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'delta-1',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'content.delta',
+            payload: { streamKind: 'assistant_text', delta: 'No files' },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'delta-2',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'content.delta',
+            payload: { streamKind: 'assistant_text', delta: ' were changed.' },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({ type: 'text', role: 'assistant', text: 'No files were changed.' }),
+    ]);
+  });
+
+  it('uses the canonical content index to keep separated assistant segments uniquely keyed', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'delta-1',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'content.delta',
+            payload: { streamKind: 'assistant_text', contentIndex: 0, delta: 'Before tool.' },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'tool-started',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'file_read',
+              status: 'inProgress',
+              title: 'Read',
+              data: { toolName: 'Read', input: { path: '/repo/README.md' } },
+            },
+          },
+        }),
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'delta-2',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-08-15T10:00:02Z',
+            type: 'content.delta',
+            payload: { streamKind: 'assistant_text', contentIndex: 2, delta: 'After tool.' },
+          },
+        }),
+      ),
+    );
+
+    const assistantParts = parts.filter(
+      (part) => part.type === 'text' && part.role === 'assistant',
+    );
+    expect(assistantParts.map((part) => part.id)).toEqual([
+      'assistant_text:thread-1:turn-1:0',
+      'assistant_text:thread-1:turn-1:2',
+    ]);
+  });
+
+  it('accumulates Claude tool input deltas into the completed canonical tool', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'tool-started',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'command_execution',
+              status: 'inProgress',
+              title: 'Bash',
+              data: { toolName: 'Bash', input: {} },
+            },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'tool-delta-1',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'item.updated',
+            payload: {
+              itemType: 'command_execution',
+              status: 'inProgress',
+              title: 'Bash',
+              data: { toolName: 'Bash', inputDelta: '{"command":' },
+            },
+          },
+        }),
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'tool-delta-2',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:02Z',
+            type: 'item.updated',
+            payload: {
+              itemType: 'command_execution',
+              status: 'inProgress',
+              title: 'Bash',
+              data: { toolName: 'Bash', inputDelta: '"pwd"}' },
+            },
+          },
+        }),
+        event(4, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'tool-completed',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:03Z',
+            type: 'item.completed',
+            payload: {
+              itemType: 'command_execution',
+              status: 'completed',
+              title: 'Bash',
+              data: { toolName: 'Bash', input: {}, result: 'ok' },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        input: { command: 'pwd' },
+        summary: 'pwd',
+        state: 'completed',
+      }),
+    ]);
+  });
+
+  it('completes canonical tools when status is omitted or the turn closes', () => {
+    const completedWithoutStatus = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'completed',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.completed',
+            payload: { itemType: 'file_read', title: 'Read', data: { input: { path: '/tmp/a' } } },
+          },
+        }),
+      ),
+    );
+    expect(completedWithoutStatus).toEqual([
+      expect.objectContaining({ type: 'tool', state: 'completed', ok: true }),
+    ]);
+
+    const closedWhileStreaming = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'updated',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'tool-2',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.updated',
+            payload: { itemType: 'file_read', title: 'Read', data: { input: { path: '/tmp/b' } } },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'turn-completed',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'turn.completed',
+            payload: { state: 'completed' },
+          },
+        }),
+      ),
+    );
+    expect(closedWhileStreaming).toEqual([
+      expect.objectContaining({ type: 'tool', state: 'completed' }),
+    ]);
+  });
+
+  it('merges Codex exec completion into its detailed command activity', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'exec-started',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-exec',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'exec',
+              status: 'inProgress',
+              title: 'exec',
+              data: { toolName: 'exec', input: 'const result = await tools.exec_command(...)' },
+            },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'command-started',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'command-exec-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'command_execution',
+              status: 'inProgress',
+              title: 'command_execution',
+              data: {
+                toolName: 'command_execution',
+                input: { command: 'pwd', status: 'inProgress', type: 'commandExecution' },
+              },
+            },
+          },
+        }),
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'exec-completed',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-exec',
+            createdAt: '2026-08-15T10:00:02Z',
+            type: 'item.completed',
+            payload: {
+              itemType: 'tool_call',
+              status: 'completed',
+              title: 'Tool',
+              data: { output: ['/repo'], ok: true },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-exec',
+        name: 'command_execution',
+        label: 'Ran command',
+        state: 'completed',
+        input: { command: 'pwd', status: 'inProgress', type: 'commandExecution' },
+        output: ['/repo'],
+        ok: true,
+        summary: 'pwd',
+      }),
+    ]);
+  });
+
+  it('preserves a canonical tool name when a generic completion arrives', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'wait-started',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-wait',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'wait',
+              status: 'inProgress',
+              title: 'wait',
+              data: { toolName: 'wait', input: { yield_time_ms: 30_000 } },
+            },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'wait-completed',
+            provider: 'codex',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-wait',
+            createdAt: '2026-08-15T10:00:30Z',
+            type: 'item.completed',
+            payload: { itemType: 'tool_call', status: 'completed', title: 'Tool', data: {} },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({ type: 'tool', name: 'wait', label: 'wait', state: 'completed' }),
+    ]);
+  });
+
+  it('keeps canonical app-server stderr out of the conversational transcript', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'session-started',
+            provider: 'codex',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'session.started',
+            payload: {},
+          },
+        }),
+        event(2, {
+          type: 'text_chunk',
+          stream: 'stderr',
+          chunk: 'ERROR codex_models_manager::cache: failed to renew cache TTL',
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([]);
+  });
+
+  it('pairs canonical driver user echoes with composer sends without collapsing repeated messages', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, { type: 'text_chunk', stream: 'user', chunk: 'hi' }),
+        { seq: 2, kind: 'lifecycle', event: { phase: 'composer_send', text: 'hi' } },
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-1',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'session.started',
+            payload: {},
+          },
+        }),
+        event(4, { type: 'text_chunk', stream: 'user', chunk: 'hi' }),
+        { seq: 5, kind: 'lifecycle', event: { phase: 'composer_send', text: 'hi' } },
+      ),
+    );
+
+    expect(
+      parts
+        .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
+        .filter((part) => part.role === 'user')
+        .map((part) => part.text),
+    ).toEqual(['hi', 'hi']);
+  });
+
+  it('keeps an unmatched canonical driver user echo as a persistence fallback', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, { type: 'text_chunk', stream: 'user', chunk: 'keep me' }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-1',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'session.started',
+            payload: {},
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({ type: 'text', role: 'user', text: 'keep me' }),
+    ]);
+  });
+
+  it('normalizes a real OpenCode command lifecycle into a compact command tool', () => {
+    const output = 'ORGASMIC_ENTRY_FAST_V1 abc123\nPROJECT /repo\n';
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-started',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'command_execution',
+              status: 'inProgress',
+              title: 'bash',
+              data: { tool: 'bash', state: { input: {}, raw: '', status: 'pending' } },
+            },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-completed',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-1',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'item.completed',
+            payload: {
+              itemType: 'command_execution',
+              status: 'completed',
+              title: 'orgasmic entry',
+              detail: output,
+              data: {
+                tool: 'bash',
+                state: {
+                  input: { command: 'orgasmic entry' },
+                  metadata: { exit: 0, output, truncated: false },
+                  output,
+                  status: 'completed',
+                  title: 'orgasmic entry',
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-1',
+        name: 'command_execution',
+        label: 'Ran command',
+        state: 'completed',
+        input: { command: 'orgasmic entry' },
+        output,
+        ok: true,
+        summary: 'orgasmic entry',
+      }),
+    ]);
+  });
+
+  it('keeps a real OpenCode web fetch result out of the tool header', () => {
+    const url = 'https://opencode.ai/docs/providers/';
+    const output = 'Providers | OpenCode\n\nLarge fetched document body';
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-started',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-webfetch',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'item.started',
+            payload: {
+              itemType: 'web_search',
+              status: 'inProgress',
+              title: 'webfetch',
+              data: { tool: 'webfetch', state: { input: {}, raw: '', status: 'pending' } },
+            },
+          },
+        }),
+        event(2, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-completed',
+            provider: 'opencode',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'call-webfetch',
+            createdAt: '2026-08-15T10:00:01Z',
+            type: 'item.completed',
+            payload: {
+              itemType: 'web_search',
+              status: 'completed',
+              title: `${url} (text/html)`,
+              detail: output,
+              data: {
+                tool: 'webfetch',
+                state: {
+                  input: { url },
+                  output,
+                  output_bounded: { bytes: 51_453, retained_bytes: 2_048 },
+                  status: 'completed',
+                  title: `${url} (text/html)`,
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parts).toEqual([
+      expect.objectContaining({
+        type: 'tool',
+        callId: 'call-webfetch',
+        name: 'web_search',
+        label: 'Fetched page',
+        state: 'completed',
+        input: { url },
+        output,
+        ok: true,
+        summary: url,
+      }),
+    ]);
+  });
+
   it('coalesces adjacent text chunks by stream while preserving role and the latest time', () => {
     const parts = normalizeTranscriptParts(
       source(
@@ -315,6 +933,33 @@ describe('normalizeTranscriptParts', () => {
     expect(parts[2]).toMatchObject({ type: 'text', role: 'user', text: 'Continue' });
     expect(parts[3]).toMatchObject({ type: 'system', label: 'run ended', tone: 'info' });
   });
+
+  it('does not duplicate a canonical dispatch prompt delivered through send_input', () => {
+    const prompt = 'orgasmic compiled prompt\nwork on TASK-ONE';
+    const parts = normalizeTranscriptParts(
+      source(
+        {
+          seq: 1,
+          kind: 'lifecycle',
+          event: { phase: 'run_meta', driver_config: { prompt_bundle_text: prompt } },
+        },
+        event(2, { type: 'text_chunk', stream: 'user', chunk: prompt }),
+        event(3, {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'event-1',
+            provider: 'claude',
+            threadId: 'thread-1',
+            createdAt: '2026-08-15T10:00:00Z',
+            type: 'session.started',
+            payload: {},
+          },
+        }),
+      ),
+    );
+
+    expect(parts.filter((part) => part.type === 'text' && part.role === 'user')).toHaveLength(1);
+  });
 });
 
 describe('hasResponseAfterPending', () => {
@@ -333,6 +978,35 @@ describe('hasResponseAfterPending', () => {
     const completeSource = source(
       event(2, { type: 'run_complete' }, '2026-07-16T10:02:00Z'),
     );
+    expect(
+      hasResponseAfterPending(
+        normalizeTranscriptParts(completeSource),
+        completeSource,
+        '2026-07-16T10:00:00Z',
+      ),
+    ).toBe(true);
+  });
+
+  it('resolves when a canonical turn terminal event occurs after the send', () => {
+    const completeSource = source(
+      event(
+        1,
+        {
+          type: 'provider_runtime',
+          event: {
+            eventId: 'turn-completed',
+            provider: 'claude',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            createdAt: '2026-07-16T10:01:00Z',
+            type: 'turn.completed',
+            payload: { state: 'completed' },
+          },
+        },
+        '2026-07-16T10:01:00Z',
+      ),
+    );
+
     expect(
       hasResponseAfterPending(
         normalizeTranscriptParts(completeSource),

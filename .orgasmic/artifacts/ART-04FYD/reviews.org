@@ -1,2 +1,16 @@
 #+title: orgasmic artifact reviews ART-04FYD
 #+orgasmic_version: 1
+
+* CID-c3a6c87d
+:PROPERTIES:
+:CID:              CID-c3a6c87d
+:AUTHOR:           aspirational
+:VERSION:          1
+:ANCHOR:           lifecycle aggregate over several explicitly linked Projects, stored in its own Git-backable Program workspace (not inside any one repo, not hidde
+:RESOLUTION_TARGET: 
+:REPLY_TO:         
+:RESOLVED:         false
+:CONSUMED:         false
+:END:
+
+dfsdfsf

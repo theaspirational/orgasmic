@@ -6,6 +6,7 @@
 
 use orgasmic_core::WorkerKind;
 use orgasmic_drivers::validate_supported_pair as drivers_validate_supported_pair;
+use std::path::Path;
 
 use crate::governance::{
     resolve_governance, DispatchGovernanceOverlay, GovernanceDefaults, GovernancePatch,
@@ -45,6 +46,31 @@ pub fn validate_address_harness_args(harness: &str, harness_args: &[String]) -> 
 /// Historical/compat run label — never used as routing authority.
 pub fn compatibility_worker_id(kind: WorkerKind, mode: &str, harness: &str) -> String {
     format!("{}-{}-{}", kind.as_str(), harness.trim(), mode.trim())
+}
+
+/// Provider whose existing dispatch address can use the canonical RunDock
+/// runtime. Address validation remains owned by `SUPPORTED`; this helper only
+/// selects the runtime after the caller has accepted that legacy address.
+pub fn dispatch_chat_provider(
+    _mode: &str,
+    harness: &str,
+    harness_args: &[String],
+) -> Option<&'static str> {
+    match harness.trim().to_ascii_lowercase().as_str() {
+        "codex" => Some("codex"),
+        "claude" => Some("claude"),
+        "custom"
+            if harness_args.first().is_some_and(|argument| {
+                Path::new(argument)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.eq_ignore_ascii_case("opencode"))
+            }) =>
+        {
+            Some("opencode")
+        }
+        _ => None,
+    }
 }
 
 /// Resolve governance with the documented precedence for a dispatch address.
@@ -96,5 +122,34 @@ mod tests {
     fn harness_args_allowed_for_custom_harness() {
         validate_address_harness_args("custom", &["opencode".into(), "--print-logs".into()])
             .unwrap();
+    }
+
+    #[test]
+    fn dispatch_chat_provider_maps_builtin_codex_and_claude_addresses() {
+        assert_eq!(dispatch_chat_provider("stdio", "codex", &[]), Some("codex"));
+        assert_eq!(
+            dispatch_chat_provider("tmux", "claude", &[]),
+            Some("claude")
+        );
+    }
+
+    #[test]
+    fn dispatch_chat_provider_recognizes_opencode_custom_executable_only() {
+        assert_eq!(
+            dispatch_chat_provider(
+                "tmux",
+                "custom",
+                &["/opt/homebrew/bin/opencode".into(), "--print-logs".into()],
+            ),
+            Some("opencode")
+        );
+        assert_eq!(
+            dispatch_chat_provider("tmux", "custom", &["aider".into()]),
+            None
+        );
+        assert_eq!(
+            dispatch_chat_provider("subprocess-stream-json", "cursor-agent", &[]),
+            None
+        );
     }
 }

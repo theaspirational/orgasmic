@@ -75,6 +75,29 @@ describe('orderRunsByLaunch — stable, oldest-first taskbar order', () => {
     expect(first[0].run_id).toBe('run-20260715T095431-aaa');
   });
 
+  it('orders compact monotonic ULIDs directly', () => {
+    const ids = [
+      'run-01ARZ3NDEKTSV4RRFFQ69G5FAW',
+      'run-01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    ];
+    const ordered = orderRunsByLaunch(ids.map((run_id) => run({ run_id })));
+    expect(ordered.map((item) => item.run_id)).toEqual([...ids].reverse());
+  });
+
+  it('orders mixed historical and compact ids by their embedded time', () => {
+    const ids = [
+      'run-20160730T235411-legacy-after',
+      'run-01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      'run-20160730T235409-legacy-before',
+    ];
+    const ordered = orderRunsByLaunch(ids.map((run_id) => run({ run_id })));
+    expect(ordered.map((item) => item.run_id)).toEqual([
+      ids[2],
+      ids[1],
+      ids[0],
+    ]);
+  });
+
   it('does not mutate the caller list', () => {
     const runs = [run({ run_id: 'run-b' }), run({ run_id: 'run-a' })];
     orderRunsByLaunch(runs);

@@ -14,6 +14,8 @@
 //! (`tmux new-session -d`), runs the configured command, and tears the
 //! session down on `release`.
 
+#[cfg(unix)]
+use std::ffi::CStr;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -32,7 +34,7 @@ use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use orgasmic_core::{DriverEvent, RuntimeIdentity};
+use orgasmic_core::{compact_run_id_token, DriverEvent, RuntimeIdentity};
 
 use crate::catalog::TransportInteraction;
 use crate::r#trait::{
@@ -913,8 +915,40 @@ fn tmux_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Prefix used to discover every tmux incarnation of one run.
+///
+/// Historical runs retain their exact original prefix so a new daemon can
+/// reattach to panes created before compact run ids shipped.
+pub fn tmux_session_prefix(run_id: &str) -> String {
+    compact_run_id_token(run_id)
+        .map(|token| format!("og_{token}_"))
+        .unwrap_or_else(|| format!("orgasmic-{run_id}-"))
+}
+
 pub fn tmux_session_name(identity: &RuntimeIdentity) -> String {
-    format!("orgasmic-{}-{}", identity.run_id, identity.runtime_id)
+    if compact_run_id_token(&identity.run_id).is_none() {
+        return format!("orgasmic-{}-{}", identity.run_id, identity.runtime_id);
+    }
+
+    // The complete runtime id remains in RuntimeIdentity and every ownership
+    // check. Tmux needs only a compact local locator; `new-session` refuses an
+    // existing name, so the improbable eight-hex collision fails closed.
+    let runtime_token = uuid::Uuid::parse_str(&identity.runtime_id)
+        .map(|value| value.simple().to_string()[..8].to_string())
+        .unwrap_or_else(|_| {
+            let token: String = identity
+                .runtime_id
+                .chars()
+                .filter(|ch| ch.is_ascii_alphanumeric())
+                .take(8)
+                .collect();
+            if token.is_empty() {
+                "runtime".to_string()
+            } else {
+                token
+            }
+        });
+    format!("{}{runtime_token}", tmux_session_prefix(&identity.run_id))
 }
 
 /// What a synchronous `tmux has-session` probe actually established.
@@ -1847,7 +1881,8 @@ fn should_use_default_command(cfg: &TmuxTuiConfig, _harness: &str) -> bool {
     // The dispatch placeholder is the daemon's explicit "swap me for the real
     // harness" sentinel (api.rs stages every worker with it); honor it for any
     // TUI harness, not just claude. `default_command_for_harness` resolves the
-    // right binary (codex, hermes, …) and falls back to `sh` for unknown ones.
+    // right binary (codex, hermes, …), opens the user's login shell for
+    // `custom`, and falls back to `sh` for unknown ones.
     cfg.command.is_none() || is_dispatch_placeholder(cfg.command.as_deref(), &cfg.args)
 }
 
@@ -1882,8 +1917,57 @@ fn default_command_for_harness(harness: &str, cfg: &TmuxTuiConfig) -> (String, V
             "hermes".to_string(),
             vec!["chat".to_string(), "--tui".to_string()],
         ),
+        "custom" => (default_login_shell(), vec!["-l".to_string()]),
         _ => ("sh".to_string(), Vec::new()),
     }
+}
+
+fn default_login_shell() -> String {
+    account_login_shell()
+        .or_else(|| {
+            std::env::var("SHELL")
+                .ok()
+                .map(|shell| shell.trim().to_string())
+                .filter(|shell| !shell.is_empty())
+        })
+        .unwrap_or_else(|| "/bin/sh".to_string())
+}
+
+#[cfg(unix)]
+fn account_login_shell() -> Option<String> {
+    let buffer_len = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let mut buffer = vec![0_u8; usize::try_from(buffer_len).unwrap_or(16_384).max(1_024)];
+    let mut passwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    let status = unsafe {
+        libc::getpwuid_r(
+            libc::geteuid(),
+            passwd.as_mut_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+            &mut result,
+        )
+    };
+    if status != 0 || result.is_null() {
+        return None;
+    }
+    let passwd = unsafe { passwd.assume_init() };
+    if passwd.pw_shell.is_null() {
+        return None;
+    }
+    let shell = unsafe { CStr::from_ptr(passwd.pw_shell) }
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    (!shell.is_empty()).then_some(shell)
+}
+
+#[cfg(not(unix))]
+fn account_login_shell() -> Option<String> {
+    std::env::var("SHELL")
+        .ok()
+        .map(|shell| shell.trim().to_string())
+        .filter(|shell| !shell.is_empty())
 }
 
 fn inert_reason(cfg: &TmuxTuiConfig, command: &str) -> Option<String> {
@@ -3429,6 +3513,38 @@ mod tests {
         fn drop(&mut self) {
             kill_tmux_session_sync(&self.0);
         }
+    }
+
+    #[test]
+    fn compact_run_uses_short_tmux_name_and_runtime_fence() {
+        let identity = RuntimeIdentity::planned(
+            "run-01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "71e46f99-73f8-4075-940e-c279bfaf5658",
+            "boot-test",
+        );
+
+        assert_eq!(
+            tmux_session_name(&identity),
+            "og_01ARZ3NDEKTSV4RRFFQ69G5FAV_71e46f99"
+        );
+        assert_eq!(
+            tmux_session_prefix(&identity.run_id),
+            "og_01ARZ3NDEKTSV4RRFFQ69G5FAV_"
+        );
+    }
+
+    #[test]
+    fn historical_run_keeps_exact_tmux_name_for_reattach() {
+        let identity = RuntimeIdentity::planned(
+            "run-20260815T224157-a6bee61d001347af9797018d21d34f06",
+            "71e46f99-73f8-4075-940e-c279bfaf5658",
+            "boot-test",
+        );
+
+        assert_eq!(
+            tmux_session_name(&identity),
+            "orgasmic-run-20260815T224157-a6bee61d001347af9797018d21d34f06-71e46f99-73f8-4075-940e-c279bfaf5658"
+        );
     }
 
     #[test]
@@ -5715,6 +5831,22 @@ mod tests {
                  harness_execs_provider_binary"
             );
         }
+    }
+
+    #[test]
+    fn custom_terminal_opens_the_users_login_shell() {
+        let (command, args) = default_command_for_harness("custom", &TmuxTuiConfig::default());
+        let expected = account_login_shell()
+            .or_else(|| {
+                std::env::var("SHELL")
+                    .ok()
+                    .map(|shell| shell.trim().to_string())
+                    .filter(|shell| !shell.is_empty())
+            })
+            .unwrap_or_else(|| "/bin/sh".to_string());
+
+        assert_eq!(command, expected);
+        assert_eq!(args, ["-l"]);
     }
 
     #[test]

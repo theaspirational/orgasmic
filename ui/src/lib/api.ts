@@ -18,6 +18,7 @@ import type {
   FilesystemValidateProjectResponse,
   GlossarySummary,
   ManagerDriversResponse,
+  ManagerChatCatalogResponse,
   ManagerLaunchResponse,
   ManagerState,
   OrgFileResponse,
@@ -215,6 +216,10 @@ export function fetchManagerState(): Promise<ManagerState> {
   return get<ManagerState>('/manager/state');
 }
 
+export function fetchManagerChatCatalog(projectId: string): Promise<ManagerChatCatalogResponse> {
+  return get<ManagerChatCatalogResponse>(`/managers/chat-catalog${q(projectId)}`);
+}
+
 export function fetchDaemonStatus(): Promise<DaemonStatus> {
   return get<DaemonStatus>('/daemon/status');
 }
@@ -360,6 +365,17 @@ export function postManagerLaunch(body: {
   harness_args?: string[];
 }): Promise<ManagerLaunchResponse> {
   return post<ManagerLaunchResponse>('/manager/launch', body);
+}
+
+export function postManagerChatLaunch(body: {
+  project_id: string;
+  provider: 'codex' | 'claude' | 'opencode';
+  model?: string | null;
+  effort?: string | null;
+  access?: string | null;
+  service_tier?: string | null;
+}): Promise<ManagerLaunchResponse> {
+  return post<ManagerLaunchResponse>('/manager/chat/launch', body);
 }
 
 export function postTx(body: Record<string, unknown>): Promise<unknown> {

@@ -46,12 +46,31 @@ function LateSyncProbe({ runs, runId }: { runs: RunSummary[]; runId: string }) {
   );
 }
 
+function OpenChatProbe() {
+  const { activeTabId, open, openChat } = useRunDock();
+  return createElement(
+    'div',
+    null,
+    createElement('button', { onClick: openChat }, 'Open chat'),
+    createElement('output', { 'aria-label': 'active dock surface' }, activeTabId ?? 'none'),
+    createElement('output', { 'aria-label': 'dock open' }, String(open)),
+  );
+}
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
 });
 
 describe('persisted Run Dock restore eligibility', () => {
+  it('opens Chat as a pinned surface without creating a run tab', () => {
+    render(createElement(RunDockProvider, null, createElement(OpenChatProbe)));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
+    expect(screen.getByLabelText('active dock surface').textContent).toBe('chat');
+    expect(screen.getByLabelText('dock open').textContent).toBe('true');
+  });
+
   it('purges a saved external tab while restoring normal live and recovered tabs', () => {
     const stored = [
       { tabId: 'run-external', runId: 'run-external' },

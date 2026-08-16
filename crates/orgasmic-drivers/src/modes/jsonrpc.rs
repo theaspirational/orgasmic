@@ -246,6 +246,17 @@ pub async fn run_jsonrpc_handshake(
     )
     .await?;
 
+    // Capability probes need only the initialized app-server. In particular,
+    // Codex `model/list` is available before `thread/start`; skipping the
+    // session keeps opening the model picker from creating an empty thread.
+    if session_init
+        .get("skip_session_start")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
     let thread_start = session_init
         .get("thread_start")
         .cloned()
@@ -446,6 +457,41 @@ mod tests {
             .map(|value| value["method"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(methods, vec!["initialize", "thread/start"]);
+    }
+
+    #[tokio::test]
+    async fn handshake_catalog_probe_stops_after_initialize() {
+        let (tx, _rx) = mpsc::channel(8);
+        let mut transport = ChannelTransport {
+            incoming: std::collections::VecDeque::from(vec![
+                json!({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "fixture"}}),
+            ]),
+            outgoing: Vec::new(),
+        };
+        let mut ids = RpcIds::new();
+        let mut adapter = MockAdapter;
+
+        run_jsonrpc_handshake(
+            &mut transport,
+            &mut ids,
+            "fixture",
+            json!({
+                "initialize": {},
+                "skip_session_start": true,
+            }),
+            &tx,
+            &mut adapter,
+            &SandboxAllowlist::default(),
+        )
+        .await
+        .unwrap();
+
+        let methods = transport
+            .outgoing
+            .iter()
+            .map(|value| value["method"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(methods, vec!["initialize"]);
     }
 
     #[test]

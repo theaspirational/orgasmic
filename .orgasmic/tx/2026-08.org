@@ -35326,3 +35326,228 @@
 :REASON:       edited task node TASK-AP971.1
 :NODE_ID:      TASK-AP971.1
 :END:
+
+* TX 2026-08-14 Fri 20:46:17 task.state_transitioned TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6105
+:TIME:         [2026-08-14 Fri 20:46:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       claimed: grilling session with owner
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-14 Fri 21:58:03 task.edited TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6106
+:TIME:         [2026-08-14 Fri 21:58:03]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-AP971.1
+:NODE_ID:      TASK-AP971.1
+:END:
+
+* TX 2026-08-14 Fri 21:58:03 comment TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6107
+:TIME:         [2026-08-14 Fri 21:58:03]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:REASON:       resolved via grilling: tx-grammar reuse + real prose bodies; facts append-only, comment edits in place with git history; 4 reserved dir names; structured-writes-only enforcement — full spec in Resolution section
+:END:
+
+* TX 2026-08-14 Fri 21:58:03 task.state_transitioned TASK-AP971.1
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6108
+:TIME:         [2026-08-14 Fri 21:58:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       wayfinder ticket resolved; 12 decisions in Resolution section
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-14 Fri 21:58:12 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6109
+:TIME:         [2026-08-14 Fri 21:58:12]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-14 Fri 22:11:25 task.state_transitioned TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6110
+:TIME:         [2026-08-14 Fri 22:11:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-14 Fri 22:11:27 manager.dispatch_started TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6111
+:TIME:         [2026-08-14 Fri 22:11:27]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf
+:BRANCH:       task-zkzbf-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/acp-explorer/acp-explorer-brief.md
+:STARTED_AT:   [2026-08-14 Fri 22:11:27]
+:LIVENESS:     da7c83715b80ba47b45298c85e8ba259859f953e
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: temporary read-only ACP explorer for live chat UI comparison
+:END:
+
+* TX 2026-08-14 Fri 22:11:27 run.created TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6112
+:TIME:         [2026-08-14 Fri 22:11:27]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF-implementer-20260814T221127.jsonl
+:REASON:       temporary read-only ACP explorer for live chat UI comparison
+:RUN_ID:       run-20260814T221127-a4f5687b13774fc0a1403c5fa8369dda
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor-agent-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/acp-explorer/acp-explorer-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/acp-explorer/acp-explorer-bc5281a6e7304094857b55f1c1c667be-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/acp-explorer/acp-explorer-bc5281a6e7304094857b55f1c1c667be-stdout.log
+:DISPATCH_ATTEMPT: bc5281a6e7304094857b55f1c1c667be
+:PID:          44081
+:DISPATCH_TX:  tx-20260814-orgasmic-6111
+:END:
+
+* TX 2026-08-14 Fri 22:27:53 task.state_transitioned TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6113
+:TIME:         [2026-08-14 Fri 22:27:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CM5KV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-14 Fri 22:28:38 task.state_transitioned TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6114
+:TIME:         [2026-08-14 Fri 22:28:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       rollback partial state transition after timed-out read-only comparison dispatch
+:FROM_STATE:   in_progress
+:TO_STATE:     backlog
+:END:
+
+* TX 2026-08-14 Fri 22:29:41 task.state_transitioned TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6115
+:TIME:         [2026-08-14 Fri 22:29:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CM5KV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-14 Fri 22:30:05 task.state_transitioned TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260814-orgasmic-6116
+:TIME:         [2026-08-14 Fri 22:30:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       rollback partial state transition after timed-out read-only comparison dispatch
+:FROM_STATE:   in_progress
+:TO_STATE:     backlog
+:END:
+
+
+* TX 2026-08-15 Sat 19:59:02 graph.project.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260815-orgasmic-6117
+:TIME:         [2026-08-15 Sat 19:59:02]
+:TYPE:         graph.project.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/project.org
+:REASON:       edited project node orgasmic
+:NODE_ID:      orgasmic
+:END:
+
+
+* TX 2026-08-15 Sat 20:41:52 artifact.comment.added orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260815-orgasmic-6118
+:TIME:         [2026-08-15 Sat 20:41:52]
+:TYPE:         artifact.comment.added
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:ARTIFACT_ID:  ART-04FYD
+:CID:          CID-c3a6c87d
+:AUTHOR:       aspirational
+:VERSION:      1
+:ANCHOR:       lifecycle aggregate over several explicitly linked Projects, stored in its own Git-backable Program workspace (not inside any one repo, not hidde
+:RESOLUTION_TARGET:
+:REPLY_TO:
+:END:

@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RunSummary, RecoveryInventoryResponse } from '@/lib/types';
 
-const { openRunMock, postRunReleaseMock, fetchRecoveryInventoryMock } = vi.hoisted(() => ({
+const { openChatMock, openRunMock, postRunReleaseMock, fetchRecoveryInventoryMock } = vi.hoisted(() => ({
+  openChatMock: vi.fn(),
   openRunMock: vi.fn(),
   postRunReleaseMock: vi.fn(async () => ({})),
   fetchRecoveryInventoryMock: vi.fn(),
@@ -16,7 +17,7 @@ vi.mock('@/hooks/useEventStream', () => ({
 }));
 
 vi.mock('@/lib/runDock', () => ({
-  useRunDock: () => ({ openRun: openRunMock }),
+  useRunDock: () => ({ openChat: openChatMock, openRun: openRunMock }),
 }));
 
 vi.mock('@/lib/api', async () => {
@@ -88,6 +89,25 @@ function workerRun(runId: string): RunSummary {
   };
 }
 
+function managerRun(runId: string): RunSummary {
+  return {
+    ...workerRun(runId),
+    task_id: 'manager.launch:proj',
+    kind: 'manager',
+    role: 'manager',
+    driver: 'ws',
+    harness: 'codex',
+  };
+}
+
+function nativeChatRun(runId: string): RunSummary {
+  return {
+    ...managerRun(runId),
+    driver: 'stdio',
+    harness: 'codex-chat',
+  };
+}
+
 function runsResponse(live: RunSummary[]): RecoveryInventoryResponse {
   return {
     live,
@@ -111,6 +131,7 @@ async function openMenu() {
 describe('RunningAgentsMenu external manager row', () => {
   beforeEach(() => {
     openRunMock.mockClear();
+    openChatMock.mockClear();
     postRunReleaseMock.mockClear();
     fetchRecoveryInventoryMock.mockReset();
   });
@@ -160,5 +181,27 @@ describe('RunningAgentsMenu external manager row', () => {
     fireEvent.click(row);
 
     expect(openRunMock).toHaveBeenCalledWith({ runId: 'run-worker-1' });
+  });
+
+  it('raises the pinned Chat surface for a native manager conversation', async () => {
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([nativeChatRun('run-chat-1')]));
+    render(<RunningAgentsMenu projectId="proj" />);
+    await openMenu();
+
+    fireEvent.click(await screen.findByText(/Manager · Codex/i));
+
+    expect(openChatMock).toHaveBeenCalledOnce();
+    expect(openRunMock).not.toHaveBeenCalled();
+  });
+
+  it('opens a traditional manager run instead of replacing it with Chat', async () => {
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([managerRun('run-manager-1')]));
+    render(<RunningAgentsMenu projectId="proj" />);
+    await openMenu();
+
+    fireEvent.click(await screen.findByText(/Manager · Codex/i));
+
+    expect(openRunMock).toHaveBeenCalledWith({ runId: 'run-manager-1' });
+    expect(openChatMock).not.toHaveBeenCalled();
   });
 });
