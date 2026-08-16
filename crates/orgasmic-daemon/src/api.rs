@@ -4466,7 +4466,7 @@ async fn get_manager_chat_catalog(
 }
 
 async fn probe_codex_chat_catalog(state: &ApiState) -> Result<RuntimeOptionsCatalog, String> {
-    let driver = orgasmic_drivers::driver_for_mode_harness("stdio", "codex")
+    let driver = crate::driver_resolution::resolve_driver("stdio", "codex")
         .ok_or_else(|| "Codex native driver is unavailable".to_string())?;
     let probe_id = format!("chat-catalog-probe-{}", uuid::Uuid::new_v4().simple());
     let context = DriverContext {
@@ -5016,13 +5016,23 @@ fn canonicalize_dispatch_worker(mut worker: StageWorker) -> StageWorker {
     worker
 }
 
-fn canonical_runtime_provider(worker: &StageWorker) -> Option<&'static str> {
-    match (worker.driver.as_str(), worker.harness.as_str()) {
+fn canonical_runtime_provider_address(driver: &str, harness: &str) -> Option<&'static str> {
+    match (driver, harness) {
         ("stdio", "codex-chat") => Some("codex"),
         ("stdio", "claude-sdk") => Some("claude"),
         ("stdio", "opencode") => Some("opencode"),
         _ => None,
     }
+}
+
+fn canonical_runtime_provider(worker: &StageWorker) -> Option<&'static str> {
+    canonical_runtime_provider_address(&worker.driver, &worker.harness)
+}
+
+fn resolve_persisted_run_driver(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
+    canonical_runtime_provider_address(mode, harness)
+        .and_then(orgasmic_drivers::chat_driver)
+        .or_else(|| resolve_driver(mode, harness))
 }
 
 fn resolve_worker_launch_driver(worker: &StageWorker) -> Option<Box<dyn WorkerDriver>> {
@@ -11067,7 +11077,7 @@ async fn execute_run_recover_action(
                             "recovery address unavailable; supply mode+harness/start fresh",
                         )
                     })?;
-                let driver = resolve_driver(&mode, &harness).ok_or_else(|| {
+                let driver = resolve_persisted_run_driver(&mode, &harness).ok_or_else(|| {
                     ApiError::bad_request(format!(
                         "unsupported recovery mode/harness pair {mode}/{harness}"
                     ))
@@ -13475,7 +13485,7 @@ fn session_driver(
     _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
     if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
-        if let Some(driver) = resolve_driver(&mode, &harness) {
+        if let Some(driver) = resolve_persisted_run_driver(&mode, &harness) {
             return Some((driver, format!("{mode}/{harness}")));
         }
         // A recorded address the registry no longer knows — the pre-TASK-XCJYC
