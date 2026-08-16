@@ -141,8 +141,8 @@ async fn partial_full_board_commands_keep_json_and_errors_but_exit_honestly() {
     assert!(status.status.success(), "{status_stdout}\n{status_stderr}");
     assert!(status_stdout.contains("missing-slug"), "{status_stdout}");
     assert!(
-        status_stderr.contains("skipped project unreadable"),
-        "{status_stderr}"
+        status_stderr.contains("failed=[unreadable]"),
+        "partial full-board status must name the unloaded project: {status_stderr}"
     );
 
     let reindex = run_orgasmic(&home, &daemon_url, &["reindex"]);

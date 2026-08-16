@@ -29219,15 +29219,8 @@ pub(crate) mod tests {
         let base = format!("http://{}", running.addr);
 
         // Parse-error reporting is deliberately partial until projections are
-        // requested. Marker lookup is the explicit whole-board operation that
-        // asks for recursive source/identity coverage.
-        let core_response = client
-            .get(format!("{base}/api/projects/orgasmic"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap();
-        assert!(core_response.status().is_success());
+        // requested; `?full=true` is the explicit whole-board operation that
+        // asks for complete coverage.
         let partial_errors = client
             .get(format!("{base}/api/graph/parse-errors"))
             .bearer_auth(&token)
@@ -29249,19 +29242,11 @@ pub(crate) mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            "partial; ready=1/1; markers=0/1; unloaded=[]; marker_unloaded=[orgasmic]; loading=[]; failed=[]"
+            "partial; ready=0/1; unloaded=[orgasmic]; loading=[]; failed=[]"
         );
 
-        let marker_response = client
-            .get(format!("{base}/api/graph/markers/term_A"))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap();
-        assert!(marker_response.status().is_success());
-
         let errors_response = client
-            .get(format!("{base}/api/graph/parse-errors"))
+            .get(format!("{base}/api/graph/parse-errors?full=true"))
             .bearer_auth(&token)
             .send()
             .await
@@ -29273,7 +29258,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .to_str()
                 .unwrap(),
-            "complete; ready=1/1; markers=1/1; unloaded=[]; marker_unloaded=[]; loading=[]; failed=[]"
+            "complete; ready=1/1; unloaded=[]; loading=[]; failed=[]"
         );
         let errors: Value = errors_response.json().await.unwrap();
         let errors = errors.as_array().expect("parse-errors array");
@@ -34305,58 +34290,6 @@ pub(crate) mod tests {
         assert!(prompt.contains("2 files changed"), "{prompt}");
         assert!(prompt.contains("Inspect before acting"), "{prompt}");
         assert!(prompt.contains("NOT been sent"), "{prompt}");
-    }
-
-    #[tokio::test]
-    async fn graph_markers_route_returns_seeded_marker_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        write(
-            project_root.join("crates/orgasmic-core/src/org.rs"),
-            "// orgasmic:arch_003,dec_004\n",
-        );
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(format!(
-                "http://{}/api/graph/markers/arch_003",
-                running.addr
-            ))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success(), "graph markers route");
-        let body: serde_json::Value = resp.json().await.unwrap();
-        assert_eq!(body["node_id"], "arch_003");
-        assert_eq!(
-            body["files"],
-            serde_json::json!(["crates/orgasmic-core/src/org.rs"])
-        );
-
-        let resp = client
-            .get(format!(
-                "http://{}/api/graph/markers/dec_missing",
-                running.addr
-            ))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success(), "unknown graph marker route");
-        let body: serde_json::Value = resp.json().await.unwrap();
-        assert_eq!(body["node_id"], "dec_missing");
-        assert_eq!(body["files"], serde_json::json!([]));
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
     }
 
     // ── artifact round-trip (TASK-ZEFEY acceptance) ───────────────────────────

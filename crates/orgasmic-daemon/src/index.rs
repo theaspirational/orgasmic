@@ -3855,7 +3855,7 @@ mod tests {
 
         assert_eq!(
             index.refresh_status().await.scans_total,
-            10,
+            6,
             "each immediate retry must enter the production scan path"
         );
     }
