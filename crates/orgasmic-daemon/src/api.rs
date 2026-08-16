@@ -28038,7 +28038,7 @@ pub(crate) mod tests {
 
     #[test]
     fn unknown_dispatch_runtime_is_rejected_instead_of_silently_downgrading() {
-        assert!(canonical_dispatch_runtime_requested(None).unwrap() == false);
+        assert!(!canonical_dispatch_runtime_requested(None).unwrap());
         assert!(canonical_dispatch_runtime_requested(Some("canonical_chat")).unwrap());
         let error = canonical_dispatch_runtime_requested(Some("future-runtime")).unwrap_err();
         assert_eq!(error.status, StatusCode::BAD_REQUEST);

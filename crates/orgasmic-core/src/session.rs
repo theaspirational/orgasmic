@@ -942,7 +942,7 @@ pub enum DriverEvent {
         capabilities: Value,
     },
     /// T3-style provider-neutral event emitted by dedicated Chat runtimes.
-    ProviderRuntime { event: ProviderRuntimeEvent },
+    ProviderRuntime { event: Box<ProviderRuntimeEvent> },
     /// Free-form text chunk (assistant reply, stdout, stderr).
     TextChunk {
         stream: TextStream,

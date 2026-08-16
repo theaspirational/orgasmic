@@ -588,8 +588,8 @@ fn provider_runtime_event(
     turn_id: Option<String>,
     item_id: Option<String>,
     kind: ProviderRuntimeEventKind,
-) -> ProviderRuntimeEvent {
-    ProviderRuntimeEvent {
+) -> Box<ProviderRuntimeEvent> {
+    Box::new(ProviderRuntimeEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
         provider: provider.to_string(),
         thread_id,
@@ -600,7 +600,7 @@ fn provider_runtime_event(
         provider_refs: None,
         raw: None,
         kind,
-    }
+    })
 }
 
 fn canonicalize_codex_chat_events(
@@ -1739,14 +1739,10 @@ mod tests {
 
         assert!(events.iter().any(|event| matches!(
             event,
-            DriverEvent::ProviderRuntime {
-                event: ProviderRuntimeEvent {
-                    thread_id,
-                    turn_id: Some(turn_id),
-                    kind: ProviderRuntimeEventKind::TurnCompleted(payload),
-                    ..
-                }
-            } if thread_id == "thread-chat" && turn_id == "turn-chat" && payload.state == "completed"
+            DriverEvent::ProviderRuntime { event }
+                if event.thread_id == "thread-chat"
+                    && event.turn_id.as_deref() == Some("turn-chat")
+                    && matches!(event.kind, ProviderRuntimeEventKind::TurnCompleted(ref payload) if payload.state == "completed")
         )));
         assert!(events
             .iter()

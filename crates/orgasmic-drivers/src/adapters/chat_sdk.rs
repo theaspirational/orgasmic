@@ -190,7 +190,7 @@ impl ChatSdkAdapter {
 
     fn events_for_runtime(&mut self, event: ProviderRuntimeEvent) -> Vec<DriverEvent> {
         let mut events = vec![DriverEvent::ProviderRuntime {
-            event: event.clone(),
+            event: Box::new(event.clone()),
         }];
         match &event.kind {
             ProviderRuntimeEventKind::SessionStarted(_) if !self.ready => {
@@ -578,12 +578,8 @@ mod tests {
         assert!(matches!(events.first(), Some(DriverEvent::Ready { .. })));
         assert!(matches!(
             events.get(1),
-            Some(DriverEvent::ProviderRuntime {
-                event: ProviderRuntimeEvent {
-                    kind: ProviderRuntimeEventKind::SessionStarted(_),
-                    ..
-                }
-            })
+            Some(DriverEvent::ProviderRuntime { event })
+                if matches!(event.kind, ProviderRuntimeEventKind::SessionStarted(_))
         ));
     }
 
@@ -604,12 +600,8 @@ mod tests {
 
         assert!(matches!(
             events.first(),
-            Some(DriverEvent::ProviderRuntime {
-                event: ProviderRuntimeEvent {
-                    kind: ProviderRuntimeEventKind::TurnCompleted(_),
-                    ..
-                }
-            })
+            Some(DriverEvent::ProviderRuntime { event })
+                if matches!(event.kind, ProviderRuntimeEventKind::TurnCompleted(_))
         ));
         assert!(matches!(
             events.get(1),
