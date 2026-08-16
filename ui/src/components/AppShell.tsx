@@ -50,6 +50,7 @@ import { useActiveProject } from '@/hooks/useActiveProject';
 import { useTabSync } from '@/hooks/useProjectTabs';
 import { navPageVisible } from '@/lib/capabilities';
 import { useBackendProfiles } from '@/lib/backend';
+import { fetchWhoami } from '@/lib/api';
 import {
   UPDATE_AUTO_CHECK_MS,
   UPDATE_LAST_NOTIFIED_KEY,
@@ -183,11 +184,16 @@ export function AppShell() {
   const { activeProfile, updateProfile, testConnection } = useBackendProfiles();
   const { me, can, isMember, onUnauthorized } = useMe();
   const [authError, setAuthError] = useState<string | null>(null);
+  const requiresSessionCheck = !isMember && !activeProfile.token;
+  const [checkingSession, setCheckingSession] = useState(requiresSessionCheck);
+  const [hasAdminSession, setHasAdminSession] = useState(false);
   const [moreOpen, setMoreOpen] = useState(!isMobile);
   const bumpRefresh = useRefreshBump();
-  // A member has no admin token and authenticates by cookie, so the bearer gate
-  // must not block them — only prompt when an admin bearer is actually missing.
-  const needsToken = !isMember && (!activeProfile.token || Boolean(authError));
+  // `orgasmic ui` exchanges its one-time ticket for an HttpOnly admin cookie.
+  // Wait for that cookie's protected probe before asking for a stored bearer.
+  const needsToken =
+    !checkingSession && !isMember && !hasAdminSession && (!activeProfile.token || Boolean(authError));
+  const blockProtectedRoutes = checkingSession || needsToken;
   const visiblePrimary = PRIMARY.filter((item) => navPageVisible(me, projectId, item.page));
   const visibleMore = MORE.filter((item) => navPageVisible(me, projectId, item.page));
   const canWatchSessions = can(projectId, 'sessions.watch');
@@ -197,6 +203,28 @@ export function AppShell() {
   useEffect(() => {
     setMoreOpen(!isMobile);
   }, [isMobile]);
+
+  useEffect(() => {
+    if (!requiresSessionCheck) {
+      setCheckingSession(false);
+      setHasAdminSession(false);
+      return;
+    }
+    let cancelled = false;
+    setCheckingSession(true);
+    setHasAdminSession(false);
+    void fetchWhoami()
+      .then(({ authenticated }) => {
+        if (!cancelled) setHasAdminSession(authenticated);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setCheckingSession(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfile.baseUrl, requiresSessionCheck]);
 
   useEffect(() => {
     setUnauthorizedHandler((err) => {
@@ -420,10 +448,10 @@ export function AppShell() {
                 caches that error without re-running once the token lands, so a
                 stale "401 missing or invalid bearer token" would persist after a
                 first-time connect. */}
-            {needsToken ? null : <Outlet />}
+            {blockProtectedRoutes ? null : <Outlet />}
           </div>
         </SidebarInset>
-        {!needsToken && projectId && activeEntityId && activeEntityIsTask ? (
+        {!blockProtectedRoutes && projectId && activeEntityId && activeEntityIsTask ? (
           <Suspense
             fallback={
               <TaskDialogChunkFallback
@@ -444,7 +472,7 @@ export function AppShell() {
             />
           </Suspense>
         ) : null}
-        {!needsToken && projectId && activeEntityId && !activeEntityIsTask ? (
+        {!blockProtectedRoutes && projectId && activeEntityId && !activeEntityIsTask ? (
           <NodeModal
             projectId={projectId}
             nodeKind={activeEntityId.startsWith('dec_') ? 'decision' : 'glossary'}
