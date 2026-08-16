@@ -160,7 +160,7 @@
 :CANONICAL:          advisory code marker
 :AVOID:              daemon pragma, authoritative code link
 :RELATES_TO:         term_RG690
-:DEFINITION:         An optional source comment that helps future agents find code related to a graph node without becoming authoritative state.
+:DEFINITION:         An optional source comment that helps future agents find code related to a graph node without becoming authoritative state. The runtime indexing of markers was removed (dec_7RTRT); such comments are now inert prose found only by explicit grep.
 :DECIDED_AT:         [2026-05-21 Thu 19:06]
 :END:
 
@@ -372,7 +372,7 @@
 :CANONICAL:          materialized index
 :AVOID:              database, cache, persisted store
 :RELATES_TO:         term_N5SJT term_CEQFS term_RG690 term_FM60Y
-:DEFINITION:         The daemon's in-memory read projection of board, projects, tasks, activity, graph nodes, and advisory markers, rebuilt from the .org files at boot and incrementally refreshed by the watcher; the API, CLI, and UI read from it rather than re-parsing files, and on a parse failure the last-good projection for that file is kept. Also called the materialized read index.
+:DEFINITION:         The daemon's in-memory read projection of board, projects, tasks, activity, and graph nodes, rebuilt from the .org files at boot and incrementally refreshed by the watcher; the API, CLI, and UI read from it rather than re-parsing files, and on a parse failure the last-good projection for that file is kept. Also called the materialized read index.
 :DECIDED_AT:         [2026-06-05 Fri 00:00]
 :PRIMARY_LEAF:       arch_C87Z9.4
 :END:

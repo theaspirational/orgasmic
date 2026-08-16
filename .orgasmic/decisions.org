@@ -2613,3 +2613,20 @@ Migration is a one-shot converter from state files, tx/, and dispatch-records/ i
 
 ** Consequences
 One directory tells a node's whole story (git log on the path is the retro). Briefs and compiled prompts become durable. A state change is a property edit in a small file, not a move between growing files; done.org and per-mutation full scans disappear, fixing comment latency at the root. Comment edit/delete falls out as journal entries. Adding a future node type needs no daemon release for the basics. Costs: reading a whole collection now needs derived read views (directories are truth, views are throwaway); indexer, writer, CLI, prompt compiler, and conventions all change, so the refactor lands in stages behind the migrator; tiny nodes (glossary terms) pay a directory of overhead in exchange for per-node comments and regeneration.
+
+* dec_7RTRT Remove the runtime marker-comment feature
+:PROPERTIES:
+:DECIDED_AT: 2026-08-16
+:ID: dec_7RTRT
+:SUPERSEDES: dec_BP4NH
+:SOURCE: removal planning session 2026-08-16
+:END:
+
+** Context
+dec_BP4NH made in-code markers advisory grep hints and built runtime machinery around them: a marker grammar in core, a lazy recursive source-tree scanner in the daemon, a /graph/markers/:node_id route, marker-aware ID repair, and a shipped prompt policy instructing agents to add markers. Audit found the only production callers of the route used the fake =__coverage__= node id to force the lazy projection before reading parse errors — no UI, CLI, prompt, or internal module ever asked for the source files of a real task, decision, or glossary id. The route's actual result was unused. The one piece of load-bearing behavior inside the marker projection was identity lint (duplicate ids, malformed mints, dangling .orgasmic references), which reads only task files, decisions.org, and glossary.org and never needed the scanner.
+
+** Decision
+Remove the runtime feature entirely. The marker grammar module, recursive scanner, ProjectIndex.markers, marker-loaded tracking, marker-derived parse errors, RefreshTarget::Markers, the /graph/markers route, marker-aware ID-repair logic, and the code_marker_policy prompt part are deleted. Identity lint moves into ordinary project loading, so every core load carries it. The marker-coverage hack is replaced by /graph/parse-errors?full=true, which materializes ordinary project state and reports per-project load failures through the coverage header's =failed=[...]= segment. No compatibility stub: there were no in-tree real consumers. Existing =orgasmic:=-tagged comments become inert prose with zero runtime cost; a separate mechanical textual cleanup may follow.
+
+** Consequences
+The public marker endpoint disappears (the one breaking change). Task =:PRODUCES:= edges remain the authoritative design-to-code link, per dec_BP4NH's core ruling; agents lose the instruction to mint new markers, so the corpus stops growing. Dangling-advisory-marker diagnostics are gone with the scanner — a typo'd id in a comment no longer surfaces, the same as any free-text comment. Whole-board status/error views now wait only on core projections, not recursive source-tree scans.
