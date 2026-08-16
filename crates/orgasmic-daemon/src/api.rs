@@ -29428,11 +29428,8 @@ pub(crate) mod tests {
         let state = direct_catalog_test_state(home).await;
         state.index.fail_next_refresh();
 
-        let response = get_parse_errors(
-            State(state.clone()),
-            Query(ParseErrorsQuery { full: true }),
-        )
-        .await;
+        let response =
+            get_parse_errors(State(state.clone()), Query(ParseErrorsQuery { full: true })).await;
 
         let coverage = response
             .headers()
@@ -29711,7 +29708,8 @@ pub(crate) mod tests {
         seed_project(&home, &project_root, "proj-é");
         let state = direct_test_state(home, false).await;
 
-        let response = get_parse_errors(State(state), Query(ParseErrorsQuery { full: false })).await;
+        let response =
+            get_parse_errors(State(state), Query(ParseErrorsQuery { full: false })).await;
         let coverage = response
             .headers()
             .get("x-orgasmic-project-coverage")
