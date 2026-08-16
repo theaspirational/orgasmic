@@ -227,8 +227,10 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         PreflightOutcome::default()
     }
 
-    /// Subprocess invocation for the stdio mode pairing.
-    /// Returns `None` when this adapter does not participate in stdio mode.
+    /// Base subprocess invocation for stdio adapters that ask the mode to
+    /// construct or upgrade their request. Adapters that return a complete
+    /// [`HarnessRequest::Subprocess`] from [`Self::compose_request`] do not
+    /// need to duplicate that invocation here.
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
         None
     }

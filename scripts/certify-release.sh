@@ -79,6 +79,15 @@ CARGO_TARGET_DIR="$MSRV_TARGET" rustup run "$MSRV_RUST" cargo check \
 step "Install locked UI dependencies"
 npm ci --prefix ui
 
+step "Install locked Chat provider SDK dependencies"
+npm ci --prefix provider-host
+
+step "Chat provider SDK host typecheck"
+npm --prefix provider-host run typecheck
+
+step "Chat provider normalization tests"
+npm --prefix provider-host test
+
 step "UI typecheck"
 npm --prefix ui run typecheck
 

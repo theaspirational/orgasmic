@@ -115,7 +115,14 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: |
+            ui/package-lock.json
+            provider-host/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -136,6 +143,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci --prefix ui
+
+      - name: Install Chat provider host dependencies
+        run: npm ci --prefix provider-host
 
       # macOS only: import a stable code-signing identity into a throwaway
       # keychain so package-runtime.sh re-signs the binary with a fixed
@@ -196,13 +206,22 @@ jobs:
           tar -xzf "$tarball" -C "$stage"
           bin="$stage/bin/orgasmic"
           [ -f "$bin" ] || bin="$stage/bin/orgasmic.exe"
+          provider_host="$stage/libexec/orgasmic-provider-host"
+          [ -f "$provider_host" ] || provider_host="$stage/libexec/orgasmic-provider-host.exe"
           test -f "$stage/runtime-manifest.json"
           test -f "$stage/shipped/skills/orgasmic/SKILL.md"
+          test -f "$provider_host"
           if [ "${{ matrix.cross }}" = "true" ]; then
             echo "cross build — verifying binary arch instead of executing:"
             file "$bin"
+            file "$provider_host"
           else
             "$bin" --version
+            if "$provider_host" >"$RUNNER_TEMP/provider-host-smoke.log" 2>&1; then
+              echo "provider host unexpectedly accepted an empty command" >&2
+              exit 1
+            fi
+            grep -q 'usage: index.ts' "$RUNNER_TEMP/provider-host-smoke.log"
           fi
 
       - name: Upload bundle artifact

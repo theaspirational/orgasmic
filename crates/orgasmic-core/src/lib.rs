@@ -17,6 +17,7 @@ pub mod node_kind;
 pub mod org;
 pub mod paths;
 pub mod projects;
+pub mod run_id;
 // orgasmic:dec_WDR5K — residue left behind by hard cutovers
 pub mod retired;
 pub mod sandbox;
@@ -66,6 +67,7 @@ pub use paths::{
     TASK_FILE_NAMES,
 };
 pub use retired::{RetiredContent, RETIRED_CONTENT};
+pub use run_id::{compact_run_id_token, mint_run_id, run_id_timestamp_millis};
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{
     DecisionNode, GlossaryTerm, LifecycleStage, ProjectFile, SchemaError, SkillMetadata,
@@ -74,10 +76,15 @@ pub use schema::{
 pub use session::{
     bound_driver_event_payload, driver_event_total_cap, read_session_file, scan_session_lifecycle,
     scan_session_lifecycle_complete, scan_session_lifecycle_complete_reader,
-    scan_session_lifecycle_reader, BoundedDriverEvent, DriverEvent, Lifecycle, ReleaseOutcome,
-    RunSubState, RuntimeIdentity, SessionEnvelope, SessionError, SessionEventKind,
-    SessionLifecycleScan, SessionScanBudget, SessionWriter, TextStream, WorkerTool,
-    DRIVER_EVENT_PAYLOAD_CAP_BYTES, RETENTION_TIERS,
+    scan_session_lifecycle_reader, BoundedDriverEvent, DriverEvent, Lifecycle,
+    ProviderContentDeltaPayload, ProviderDiagnosticPayload, ProviderItemLifecyclePayload,
+    ProviderRequestPayload, ProviderRuntimeEvent, ProviderRuntimeEventKind,
+    ProviderSessionExitedPayload, ProviderSessionStartedPayload, ProviderThreadMetadataPayload,
+    ProviderTokenUsagePayload, ProviderTurnAbortedPayload, ProviderTurnCompletedPayload,
+    ProviderTurnStartedPayload, ProviderUserInputPayload, ReleaseOutcome, RunSubState,
+    RuntimeIdentity, SessionEnvelope, SessionError, SessionEventKind, SessionLifecycleScan,
+    SessionScanBudget, SessionWriter, TextStream, WorkerTool, DRIVER_EVENT_PAYLOAD_CAP_BYTES,
+    RETENTION_TIERS,
 };
 pub use slots::{
     compile as compile_slots, default_registry as default_slot_registry, dry_run as slot_dry_run,

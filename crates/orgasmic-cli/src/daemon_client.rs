@@ -236,6 +236,10 @@ fn api_path(path: &str) -> String {
 #[derive(Debug, Serialize)]
 pub(crate) struct DispatchRequest {
     kind: String,
+    /// Ask a current daemon to replace the legacy provider transport with its
+    /// reusable canonical Chat runtime. Older daemons ignore this additive
+    /// field and keep their established dispatch behavior.
+    runtime: &'static str,
     mode: String,
     harness: String,
     harness_args: Vec<String>,
@@ -259,6 +263,7 @@ pub(crate) struct DispatchRequest {
 pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
     DispatchRequest {
         kind: plan.kind.as_str().to_string(),
+        runtime: "canonical_chat",
         mode: plan.mode.clone(),
         harness: plan.harness.clone(),
         harness_args: plan.harness_args.clone(),
@@ -593,6 +598,8 @@ mod tests {
         );
         assert_eq!(request.branch, "task-1-impl");
         assert_eq!(request.liveness, "abc123");
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(wire["runtime"], "canonical_chat");
     }
 
     #[test]

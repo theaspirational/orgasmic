@@ -13,7 +13,12 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
-use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
+use orgasmic_core::{
+    DriverEvent, ProviderContentDeltaPayload, ProviderDiagnosticPayload,
+    ProviderItemLifecyclePayload, ProviderRuntimeEvent, ProviderRuntimeEventKind,
+    ProviderSessionStartedPayload, ProviderTurnCompletedPayload, ProviderTurnStartedPayload,
+    SandboxAllowlist, TextStream,
+};
 
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
@@ -45,6 +50,7 @@ pub struct CodexAdapter {
     thread_id: Option<String>,
     active_turn_id: Option<String>,
     terminal_emitted: bool,
+    canonical_chat: bool,
 }
 
 impl CodexAdapter {
@@ -56,7 +62,27 @@ impl CodexAdapter {
             thread_id: None,
             active_turn_id: None,
             terminal_emitted: false,
+            canonical_chat: false,
         }
+    }
+
+    /// Dedicated RunDock Chat flavor. It speaks the same app-server protocol
+    /// as the worker adapter, but a completed turn is a reusable conversation
+    /// boundary rather than a terminal worker run.
+    pub fn new_chat() -> Self {
+        Self {
+            canonical_chat: true,
+            ..Self::new()
+        }
+    }
+
+    fn canonical_context(&self) -> (String, Option<String>) {
+        let thread_id = self
+            .thread_id
+            .clone()
+            .or_else(|| self.ctx.as_ref().map(|ctx| ctx.identity.runtime_id.clone()))
+            .unwrap_or_else(|| "codex-chat".to_string());
+        (thread_id, self.active_turn_id.clone())
     }
 }
 
@@ -84,16 +110,28 @@ struct CodexAppserverConfig {
     prompt_bundle_text: Option<String>,
     #[serde(default = "default_auto_start_turn")]
     auto_start_turn: bool,
+    /// Initialization-only session used by the manager chat picker to read
+    /// `model/list` without creating a Codex thread or starting a turn.
+    #[serde(default)]
+    catalog_probe: bool,
 }
 
 #[async_trait]
 impl HarnessEventAdapter for CodexAdapter {
     fn harness(&self) -> &'static str {
-        "codex"
+        if self.canonical_chat {
+            "codex-chat"
+        } else {
+            "codex"
+        }
     }
 
     fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
-        Box::new(CodexAdapter::new())
+        Box::new(if self.canonical_chat {
+            CodexAdapter::new_chat()
+        } else {
+            CodexAdapter::new()
+        })
     }
 
     fn validate_config(&self, config: &DriverConfig) -> Result<(), DriverError> {
@@ -161,6 +199,13 @@ impl HarnessEventAdapter for CodexAdapter {
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
         self.ctx = Some(ctx.clone());
         self.cfg = Some(cfg.clone());
+        if cfg.catalog_probe {
+            return Ok(json!({
+                "initialize": initialize_params(),
+                "skip_session_start": true,
+                "auto_turn": false,
+            }));
+        }
         Ok(json!({
             "initialize": initialize_params(),
             "thread_start": thread_start_params(ctx, &cfg)?,
@@ -219,7 +264,7 @@ impl HarnessEventAdapter for CodexAdapter {
             .as_ref()
             .ok_or_else(|| DriverError::Other("codex config missing".into()))?
             .clone();
-        Ok(vec![DriverEvent::Ready {
+        let mut events = vec![DriverEvent::Ready {
             protocol_version: "codex-appserver/1".into(),
             capabilities: json!({
                 "simulated": false,
@@ -230,7 +275,22 @@ impl HarnessEventAdapter for CodexAdapter {
                 "endpoint": endpoint,
                 "thread_id": thread_id,
             }),
-        }])
+        }];
+        if self.canonical_chat {
+            events.push(DriverEvent::ProviderRuntime {
+                event: provider_runtime_event(
+                    "codex",
+                    thread_id,
+                    None,
+                    None,
+                    ProviderRuntimeEventKind::SessionStarted(ProviderSessionStartedPayload {
+                        message: Some("Codex app-server session started".into()),
+                        resume: None,
+                    }),
+                ),
+            });
+        }
+        Ok(events)
     }
 
     fn ws_turn_start_params(&mut self) -> Result<Value, DriverError> {
@@ -260,6 +320,22 @@ impl HarnessEventAdapter for CodexAdapter {
                 .and_then(|turn| turn.get("id"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+        }
+        if self.canonical_chat && method == "turn/start" {
+            let (thread_id, turn_id) = self.canonical_context();
+            let cfg = self.cfg.as_ref();
+            return Ok(vec![DriverEvent::ProviderRuntime {
+                event: provider_runtime_event(
+                    "codex",
+                    thread_id,
+                    turn_id,
+                    None,
+                    ProviderRuntimeEventKind::TurnStarted(ProviderTurnStartedPayload {
+                        model: cfg.and_then(|cfg| cfg.model.clone()),
+                        effort: cfg.and_then(|cfg| cfg.reasoning_effort.clone()),
+                    }),
+                ),
+            }]);
         }
         Ok(Vec::new())
     }
@@ -309,7 +385,7 @@ impl HarnessEventAdapter for CodexAdapter {
         } else {
             false
         };
-        if done {
+        if done && !self.canonical_chat {
             self.terminal_emitted = true;
         }
         drop(tx);
@@ -317,7 +393,18 @@ impl HarnessEventAdapter for CodexAdapter {
         while let Ok(event) = rx.try_recv() {
             events.push(event);
         }
-        events
+        if !self.canonical_chat {
+            return events;
+        }
+        let completed_turn = notification(&raw)
+            .map(|(method, _)| method == "turn/completed")
+            .unwrap_or(false);
+        let (thread_id, turn_id) = self.canonical_context();
+        let canonical = canonicalize_codex_chat_events(events, &thread_id, turn_id.as_deref());
+        if completed_turn {
+            self.active_turn_id = None;
+        }
+        canonical
     }
 
     async fn transition_state(
@@ -414,14 +501,18 @@ impl HarnessEventAdapter for CodexAdapter {
         if let Some(speed) = req.speed {
             cfg.speed = Some(speed);
         }
-        Ok(HarnessControlOutcome::event(DriverEvent::TextChunk {
-            stream: TextStream::System,
-            chunk: format!(
-                "runtime options updated for next Codex turn: {}",
-                req.summary()
-            ),
-            seq: self.seqs.next_text(TextStream::System),
-        }))
+        if self.canonical_chat {
+            Ok(HarnessControlOutcome::default())
+        } else {
+            Ok(HarnessControlOutcome::event(DriverEvent::TextChunk {
+                stream: TextStream::System,
+                chunk: format!(
+                    "runtime options updated for next Codex turn: {}",
+                    req.summary()
+                ),
+                seq: self.seqs.next_text(TextStream::System),
+            }))
+        }
     }
 
     fn runtime_options_catalog_rpc(&self) -> Option<RuntimeOptionsCatalogRpc> {
@@ -489,6 +580,178 @@ impl HarnessEventAdapter for CodexAdapter {
         line.contains("codex_core_skills::loader")
             && line.contains("icon path must not contain '..'")
     }
+}
+
+fn provider_runtime_event(
+    provider: &str,
+    thread_id: String,
+    turn_id: Option<String>,
+    item_id: Option<String>,
+    kind: ProviderRuntimeEventKind,
+) -> Box<ProviderRuntimeEvent> {
+    Box::new(ProviderRuntimeEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        provider: provider.to_string(),
+        thread_id,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        turn_id,
+        item_id,
+        request_id: None,
+        provider_refs: None,
+        raw: None,
+        kind,
+    })
+}
+
+fn canonicalize_codex_chat_events(
+    events: Vec<DriverEvent>,
+    thread_id: &str,
+    turn_id: Option<&str>,
+) -> Vec<DriverEvent> {
+    let failed = events.iter().find_map(|event| match event {
+        DriverEvent::RunFail { error_markdown, .. } => Some(error_markdown.clone()),
+        _ => None,
+    });
+    let mut normalized = Vec::new();
+    for event in events {
+        let canonical = match &event {
+            DriverEvent::TextChunk {
+                stream,
+                chunk,
+                seq: _,
+            } => {
+                let stream_kind = match stream {
+                    TextStream::Assistant => "assistant_text",
+                    TextStream::System => "reasoning_text",
+                    TextStream::Stdout => "command_output",
+                    TextStream::Stderr => "tool_output",
+                    TextStream::User => {
+                        normalized.push(event);
+                        continue;
+                    }
+                };
+                Some(ProviderRuntimeEventKind::ContentDelta(
+                    ProviderContentDeltaPayload {
+                        stream_kind: stream_kind.to_string(),
+                        delta: chunk.clone(),
+                        content_index: None,
+                        summary_index: None,
+                    },
+                ))
+            }
+            DriverEvent::ToolCall {
+                call_id,
+                name,
+                args,
+                seq: _,
+            } => {
+                normalized.push(DriverEvent::ProviderRuntime {
+                    event: provider_runtime_event(
+                        "codex",
+                        thread_id.to_string(),
+                        turn_id.map(str::to_string),
+                        Some(call_id.clone()),
+                        ProviderRuntimeEventKind::ItemStarted(ProviderItemLifecyclePayload {
+                            item_type: name.clone(),
+                            status: Some("inProgress".into()),
+                            title: Some(name.clone()),
+                            detail: None,
+                            data: Some(json!({ "toolName": name, "input": args })),
+                        }),
+                    ),
+                });
+                None
+            }
+            DriverEvent::ToolResult {
+                call_id,
+                ok,
+                output,
+                seq: _,
+            } => {
+                normalized.push(DriverEvent::ProviderRuntime {
+                    event: provider_runtime_event(
+                        "codex",
+                        thread_id.to_string(),
+                        turn_id.map(str::to_string),
+                        Some(call_id.clone()),
+                        ProviderRuntimeEventKind::ItemCompleted(ProviderItemLifecyclePayload {
+                            item_type: "tool_call".into(),
+                            status: Some(if *ok { "completed" } else { "failed" }.into()),
+                            title: Some("Tool".into()),
+                            detail: None,
+                            data: Some(json!({ "output": output, "ok": ok })),
+                        }),
+                    ),
+                });
+                None
+            }
+            DriverEvent::AgentTurnComplete { .. } => {
+                normalized.push(DriverEvent::ProviderRuntime {
+                    event: provider_runtime_event(
+                        "codex",
+                        thread_id.to_string(),
+                        turn_id.map(str::to_string),
+                        None,
+                        ProviderRuntimeEventKind::TurnCompleted(ProviderTurnCompletedPayload {
+                            state: if failed.is_some() {
+                                "failed".into()
+                            } else {
+                                "completed".into()
+                            },
+                            stop_reason: None,
+                            usage: None,
+                            model_usage: None,
+                            total_cost_usd: None,
+                            error_message: failed.clone(),
+                        }),
+                    ),
+                });
+                normalized.push(event);
+                None
+            }
+            DriverEvent::DriverError { fatal, message } => {
+                normalized.push(DriverEvent::ProviderRuntime {
+                    event: provider_runtime_event(
+                        "codex",
+                        thread_id.to_string(),
+                        turn_id.map(str::to_string),
+                        None,
+                        ProviderRuntimeEventKind::RuntimeError(ProviderDiagnosticPayload {
+                            message: Some(message.clone()),
+                            class: Some(if *fatal {
+                                "transport_error".into()
+                            } else {
+                                "provider_error".into()
+                            }),
+                            detail: None,
+                            rate_limits: None,
+                        }),
+                    ),
+                });
+                if *fatal {
+                    normalized.push(event);
+                }
+                None
+            }
+            DriverEvent::RunComplete { .. } | DriverEvent::RunFail { .. } => None,
+            _ => {
+                normalized.push(event);
+                None
+            }
+        };
+        if let Some(kind) = canonical {
+            normalized.push(DriverEvent::ProviderRuntime {
+                event: provider_runtime_event(
+                    "codex",
+                    thread_id.to_string(),
+                    turn_id.map(str::to_string),
+                    None,
+                    kind,
+                ),
+            });
+        }
+    }
+    normalized
 }
 
 fn default_auto_start_turn() -> bool {
@@ -1455,6 +1718,41 @@ mod tests {
             matches!(event, DriverEvent::RunComplete { summary: None }),
             "expected RunComplete with no fabricated summary, got {event:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn chat_turn_completion_is_normalized_without_ending_the_session() {
+        let mut adapter = CodexAdapter::new_chat();
+        adapter.thread_id = Some("thread-chat".into());
+        adapter.active_turn_id = Some("turn-chat".into());
+
+        let events = adapter
+            .parse_event(json!({
+                "jsonrpc": "2.0",
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-chat",
+                    "turn": { "id": "turn-chat", "status": "completed" }
+                }
+            }))
+            .await;
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            DriverEvent::ProviderRuntime { event }
+                if event.thread_id == "thread-chat"
+                    && event.turn_id.as_deref() == Some("turn-chat")
+                    && matches!(event.kind, ProviderRuntimeEventKind::TurnCompleted(ref payload) if payload.state == "completed")
+        )));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, DriverEvent::AgentTurnComplete { .. })));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            DriverEvent::RunComplete { .. } | DriverEvent::RunFail { .. }
+        )));
+        assert!(!adapter.terminal_emitted());
+        assert!(adapter.active_turn_id.is_none());
     }
 
     #[tokio::test]

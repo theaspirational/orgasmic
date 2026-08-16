@@ -48,8 +48,8 @@ use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::addressing::{
-    compatibility_worker_id, resolve_address_governance, validate_address_harness_args,
-    validate_supported_pair,
+    compatibility_worker_id, dispatch_chat_provider, resolve_address_governance,
+    validate_address_harness_args, validate_supported_pair,
 };
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
@@ -795,6 +795,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/skills", get(get_skills))
         .route("/skills/:id", get(get_skill))
         .route("/manager/launch", post(post_manager_launch))
+        .route("/manager/chat/launch", post(post_manager_chat_launch))
         .route("/manager/action", post(post_manager_action))
         .route("/manager/register", post(post_manager_register_http))
         .route("/manager/wake", post(post_manager_wake))
@@ -807,6 +808,7 @@ pub fn router(state: ApiState) -> Router {
             post(post_manager_tier).get(get_manager_tier),
         )
         .route("/managers/drivers", get(get_manager_drivers))
+        .route("/managers/chat-catalog", get(get_manager_chat_catalog))
         .route("/tmux/:run_id/attach", get(stub("TASK-007")))
         .route("/question", post(post_question))
         .route("/question/:id/answer", post(post_question_answer))
@@ -3010,6 +3012,20 @@ pub struct ManagerLaunchResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ManagerChatLaunchRequest {
+    pub project_id: String,
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub access: Option<String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ManagerActionRequest {
     #[serde(default)]
     pub ty: Option<String>,
@@ -3044,6 +3060,15 @@ fn manager_external_harness(harness: &str) -> bool {
     harness.trim().eq_ignore_ascii_case("external")
 }
 
+fn chat_access_supported(provider: &str, access: &str) -> bool {
+    match provider {
+        "codex" => matches!(access, "auto-accept-edits" | "auto" | "full-access"),
+        "claude" => matches!(access, "auto" | "full-access"),
+        "opencode" => access == "full-access",
+        _ => false,
+    }
+}
+
 struct ManagerLaunchIds {
     task_id: String,
     session_file: String,
@@ -3065,6 +3090,17 @@ fn manager_launch_ids(
     now: chrono::DateTime<Utc>,
 ) -> ManagerLaunchIds {
     let stamp = now.format("%Y%m%dT%H%M%S");
+    if harness.trim().to_ascii_lowercase().starts_with("chat-") {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        return ManagerLaunchIds {
+            // Chat providers still contend on the project's one manager lease.
+            task_id: format!("manager.launch:{project_id}"),
+            // A released chat is immediately restartable. The UUID prevents a
+            // same-second restart from appending a new run at sequence zero to
+            // the previous conversation's JSONL.
+            session_file: format!("manager-{project_id}-{stamp}-chat-{id}.jsonl"),
+        };
+    }
     if !manager_terminal_harness(harness) {
         let session_file = if manager_external_harness(harness) {
             // External presence runs share the real manager lease, but never
@@ -3174,6 +3210,115 @@ async fn post_manager_launch(
         )
         .await
         .map_err(|e| supervisor_acquire_error("manager launch", e))?;
+
+    Ok(Json(ManagerLaunchResponse {
+        run_id: acquire.run_id,
+    }))
+}
+
+/// Launch a reusable RunDock Chat conversation without changing the worker
+/// driver registry. Claude uses the Agent SDK host, OpenCode its HTTP/SSE SDK,
+/// and Codex the existing app-server client wrapped in the same canonical
+/// provider-event vocabulary.
+async fn post_manager_chat_launch(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerChatLaunchRequest>,
+) -> Result<Json<ManagerLaunchResponse>, ApiError> {
+    let provider = req.provider.trim().to_ascii_lowercase();
+    let driver = orgasmic_drivers::chat_driver(&provider).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unsupported Chat provider '{}'; expected codex, claude, or opencode",
+            req.provider
+        ))
+    })?;
+    let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
+    let project = snap
+        .projects
+        .get(&req.project_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
+    drop(snap);
+
+    let access = match req.access.as_deref().unwrap_or("full-access") {
+        "supervised" | "auto-accept-edits" | "auto" | "full-access" => {
+            req.access.unwrap_or_else(|| "full-access".into())
+        }
+        value => {
+            return Err(ApiError::bad_request(format!(
+                "unsupported Chat access mode '{value}'"
+            )));
+        }
+    };
+    if !chat_access_supported(&provider, &access) {
+        return Err(ApiError::bad_request(format!(
+            "Chat access mode '{access}' is not supported by the {provider} runtime"
+        )));
+    }
+    let service_tier = match req.service_tier.as_deref() {
+        None | Some("") | Some("standard") => None,
+        Some("fast") => Some("fast".to_string()),
+        Some(value) => {
+            return Err(ApiError::bad_request(format!(
+                "unsupported Chat service tier '{value}'"
+            )));
+        }
+    };
+    let sandbox_permissions = match access.as_str() {
+        "supervised" => {
+            "allow_exec=false,allow_patch=false,allow_network=false,allow_writes_outside_cwd=false"
+        }
+        "auto-accept-edits" => {
+            "allow_exec=false,allow_patch=true,allow_network=false,allow_writes_outside_cwd=false"
+        }
+        "auto" => {
+            "allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false"
+        }
+        _ => "allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true",
+    };
+    let speed = service_tier.as_ref().map(|_| "fast");
+
+    let driver_config = DriverConfig::from_value(json!({
+        "cwd": project.root.clone(),
+        "auto_start_turn": false,
+        "model": verbatim_optional(req.model),
+        "reasoning_effort": verbatim_optional(req.effort),
+        "access": access,
+        "service_tier": service_tier,
+        "speed": speed,
+        "sandbox_permissions": sandbox_permissions,
+    }));
+    driver
+        .validate(&driver_config)
+        .map_err(|error| driver_validate_error("chat", &provider, error))?;
+
+    let ids = manager_launch_ids(&req.project_id, &format!("chat-{provider}"), Utc::now());
+    let session_path = project_sessions_dir(&project.root).join(ids.session_file);
+    let acquire = state
+        .supervisor
+        .acquire(
+            driver.as_ref(),
+            AcquireRequest {
+                task_id: ids.task_id,
+                kind: RunKind::Worker,
+                worker_id: "manager".into(),
+                role: "manager".into(),
+                project_id: Some(req.project_id),
+                worktree: Some(project.root),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                session_path,
+                driver_config,
+                stall_timeout_secs: Some(0),
+                max_run_duration_secs: Some(0),
+                idle_timeout_secs: None,
+                applicable_states: Vec::new(),
+                max_iterations: None,
+                planned_identity: None,
+            },
+        )
+        .await
+        .map_err(|error| supervisor_acquire_error("Chat launch", error))?;
 
     Ok(Json(ManagerLaunchResponse {
         run_id: acquire.run_id,
@@ -4229,6 +4374,32 @@ pub struct ManagerDriversResponse {
     pub drivers: Vec<ManagerDriverProfile>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagerChatCatalogModel {
+    pub id: String,
+    pub label: String,
+    pub legacy: bool,
+    pub reasoning_efforts: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerChatCatalogProvider {
+    pub id: String,
+    pub source: String,
+    pub models: Vec<ManagerChatCatalogModel>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerChatCatalogResponse {
+    pub providers: Vec<ManagerChatCatalogProvider>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ManagerChatCatalogQuery {
+    pub project: Option<String>,
+}
+
 /// Driver-adaptive launcher catalog (dec_029): every supported `(mode, harness)`
 /// pair plus whether its CLI binary is installed, so the UI can offer the same
 /// "choose driver, then start" affordance HAR exposes in its board-manager drawer.
@@ -4249,6 +4420,216 @@ async fn get_manager_drivers() -> Json<ManagerDriversResponse> {
         })
         .collect();
     Json(ManagerDriversResponse { drivers })
+}
+
+async fn get_manager_chat_catalog(
+    State(state): State<ApiState>,
+    Query(query): Query<ManagerChatCatalogQuery>,
+) -> Result<Json<ManagerChatCatalogResponse>, ApiError> {
+    let (project_id, snap) = ensure_loaded_snapshot(&state, query.project.as_deref()).await?;
+    let cwd = snap
+        .projects
+        .get(&project_id)
+        .map(|project| project.root.clone())
+        .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
+    let (codex_result, claude, opencode) = tokio::join!(
+        probe_codex_chat_catalog(&state),
+        probe_sdk_chat_catalog("claude", &cwd),
+        probe_sdk_chat_catalog("opencode", &cwd),
+    );
+    let codex = match codex_result {
+        Ok(catalog) => ManagerChatCatalogProvider {
+            id: "codex".to_string(),
+            source: catalog.source,
+            models: catalog
+                .models
+                .into_iter()
+                .map(|model| ManagerChatCatalogModel {
+                    id: model.id,
+                    label: model.label,
+                    legacy: false,
+                    reasoning_efforts: model.reasoning_efforts,
+                })
+                .collect(),
+            message: None,
+        },
+        Err(message) => ManagerChatCatalogProvider {
+            id: "codex".to_string(),
+            source: "codex-app-server:model/list".to_string(),
+            models: Vec::new(),
+            message: Some(message),
+        },
+    };
+    Ok(Json(ManagerChatCatalogResponse {
+        providers: vec![codex, claude, opencode],
+    }))
+}
+
+async fn probe_codex_chat_catalog(state: &ApiState) -> Result<RuntimeOptionsCatalog, String> {
+    let driver = crate::driver_resolution::resolve_driver("stdio", "codex")
+        .ok_or_else(|| "Codex native driver is unavailable".to_string())?;
+    let probe_id = format!("chat-catalog-probe-{}", uuid::Uuid::new_v4().simple());
+    let context = DriverContext {
+        identity: RuntimeIdentity::new(probe_id.clone(), state.boot.boot_id.clone()),
+        run_kind: RunKind::Worker,
+        task_id: probe_id.clone(),
+        worker_id: probe_id,
+        project_id: None,
+        worktree: None,
+    };
+    let config = DriverConfig::from_value(json!({
+        "auto_start_turn": false,
+        "catalog_probe": true,
+    }));
+    let mut session = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        driver.acquire(context, config),
+    )
+    .await
+    .map_err(|_| "Codex model catalog probe timed out".to_string())?
+    .map_err(|error| format!("Codex model catalog probe failed: {error}"))?;
+    let catalog = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        session.control.runtime_options_catalog(),
+    )
+    .await
+    .map_err(|_| "Codex model/list timed out".to_string())?
+    .map_err(|error| format!("Codex model/list failed: {error}"));
+    let _ = session.control.release("catalog probe complete").await;
+    if let Some(mut producer) = session.producer.take() {
+        if tokio::time::timeout(std::time::Duration::from_secs(2), &mut producer)
+            .await
+            .is_err()
+        {
+            producer.abort();
+        }
+    }
+    catalog
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SdkChatCatalogModel {
+    id: String,
+    label: String,
+    #[serde(default)]
+    legacy: bool,
+    #[serde(default)]
+    reasoning_efforts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SdkChatCatalog {
+    id: String,
+    source: String,
+    #[serde(default)]
+    models: Vec<SdkChatCatalogModel>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+async fn probe_sdk_chat_catalog(provider: &str, cwd: &FsPath) -> ManagerChatCatalogProvider {
+    let unavailable = |message: String| ManagerChatCatalogProvider {
+        id: provider.to_string(),
+        source: format!("{provider}-sdk"),
+        models: Vec::new(),
+        message: Some(message),
+    };
+    let invocation = match orgasmic_drivers::provider_host_invocation() {
+        Ok(invocation) => invocation,
+        Err(error) => return unavailable(error),
+    };
+    let mut command = tokio::process::Command::new(invocation.binary);
+    command.args(invocation.leading_args).args([
+        "catalog",
+        "--provider",
+        provider,
+        "--cwd",
+        &cwd.display().to_string(),
+    ]);
+    let output =
+        match tokio::time::timeout(std::time::Duration::from_secs(35), command.output()).await {
+            Err(_) => return unavailable(format!("{provider} SDK catalog probe timed out")),
+            Ok(Err(error)) => {
+                return unavailable(format!("{provider} SDK catalog probe failed: {error}"));
+            }
+            Ok(Ok(output)) => output,
+        };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return unavailable(if stderr.is_empty() {
+            format!("{provider} SDK catalog probe exited with {}", output.status)
+        } else {
+            stderr
+        });
+    }
+    let catalog: SdkChatCatalog = match serde_json::from_slice(&output.stdout) {
+        Ok(catalog) => catalog,
+        Err(error) => {
+            return unavailable(format!("invalid {provider} SDK catalog response: {error}"));
+        }
+    };
+    ManagerChatCatalogProvider {
+        id: catalog.id,
+        source: catalog.source,
+        models: catalog
+            .models
+            .into_iter()
+            .map(|model| ManagerChatCatalogModel {
+                id: model.id,
+                label: model.label,
+                legacy: model.legacy,
+                reasoning_efforts: model.reasoning_efforts,
+            })
+            .collect(),
+        message: catalog.message,
+    }
+}
+
+#[cfg(test)]
+fn claude_chat_models(version: &str) -> Vec<ManagerChatCatalogModel> {
+    let common = &["low", "medium", "high", "xhigh", "max"];
+    let standard = &["low", "medium", "high", "max"];
+    let mut models = Vec::new();
+    let mut push = |id: &str, label: &str, legacy: bool, efforts: &[&str]| {
+        models.push(ManagerChatCatalogModel {
+            id: id.to_string(),
+            label: label.to_string(),
+            legacy,
+            reasoning_efforts: efforts.iter().map(|value| (*value).to_string()).collect(),
+        });
+    };
+    if version_at_least(version, (2, 1, 169)) {
+        push("claude-fable-5", "Claude Fable 5", false, common);
+    }
+    if version_at_least(version, (2, 1, 219)) {
+        push("claude-opus-5", "Claude Opus 5", false, common);
+    }
+    push("claude-sonnet-5", "Claude Sonnet 5", false, common);
+    if version_at_least(version, (2, 1, 154)) {
+        push("claude-opus-4-8", "Claude Opus 4.8", true, common);
+    }
+    if version_at_least(version, (2, 1, 111)) {
+        push("claude-opus-4-7", "Claude Opus 4.7", true, common);
+    }
+    push("claude-opus-4-6", "Claude Opus 4.6", true, standard);
+    push("claude-opus-4-5", "Claude Opus 4.5", true, standard);
+    push("claude-sonnet-4-6", "Claude Sonnet 4.6", true, standard);
+    push("claude-haiku-4-5", "Claude Haiku 4.5", true, &[]);
+    models
+}
+
+#[cfg(test)]
+fn version_at_least(version: &str, minimum: (u64, u64, u64)) -> bool {
+    let mut parts = version
+        .split('.')
+        .filter_map(|part| part.parse::<u64>().ok());
+    let parsed = (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    );
+    parsed >= minimum
 }
 
 async fn post_question(Json(body): Json<Value>) -> Json<Value> {
@@ -4604,6 +4985,60 @@ struct StageWorker {
     sandbox_permissions: Option<SandboxAllowlist>,
     /// Extra argv appended verbatim to the harness CLI (`:HARNESS_ARGS:`).
     harness_args: Vec<String>,
+}
+
+fn canonical_dispatch_runtime_requested(runtime: Option<&str>) -> Result<bool, ApiError> {
+    match runtime.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("legacy") => Ok(false),
+        Some("canonical_chat") => Ok(true),
+        Some(value) => Err(ApiError::bad_request(format!(
+            "unknown dispatch runtime '{value}'; expected canonical_chat or legacy"
+        ))),
+    }
+}
+
+fn canonicalize_dispatch_worker(mut worker: StageWorker) -> StageWorker {
+    let Some(provider) =
+        dispatch_chat_provider(&worker.driver, &worker.harness, &worker.harness_args)
+    else {
+        return worker;
+    };
+    worker.driver = "stdio".to_string();
+    worker.harness = match provider {
+        "codex" => "codex-chat",
+        "claude" => "claude-sdk",
+        "opencode" => "opencode",
+        _ => unreachable!("dispatch_chat_provider returned an unknown provider"),
+    }
+    .to_string();
+    worker.harness_args.clear();
+    worker.id = compatibility_worker_id(worker.kind, &worker.driver, &worker.harness);
+    worker
+}
+
+fn canonical_runtime_provider_address(driver: &str, harness: &str) -> Option<&'static str> {
+    match (driver, harness) {
+        ("stdio", "codex-chat") => Some("codex"),
+        ("stdio", "claude-sdk") => Some("claude"),
+        ("stdio", "opencode") => Some("opencode"),
+        _ => None,
+    }
+}
+
+fn canonical_runtime_provider(worker: &StageWorker) -> Option<&'static str> {
+    canonical_runtime_provider_address(&worker.driver, &worker.harness)
+}
+
+fn resolve_persisted_run_driver(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
+    canonical_runtime_provider_address(mode, harness)
+        .and_then(orgasmic_drivers::chat_driver)
+        .or_else(|| resolve_driver(mode, harness))
+}
+
+fn resolve_worker_launch_driver(worker: &StageWorker) -> Option<Box<dyn WorkerDriver>> {
+    canonical_runtime_provider(worker)
+        .and_then(orgasmic_drivers::chat_driver)
+        .or_else(|| resolve_launch_driver(&worker.driver, &worker.harness))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -5136,6 +5571,22 @@ fn stage_driver_config_with_overrides(
         "prompt_bundle_text": bundle,
         "sandbox_permissions": sandbox_allowlist_to_csv(&resolved_sandbox),
     });
+    if canonical_runtime_provider(worker).is_some() {
+        if let Some(map) = config.as_object_mut() {
+            // The compiled bundle is delivered through Supervisor::send_input
+            // after acquire for all three canonical providers. Codex otherwise
+            // auto-starts from prompt_bundle_text and would run it twice.
+            map.insert("auto_start_turn".to_string(), json!(false));
+            map.insert(
+                "access".to_string(),
+                json!(if resolved_sandbox == SandboxAllowlist::default() {
+                    "full-access"
+                } else {
+                    "supervised"
+                }),
+            );
+        }
+    }
     if let Some(secs) = tmux_input_ready_timeout_secs {
         if let Some(map) = config.as_object_mut() {
             map.insert("input_ready_timeout".to_string(), json!(secs));
@@ -5194,6 +5645,12 @@ fn apply_driver_defaults(
 #[derive(Debug, Deserialize)]
 struct DispatchRequest {
     pub kind: String,
+    /// `canonical_chat` is emitted by current CLI clients. Keeping this
+    /// additive and optional lets old API callers retain the legacy transport
+    /// they explicitly addressed while every new CLI dispatch gets the shared
+    /// RunDock Chat runtime.
+    #[serde(default)]
+    pub runtime: Option<String>,
     /// Transport mode from `orgasmic_drivers::SUPPORTED` (routing authority).
     pub mode: String,
     /// Harness from `orgasmic_drivers::SUPPORTED` (routing authority).
@@ -5341,7 +5798,7 @@ async fn spawn_worker_run(
         });
     }
 
-    let Some(driver) = resolve_launch_driver(&worker.driver, &worker.harness) else {
+    let Some(driver) = resolve_worker_launch_driver(&worker) else {
         return Err(SpawnWorkerFailure {
             error: ApiError::bad_request(format!(
                 "unsupported driver/harness pair {}/{}",
@@ -5498,6 +5955,45 @@ async fn spawn_worker_run(
     // hint (the wrapper outlives the worker), and the precise child pid is
     // resolved off the hot path below for observability.
     let pid = acquire.pid.unwrap_or(0);
+
+    if canonical_runtime_provider(&worker).is_some() {
+        let input = state
+            .supervisor
+            .send_input(&acquire.run_id, req.bundle.to_string(), &acquire.identity)
+            .await;
+        let initial_prompt_error = match input {
+            Ok(ack) if ack.accepted => None,
+            Ok(ack) => Some(ApiError::internal(format!(
+                "{}/{} rejected the compiled dispatch prompt{}",
+                worker.driver,
+                worker.harness,
+                ack.message
+                    .as_deref()
+                    .map(|message| format!(": {message}"))
+                    .unwrap_or_default()
+            ))),
+            Err(error) => Some(supervisor_control_error("dispatch initial prompt", error)),
+        };
+        if let Some(error) = initial_prompt_error {
+            if let Err(release_error) = state
+                .supervisor
+                .release(
+                    &acquire.run_id,
+                    "canonical dispatch prompt delivery failed",
+                    ReleaseOutcome::Failed,
+                )
+                .await
+            {
+                tracing::error!(
+                    run_id = %acquire.run_id,
+                    error = %release_error,
+                    "failed to release canonical dispatch after prompt delivery failure"
+                );
+            }
+            return Err(SpawnWorkerFailure { error });
+        }
+    }
+
     if req.origin == "cli_dispatch" {
         if let Some(wrapper_pid) = acquire.pid.filter(|p| *p != 0) {
             let run_id = acquire.run_id.clone();
@@ -5533,6 +6029,7 @@ async fn post_task_dispatch(
     Json(req): Json<DispatchRequest>,
 ) -> Result<Json<DispatchResponse>, ApiError> {
     let kind = DispatchEndpointKind::from_str(&req.kind)?;
+    let canonical_chat = canonical_dispatch_runtime_requested(req.runtime.as_deref())?;
     validate_dispatch_path("brief_path", &req.brief_path)?;
     validate_dispatch_path("worktree_path", &req.worktree_path)?;
     validate_dispatch_path("last_path", &req.last_path)?;
@@ -5557,6 +6054,11 @@ async fn post_task_dispatch(
         &state.dispatch_governance,
         req.governance.as_ref(),
     )?;
+    let worker_for_bundle = if canonical_chat {
+        canonicalize_dispatch_worker(worker_for_bundle)
+    } else {
+        worker_for_bundle
+    };
     if let Some(skill) = worker_for_bundle.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
@@ -6679,6 +7181,9 @@ async fn record_dispatch_started(
             dispatch_expected_next(record.kind).to_string(),
         ),
     ];
+    if let Some(runtime) = non_empty_field(record.req.runtime.clone()) {
+        extra.push(("RUNTIME".to_string(), runtime));
+    }
     // Raw argv preserved as a JSON array string — never shell-joined (dec_WDR5K item 4).
     if !record.req.harness_args.is_empty() {
         extra.push((
@@ -10572,7 +11077,7 @@ async fn execute_run_recover_action(
                             "recovery address unavailable; supply mode+harness/start fresh",
                         )
                     })?;
-                let driver = resolve_driver(&mode, &harness).ok_or_else(|| {
+                let driver = resolve_persisted_run_driver(&mode, &harness).ok_or_else(|| {
                     ApiError::bad_request(format!(
                         "unsupported recovery mode/harness pair {mode}/{harness}"
                     ))
@@ -12980,7 +13485,7 @@ fn session_driver(
     _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
     if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
-        if let Some(driver) = resolve_driver(&mode, &harness) {
+        if let Some(driver) = resolve_persisted_run_driver(&mode, &harness) {
             return Some((driver, format!("{mode}/{harness}")));
         }
         // A recorded address the registry no longer knows — the pre-TASK-XCJYC
@@ -19599,6 +20104,27 @@ pub(crate) mod tests {
     >;
 
     #[test]
+    fn chat_catalog_version_comparison_handles_patch_thresholds() {
+        assert!(version_at_least("2.1.219", (2, 1, 219)));
+        assert!(version_at_least("2.2.0", (2, 1, 219)));
+        assert!(!version_at_least("2.1.218", (2, 1, 219)));
+        assert!(!version_at_least("unknown", (2, 1, 1)));
+    }
+
+    #[test]
+    fn claude_chat_catalog_is_version_gated() {
+        let older = claude_chat_models("2.1.168");
+        assert!(!older.iter().any(|model| model.id == "claude-fable-5"));
+        assert!(!older.iter().any(|model| model.id == "claude-opus-5"));
+        assert!(older.iter().any(|model| model.id == "claude-sonnet-5"));
+
+        let current = claude_chat_models("2.1.233");
+        assert!(current.iter().any(|model| model.id == "claude-fable-5"));
+        assert!(current.iter().any(|model| model.id == "claude-opus-5"));
+        assert!(current.iter().any(|model| model.legacy));
+    }
+
+    #[test]
     fn org_file_rewrite_refuses_tx_ledger_paths() {
         reject_ledger_rewrite(FsPath::new(".orgasmic/tx/2026-08.org"))
             .expect_err("tx ledger rewrite must be refused");
@@ -24791,6 +25317,28 @@ pub(crate) mod tests {
         assert_eq!(recovered.transport, "tmux");
     }
 
+    #[test]
+    fn same_second_chat_restart_gets_a_fresh_session_file() {
+        let stamp = launch_stamp();
+        let first = manager_launch_ids("proj", "chat-claude", stamp);
+        let second = manager_launch_ids("proj", "chat-claude", stamp);
+
+        assert_eq!(first.task_id, "manager.launch:proj");
+        assert_eq!(second.task_id, first.task_id);
+        assert_ne!(second.session_file, first.session_file);
+    }
+
+    #[test]
+    fn chat_access_modes_match_headless_provider_capabilities() {
+        assert!(chat_access_supported("codex", "auto-accept-edits"));
+        assert!(chat_access_supported("codex", "auto"));
+        assert!(!chat_access_supported("codex", "supervised"));
+        assert!(chat_access_supported("claude", "auto"));
+        assert!(!chat_access_supported("claude", "auto-accept-edits"));
+        assert!(chat_access_supported("opencode", "full-access"));
+        assert!(!chat_access_supported("opencode", "auto"));
+    }
+
     // orgasmic:TASK-7QM8M
     // ---------------------------------------------------------------------
     // Boot reattach reads a bounded prefix + tail per session file instead of
@@ -27475,6 +28023,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn canonical_dispatch_runtime_rewrites_provider_addresses_for_rundock_chat() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "tmux",
+            "claude",
+            Vec::new(),
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap();
+
+        let worker = canonicalize_dispatch_worker(worker);
+
+        assert_eq!(worker.driver, "stdio");
+        assert_eq!(worker.harness, "claude-sdk");
+        assert_eq!(worker.id, "implementer-claude-sdk-stdio");
+        assert_eq!(canonical_runtime_provider(&worker), Some("claude"));
+    }
+
+    #[test]
+    fn unknown_dispatch_runtime_is_rejected_instead_of_silently_downgrading() {
+        assert!(!canonical_dispatch_runtime_requested(None).unwrap());
+        assert!(canonical_dispatch_runtime_requested(Some("canonical_chat")).unwrap());
+        let error = canonical_dispatch_runtime_requested(Some("future-runtime")).unwrap_err();
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(error.message.contains("future-runtime"));
+    }
+
+    #[test]
     fn context_budget_chars_enforces_character_limit_not_token_estimate() {
         let err = enforce_context_budget_chars(101, Some(100), "dispatch").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
@@ -28126,6 +28707,50 @@ pub(crate) mod tests {
         assert_eq!(cfg.0["reasoning_effort"], "xhigh");
         assert!(cfg.0.get("effort").is_none());
         assert_eq!(cfg.0["prompt_bundle_text"], "brief");
+    }
+
+    #[test]
+    fn canonical_dispatch_config_defers_the_first_turn_and_preserves_sandbox() {
+        let worker = StageWorker {
+            id: "implementer-claude-sdk-stdio".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: "stdio".to_string(),
+            harness: "claude-sdk".to_string(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let task = SandboxAllowlist {
+            allow_exec: true,
+            allow_patch: true,
+            allow_network: false,
+            allow_writes_outside_cwd: false,
+        };
+
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            None,
+            "compiled brief",
+            DriverOverrides::default(),
+            Some(&task),
+            &DriverDefaults::default(),
+            None,
+        );
+
+        assert_eq!(cfg.0["auto_start_turn"], false);
+        assert_eq!(cfg.0["access"], "supervised");
+        assert_eq!(
+            cfg.0["sandbox_permissions"],
+            "allow_exec=true,allow_patch=true,allow_network=false,allow_writes_outside_cwd=false"
+        );
     }
 
     #[test]

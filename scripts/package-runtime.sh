@@ -61,6 +61,22 @@ derive_target_key() {
     esac
 }
 
+provider_host_target() {
+    local triple="$1"
+    case "$triple" in
+        aarch64-apple-darwin) echo "bun-darwin-arm64" ;;
+        x86_64-apple-darwin) echo "bun-darwin-x64" ;;
+        x86_64-unknown-linux-*) echo "bun-linux-x64-baseline" ;;
+        aarch64-unknown-linux-*) echo "bun-linux-arm64" ;;
+        x86_64-pc-windows-*) echo "bun-windows-x64-baseline" ;;
+        aarch64-pc-windows-*) echo "bun-windows-arm64" ;;
+        *)
+            echo "unsupported provider-host target: $triple" >&2
+            return 1
+            ;;
+    esac
+}
+
 if [[ -z "$TARGET_TRIPLE" ]]; then
     TARGET_TRIPLE="$(rustc -Vv | awk '/^host:/ {print $2}')"
 fi
@@ -149,6 +165,22 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-runtime.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/bin" "$STAGE/docs"
 cp "$BIN" "$STAGE/bin/orgasmic$EXE"
+
+# RunDock Chat mirrors T3 Code's SDK boundary in a compact standalone host:
+# Claude Agent SDK and OpenCode SDK are bundled into this sidecar, while the
+# authenticated `claude` and `opencode` executables remain user-owned. The
+# resulting runtime keeps the ordinary installer free of Node/npm requirements.
+if ! command -v bun >/dev/null 2>&1; then
+    echo "error: bun is required to compile the Chat provider SDK host" >&2
+    exit 1
+fi
+PROVIDER_HOST_TARGET="$(provider_host_target "$TARGET_TRIPLE")"
+mkdir -p "$STAGE/libexec"
+echo "→ building Chat provider SDK host for $PROVIDER_HOST_TARGET"
+bun build "$ROOT/provider-host/src/index.ts" \
+    --compile \
+    --target="$PROVIDER_HOST_TARGET" \
+    --outfile="$STAGE/libexec/orgasmic-provider-host$EXE"
 
 # Optional: re-sign the binary with a stable code-signing identity so macOS keeps
 # file-access (TCC) grants across versions instead of re-prompting on every build.

@@ -39,6 +39,14 @@ function liveCatalog(): RuntimeOptionsCatalog {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   Object.defineProperty(window.HTMLElement.prototype, 'hasPointerCapture', {
     value: () => false,
     configurable: true,
@@ -60,10 +68,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('RuntimeOptionsBar', () => {
-  it('enables Apply when the catalog supports live switching', async () => {
+  it('applies a model immediately when the live catalog supports switching', async () => {
     fetchRunRuntimeOptionsMock.mockResolvedValue({
       run_id: 'run-live',
       catalog: liveCatalog(),
@@ -76,25 +85,42 @@ describe('RuntimeOptionsBar', () => {
 
     render(<RuntimeOptionsBar runId="run-live" />);
 
-    const apply = await screen.findByRole('button', { name: 'Apply' });
-    expect(apply).toBeEnabled();
-
-    fireEvent.click(apply);
+    const picker = await screen.findByRole('button', { name: 'Choose provider and model' });
+    expect(picker).toBeEnabled();
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByText('Fixture B'));
     await waitFor(() => {
       expect(postRunRuntimeOptionsMock).toHaveBeenCalledWith('run-live', {
-        model: 'fixture-a',
-        reasoning_effort: null,
+        model: 'fixture-b',
       });
     });
   });
 
-  it('shows unsupported messaging and disabled Apply when catalog fetch fails', async () => {
+  it('does not fake a reset when the current live provider is clicked', async () => {
+    fetchRunRuntimeOptionsMock.mockResolvedValue({
+      run_id: 'run-live',
+      catalog: liveCatalog(),
+    });
+
+    render(<RuntimeOptionsBar runId="run-live" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose provider and model' }));
+    const currentProvider = await screen.findByRole('button', { name: 'Codex' });
+    expect(currentProvider).toBeDisabled();
+    fireEvent.click(currentProvider);
+
+    expect(postRunRuntimeOptionsMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Choose provider and model' })).toHaveTextContent(
+      'Fixture A',
+    );
+  });
+
+  it('shows fixed-session messaging when catalog fetch fails', async () => {
     fetchRunRuntimeOptionsMock.mockRejectedValue(new Error('capability_unsupported'));
 
     render(<RuntimeOptionsBar runId="run-unsupported" />);
 
-    expect(await screen.findByText(/Live runtime switching is not available/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(await screen.findByText(/Codex options are fixed/)).toBeInTheDocument();
   });
 
   it('disables live controls when catalog lacks live_switching', async () => {
@@ -105,7 +131,6 @@ describe('RuntimeOptionsBar', () => {
 
     render(<RuntimeOptionsBar runId="run-static" />);
 
-    expect(await screen.findByText('Live switch unsupported')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Choose provider and model' })).toBeDisabled();
   });
 });

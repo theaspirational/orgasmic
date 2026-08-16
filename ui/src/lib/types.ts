@@ -479,6 +479,24 @@ export type ManagerDriverProfile = {
   installed: boolean;
 };
 
+export type ManagerChatCatalogModel = {
+  id: string;
+  label: string;
+  legacy: boolean;
+  reasoning_efforts: string[];
+};
+
+export type ManagerChatCatalogProvider = {
+  id: 'codex' | 'claude' | 'opencode';
+  source: string;
+  models: ManagerChatCatalogModel[];
+  message?: string | null;
+};
+
+export type ManagerChatCatalogResponse = {
+  providers: ManagerChatCatalogProvider[];
+};
+
 export type ManagerDriversResponse = {
   drivers: ManagerDriverProfile[];
 };

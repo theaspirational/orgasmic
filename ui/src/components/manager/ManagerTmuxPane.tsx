@@ -1,9 +1,13 @@
+import { Check, Copy } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
+import { toast } from 'sonner';
 import '@xterm/xterm/css/xterm.css';
 
+import { Button } from '@/components/ui/button';
+import { copyText } from '@/lib/clipboard';
 import { transport } from '@/lib/transport';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +24,12 @@ type TmuxPaneServerFrame =
   | { type: 'pane_delta'; text: string }
   | { type: 'pane_full'; text: string }
   | { type: 'error'; message?: string };
+
+function tmuxAttachCommand(runId: string, runtimeId: string): string {
+  const session = `orgasmic-${runId}-${runtimeId}`;
+  // A paste from within tmux otherwise refuses to create a nested client.
+  return `unset TMUX; tmux attach -t '${session.replace(/'/g, `'"'"'`)}'`;
+}
 
 function parseTmuxPaneServerFrame(data: string): TmuxPaneServerFrame | null {
   try {
@@ -58,11 +68,13 @@ function parseTmuxPaneServerFrame(data: string): TmuxPaneServerFrame | null {
  */
 export function ManagerTmuxPane({
   runId,
+  runtimeId,
   onConnectionState,
   onSendReady,
   readOnly = false,
 }: {
   runId: string;
+  runtimeId: string;
   onConnectionState?: (state: TmuxPaneConnectionState) => void;
   onSendReady?: (send: TmuxSendKeys | null) => void;
   readOnly?: boolean;
@@ -74,15 +86,38 @@ export function ManagerTmuxPane({
   const [connState, setConnState] = useState<TmuxPaneConnectionState>('connecting');
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [copied, setCopied] = useState(false);
   /** True when the component is unmounting — suppresses auto-reconnect. */
   const userDetachedRef = useRef(false);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Disposable for xterm onData — replaced on each connectWs call. */
   const onDataRef = useRef<{ dispose: () => void } | null>(null);
 
   // Stable wire encoder so we don't churn one per keystroke.
   const codec = useMemo(() => ({ enc: new TextEncoder() }), []);
+  const attachCommand = useMemo(() => tmuxAttachCommand(runId, runtimeId), [runId, runtimeId]);
+
+  const copyAttachCommand = useCallback(() => {
+    void copyText(attachCommand)
+      .then(() => {
+        setCopied(true);
+        if (copyResetTimerRef.current !== null) clearTimeout(copyResetTimerRef.current);
+        copyResetTimerRef.current = setTimeout(() => {
+          copyResetTimerRef.current = null;
+          setCopied(false);
+        }, 2000);
+      })
+      .catch(() => toast.error('Could not copy tmux attach command'));
+  }, [attachCommand]);
+
+  useEffect(
+    () => () => {
+      if (copyResetTimerRef.current !== null) clearTimeout(copyResetTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     onConnectionState?.(connState);
@@ -334,7 +369,21 @@ export function ManagerTmuxPane({
   return (
     <div className="relative flex h-full min-h-0 flex-col bg-black">
       <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-1.5 font-mono text-xs text-white/60">
-        <span className="truncate">{runId}</span>
+        <code className="min-w-0 flex-1 truncate" title={attachCommand}>
+          {attachCommand}
+        </code>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 shrink-0 gap-1.5 px-2 text-white/70 hover:bg-white/10 hover:text-white"
+          aria-label="Copy tmux attach command"
+          title="Copy tmux attach command"
+          onClick={copyAttachCommand}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
         {readOnly ? (
           <span className="rounded-sm border border-white/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
             read-only

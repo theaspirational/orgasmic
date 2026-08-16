@@ -92,17 +92,24 @@ export function ManagerChatTranscript({
 
   return (
     <Conversation className="h-full min-h-0">
-      <ConversationContent className="min-h-full gap-3 p-4">
+      <ConversationContent className="mx-auto min-h-full w-full max-w-3xl gap-4 px-4 py-6 sm:px-6">
         {detail.error ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <div
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+            role="alert"
+          >
             {detail.error instanceof Error ? detail.error.message : String(detail.error)}
           </div>
         ) : null}
         {parts.length === 0 && !showPending ? (
           <ConversationEmptyState
             className="min-h-48"
-            description="Events will appear here as the driver emits them."
-            title="No transcript events for this run yet"
+            description={
+              detail.loading
+                ? 'Loading the live session and its latest events.'
+                : 'Send a message below to guide the agent. Its work will appear here as it happens.'
+            }
+            title={detail.loading ? 'Connecting to transcript…' : 'Ready for direction'}
           />
         ) : (
           parts.map((part) => <TranscriptPartView key={part.id} part={part} />)
@@ -167,7 +174,18 @@ function TranscriptReasoning({ part }: { part: TranscriptReasoningPart }) {
 export function TranscriptToolCard({ part }: { part: TranscriptToolPart }) {
   const hasInput = hasDisplayValue(part.input);
   const hasOutput = hasDisplayValue(part.output);
-  const title = part.summary ? `${part.label}: ${part.summary}` : part.label || part.name;
+  const isCanonicalActivity = [
+    'command_execution',
+    'file_read',
+    'file_change',
+    'web_search',
+    'agent_task',
+  ].includes(part.name);
+  const title = part.summary
+    ? isCanonicalActivity
+      ? `${part.label} ${part.summary}`
+      : `${part.label}: ${part.summary}`
+    : part.label || part.name;
   return (
     <Tool
       className="mb-0 w-full max-w-[min(760px,95%)] self-start bg-card"

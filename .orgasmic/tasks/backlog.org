@@ -135,29 +135,6 @@ Behavior:
 
 Regression: poll `/api/runs` repeatedly with several records pointing at one pruned worktree and assert zero repeated filesystem reads/warnings after the first classification; remove a board project and assert its watch/index vanish while files remain; simulate temporary disappearance/reappearance and assert one unavailable and one recovered event. Measure warning volume, not only return values.
 
-* BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport    :drivers:research:
-:PROPERTIES:
-:ID: TASK-CM5KV
-:PRIORITY: P2
-:DEPENDS_ON: TASK-XCJYC
-:END:
-
-Evaluate adding the Agent Client Protocol as a real orgasmic transport, once TASK-XCJYC frees the name.
-
-ACP is an open standard from Zed Industries (August 2025, Apache-licensed): JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote (work in progress). It standardises the editor-to-agent boundary; MCP standardises tool access beneath it. Adopted by JetBrains, Google and GitHub, with 25+ agents.
-
-The draw is consolidation. Zed's ACP Registry already lists Claude Agent, Codex, Gemini CLI, OpenCode, Copilot, Cursor and Pi Coding Agent. Orgasmic currently maintains a bespoke adapter per harness — `adapters/claude.rs` (stream-json), `adapters/codex.rs` (app-server), `adapters/cursor_acp.rs`, `adapters/hermes.rs` — each with its own event mapping, session identity story and transcript-finder strategy. One ACP transport could in principle serve several of them through a single event mapping.
-
-Open questions to answer before committing to it:
-1. Does ACP expose what orgasmic's supervisor actually needs — terminal declaration, tool-call visibility, stall signals, and a resumable native session identity? A protocol built for editor UX may not carry the lifecycle facts recovery depends on.
-2. Does an ACP-launched agent still write its vendor-native transcript, or does the adapter layer hide it? The retro contract depends on vendor JSONL existing and being resumable (see dec on transcript ownership).
-3. Is the ACP adapter an extra process between orgasmic and the harness, and what does that mean for the startup preflight (TASK-TJKFC) and for credential handling (TASK-Z8WEJ)?
-4. Would it replace the bespoke adapters or sit alongside them? A fifth transport that duplicates four existing ones is a cost, not a saving.
-
-This is deliberately a research-and-decide task, not an implementation commitment. If the answer is that ACP does not carry orgasmic's lifecycle needs, recording that is a complete and useful result.
-
-Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
-
 * BACKLOG TASK-5M45A Hermes ignores the provider and model a dispatch asks for    :P1:
 :PROPERTIES:
 :ID: TASK-5M45A
@@ -1037,40 +1014,6 @@ differential as a byproduct once the code has matured.
 :END:
 
 From TASK-K4G1D (2026-07-29): the recovery action id 'reattach_tmux' is emitted for rmux runs as well (api.rs:10295 at K4G1D's HEAD; re-locate before acting). Harmless today, actively misleading in exactly the mux-differential investigations K4G1D built the instrument for (TASK-STWVB, TASK-JGHNC). Rename so the action id names the actual mode, keeping any external consumers of the id in mind — grep the UI and shipped conventions for the string before changing it. Injection per TCTTD standard (natural red: an rmux recovery emitting an id that claims tmux).
-
-* BACKLOG TASK-ZKZBF Audit the remaining --property surfaces (node prop, glossary/decision/architecture create, dispatch-close) for the HXSW0 silent-drop shape
-:PROPERTIES:
-:ID: TASK-ZKZBF
-:PRIORITY: P2
-:END:
-
-From TASK-HXSW0 (2026-07-29), which fixed key validation on task create/update
-— the surface all six measured silent-drop instances lived on. The same
-untyped-passthrough shape exists on:
-
-- `node prop set` / `node prop unset`
-- `glossary create --property`
-- `decision create --property`
-- `architecture create --property`
-- `manager dispatch-close --property`
-
-For each surface: determine whether a miscased key is stored-and-never-read
-(the `Heading::property` byte comparison in crates/orgasmic-core/src/org.rs
-makes this the DEFAULT outcome for any drawer-backed key), whether any per-key
-filter drops silently, and whether the key set diverges from a sibling verb.
-
-Reuse `validate_task_property_keys` (api.rs, TASK-HXSW0) where the target is a
-schema-read drawer. NOTE: `dispatch-close --property` writes tx metadata, not a
-node drawer — the same rule may not apply unchanged; decide and state the rule
-for it rather than assuming.
-
-=== Acceptance
-
-- A production-path test per surface asserting a miscased key is refused BY
-  NAME (real binary, drawer read off disk afterwards — the HXSW0 test shape in
-  crates/orgasmic-cli/tests/task_property_silent_drop_cli.rs is the template).
-- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
-  before reporting.
 
 * BACKLOG TASK-TKR0H Guard shipped prose that DENIES a real verb: negative claims about command names must fail when the verb resolves
 :PROPERTIES:
@@ -4609,6 +4552,7 @@ Tracker adapter: .orgasmic/conventions/wayfinder.org (orgasmic IS the tracker; t
 Standing preference: minimize framework overhead; owner wants short plain-language summaries.
 ** Decisions so far
 - tx and state-file dependency inventory (TASK-AP971.4) — [[file:../dispatch-records/tx-20260814-orgasmic-6093/tx-dependency-inventory.md][inventory]]: ~254 touchpoints; recovery_claim.rs has zero (premise corrected — recovery tx logic is in api.rs/manager.rs); top risks: writer one-ledger invariant vs atomic multi-journal appends, dispatch-open fold needs an index or a tx/-resident dispatch ledger BEFORE the split (now TASK-AP971.11), non-recursive collect_tx_dir silently empties the activity feed; favourable: the activity projection is file-order independent.
+- Journal entry schema (TASK-AP971.1) — tx-grammar reuse with real multi-line prose bodies; facts append-only, comment edits IN PLACE (OCC + :EDITED_AT:, git is history, tombstones for deletes); global tx-style entry ids; reserved names node.org/journal.org/attachments/<entry-id>//dispatches/<started-tx>/; unknown files ignored + lint; structured-daemon-writes-only enforcement; no rotation v1; prose-only (no :BODY: dual-write). Full 12-point spec in the ticket's Resolution.
 ** Not yet specified
 - UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
 - CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary
@@ -4618,15 +4562,6 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 - Folding wayfinder itself into orgasmic as a native agent (owner intent, separate effort)
 ** Out of scope
 - Implementing the refactor itself — this map ends at the implementation-ready task chain
-
-* BACKLOG TASK-AP971.1 Journal entry schema    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.1
-:END:
-
-** Question
-What exactly is one journal.org entry? Event vocabulary (comment, comment.edit, comment.delete, state change, regenerate, dispatch events), drawer shape, single-line vs body prose, and how it relates to today's tx entry grammar (shipped/schema/tx.org).
-Also decide the intra-node directory layout (owner input 2026-08-14): NOT flat — journal entries (especially comments) may carry attachments, so reserve nested subdirs from day one, e.g. tasks/TASK-X/{node.org, journal.org, attachments/<entry-id>/, dispatches/<n>/}. Decide the reserved names, how a journal entry references its attachment files, and what the kernel guarantees about unknown extra files/dirs in a node dir (ignore? lint?).
 
 * BACKLOG TASK-AP971.2 Node type descriptor format    :wf_grilling:
 :PROPERTIES:
@@ -4705,3 +4640,27 @@ Per-type regenerate prompts and the universal consume-on-regenerate rule. What d
 
 ** Question
 'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.
+
+* BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
+:PROPERTIES:
+:ID: TASK-CM5KV
+:PRIORITY: P2
+:DEPENDS_ON: TASK-XCJYC
+:END:
+
+Evaluate adding the Agent Client Protocol as a real orgasmic transport, once TASK-XCJYC frees the name.
+
+ACP is an open standard from Zed Industries (August 2025, Apache-licensed): JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote (work in progress). It standardises the editor-to-agent boundary; MCP standardises tool access beneath it. Adopted by JetBrains, Google and GitHub, with 25+ agents.
+
+The draw is consolidation. Zed's ACP Registry already lists Claude Agent, Codex, Gemini CLI, OpenCode, Copilot, Cursor and Pi Coding Agent. Orgasmic currently maintains a bespoke adapter per harness — `adapters/claude.rs` (stream-json), `adapters/codex.rs` (app-server), `adapters/cursor_acp.rs`, `adapters/hermes.rs` — each with its own event mapping, session identity story and transcript-finder strategy. One ACP transport could in principle serve several of them through a single event mapping.
+
+Open questions to answer before committing to it:
+1. Does ACP expose what orgasmic's supervisor actually needs — terminal declaration, tool-call visibility, stall signals, and a resumable native session identity? A protocol built for editor UX may not carry the lifecycle facts recovery depends on.
+2. Does an ACP-launched agent still write its vendor-native transcript, or does the adapter layer hide it? The retro contract depends on vendor JSONL existing and being resumable (see dec on transcript ownership).
+3. Is the ACP adapter an extra process between orgasmic and the harness, and what does that mean for the startup preflight (TASK-TJKFC) and for credential handling (TASK-Z8WEJ)?
+4. Would it replace the bespoke adapters or sit alongside them? A fifth transport that duplicates four existing ones is a cost, not a saving.
+
+This is deliberately a research-and-decide task, not an implementation commitment. If the answer is that ACP does not carry orgasmic's lifecycle needs, recording that is a complete and useful result.
+
+Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
+

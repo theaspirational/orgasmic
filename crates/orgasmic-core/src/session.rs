@@ -735,6 +735,199 @@ fn hex_sha256(bytes: &[u8]) -> String {
     out
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRuntimeEvent {
+    pub event_id: String,
+    pub provider: String,
+    pub thread_id: String,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_refs: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<Value>,
+    #[serde(flatten)]
+    pub kind: ProviderRuntimeEventKind,
+}
+
+/// Provider-neutral Chat event vocabulary, mirroring T3 Code's canonical
+/// provider-runtime boundary. Native payloads may be retained in `raw`; the
+/// visible transcript is built only from these normalized variants.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", content = "payload")]
+pub enum ProviderRuntimeEventKind {
+    #[serde(rename = "session.started")]
+    SessionStarted(ProviderSessionStartedPayload),
+    #[serde(rename = "session.exited")]
+    SessionExited(ProviderSessionExitedPayload),
+    #[serde(rename = "thread.metadata.updated")]
+    ThreadMetadataUpdated(ProviderThreadMetadataPayload),
+    #[serde(rename = "thread.token-usage.updated")]
+    ThreadTokenUsageUpdated(ProviderTokenUsagePayload),
+    #[serde(rename = "turn.started")]
+    TurnStarted(ProviderTurnStartedPayload),
+    #[serde(rename = "turn.completed")]
+    TurnCompleted(ProviderTurnCompletedPayload),
+    #[serde(rename = "turn.aborted")]
+    TurnAborted(ProviderTurnAbortedPayload),
+    #[serde(rename = "item.started")]
+    ItemStarted(ProviderItemLifecyclePayload),
+    #[serde(rename = "item.updated")]
+    ItemUpdated(ProviderItemLifecyclePayload),
+    #[serde(rename = "item.completed")]
+    ItemCompleted(ProviderItemLifecyclePayload),
+    #[serde(rename = "content.delta")]
+    ContentDelta(ProviderContentDeltaPayload),
+    #[serde(rename = "request.opened")]
+    RequestOpened(ProviderRequestPayload),
+    #[serde(rename = "request.resolved")]
+    RequestResolved(ProviderRequestPayload),
+    #[serde(rename = "user-input.requested")]
+    UserInputRequested(ProviderUserInputPayload),
+    #[serde(rename = "user-input.resolved")]
+    UserInputResolved(ProviderUserInputPayload),
+    #[serde(rename = "account.rate-limits.updated")]
+    AccountRateLimitsUpdated(ProviderDiagnosticPayload),
+    #[serde(rename = "runtime.warning")]
+    RuntimeWarning(ProviderDiagnosticPayload),
+    #[serde(rename = "runtime.error")]
+    RuntimeError(ProviderDiagnosticPayload),
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSessionStartedPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderSessionExitedPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recoverable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderThreadMetadataPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTokenUsagePayload {
+    #[serde(default)]
+    pub usage: Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTurnStartedPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTurnCompletedPayload {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_usage: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderTurnAbortedPayload {
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderItemLifecyclePayload {
+    pub item_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderContentDeltaPayload {
+    pub stream_kind: String,
+    pub delta: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_index: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_index: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRequestPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUserInputPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub questions: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDiagnosticPayload {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limits: Option<Value>,
+}
+
 /// Driver-side events serialized into the per-run JSONL session.
 ///
 /// The supervisor folds these into [`SessionEnvelope`] (kind = [`SessionEventKind::DriverEvent`])
@@ -748,6 +941,8 @@ pub enum DriverEvent {
         protocol_version: String,
         capabilities: Value,
     },
+    /// T3-style provider-neutral event emitted by dedicated Chat runtimes.
+    ProviderRuntime { event: Box<ProviderRuntimeEvent> },
     /// Free-form text chunk (assistant reply, stdout, stderr).
     TextChunk {
         stream: TextStream,

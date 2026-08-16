@@ -99,8 +99,15 @@ export function normalizeTranscriptParts(
   const parts: PartDraft[] = [];
   const toolsByCallId = new Map<string, TranscriptToolPart>();
   const pendingResultsByCallId = new Map<string, TranscriptToolPart>();
+  const canonicalInputDeltas = new Map<string, string>();
   let terminalToolState: Extract<TranscriptToolState, 'completed' | 'error'> | null = null;
   const promptBundle = options.promptOverride ?? extractPromptBundle(envelopes);
+  const canonicalChat = envelopes.some(
+    (envelope) => stringValue(envelope.event?.type) === 'provider_runtime',
+  );
+  const unmatchedComposerSends = canonicalChat
+    ? composerSendCounts(envelopes)
+    : new Map<string, number>();
 
   if (promptBundle) {
     parts.push({
@@ -118,10 +125,198 @@ export function normalizeTranscriptParts(
     const eventType = stringValue(event.type);
     const id = String(envelope.seq ?? index);
 
+    if (eventType === 'provider_runtime') {
+      const runtime = isRecord(event.event) ? event.event : null;
+      if (!runtime) continue;
+      const runtimeType = stringValue(runtime.type);
+      const payload = isRecord(runtime.payload) ? runtime.payload : {};
+      const runtimeId = stringValue(runtime.itemId || runtime.requestId) || id;
+      const runtimeTime = stringValue(runtime.createdAt) || envelope.time;
+
+      if (runtimeType === 'content.delta') {
+        const streamKind = stringValue(payload.streamKind);
+        const delta = stringValue(payload.delta);
+        if (!delta) continue;
+        if (streamKind === 'assistant_text') {
+          closeStreamingReasoning(parts);
+          const contentId = canonicalContentPartId(runtime, runtimeId, streamKind);
+          pushPart(
+            parts,
+            {
+              id: contentId,
+              type: 'text',
+              role: 'assistant',
+              label: 'assistant',
+              text: delta,
+              time: runtimeTime,
+            },
+            `provider:assistant:${contentId}`,
+          );
+          continue;
+        }
+        if (streamKind === 'reasoning_text') {
+          const contentId = canonicalContentPartId(runtime, runtimeId, streamKind);
+          pushPart(
+            parts,
+            {
+              id: contentId,
+              type: 'reasoning',
+              label: 'thinking',
+              text: delta,
+              state: 'streaming',
+              time: runtimeTime,
+            },
+            `provider:reasoning:${contentId}`,
+          );
+          continue;
+        }
+        const tool = toolsByCallId.get(runtimeId);
+        if (tool) {
+          const previous = typeof tool.output === 'string' ? tool.output : '';
+          tool.output = `${previous}${delta}`;
+        }
+        continue;
+      }
+
+      if (
+        runtimeType === 'item.started' ||
+        runtimeType === 'item.updated' ||
+        runtimeType === 'item.completed'
+      ) {
+        const itemType = stringValue(payload.itemType);
+        if (itemType === 'assistant_message') {
+          if (runtimeType === 'item.completed') closeStreamingReasoning(parts);
+          continue;
+        }
+        closeStreamingReasoning(parts);
+        const data = isRecord(payload.data) ? payload.data : {};
+        const providerState = isRecord(data.state) ? data.state : {};
+        const existing = toolsByCallId.get(runtimeId);
+        const name = canonicalProviderToolName(itemType, data, payload, existing?.name);
+        const pairedCommand =
+          !existing && name === 'command_execution'
+            ? immediatelyPrecedingRunningCanonicalExec(parts)
+            : undefined;
+        const target = existing ?? pairedCommand;
+        const status = stringValue(payload.status);
+        const state: TranscriptToolState =
+          status === 'failed'
+            ? 'error'
+            : runtimeType === 'item.completed' || status === 'completed'
+              ? 'completed'
+              : runtimeType === 'item.started'
+                ? 'running'
+                : 'streaming';
+        const inputDelta = stringValue(data.inputDelta);
+        if (inputDelta) {
+          canonicalInputDeltas.set(
+            runtimeId,
+            `${canonicalInputDeltas.get(runtimeId) ?? ''}${inputDelta}`,
+          );
+        }
+        const accumulatedInput = parseJsonValue(canonicalInputDeltas.get(runtimeId));
+        const input = accumulatedInput ?? data.input ?? providerState.input ?? null;
+        const output =
+          data.output ??
+          data.result ??
+          providerState.output ??
+          providerState.error ??
+          (runtimeType === 'item.completed' ? stringValue(payload.detail) || null : null);
+        const summary = summarizeCanonicalProviderTool(name, input, payload, target);
+        if (target) {
+          if (!existing) toolsByCallId.set(runtimeId, target);
+          target.name = name;
+          target.label = summary.label ?? target.label;
+          target.state = state;
+          if (input !== null) target.input = input;
+          if (output !== null) target.output = output;
+          target.ok = state === 'error' ? false : state === 'completed' ? true : null;
+          target.summary = summary.summary ?? target.summary;
+          target.meta = mergeMeta(target.meta, summary.meta);
+          if (runtimeType === 'item.completed') canonicalInputDeltas.delete(runtimeId);
+          continue;
+        }
+        const part: TranscriptToolPart = {
+          id: runtimeId,
+          type: 'tool',
+          callId: runtimeId,
+          name,
+          label: summary.label ?? (compactLabel(payload.title) || `tool ${name}`),
+          state,
+          input,
+          output,
+          ok: state === 'error' ? false : state === 'completed' ? true : null,
+          summary: summary.summary,
+          meta: summary.meta,
+          time: runtimeTime,
+        };
+        parts.push(part);
+        toolsByCallId.set(runtimeId, part);
+        if (runtimeType === 'item.completed') canonicalInputDeltas.delete(runtimeId);
+        continue;
+      }
+
+      if (runtimeType === 'turn.completed' || runtimeType === 'turn.aborted') {
+        closeStreamingReasoning(parts);
+        const failed =
+          runtimeType === 'turn.aborted' ||
+          ['failed', 'cancelled', 'interrupted'].includes(stringValue(payload.state));
+        closeRunningTools(parts, failed ? 'error' : 'completed');
+        const message = stringValue(payload.errorMessage || payload.reason);
+        if (failed && message) {
+          parts.push({
+            id,
+            type: 'system',
+            label: runtimeType === 'turn.aborted' ? 'turn aborted' : 'provider error',
+            text: message,
+            tone: 'error',
+            time: runtimeTime,
+          });
+        }
+        continue;
+      }
+
+      if (runtimeType === 'runtime.error' || runtimeType === 'runtime.warning') {
+        const message = stringValue(payload.message);
+        if (!message) continue;
+        parts.push({
+          id,
+          type: 'system',
+          label: runtimeType === 'runtime.error' ? 'provider error' : 'provider warning',
+          text: message,
+          tone: runtimeType === 'runtime.error' ? 'error' : 'diagnostic',
+          time: runtimeTime,
+        });
+        continue;
+      }
+
+      if (runtimeType === 'request.opened' || runtimeType === 'user-input.requested') {
+        parts.push({
+          id,
+          type: 'system',
+          label: runtimeType === 'request.opened' ? 'approval required' : 'input required',
+          text:
+            stringValue(payload.detail) ||
+            (runtimeType === 'request.opened'
+              ? 'The provider is waiting for approval.'
+              : 'The provider is waiting for an answer.'),
+          tone: 'info',
+          time: runtimeTime,
+        });
+      }
+      // Session metadata, token usage, rate limits, and resolved requests are
+      // canonical state updates, not transcript prose.
+      continue;
+    }
+
     if (eventType === 'text_chunk') {
       const stream = stringValue(event.stream);
       const chunk = stringValue(event.chunk);
       if (!chunk.trim()) continue;
+      if (canonicalChat && stream === 'user' && promptBundle && chunk === promptBundle) continue;
+      if (canonicalChat && stream === 'user' && consumeComposerSend(unmatchedComposerSends, chunk)) {
+        continue;
+      }
 
       if (stream === 'system' && !isProviderWarning(chunk)) {
         pushPart(
@@ -140,7 +335,7 @@ export function normalizeTranscriptParts(
       }
 
       if (stream === 'stderr') {
-        if (isIgnoredStderr(chunk)) continue;
+        if (canonicalChat || isIgnoredStderr(chunk)) continue;
         closeStreamingReasoning(parts);
         const clean = stripAnsi(chunk);
         pushPart(
@@ -339,11 +534,19 @@ export function normalizeTranscriptParts(
     }
 
     if (envelope.kind === 'lifecycle') {
+      if (
+        canonicalChat &&
+        stringValue(event.phase) === 'composer_send' &&
+        promptBundle &&
+        stringValue(event.text) === promptBundle
+      ) {
+        continue;
+      }
       if (stringValue(event.phase) === 'release') {
         terminalToolState =
           stringValue(event.outcome) === 'failed' ? 'error' : (terminalToolState ?? 'completed');
       }
-      const lifecyclePart = normalizeLifecyclePart(id, envelope.time, event);
+      const lifecyclePart = normalizeLifecyclePart(id, envelope.time, event, canonicalChat);
       if (lifecyclePart) parts.push(lifecyclePart);
       continue;
     }
@@ -384,10 +587,19 @@ export function hasResponseAfterPending(
   if (hasVisibleResponse) return true;
 
   return parseSessionSource(source).some((envelope) => {
-    if (!envelope.time) return false;
     const type = stringValue(envelope.event?.type);
-    if (type !== 'run_complete' && type !== 'run_fail' && type !== 'driver_error') return false;
-    const eventTime = Date.parse(envelope.time);
+    const runtime = type === 'provider_runtime' && isRecord(envelope.event?.event)
+      ? envelope.event.event
+      : null;
+    const runtimeType = runtime ? stringValue(runtime.type) : '';
+    const isTerminal =
+      type === 'run_complete' ||
+      type === 'run_fail' ||
+      type === 'driver_error' ||
+      runtimeType === 'turn.completed' ||
+      runtimeType === 'turn.aborted';
+    if (!isTerminal) return false;
+    const eventTime = Date.parse(stringValue(runtime?.createdAt) || envelope.time || '');
     return Number.isFinite(eventTime) && eventTime >= pendingTime;
   });
 }
@@ -396,6 +608,7 @@ function normalizeLifecyclePart(
   id: string,
   time: string | undefined,
   event: Record<string, unknown>,
+  canonicalChat = false,
 ): TranscriptPart | null {
   const phase = stringValue(event.phase);
   if (phase === 'composer_send') {
@@ -404,6 +617,7 @@ function normalizeLifecyclePart(
     return { id, type: 'text', role: 'user', label: 'user', text, time };
   }
   if (phase === 'acquire') {
+    if (canonicalChat) return null;
     const task = stringValue(event.task_id);
     const worker = stringValue(event.worker_id);
     return {
@@ -443,6 +657,7 @@ function normalizeLifecyclePart(
   if (phase === 'release') {
     const outcome = stringValue(event.outcome);
     const reason = stringValue(event.reason);
+    if (canonicalChat && outcome !== 'failed') return null;
     return {
       id,
       type: 'system',
@@ -462,6 +677,164 @@ function pushPart(parts: PartDraft[], part: TranscriptPart, mergeKey: string): v
     return;
   }
   parts.push({ ...part, mergeKey });
+}
+
+function composerSendKey(text: string): string {
+  return text.trim();
+}
+
+function composerSendCounts(envelopes: SessionEnvelope[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const envelope of envelopes) {
+    if (envelope.kind !== 'lifecycle') continue;
+    const event = envelope.event ?? {};
+    if (stringValue(event.phase) !== 'composer_send') continue;
+    const key = composerSendKey(stringValue(event.text));
+    if (!key) continue;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function consumeComposerSend(counts: Map<string, number>, text: string): boolean {
+  const key = composerSendKey(text);
+  const count = counts.get(key) ?? 0;
+  if (!key || count === 0) return false;
+  if (count === 1) counts.delete(key);
+  else counts.set(key, count - 1);
+  return true;
+}
+
+function canonicalContentPartId(
+  runtime: Record<string, unknown>,
+  fallbackId: string,
+  streamKind: string,
+): string {
+  const itemId = stringValue(runtime.itemId || runtime.requestId).trim();
+  if (itemId) return `${streamKind}:${itemId}`;
+
+  const threadId = stringValue(runtime.threadId).trim();
+  const turnId = stringValue(runtime.turnId).trim();
+  const payload = isRecord(runtime.payload) ? runtime.payload : {};
+  const contentIndex = payload.contentIndex;
+  if (threadId && turnId && typeof contentIndex === 'number') {
+    return `${streamKind}:${threadId}:${turnId}:${contentIndex}`;
+  }
+  if (threadId && turnId) return `${streamKind}:${threadId}:${turnId}`;
+  return `${streamKind}:${fallbackId}`;
+}
+
+function parseJsonValue(value: string | undefined): unknown | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function immediatelyPrecedingRunningCanonicalExec(
+  parts: PartDraft[],
+): TranscriptToolPart | undefined {
+  const previous = parts.at(-1);
+  return previous?.type === 'tool' && previous.name === 'exec' && previous.state === 'running'
+    ? previous
+    : undefined;
+}
+
+function canonicalProviderToolName(
+  itemType: string,
+  data: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  existingName?: string,
+): string {
+  const semanticName = stringValue(itemType).trim();
+  if (semanticName && semanticName !== 'tool_call') return semanticName;
+  const explicitName = stringValue(data.toolName || data.tool).trim();
+  if (explicitName) return explicitName;
+  if (existingName && existingName !== 'tool_call') return existingName;
+  return compactLabel(payload.title || semanticName || 'tool');
+}
+
+function summarizeCanonicalProviderTool(
+  name: string,
+  input: unknown,
+  payload: Record<string, unknown>,
+  existing?: TranscriptToolPart,
+): ToolSummary {
+  const base = summarizeToolCall(name, input);
+  if (name === 'command_execution') {
+    return {
+      label: 'Ran command',
+      summary:
+        providerCommand(input) ??
+        (existing?.label === 'Ran command' ? existing.summary : undefined),
+      meta: base.meta,
+    };
+  }
+
+  const inputRecord = isRecord(input) ? input : {};
+  if (name === 'web_search') {
+    const url = stringValue(inputRecord.url).trim();
+    const query = stringValue(inputRecord.query || inputRecord.searchTerm).trim();
+    return {
+      label: url ? 'Fetched page' : 'Searched web',
+      summary: trimMiddle(url || query, 180) || existing?.summary,
+      meta: base.meta,
+    };
+  }
+  if (name === 'file_read') {
+    const path = providerPath(inputRecord);
+    return {
+      label: 'Read file',
+      summary: path ? trimMiddle(path, 180) : existing?.summary,
+      meta: base.meta,
+    };
+  }
+  if (name === 'file_change') {
+    const path = providerPath(inputRecord);
+    return {
+      label: 'Changed files',
+      summary: path ? trimMiddle(path, 180) : existing?.summary,
+      meta: base.meta,
+    };
+  }
+  if (name === 'agent_task') {
+    const task = stringValue(
+      inputRecord.description || inputRecord.prompt || inputRecord.task || inputRecord.message,
+    ).trim();
+    return {
+      label: 'Delegated task',
+      summary: task ? trimMiddle(firstLine(task), 180) : existing?.summary,
+      meta: base.meta,
+    };
+  }
+
+  const title = stringValue(payload.title).trim();
+  const semanticTitle = title.toLowerCase() === 'tool' ? '' : title;
+  return {
+    label: semanticTitle ? trimMiddle(semanticTitle, 96) : existing?.label ?? base.label,
+    summary: existing?.summary,
+    meta: base.meta,
+  };
+}
+
+function providerPath(input: Record<string, unknown>): string {
+  return stringValue(
+    input.path || input.filePath || input.filename || input.newPath || input.oldPath,
+  ).trim();
+}
+
+function providerCommand(input: unknown): string | undefined {
+  if (!isRecord(input)) return undefined;
+  const actions = Array.isArray(input.commandActions) ? input.commandActions : [];
+  for (const action of actions) {
+    if (!isRecord(action)) continue;
+    const command = stringValue(action.command).trim();
+    if (command) return command;
+  }
+  const command = stringValue(input.command || input.cmd).trim();
+  return command || undefined;
 }
 
 function mergePart(previous: PartDraft, next: TranscriptPart): boolean {
@@ -497,7 +870,9 @@ function closeRunningTools(
   state: Extract<TranscriptToolState, 'completed' | 'error'>,
 ): void {
   for (const part of parts) {
-    if (part.type === 'tool' && part.state === 'running') part.state = state;
+    if (part.type === 'tool' && (part.state === 'running' || part.state === 'streaming')) {
+      part.state = state;
+    }
   }
 }
 

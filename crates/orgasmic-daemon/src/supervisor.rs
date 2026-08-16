@@ -28,8 +28,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::{
-    read_session_file, scan_session_lifecycle_complete, DriverEvent, Lifecycle, ReleaseOutcome,
-    RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
+    mint_run_id, read_session_file, scan_session_lifecycle_complete, DriverEvent, Lifecycle,
+    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
 };
 use orgasmic_drivers::{
     AttachOutcome, DriverConfig, DriverContext, DriverControl, DriverError, ManagerWakeRequest,
@@ -1646,7 +1646,7 @@ impl Supervisor {
         let (run_id, identity) = if let Some(planned) = req.planned_identity.clone() {
             (planned.run_id.clone(), planned)
         } else {
-            let run_id = make_run_id(&req.kind);
+            let run_id = mint_run_id();
             (
                 run_id.clone(),
                 RuntimeIdentity::new(&run_id, &self.boot.boot_id),
@@ -4546,14 +4546,6 @@ pub struct RunSummary {
     /// project's manager lease. The capability and provider stay private.
     #[serde(default)]
     pub claimed_manager: bool,
-}
-
-fn make_run_id(_kind: &RunKind) -> String {
-    format!(
-        "run-{}-{}",
-        Utc::now().format("%Y%m%dT%H%M%S"),
-        Uuid::new_v4().simple()
-    )
 }
 
 fn into_anyhow(e: serde_json::Error) -> anyhow::Error {
@@ -10858,6 +10850,7 @@ mod tests {
         assert!(!resp.identity.run_id.is_empty());
         assert!(!resp.identity.runtime_id.is_empty());
         assert!(!resp.identity.boot_id.is_empty());
+        assert!(orgasmic_core::compact_run_id_token(&resp.identity.run_id).is_some());
         // Matches the supervisor's boot.
         assert_eq!(resp.identity.boot_id, sup.boot.boot_id);
     }

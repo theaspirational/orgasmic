@@ -19,6 +19,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{interval, Duration};
 use tracing::debug;
 
+use orgasmic_drivers::modes::tmux::tmux_session_prefix;
+
 use crate::api::ApiState;
 use crate::authz::{self, Action, Identity};
 use crate::events::Topic;
@@ -110,7 +112,7 @@ pub async fn tmux_handler(
     // matching mux session may still be alive — e.g. a system-wide manager
     // session whose run wasn't rehydrated by boot auto-reattach, or a request
     // landing in the window before reattach completed. Probe the live mux
-    // daemons for an `orgasmic-<run_id>-*` session and attach directly rather
+    // daemons for the run's derived session prefix and attach directly rather
     // than dead-ending on "no live run".
     let target = match target {
         Some(target) => Some(target),
@@ -297,13 +299,14 @@ const TMUX_PTY_INIT_COLS: u16 = 200;
 const COALESCE_BUDGET: Duration = Duration::from_millis(16);
 const COALESCE_MAX_BYTES: usize = 64 * 1024;
 
-/// Probe the live mux daemons for a session named `orgasmic-<run_id>-*` when
-/// the supervisor holds no record for `run_id`. Returns the kind/bin/session to
-/// attach to, or `None` if no surviving session matches.
+/// Probe the live mux daemons for a session with the run's legacy or compact
+/// prefix when the supervisor holds no record for `run_id`. Returns the
+/// kind/bin/session to attach to, or `None` if no surviving session matches.
 async fn find_orphan_mux_session(run_id: &str) -> Option<(String, String)> {
-    // Session-name shapes per driver (runtime_id suffix unknown here):
-    // tmux:  `orgasmic-<run_id>-<runtime_id>`      (tmux_session_name)
-    let tmux_prefix = format!("orgasmic-{run_id}-");
+    // The runtime suffix is intentionally unknown here. The shared prefix
+    // helper preserves the historical long form and derives the compact form
+    // for ULID-backed runs.
+    let tmux_prefix = tmux_session_prefix(run_id);
 
     // tmux: list-sessions by name; an absent server exits non-zero → no match.
     // orgasmic:TASK-0RCRY

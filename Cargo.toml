@@ -29,6 +29,7 @@ notify = "6"
 fs2 = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+ulid = "3"
 sha2 = "0.10"
 semver = "1"
 include_dir = "0.7"

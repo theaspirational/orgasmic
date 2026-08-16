@@ -32436,3 +32436,26 @@ Inventory delivered as evidence keyed by the resolution comment tx (TASK-QGWK7 p
 Premise corrections: recovery_claim.rs has ZERO tx/state-file touchpoints — the tx-heavy recovery logic lives in api.rs (7542-7575, 17600-19010) and manager.rs scan_dispatches (9463-9498).
 Top risks for the split: (1) writer.rs one-ledger invariant — atomic multi-journal appends need a redesigned transaction primitive (process_tx_batch is the closest model); (2) dispatch-open state is discovered by folding the whole tx dir with three safety gates on top — needs a real index or a project-level dispatch ledger that stays in tx/, landed BEFORE journals split (graduated to TASK-AP971.11); (3) iter_task_file_paths full scans back the identity lints and two shell gates, all four degrade silently; (4) tx_destination has no node parameter — best seam, hard cutover; (5) collect_tx_dir is non-recursive — journals in subdirs silently vanish from the activity feed. Favourable: build_activity_index sorts by (time, tx_id), so the projection has no file-order dependency and per-node reads get simpler. Early decides: denylist ledger paths in the org-edit endpoint; make project_tx_sequence and latest_org_file fail loudly.
 
+* DONE TASK-AP971.1 Journal entry schema :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.1
+:END:
+
+** Question
+What exactly is one journal.org entry? Event vocabulary (comment, comment.edit, comment.delete, state change, regenerate, dispatch events), drawer shape, single-line vs body prose, and how it relates to today's tx entry grammar (shipped/schema/tx.org).
+Also decide the intra-node directory layout (owner input 2026-08-14): NOT flat — journal entries (especially comments) may carry attachments, so reserve nested subdirs from day one, e.g. tasks/TASK-X/{node.org, journal.org, attachments/<entry-id>/, dispatches/<n>/}. Decide the reserved names, how a journal entry references its attachment files, and what the kernel guarantees about unknown extra files/dirs in a node dir (ignore? lint?).
+** Resolution
+Grilled with owner 2026-08-15; twelve decisions:
+1. Grammar: journal.org reuses the tx property-drawer grammar — one org heading per entry, required :TX_ID:/:TIME:/:TYPE:/:ACTOR:/:MACHINE:. New shipped/schema/journal.org v1 documents it.
+2. Prose: entries carry real multi-line org bodies (no escaped single-line :BODY:).
+3. Event vocabulary v1 (namespaced, open; type descriptors per ticket .2 may add types): comment, comment.deleted (tombstone), state_transitioned, property_updated, regenerated, dispatch.linked (thin pointer; authoritative dispatch lifecycle stays project-level per tickets .5/.11).
+4. Entry identity: global daemon mint, tx-style ids. IN_REPLY_TO stays globally unambiguous; attachments key off the entry id.
+5. Reserved node-dir names: node.org, journal.org, attachments/<entry-id>/, dispatches/<started-tx>/ (generation-keyed). Type descriptors may reserve more; everything else is free space.
+6. Unknown files/dirs in a node dir: ignored, plus a low-severity lint that names them.
+7. Mutability split: FACT entries (state_transitioned, property_updated, regenerated, dispatch.linked) are immutable append-only. AUTHORED PROSE (comments) is edited IN PLACE via a surgical OCC-guarded daemon edit that stamps :EDITED_AT: — one copy ever exists, no redundant LLM context; pre-edit text lives in git history (same rule as node content). Delete = remove the body, leave a one-line tombstone entry so reply chains never dangle. Projections show current truth only.
+8. Enforcement: journal.org joins the ledger-rewrite denylist (no whole-file rewrite via the org-file surface); all mutations are structured daemon ops (append entry, OCC comment-body edit, tombstone); hand-edits detected by the watcher raise a lint, never auto-reconcile.
+9. No rotation in v1; size lint warns past ~500KB so reality can veto before rotation machinery exists.
+10. Attachments: files at attachments/<entry-id>/<filename>, declared on the owning entry via :ATTACHMENTS: (space-separated filenames) — readers never stat the filesystem to learn attachments exist.
+11. Prose guard: daemon writer refuses column-0 '* ' in journal prose (nested **+ fine). Loud refusal, never silent auto-escape.
+12. No legacy :BODY: dual-write — journals are prose-only; the activity projection reads both sources (old tx :BODY:, new journal prose) across the cut-over.
+

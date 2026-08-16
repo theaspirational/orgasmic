@@ -1,5 +1,15 @@
 import type { PointerEvent, ReactNode } from 'react';
-import { Bot, ChevronDown, Loader2, Plus, Power, SquareTerminal, X } from 'lucide-react';
+import {
+  Bot,
+  ChevronDown,
+  History,
+  Loader2,
+  MessageCircle,
+  Plus,
+  Power,
+  SquareTerminal,
+  X,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -26,7 +36,9 @@ export type TaskbarRunButton = {
 
 function buttonIcon(kind: TaskbarRunButton['kind']) {
   if (kind === 'terminal') return <SquareTerminal className="size-3.5" />;
-  if (kind === 'stale') return <X className="size-3.5" />;
+  // An ended run remains available for review. A history icon communicates that
+  // state without competing with the inline × that dismisses the tab.
+  if (kind === 'stale') return <History className="size-3.5" />;
   return <Bot className="size-3.5" />;
 }
 
@@ -147,13 +159,16 @@ export function DockTaskbar({
   open,
   readOnly,
   terminalBusy,
+  chatActive,
   buttons,
   activeTabId,
   onTerminalLaunch,
+  onChatOpen,
   onSelect,
   onStop,
   onDismiss,
   onMinimize,
+  onRestore,
   resizeHandlers,
   runningAgents,
 }: {
@@ -161,13 +176,17 @@ export function DockTaskbar({
   open: boolean;
   readOnly: boolean;
   terminalBusy: boolean;
+  chatActive: boolean;
   buttons: TaskbarRunButton[];
   activeTabId: string | null;
   onTerminalLaunch: () => void;
+  onChatOpen: () => void;
   onSelect: (button: TaskbarRunButton) => void;
   onStop: (button: TaskbarRunButton) => void;
   onDismiss: (button: TaskbarRunButton) => void;
   onMinimize: () => void;
+  /** Raises the last surface when the collapsed dock background is clicked. */
+  onRestore: () => void;
   /** Pointer handlers for the top-border drag. They must all sit on this same
    * element: pointer capture retargets move/up to whatever captured the down. */
   resizeHandlers: {
@@ -185,8 +204,17 @@ export function DockTaskbar({
         // The bar's own top edge is the resize grab zone whenever a panel is
         // open; collapsed, there is nothing above it to resize.
         open && 'cursor-ns-resize',
+        !open && 'cursor-pointer hover:bg-muted/30',
       )}
       {...(open ? resizeHandlers : null)}
+      onClick={(event) => {
+        if (open) return;
+        const target = event.target;
+        // Tabs and controls have their own actions; the remaining dock chrome
+        // is a generous target for restoring the most recent surface.
+        if (target instanceof Element && target.closest('button, a, [data-taskbar-control][role="button"]')) return;
+        onRestore();
+      }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {/* The tab strip only ever holds tabs; the launcher rides alongside it so
@@ -244,14 +272,19 @@ export function DockTaskbar({
               <Button
                 type="button"
                 variant="ghost"
-                size="icon-sm"
+                size="sm"
                 data-taskbar-control
                 aria-label="Open terminal session"
                 disabled={terminalBusy}
                 onClick={onTerminalLaunch}
-                className="shrink-0 text-muted-foreground"
+                className="h-9 shrink-0 gap-1.5 px-2.5 text-muted-foreground"
               >
-                {terminalBusy ? <Loader2 className="animate-spin" /> : <Plus />}
+                {terminalBusy ? (
+                  <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+                ) : (
+                  <Plus className="size-3.5" />
+                )}
+                Terminal
               </Button>
             </TooltipTrigger>
             <TooltipContent side="top">Open a bare terminal session</TooltipContent>
@@ -260,6 +293,18 @@ export function DockTaskbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5" data-taskbar-control>
+        <Button
+          type="button"
+          variant={chatActive ? 'secondary' : 'ghost'}
+          size="sm"
+          aria-label="Open Chat"
+          aria-pressed={chatActive}
+          onClick={onChatOpen}
+          className="h-9 gap-1.5 px-2.5"
+        >
+          <MessageCircle className="size-3.5" />
+          Chat
+        </Button>
         {runningAgents}
         {open ? (
           <>

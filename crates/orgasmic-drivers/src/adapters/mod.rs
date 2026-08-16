@@ -1,3 +1,4 @@
+pub mod chat_sdk;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
@@ -5,6 +6,7 @@ pub mod cursor_acp;
 pub mod hermes;
 pub mod shell;
 
+pub use chat_sdk::{provider_host_invocation, ChatSdkAdapter, ChatSdkProvider};
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
 pub use cursor::CursorAdapter;
