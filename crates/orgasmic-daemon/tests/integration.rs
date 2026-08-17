@@ -1902,7 +1902,7 @@ async fn catalog_is_served_unloaded_before_first_project_read() {
             .unwrap()
             .to_str()
             .unwrap(),
-        "partial; ready=0/1; markers=0/1; unloaded=[proj-pre]; marker_unloaded=[proj-pre]; loading=[]; failed=[]"
+        "partial; ready=0/1; unloaded=[proj-pre]; loading=[]; failed=[]"
     );
 
     let resp = client

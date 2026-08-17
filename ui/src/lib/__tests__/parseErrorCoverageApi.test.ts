@@ -23,14 +23,14 @@ describe('parse-error coverage api', () => {
   it('carries the daemon coverage header with the parse-error rows', async () => {
     getWithHeader.mockResolvedValue({
       data: [],
-      header: 'partial; ready=1/2; markers=0/2',
+      header: 'partial; ready=1/2; unloaded=[paused]',
     });
 
     await expect(fetchParseErrorsWithCoverage()).resolves.toEqual({
       errors: [],
       coverage: {
         state: 'partial',
-        detail: 'partial; ready=1/2; markers=0/2',
+        detail: 'partial; ready=1/2; unloaded=[paused]',
         failures: {},
       },
     });
@@ -40,38 +40,34 @@ describe('parse-error coverage api', () => {
     );
   });
 
-  it('loads recursive marker coverage only on the explicit full action', async () => {
-    get.mockResolvedValue({ node_id: '__coverage__', files: [], projects: {}, failures: {} });
+  it('requests full coverage only on the explicit full action', async () => {
     getWithHeader.mockResolvedValue({
       data: [],
-      header: 'complete; ready=2/2; markers=2/2',
+      header: 'complete; ready=2/2; unloaded=[]; loading=[]; failed=[]',
     });
 
     await expect(loadFullParseErrorCoverage()).resolves.toMatchObject({
       coverage: { state: 'complete' },
     });
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(get).toHaveBeenCalledWith('/graph/markers/__coverage__');
+    expect(get).not.toHaveBeenCalled();
+    expect(getWithHeader).toHaveBeenCalledWith(
+      '/graph/parse-errors?full=true',
+      'x-orgasmic-project-coverage',
+    );
   });
 
-  it('keeps loaded errors and names projects skipped by full marker coverage', async () => {
-    get.mockResolvedValue({
-      node_id: '__coverage__',
-      files: [],
-      projects: { healthy: 0 },
-      failures: { blocked: 'filesystem scan timed out' },
-    });
+  it('names projects skipped by full coverage from the failed segment', async () => {
     getWithHeader.mockResolvedValue({
       data: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
-      header: 'partial; ready=1/2; markers=1/2; marker_unloaded=[blocked]',
+      header: 'partial; ready=1/2; unloaded=[]; loading=[]; failed=[blocked]',
     });
 
     await expect(loadFullParseErrorCoverage()).resolves.toEqual({
       errors: [{ path: '/healthy/glossary.org', message: 'bad ref', at: 'now' }],
       coverage: {
         state: 'partial',
-        detail: 'partial; ready=1/2; markers=1/2; marker_unloaded=[blocked]; skipped=[blocked]',
-        failures: { blocked: 'filesystem scan timed out' },
+        detail: 'partial; ready=1/2; unloaded=[]; loading=[]; failed=[blocked]',
+        failures: { blocked: '' },
       },
     });
   });

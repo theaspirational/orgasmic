@@ -11,7 +11,6 @@ pub mod home;
 pub mod id;
 pub mod id_repair;
 pub mod identity_lint;
-pub mod marker;
 pub mod members;
 pub mod node_kind;
 pub mod org;
@@ -40,11 +39,6 @@ pub use identity_lint::{
     collect_identity_occurrences, duplicate_id_groups, lint_decision_heading_id_token,
     lint_project_identities, lint_task_heading_id_token, unresolved_reference_tokens,
     IdentityLintFinding, IdentityLintKind, REFERENCE_PROPERTY_KEYS,
-};
-pub use marker::{
-    has_comment_token_before_marker, is_marker_id_byte, is_structured_marker_payload,
-    marker_node_ids_in_line, normalize_marker_node_id, parse_marker_payload,
-    should_skip_marker_path,
 };
 pub use members::{
     add_member, find_member_by_name, find_member_by_token, read_members, revoke_member, sha256_hex,

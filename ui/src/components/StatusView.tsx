@@ -174,7 +174,7 @@ export function StatusView() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium">Parse-error coverage is partial</p>
                   <p className="mt-1 break-words text-xs text-muted-foreground">
-                    Identity diagnostics are not complete until source markers load for every project.
+                    Identity diagnostics are not complete until every project is loaded.
                     {parseErrors.data?.coverage.detail ? ` ${parseErrors.data.coverage.detail}` : ''}
                   </p>
                   {Object.keys(coverageFailures).length > 0 ? (

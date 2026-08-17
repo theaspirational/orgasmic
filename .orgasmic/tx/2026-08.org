@@ -35551,3 +35551,37 @@
 :RESOLUTION_TARGET:
 :REPLY_TO:
 :END:
+
+
+* TX 2026-08-16 Sun 16:28:49 manager.dispatch_aborted TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260816-orgasmic-6119
+:TIME:         [2026-08-16 Sun 16:28:49]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:REASON:       Cursor ACP worker stalled immediately after handshake with no task output or finalization record; recorded process group was terminated.
+:CLOSED_TX:    tx-20260814-orgasmic-6111
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260814-orgasmic-6111/last.txt
+:END:
+
+* TX 2026-08-16 Sun 16:28:49 task.state_transitioned TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260816-orgasmic-6120
+:TIME:         [2026-08-16 Sun 16:28:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-ZKZBF to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:

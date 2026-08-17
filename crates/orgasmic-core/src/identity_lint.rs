@@ -313,7 +313,6 @@ pub fn lint_identity_occurrences(occurrences: &[IdentityOccurrence]) -> Vec<Iden
 pub fn lint_dangling_references(
     known_ids: &BTreeSet<String>,
     references: &[(String, PathBuf, Option<usize>, String)],
-    marker_ids: &BTreeMap<String, Vec<PathBuf>>,
 ) -> Vec<IdentityLintFinding> {
     let mut findings = Vec::new();
     for (token, path, line, context) in references {
@@ -326,22 +325,6 @@ pub fn lint_dangling_references(
             path: path.clone(),
             line: *line,
         });
-    }
-    for (marker_id, files) in marker_ids {
-        if known_ids.contains(marker_id) || is_retired_architecture_id(marker_id) {
-            continue;
-        }
-        for file in files {
-            findings.push(IdentityLintFinding {
-                kind: IdentityLintKind::DanglingReference,
-                message: format!(
-                    "dangling advisory marker `{marker_id}` in {}",
-                    file.display()
-                ),
-                path: project_relative_or_abs(file),
-                line: None,
-            });
-        }
     }
     findings
 }
@@ -367,24 +350,17 @@ fn is_retired_architecture_id(id: &str) -> bool {
     id.starts_with("arch_")
 }
 
-fn project_relative_or_abs(path: &Path) -> PathBuf {
-    path.to_path_buf()
-}
-
 pub fn known_ids_from_occurrences(occurrences: &[IdentityOccurrence]) -> BTreeSet<String> {
     occurrences.iter().map(|occ| occ.id.clone()).collect()
 }
 
 /// Scan a project tree for identity lint findings.
-pub fn lint_project_identities(
-    project_root: &Path,
-    marker_ids: &BTreeMap<String, Vec<PathBuf>>,
-) -> Vec<IdentityLintFinding> {
+pub fn lint_project_identities(project_root: &Path) -> Vec<IdentityLintFinding> {
     let occurrences = collect_identity_occurrences(project_root);
     let mut findings = lint_identity_occurrences(&occurrences);
     let known = known_ids_from_occurrences(&occurrences);
     let references = collect_reference_occurrences(project_root);
-    findings.extend(lint_dangling_references(&known, &references, marker_ids));
+    findings.extend(lint_dangling_references(&known, &references));
     findings
 }
 
@@ -535,7 +511,7 @@ mod tests {
             &root.join(".orgasmic/tasks/backlog.org"),
             "#+title: sprint\n\n* BACKLOG TASK-001 Legacy-only\n:PROPERTIES:\n:ID: TASK-001\n:END:\n",
         );
-        let findings = lint_project_identities(root, &BTreeMap::new());
+        let findings = lint_project_identities(root);
         assert!(
             !findings
                 .iter()
@@ -566,7 +542,7 @@ mod tests {
                 "#+title: decisions\n\n* {anchor} Anchor\n:PROPERTIES:\n:ID: {anchor}\n:END:\n"
             ),
         );
-        let findings = lint_project_identities(root, &BTreeMap::new());
+        let findings = lint_project_identities(root);
         assert!(
             findings.iter().any(
                 |f| matches!(f.kind, IdentityLintKind::DuplicateId) && f.message.contains(&dup)
@@ -593,7 +569,7 @@ mod tests {
                 "#+title: glossary\n\n* {id} Example\n:PROPERTIES:\n:ID: {id}\n:RELATES_TO: missing-slug\n:END:\n"
             ),
         );
-        let findings = lint_project_identities(root, &BTreeMap::new());
+        let findings = lint_project_identities(root);
         assert!(
             findings
                 .iter()
@@ -654,7 +630,7 @@ mod tests {
     #[ignore = "manual probe against live checkout; run with --ignored --nocapture"]
     fn real_post_migration_repo_lint_probe() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let findings = lint_project_identities(&root, &BTreeMap::new());
+        let findings = lint_project_identities(&root);
         let malformed: Vec<_> = findings
             .iter()
             .filter(|f| matches!(f.kind, IdentityLintKind::MalformedIdentity))

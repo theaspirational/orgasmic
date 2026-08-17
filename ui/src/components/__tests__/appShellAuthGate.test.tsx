@@ -158,6 +158,7 @@ function installFetch(handler?: (path: string, init?: RequestInit) => Response |
       events.push('me');
       return pendingMe ? pendingMe.promise : jsonResponse(memberMe());
     }
+    if (path === '/api/auth/whoami') return textResponse('missing or invalid bearer token', 401);
     if (path === '/api/healthz') {
       events.push('admin-healthz');
       expect(init?.headers).toMatchObject({ authorization: 'Bearer admin-token' });
@@ -247,7 +248,7 @@ describe('AppShell protected-route auth gate', () => {
 
     renderShell();
 
-    expect(screen.getByText('Connect to daemon')).toBeInTheDocument();
+    expect(await screen.findByText('Connect to daemon')).toBeInTheDocument();
     expect(events).not.toContain('artifact');
 
     selectMemberTab();
@@ -274,7 +275,7 @@ describe('AppShell protected-route auth gate', () => {
 
     renderShell();
 
-    expect(screen.getByText('Connect to daemon')).toBeInTheDocument();
+    expect(await screen.findByText('Connect to daemon')).toBeInTheDocument();
     expect(events).not.toContain('artifact');
 
     fireEvent.change(screen.getByLabelText('Bearer token'), { target: { value: 'admin-token' } });
@@ -302,6 +303,30 @@ describe('AppShell protected-route auth gate', () => {
     expect(artifactCall?.[1]?.credentials).toBe('include');
   });
 
+  it('uses the admin session issued by orgasmic ui without storing a bearer token', async () => {
+    const fetchMock = installFetch((path, init) => {
+      if (path === '/api/auth/whoami') {
+        events.push('whoami');
+        expect(init?.credentials).toBe('same-origin');
+        expect(init?.headers).toEqual({});
+        return jsonResponse({ authenticated: true, boot_id: 'boot-test' });
+      }
+      return undefined;
+    });
+
+    renderShell();
+
+    expect(events).not.toContain('artifact');
+    expect(screen.queryByText('Connect to daemon')).toBeNull();
+    await waitFor(() => expect(events).toContain('artifact'));
+    expect(events.indexOf('artifact')).toBeGreaterThan(events.indexOf('whoami'));
+    expect(screen.queryByText('Connect to daemon')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/auth/whoami'),
+      expect.objectContaining({ credentials: 'same-origin' }),
+    );
+  });
+
   it('keeps a failed member token on the gate and never mounts the protected route', async () => {
     installFetch((path) => {
       if (path === '/api/login') {
@@ -312,6 +337,8 @@ describe('AppShell protected-route auth gate', () => {
     });
 
     renderShell();
+
+    await screen.findByText('Connect to daemon');
 
     selectMemberTab();
     fireEvent.change(screen.getByPlaceholderText('Member token'), { target: { value: 'expired-member-token' } });

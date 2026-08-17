@@ -1,6 +1,6 @@
 // orgasmic:arch_C87Z9, dec_YYMSK
 //! In-memory catalog plus lazy materialized projections of projects, tasks,
-//! markers, artifacts, and tx.
+//! artifacts, and tx.
 //!
 //! Boot publishes board registration and home-owned safety state before any
 //! project scan. Project projections are loaded through the refresh
@@ -20,9 +20,9 @@ use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
     iter_task_file_paths, lint_decision_heading_id_token, lint_project_identities,
-    lint_task_heading_id_token, marker_node_ids_in_line, should_skip_marker_path,
-    validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home, LifecycleStage, NodeIdClass,
-    OrgError, OrgFile, ParentTreeError, ParentTreeNode, SandboxAllowlist, TaskHeading,
+    lint_task_heading_id_token, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
+    LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
+    SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
 use tokio::io::AsyncReadExt;
@@ -46,7 +46,6 @@ pub struct ProjectIndex {
     pub subtasks: BTreeMap<TaskId, Vec<TaskId>>,
     pub activity_index: BTreeMap<TaskId, Vec<ActivityEntry>>,
     pub graph: GraphIndex,
-    pub markers: BTreeMap<String, Vec<PathBuf>>,
     /// Per-file parse errors with the source path that failed and the
     /// last-good content count.
     pub last_loaded_at: Option<DateTime<Utc>>,
@@ -314,11 +313,7 @@ pub struct IndexSnapshot {
     pub parse_errors: Vec<ParseError>,
     pub rebuilt_at: Option<DateTime<Utc>>,
     #[serde(skip)]
-    marker_projects: HashSet<String>,
-    #[serde(skip)]
     artifact_projects: HashSet<String>,
-    #[serde(skip)]
-    marker_parse_errors: BTreeMap<String, Vec<ParseError>>,
 }
 
 impl IndexSnapshot {
@@ -344,28 +339,10 @@ impl IndexSnapshot {
             .collect()
     }
 
-    pub fn project_ids_with_markers_loaded(&self) -> Vec<String> {
-        self.board
-            .iter()
-            .filter(|entry| self.marker_projects.contains(&entry.id))
-            .map(|entry| entry.id.clone())
-            .collect()
-    }
-
     pub fn first_historical_tx_parse_error(&self) -> Option<&ParseError> {
         self.parse_errors
             .iter()
             .find(|error| matches!(error.kind, ParseErrorKind::HistoricalTx))
-    }
-
-    pub fn marker_files(&self, node_id: &str) -> Vec<PathBuf> {
-        let mut files = BTreeSet::new();
-        for project in self.projects.values() {
-            if let Some(project_files) = project.markers.get(node_id) {
-                files.extend(project_files.iter().cloned());
-            }
-        }
-        files.into_iter().collect()
     }
 
     /// Project owning `error.path`, derived by prefix match against each
@@ -449,7 +426,6 @@ const MAX_COMPLETED_TX_IDS_PER_TARGET: usize = 1024;
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 enum RefreshTarget {
     Project(String),
-    Markers(String),
     Artifacts(String),
     HomeTx,
 }
@@ -458,7 +434,6 @@ impl RefreshTarget {
     fn label(&self) -> String {
         match self {
             Self::Project(project_id) => project_id.clone(),
-            Self::Markers(project_id) => format!("markers:{project_id}"),
             Self::Artifacts(project_id) => format!("artifacts:{project_id}"),
             Self::HomeTx => "home-tx".to_string(),
         }
@@ -466,9 +441,7 @@ impl RefreshTarget {
 
     fn project_id(&self) -> Option<&str> {
         match self {
-            Self::Project(project_id) | Self::Markers(project_id) | Self::Artifacts(project_id) => {
-                Some(project_id)
-            }
+            Self::Project(project_id) | Self::Artifacts(project_id) => Some(project_id),
             Self::HomeTx => None,
         }
     }
@@ -476,18 +449,14 @@ impl RefreshTarget {
     fn shares_scan_lane(&self, other: &Self) -> bool {
         matches!(
             (self, other),
-            (Self::Project(_), Self::Project(_))
-                | (
-                    Self::Markers(_) | Self::Artifacts(_),
-                    Self::Markers(_) | Self::Artifacts(_)
-                )
+            (Self::Project(_), Self::Project(_)) | (Self::Artifacts(_), Self::Artifacts(_))
         )
     }
 
     fn scan_lane_permits(&self) -> usize {
         match self {
             Self::Project(_) => CORE_PROJECT_SCAN_PERMITS,
-            Self::Markers(_) | Self::Artifacts(_) => OPTIONAL_PROJECT_SCAN_PERMITS,
+            Self::Artifacts(_) => OPTIONAL_PROJECT_SCAN_PERMITS,
             Self::HomeTx => 1,
         }
     }
@@ -645,9 +614,9 @@ impl Default for RefreshCoordinator {
         Self {
             state: Mutex::new(RefreshCoordinatorState::default()),
             core_project_scans: Semaphore::new(CORE_PROJECT_SCAN_PERMITS),
-            // Marker and artifact traversal can recurse through much larger
-            // trees than the core task projection. Keep it off the core lane
-            // so optional coverage work cannot starve task-first access.
+            // Artifact traversal can recurse through much larger trees than
+            // the core task projection. Keep it off the core lane so optional
+            // coverage work cannot starve task-first access.
             optional_project_scans: Semaphore::new(OPTIONAL_PROJECT_SCAN_PERMITS),
             blocking_scans: BlockingScanRegistry::default(),
             metrics: RefreshMetrics::default(),
@@ -769,11 +738,6 @@ pub struct IndexRefreshStatus {
 #[derive(Debug)]
 enum BuiltRefresh {
     Project(Box<BuiltProjectRefresh>),
-    Markers {
-        board_entry: BoardEntry,
-        markers: BTreeMap<String, Vec<PathBuf>>,
-        parse_errors: Vec<ParseError>,
-    },
     Artifacts {
         board_entry: BoardEntry,
         artifacts: Vec<ArtifactSummary>,
@@ -796,9 +760,6 @@ enum RefreshSeed {
         prior_repo_url: Option<String>,
         rebuilt_at: Option<DateTime<Utc>>,
         repo_urls: BTreeMap<String, String>,
-    },
-    Markers {
-        board_entry: BoardEntry,
     },
     Artifacts {
         board_entry: BoardEntry,
@@ -988,12 +949,8 @@ impl Index {
             match tokio::task::spawn_blocking(move || {
                 let mut next = scan_seed;
                 scan_index.load_project(&scan_entry, &mut next, prior_repo_url);
-                let markers = scan_project_markers(&scan_entry.path);
-                lint_project_identity_state(&scan_entry.path, &markers, &mut next);
                 if let Some(project) = next.projects.get_mut(&scan_entry.id) {
-                    project.markers = markers;
                     project.artifacts = load_project_artifacts(&scan_entry.path);
-                    next.marker_projects.insert(scan_entry.id.clone());
                     next.artifact_projects.insert(scan_entry.id.clone());
                 }
                 next
@@ -1186,31 +1143,6 @@ impl Index {
             .collect();
         for id in ids {
             self.ensure_project_loaded(&id).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn ensure_project_markers_loaded(&self, project_id: &str) -> Result<(), String> {
-        self.ensure_project_loaded(project_id).await?;
-        if self.inner.read().await.marker_projects.contains(project_id) {
-            return Ok(());
-        }
-        self.request_project_load(RefreshTarget::Markers(project_id.to_string()))
-            .await
-            .map_err(ProjectLoadRequestError::into_message)
-    }
-
-    pub async fn ensure_all_project_markers_loaded(&self) -> Result<(), String> {
-        let ids: Vec<String> = self
-            .inner
-            .read()
-            .await
-            .board
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect();
-        for id in ids {
-            self.ensure_project_markers_loaded(&id).await?;
         }
         Ok(())
     }
@@ -1619,7 +1551,7 @@ impl Index {
                         }
                     }
                 }
-                RefreshTarget::Markers(_) | RefreshTarget::Artifacts(_) => {
+                RefreshTarget::Artifacts(_) => {
                     match self.refresh.optional_project_scans.acquire().await {
                         Ok(permit) => Some(permit),
                         Err(_) => {
@@ -1966,18 +1898,6 @@ impl Index {
                         repo_urls: seed.repo_urls.clone(),
                     }
                 }
-                RefreshTarget::Markers(project_id) => {
-                    let board_entry = seed
-                        .board
-                        .iter()
-                        .find(|entry| entry.id == *project_id)
-                        .cloned()
-                        .ok_or_else(|| format!("unknown project {project_id}"))?;
-                    if !seed.projects.contains_key(project_id) {
-                        return Err(format!("project {project_id} is not loaded"));
-                    }
-                    RefreshSeed::Markers { board_entry }
-                }
                 RefreshTarget::Artifacts(project_id) => {
                     let board_entry = seed
                         .board
@@ -2046,18 +1966,6 @@ impl Index {
                     tx,
                     parse_errors,
                 })))
-            }
-            RefreshSeed::Markers { board_entry } => {
-                #[cfg(test)]
-                scan_index.apply_blocking_refresh_delay(&blocking_target_label);
-                let markers = scan_project_markers(&board_entry.path);
-                let mut lint_snapshot = IndexSnapshot::default();
-                lint_project_identity_state(&board_entry.path, &markers, &mut lint_snapshot);
-                Ok(BuiltRefresh::Markers {
-                    board_entry,
-                    markers,
-                    parse_errors: lint_snapshot.parse_errors,
-                })
             }
             RefreshSeed::Artifacts { board_entry } => {
                 #[cfg(test)]
@@ -2194,9 +2102,7 @@ impl Index {
                     .unwrap_or(project.repo_url);
                 // Any core publication invalidates the optional recursive
                 // projections. Their next owning route reloads them lazily.
-                snap.marker_projects.remove(&board_entry.id);
                 snap.artifact_projects.remove(&board_entry.id);
-                snap.marker_parse_errors.remove(&board_entry.id);
                 // Home-ledger and project scans may run concurrently. Rebuild
                 // this cheap derived view from the tx set under publication so
                 // an older project scan cannot overwrite activity published by
@@ -2213,38 +2119,6 @@ impl Index {
                 load.last_loaded_at = Some(loaded_at);
                 load.cooldown_until = None;
                 load.error = None;
-            }
-            BuiltRefresh::Markers {
-                board_entry,
-                markers,
-                parse_errors,
-            } => {
-                let Some(current_entry) =
-                    snap.board.iter().find(|entry| entry.id == board_entry.id)
-                else {
-                    return Err(format!("unknown project {}", board_entry.id));
-                };
-                if current_entry != &board_entry {
-                    return Err(format!(
-                        "project {} registration changed during marker scan",
-                        board_entry.id
-                    ));
-                }
-                let Some(project) = snap.projects.get_mut(&board_entry.id) else {
-                    return Err(format!("project {} is not loaded", board_entry.id));
-                };
-                project.markers = markers;
-                if let Some(prior) = snap.marker_parse_errors.remove(&board_entry.id) {
-                    snap.parse_errors.retain(|error| {
-                        !prior
-                            .iter()
-                            .any(|old| old.path == error.path && old.message == error.message)
-                    });
-                }
-                snap.parse_errors.extend(parse_errors.iter().cloned());
-                snap.marker_parse_errors
-                    .insert(board_entry.id.clone(), parse_errors);
-                snap.marker_projects.insert(board_entry.id);
             }
             BuiltRefresh::Artifacts {
                 board_entry,
@@ -2589,8 +2463,6 @@ impl Index {
             .retain(|id, _| registered.contains_key(id) && !changed.contains(id));
         snap.repo_urls
             .retain(|id, _| registered.contains_key(id) && !changed.contains(id));
-        snap.marker_projects
-            .retain(|id| registered.contains_key(id) && !changed.contains(id));
         snap.artifact_projects
             .retain(|id| registered.contains_key(id) && !changed.contains(id));
         let registered_ids: Vec<String> = snap.board.iter().map(|entry| entry.id.clone()).collect();
@@ -2674,11 +2546,14 @@ impl Index {
             subtasks: BTreeMap::new(),
             activity_index: BTreeMap::new(),
             graph: GraphIndex::default(),
-            markers: BTreeMap::new(),
             last_loaded_at: Some(Utc::now()),
             artifacts: Vec::new(),
         };
         let mut project = project;
+        // Identity lint (duplicate ids, malformed mints, dangling .orgasmic
+        // references) lives inside ordinary project loading: it reads only
+        // task files, decisions.org, and glossary.org.
+        lint_project_identity_state(&board_entry.path, snap);
         // goal.org carries no tasks, so it is not in the task-file iteration;
         // read it just for the thin-goal lint (stale liveness vestiges).
         let goal_path = orgasmic_core::goal_file_path(&board_entry.path);
@@ -3211,12 +3086,8 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
     }
 }
 
-fn lint_project_identity_state(
-    project_root: &Path,
-    markers: &BTreeMap<String, Vec<PathBuf>>,
-    snap: &mut IndexSnapshot,
-) {
-    for finding in lint_project_identities(project_root, markers) {
+fn lint_project_identity_state(project_root: &Path, snap: &mut IndexSnapshot) {
+    for finding in lint_project_identities(project_root) {
         push_parse_error(snap, finding.path, finding.message);
     }
 }
@@ -3488,114 +3359,6 @@ fn macos_files_access_hint_for_current_user(path: &Path) -> Option<String> {
 
 fn own_vec(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
-}
-
-fn scan_project_markers(project_root: &Path) -> BTreeMap<String, Vec<PathBuf>> {
-    let root = std::fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
-    let gitignore_dirs = load_top_level_gitignore_dirs(&root);
-    let mut found: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
-    let mut stack = vec![root.clone()];
-
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_dir() {
-                if !should_skip_marker_dir(&root, &path, &gitignore_dirs) {
-                    stack.push(path);
-                }
-                continue;
-            }
-            if file_type.is_file() && should_scan_marker_file(&path) {
-                let rel = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy();
-                if should_skip_marker_path(&rel) {
-                    continue;
-                }
-                scan_marker_file(&root, &path, &mut found);
-            }
-        }
-    }
-
-    found
-        .into_iter()
-        .map(|(node_id, files)| (node_id, files.into_iter().collect()))
-        .collect()
-}
-
-fn load_top_level_gitignore_dirs(root: &Path) -> BTreeSet<String> {
-    let Ok(contents) = std::fs::read_to_string(root.join(".gitignore")) else {
-        return BTreeSet::new();
-    };
-    contents
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
-                return None;
-            }
-            let pattern = trimmed.trim_start_matches('/').trim_end_matches('/');
-            if pattern.is_empty()
-                || pattern.contains('/')
-                || pattern.contains('*')
-                || pattern.contains('?')
-                || pattern.contains('[')
-            {
-                return None;
-            }
-            Some(pattern.to_string())
-        })
-        .collect()
-}
-
-fn should_skip_marker_dir(root: &Path, path: &Path, gitignore_dirs: &BTreeSet<String>) -> bool {
-    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-    if matches!(name, ".git" | "target" | "node_modules" | "dist" | "build") {
-        return true;
-    }
-    let rel = path.strip_prefix(root).unwrap_or(path);
-    if rel.starts_with(".orgasmic/snapshots") {
-        return true;
-    }
-    rel.components().count() == 1 && gitignore_dirs.contains(name)
-}
-
-fn should_scan_marker_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some(
-            "rs" | "ts"
-                | "tsx"
-                | "js"
-                | "jsx"
-                | "py"
-                | "sh"
-                | "bash"
-                | "zsh"
-                | "yaml"
-                | "yml"
-                | "toml"
-        )
-    )
-}
-
-fn scan_marker_file(root: &Path, path: &Path, found: &mut BTreeMap<String, BTreeSet<PathBuf>>) {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    let ext = path.extension().and_then(|e| e.to_str());
-    let mut file_ids = BTreeSet::new();
-    for line in contents.lines() {
-        file_ids.extend(marker_node_ids_in_line(line, ext));
-    }
-    for node_id in file_ids {
-        found.entry(node_id).or_default().insert(rel.clone());
-    }
 }
 
 fn rebuild_all_activity_indexes(snap: &mut IndexSnapshot) {
@@ -4062,14 +3825,6 @@ mod tests {
                 "unknown project unknown",
             ),
             (
-                RefreshTarget::Markers("unknown".to_string()),
-                "unknown project unknown",
-            ),
-            (
-                RefreshTarget::Markers("project".to_string()),
-                "project project is not loaded",
-            ),
-            (
                 RefreshTarget::Artifacts("unknown".to_string()),
                 "unknown project unknown",
             ),
@@ -4100,7 +3855,7 @@ mod tests {
 
         assert_eq!(
             index.refresh_status().await.scans_total,
-            10,
+            6,
             "each immediate retry must enter the production scan path"
         );
     }
@@ -4433,7 +4188,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn marker_and_artifact_first_loads_are_bounded_and_leave_core_lane_free() {
+    async fn artifact_first_loads_are_bounded_and_leave_core_lane_free() {
         let (tmp, home) = make_home();
         let first = tmp.path().join("first");
         let second = tmp.path().join("second");
@@ -4451,17 +4206,11 @@ mod tests {
         index.bootstrap_catalog().await;
         index.ensure_project_loaded("first").await.unwrap();
         index.set_refresh_timeout(Duration::from_millis(200));
-        let marker_gate = index.gate_next_refresh_for("markers:first");
         let artifact_gate = index.gate_next_refresh_for("artifacts:first");
-        let markers = {
-            let index = index.clone();
-            tokio::spawn(async move { index.ensure_project_markers_loaded("first").await })
-        };
         let artifacts = {
             let index = index.clone();
             tokio::spawn(async move { index.ensure_project_artifacts_loaded("first").await })
         };
-        marker_gate.entered.notified().await;
         artifact_gate.entered.notified().await;
 
         tokio::time::timeout(
@@ -4471,9 +4220,7 @@ mod tests {
         .await
         .expect("optional projections starved the core project lane")
         .unwrap();
-        let marker_error = markers.await.unwrap().unwrap_err();
         let artifact_error = artifacts.await.unwrap().unwrap_err();
-        assert!(marker_error.contains("markers:first filesystem scan timed out"));
         assert!(artifact_error.contains("artifacts:first filesystem scan timed out"));
     }
 
@@ -4492,29 +4239,21 @@ mod tests {
 
         index.ensure_project_loaded("project").await.unwrap();
         let core = index.snapshot().await;
-        assert!(core.projects["project"].markers.is_empty());
+        // A source-marker comment is inert: no projection, no parse error.
         assert!(core.projects["project"].artifacts.is_empty());
-        assert!(!core.marker_projects.contains("project"));
         assert!(!core.artifact_projects.contains("project"));
+        assert!(core
+            .parse_errors
+            .iter()
+            .all(|error| !error.message.contains("TASK-SOURCE-MARKER")));
         assert_eq!(index.refresh_status().await.scans_total, 1);
-
-        index
-            .ensure_project_markers_loaded("project")
-            .await
-            .unwrap();
-        let with_markers = index.snapshot().await;
-        assert!(with_markers.marker_projects.contains("project"));
-        assert!(with_markers.projects["project"]
-            .markers
-            .contains_key("TASK-SOURCE-MARKER"));
-        assert!(!with_markers.artifact_projects.contains("project"));
 
         index
             .ensure_project_artifacts_loaded("project")
             .await
             .unwrap();
         assert!(index.snapshot().await.artifact_projects.contains("project"));
-        assert_eq!(index.refresh_status().await.scans_total, 3);
+        assert_eq!(index.refresh_status().await.scans_total, 2);
     }
 
     #[tokio::test]
@@ -5419,11 +5158,6 @@ mod tests {
             "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
         );
         index.refresh_project("proj-x").await.unwrap();
-        assert!(
-            !index.snapshot().await.marker_projects.contains("proj-x"),
-            "core refresh invalidates the recursive marker projection"
-        );
-        index.ensure_project_markers_loaded("proj-x").await.unwrap();
         let snap = index.snapshot().await;
         assert_eq!(
             snap.parse_error_counts_by_project().get("proj-x").copied(),
@@ -5600,65 +5334,6 @@ The following criteria must hold before close.
         );
     }
 
-    #[tokio::test]
-    async fn refresh_project_indexes_single_id_marker() {
-        let (tmp, home) = make_home();
-        let project_root = tmp.path().join("proj");
-        seed_project(&project_root);
-        seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join("src/lib.rs"),
-            "pub fn old() {}\n// orgasmic:dec_001\n",
-        );
-
-        let index = Index::new(home);
-        index.rebuild().await;
-        write(
-            &project_root.join("src/lib.rs"),
-            "pub fn new() {}\n// orgasmic:dec_002\n",
-        );
-        index.refresh_project("proj-x").await.unwrap();
-        assert!(
-            !index.snapshot().await.marker_projects.contains("proj-x"),
-            "core refresh invalidates the recursive marker projection"
-        );
-        index.ensure_project_markers_loaded("proj-x").await.unwrap();
-        let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
-        assert_eq!(
-            project.markers.get("dec_002").unwrap(),
-            &vec![PathBuf::from("src/lib.rs")]
-        );
-        assert!(!project.markers.contains_key("dec_001"));
-    }
-
-    #[tokio::test]
-    async fn rebuild_indexes_multi_id_marker() {
-        let (tmp, home) = make_home();
-        let project_root = tmp.path().join("proj");
-        seed_project(&project_root);
-        seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join("crates/orgasmic-core/src/org.rs"),
-            "// orgasmic:arch_003,dec_004\n",
-        );
-
-        let index = Index::new(home);
-        index.rebuild().await;
-        let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
-        assert_eq!(
-            project.markers.get("arch_003").unwrap(),
-            &vec![PathBuf::from("crates/orgasmic-core/src/org.rs")]
-        );
-        assert_eq!(
-            project.markers.get("dec_004").unwrap(),
-            &vec![PathBuf::from("crates/orgasmic-core/src/org.rs")]
-        );
-    }
-
     /// Stage D pin: after architecture.org is gone, `arch_` remaining in
     /// `looks_like_structured_node_id` is the only thing stopping a retired id
     /// from materializing into `graph.nodes` and silently disarming write-time
@@ -5676,14 +5351,13 @@ The following criteria must hold before close.
     }
 
     #[tokio::test]
-    async fn retired_architecture_marker_stays_indexed_without_dangling_parse_error() {
+    async fn retired_architecture_marker_comment_is_inert() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
         seed_board(&home, &project_root, "proj-x");
-        let marker_file = PathBuf::from("src/lib.rs");
         write(
-            &project_root.join(&marker_file),
+            &project_root.join("src/lib.rs"),
             "// orgasmic:arch_GONE99\n",
         );
         assert!(
@@ -5694,18 +5368,12 @@ The following criteria must hold before close.
         let index = Index::new(home);
         index.rebuild().await;
         let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
-        assert_eq!(
-            project.markers.get("arch_GONE99"),
-            Some(&vec![marker_file]),
-            "retired architecture marker must remain indexed"
-        );
+        assert!(snap.project("proj-x").is_some());
         assert!(
             snap.parse_errors
                 .iter()
                 .all(|error| !error.message.contains("arch_GONE99")),
-            "retired architecture marker must not emit a dangling advisory parse error: {:?}",
+            "retired architecture marker comment must not emit a parse error: {:?}",
             snap.parse_errors
         );
     }
@@ -5751,7 +5419,7 @@ The following criteria must hold before close.
     }
 
     #[tokio::test]
-    async fn unresolved_non_architecture_markers_still_surface_parse_errors() {
+    async fn unresolved_marker_comments_are_inert() {
         let (tmp, home) = make_home();
         let project_root = tmp.path().join("proj");
         seed_project(&project_root);
@@ -5764,82 +5432,15 @@ The following criteria must hold before close.
         let index = Index::new(home);
         index.rebuild().await;
         let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
         for marker_id in ["dec_GONE99", "TASK-GONE99", "term_GONE99"] {
             assert!(
-                project.markers.contains_key(marker_id),
-                "{marker_id} marker must remain indexed"
-            );
-            assert!(
-                snap.parse_errors.iter().any(|error| {
-                    error
-                        .message
-                        .contains(&format!("dangling advisory marker `{marker_id}`"))
-                }),
-                "unresolved {marker_id} marker must still surface a parse error: {:?}",
+                snap.parse_errors
+                    .iter()
+                    .all(|error| !error.message.contains(marker_id)),
+                "inert {marker_id} marker comment must not surface a parse error: {:?}",
                 snap.parse_errors
             );
         }
-    }
-
-    #[tokio::test]
-    async fn rebuild_strips_marker_option_suffix() {
-        let (tmp, home) = make_home();
-        let project_root = tmp.path().join("proj");
-        seed_project(&project_root);
-        seed_board(&home, &project_root, "proj-x");
-        write(
-            &project_root.join("src/choice.ts"),
-            "  // orgasmic:dec_007:opt_a\n",
-        );
-
-        let index = Index::new(home);
-        index.rebuild().await;
-        let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
-        assert_eq!(
-            project.markers.get("dec_007").unwrap(),
-            &vec![PathBuf::from("src/choice.ts")]
-        );
-        assert!(!project.markers.contains_key("dec_007:opt_a"));
-    }
-
-    #[tokio::test]
-    async fn marker_scan_skips_hardcoded_directories() {
-        let (tmp, home) = make_home();
-        let project_root = tmp.path().join("proj");
-        seed_project(&project_root);
-        seed_board(&home, &project_root, "proj-x");
-        write(&project_root.join("src/lib.rs"), "// orgasmic:dec_kept\n");
-        write(
-            &project_root.join("target/foo.rs"),
-            "// orgasmic:dec_skipped\n",
-        );
-
-        let index = Index::new(home);
-        index.rebuild().await;
-        let snap = index.snapshot().await;
-        let project = snap.project("proj-x").unwrap();
-
-        assert!(project.markers.contains_key("dec_kept"));
-        assert!(!project.markers.contains_key("dec_skipped"));
-    }
-
-    #[tokio::test]
-    async fn marker_files_for_unknown_node_is_empty() {
-        let (tmp, home) = make_home();
-        let project_root = tmp.path().join("proj");
-        seed_project(&project_root);
-        seed_board(&home, &project_root, "proj-x");
-        write(&project_root.join("src/lib.rs"), "// orgasmic:dec_known\n");
-
-        let index = Index::new(home);
-        index.rebuild().await;
-        let snap = index.snapshot().await;
-
-        assert!(snap.marker_files("dec_missing").is_empty());
     }
 
     #[tokio::test]

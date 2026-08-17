@@ -279,21 +279,28 @@ export async function fetchParseErrorsWithCoverage(): Promise<ParseErrorsResult>
 }
 
 export async function loadFullParseErrorCoverage(): Promise<ParseErrorsResult> {
-  const markerCoverage = await get<{
-    node_id: string;
-    files: string[];
-    projects: Record<string, number>;
-    failures: Record<string, string>;
-  }>('/graph/markers/__coverage__');
-  const result = await fetchParseErrorsWithCoverage();
-  const failures = markerCoverage.failures ?? {};
-  if (Object.keys(failures).length === 0) return result;
-  const skipped = Object.keys(failures).join(',');
+  // Explicit whole-board request: `?full=true` asks the daemon to materialize
+  // every registered project before reading the parse-error view. Projects
+  // that failed to load surface as ids in the header's `failed=[...]` segment.
+  const { data, header } = await getWithHeader<ParseError[]>(
+    '/graph/parse-errors?full=true',
+    'x-orgasmic-project-coverage',
+  );
+  const failures: Record<string, string> = {};
+  const failedSegment = /(?:^|; )failed=\[([^\]]*)\]/.exec(header ?? '')?.[1] ?? '';
+  for (const raw of failedSegment.split(',')) {
+    const id = raw.trim();
+    if (id) failures[decodeURIComponent(id)] = '';
+  }
   return {
-    ...result,
+    errors: data,
     coverage: {
-      state: 'partial',
-      detail: `${result.coverage.detail ?? 'partial'}; skipped=[${skipped}]`,
+      state: header?.startsWith('complete;')
+        ? 'complete'
+        : header?.startsWith('partial;')
+          ? 'partial'
+          : 'unknown',
+      detail: header,
       failures,
     },
   };

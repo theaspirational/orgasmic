@@ -45,7 +45,7 @@ async fn load_identity_projection(
     token: &str,
 ) {
     let response = client
-        .get(format!("http://{addr}/api/graph/markers/identity-lint"))
+        .get(format!("http://{addr}/api/graph/parse-errors?full=true"))
         .bearer_auth(token)
         .send()
         .await

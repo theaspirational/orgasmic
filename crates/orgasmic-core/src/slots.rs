@@ -366,11 +366,11 @@ mod tests {
 
     #[test]
     fn dynamic_skill_slots_are_known() {
-        let tpl = "Use {{skills.my-skill}} body, {{skill_path.my-skill}} path, and {{conventions.code_markers}} rules";
+        let tpl = "Use {{skills.my-skill}} body, {{skill_path.my-skill}} path, and {{conventions.node_references}} rules";
         let mut values = SlotValues::new();
         values.insert("skills.my-skill".into(), "BODY".into());
         values.insert("skill_path.my-skill".into(), "/a/b".into());
-        values.insert("conventions.code_markers".into(), "RULES".into());
+        values.insert("conventions.node_references".into(), "RULES".into());
         let out = compile(tpl, &values, &registry()).unwrap();
         assert_eq!(out, "Use BODY body, /a/b path, and RULES rules");
     }

@@ -8,7 +8,6 @@ use crate::identity_lint::{
     collect_identity_occurrences, duplicate_id_groups, paths_introduced_by_ref,
     select_incoming_occurrence, IdentityOccurrence,
 };
-use crate::marker::should_skip_marker_path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdRepairMapping {
@@ -122,24 +121,6 @@ fn rewrite_text(text: &str, mappings: &[(String, String)]) -> (String, usize) {
     (out, total)
 }
 
-fn rewrite_marker_payload(payload: &str, mappings: &[(String, String)]) -> (String, usize) {
-    let marker_mappings: Vec<(String, String)> = mappings
-        .iter()
-        .flat_map(|(old, new)| {
-            let mut pairs = Vec::new();
-            if old.starts_with("TASK-") {
-                pairs.push((
-                    format!("task_{}", old.strip_prefix("TASK-").unwrap()),
-                    format!("task_{}", new.strip_prefix("TASK-").unwrap()),
-                ));
-            }
-            pairs.push((old.clone(), new.clone()));
-            pairs
-        })
-        .collect();
-    rewrite_text(payload, &marker_mappings)
-}
-
 fn rewrite_file(path: &Path, mappings: &[(String, String)]) -> Result<bool, IdRepairError> {
     let original = std::fs::read_to_string(path).map_err(|e| IdRepairError::Io {
         path: path.to_path_buf(),
@@ -148,28 +129,9 @@ fn rewrite_file(path: &Path, mappings: &[(String, String)]) -> Result<bool, IdRe
     let mut changed = false;
     let mut out_lines = Vec::new();
     for line in original.lines() {
-        let (mut line_out, n) = rewrite_text(line, mappings);
+        let (line_out, n) = rewrite_text(line, mappings);
         if n > 0 {
             changed = true;
-        }
-        if line_out.contains("orgasmic:") {
-            let mut rebuilt = String::new();
-            let mut search = 0;
-            while let Some(idx) = line_out[search..].find("orgasmic:") {
-                let start = search + idx;
-                rebuilt.push_str(&line_out[search..start]);
-                let payload_start = start + "orgasmic:".len();
-                let payload = &line_out[payload_start..];
-                let (new_payload, pn) = rewrite_marker_payload(payload, mappings);
-                if pn > 0 {
-                    changed = true;
-                }
-                rebuilt.push_str("orgasmic:");
-                rebuilt.push_str(&new_payload);
-                search = payload_start + payload.len();
-            }
-            rebuilt.push_str(&line_out[search..]);
-            line_out = rebuilt;
         }
         out_lines.push(line_out);
     }
@@ -184,61 +146,6 @@ fn rewrite_file(path: &Path, mappings: &[(String, String)]) -> Result<bool, IdRe
         })?;
     }
     Ok(changed)
-}
-
-fn scan_code_marker_files(project_root: &Path) -> Vec<PathBuf> {
-    let roots = [
-        project_root.join(".orgasmic"),
-        project_root.join("shipped"),
-        project_root.join("crates"),
-        project_root.join("ui/src"),
-        project_root.join("scripts"),
-    ];
-    let mut files = Vec::new();
-    for root in roots {
-        if !root.is_dir() {
-            continue;
-        }
-        let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in read.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                let rel = path
-                    .strip_prefix(project_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy();
-                if should_skip_marker_path(&rel) {
-                    continue;
-                }
-                if matches!(
-                    path.extension().and_then(|e| e.to_str()),
-                    Some(
-                        "rs" | "ts"
-                            | "tsx"
-                            | "js"
-                            | "jsx"
-                            | "py"
-                            | "sh"
-                            | "bash"
-                            | "zsh"
-                            | "yaml"
-                            | "yml"
-                            | "toml"
-                    )
-                ) {
-                    files.push(path);
-                }
-            }
-        }
-    }
-    files
 }
 
 /// Apply repair mappings on the incoming side and git-introduced paths only.
@@ -263,17 +170,6 @@ pub fn apply_id_collision_repairs(
                 continue;
             }
             if rewrite_file(&path, &pairs)? {
-                changed_files += 1;
-            }
-        }
-        for path in scan_code_marker_files(project_root) {
-            let rel = path
-                .strip_prefix(project_root)
-                .unwrap_or(&path)
-                .to_path_buf();
-            if (extra_rewrite_paths.contains(&rel) || path == mapping.incoming_path)
-                && rewrite_file(&path, &pairs)?
-            {
                 changed_files += 1;
             }
         }
