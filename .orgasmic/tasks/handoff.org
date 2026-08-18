@@ -5,65 +5,67 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         6b1f6ef
-:LIVENESS_AT:      [2026-08-08 Sat]
-:UPDATED_AT:       [2026-08-08 Sat]
+:LIVENESS:         a90c5d8
+:LIVENESS_AT:      [2026-08-18 Tue]
+:UPDATED_AT:       [2026-08-18 Tue]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-08. *THREE MERGES, TWO REVIEWS, TWO EXPENSIVE MANAGER ERRORS*,
-and a P0 fix round in flight on the prune delete path — round FOUR.
+Session 2026-08-18 (reconciliation; previous manager session 2026-08-08 — its narrative and
+errors are preserved below and in Done so far). NOTHING IS IN FLIGHT; the board was reconciled
+today. The five rules below are durable, with 08-18 status notes where the product moved.
 
 THE FIVE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
 1. *ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE ANYTHING ELSE.* Nothing in
-   orgasmic wakes a manager. The daemon knows the instant a run ends and CANNOT
-   TELL YOU; a manager learns only by polling. On 2026-08-08 a reviewer finished
-   and *the manager sat idle until the operator pinged it.* A dispatch without a
-   watcher stalls the whole board silently and is indistinguishable from a worker
-   still working. Poll =manager dispatch-status= every 30s on the started_tx;
-   emit on =[reported]= OR =[run-gone]=-without-report. *NEVER key on
-   =[pid-gone]=* — tmux prints it always because =WORKER_PID=-=. TASK-D6N77 (P1)
-   owns the product fix.
+orgasmic wakes a manager. The daemon knows the instant a run ends and CANNOT
+TELL YOU; a manager learns only by polling. On 2026-08-08 a reviewer finished
+and *the manager sat idle until the operator pinged it.* A dispatch without a
+watcher stalls the whole board silently and is indistinguishable from a worker
+still working. Poll =manager dispatch-status= every 30s on the started_tx;
+emit on =[reported]= OR =[run-gone]=-without-report. *NEVER key on
+=[pid-gone]=* — tmux prints it always because =WORKER_PID=-=. *UPDATE 08-18:
+TASK-D6N77 IS DONE — =manager dispatch-wait --started-tx <tx>= blocks until the
+dispatch reports or dies. Use the command.*
 
 2. *NEVER RUN CARGO WITHOUT A SYSPOLICYD WATCHDOG. THERE IS NO "ATTENDED"
-   EXEMPTION.* Sample =ps -o pcpu= -p $(pgrep -x syspolicyd)= every 10s, kill at
-   ≥400% held 60s. This machine rebooted on 2026-08-08 —
-   =WindowServer-2026-08-08-105749.ips=, the THIRD occurrence — because the
-   manager read the guard and classified itself as attending. *The burst comes
-   from test EXECUTION and does not care who is watching.* TASK-4BBA6 (P1) moves
-   the guard inside =run-tests.sh=, because a protection that lives in a document
-   is not a protection.
+EXEMPTION.* Sample =ps -o pcpu= -p 520= every 10s, kill at
+≥400% held 60s. This machine rebooted on 2026-08-08 —
+=WindowServer-2026-08-08-105749.ips=, the THIRD occurrence — because the
+manager read the guard and classified itself as attending. *The burst comes
+from test EXECUTION and does not care who is watching.* *UPDATE 08-18:
+TASK-4BBA6 IS DONE — the watchdog is INSIDE =scripts/run-tests.sh= now. The
+manual guard remains for any bare =cargo test= you run.*
 
 3. *NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.*
-   =ensure_running= → =start_via_selected_adapter= → =daemon_service::start=
-   writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
-   not scope; a staged home restarts the real daemon and kills every live
-   dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
-   safe. TASK-48SFW carries the source chain.
+=ensure_running= → =start_via_selected_adapter= → =daemon_service::start=
+writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
+not scope; a staged home restarts the real daemon and kills every live
+dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
+safe. TASK-48SFW carries the source chain.
 
 4. *ONE RUN IS NOT A MEASUREMENT ON AN INTERMITTENT TEST, AND ONE TEST BINARY IS
-   NOT A CRATE.* The manager made both mistakes on 2026-08-08. It filed a P0
-   "regression bisected to TASK-RMA18" from one run per commit on a test that
-   fails ~40% of the time — the implementer overturned it, base fails 3 of 8. And
-   it reported "738 passed / 0 failed" for a crate with *23 test binaries*.
-   *Repeat before you conclude, and quote =run-tests.sh='s VERDICT block rather
-   than a raw =test result:= line.* Sibling of the standing rule below.
+NOT A CRATE.* The manager made both mistakes on 2026-08-08. It filed a P0
+"regression bisected to TASK-RMA18" from one run per commit on a test that
+fails ~40% of the time — the implementer overturned it, base fails 3 of 8. And
+it reported "738 passed / 0 failed" for a crate with *23 test binaries*.
+*Repeat before you conclude, and quote =run-tests.sh='s VERDICT block rather
+than a raw =test result:= line.* Sibling of the standing rule below.
 
 5. *A CLAIM MEASURED ON SOME CASES AND WRITTEN DOWN AS A UNIVERSAL IS THIS
-   PROJECT'S MOST EXPENSIVE DEFECT.* Still true, and 2026-08-08 added the
-   sharpest instance yet: =worktree_submodule_refusal= reproduced git's
-   =validate_no_submodules= by reading =.gitmodules= — *git reads the INDEX* — and
-   the round that "closed" it passed its own tests because every fixture it built
-   satisfied both predicates at once. *When a report says a predicate REPRODUCES
-   another system's behaviour, ask what the other system's SOURCE OF TRUTH is,
-   not whether the tests pass.*
+PROJECT'S MOST EXPENSIVE DEFECT.* Still true, and 2026-08-08 added the
+sharpest instance yet: =worktree_submodule_refusal= reproduced git's
+=validate_no_submodules= by reading =.gitmodules= — *git reads the INDEX* — and
+the round that "closed" it passed its own tests because every fixture it built
+satisfied both predicates at once. *When a report says a predicate REPRODUCES
+another system's behaviour, ask what the other system's SOURCE OF TRUTH is,
+not whether the tests pass.*
 
 CROSS-FAMILY REVIEW IS RESTORED [2026-08-08]. codex works again and the operator
 authorised =gpt-5.6-sol= for review; the same-family exception that governed
 08-07 is RETIRED. The first cross-family review immediately produced a BLOCK SHIP
 on a path three same-family rounds had cleared — do not let it lapse again.
-Caveat: *=--effort= does not actually reach codex* (TASK-C7NVH), so a tx recording
+Caveat: *=--effort= does not actually reach codex* (TASK-C7NVH, still open), so a tx recording
 =:EFFORT: high= on a codex dispatch is recording something that was never sent.
 
 THE CLOSE COMMITS ITS OWN RECORD — *PROVEN FOUR TIMES* (=f03949e=, =d8ae56f=,
@@ -74,6 +76,10 @@ ALSO STILL TRUE, from the 08-05 measurements: SHARED =CARGO_TARGET_DIR= IS
 UNSOUND, and STABLE WORKTREE SLOTS DO NOT FIX THE TCC PROMPTS. Do not implement
 either. And =scripts/run-tests.sh='s false greens are FIXED — a crashed target,
 and any anomalous cargo exit, now red whatever else classified.
+
+UPDATE 08-18: the runtime is TMUX-ONLY (rmux and acp-stdio drivers removed,
+=010a32b=) and now 0.0.21. The operator suspension on dispatching (2026-08-09)
+still governs — see In flight.
 
 ** Done so far
 SESSION 2026-08-06/07. SEVEN MERGES, SIX REVIEWS (five REJECT, one approve), and
@@ -375,157 +381,79 @@ tmux — found by reading the live pane: =gpt-5.6-sol xhigh= against a tx saying
 =:EFFORT: high=), TASK-K9WWM (P2, the 10s daemon budget timeouts, which recurred
 on a calm host and so became the real finding the 08-07 handoff predicted).
 
+SESSION 2026-08-18 — LIVENESS RECONCILIATION (manager, recall drift 6b1f6ef..a90c5d8, 230 commits).
+The operator and external agents landed a week of work no manager session recorded. Folded
+summary, verified from git and tx:
+
+- *PR WAVE #9-#18 (operator, via GitHub):* tmux-only runtime refactor (=010a32b= — *the rmux
+  driver is REMOVED*; every rmux reference below is history), canonical chat provider runtime
+  (PR #15), fast macOS ARM release path + cert reuse (PR #11/#12), release fixes (PR #9/#10),
+  simulated-claude test serialization (PR #16), marker grammar retirement + dec_BP4NH superseded
+  (PR #18), task comments + ledger hardening — rewrite guard, 5-digit tx rollover (PR #14),
+  dec_E01MC per-node directory schema. *Runtime now 0.0.21* (was 2cf6ea7 at last handoff).
+- *AGENT CHAINS LANDED (codex/claude via operator-side flows):* TASK-AJP4A lazy project indexing
+  — implemented, hardened through FIVE nested review rounds, tip =AJP4A.1.1.1.1.1= (delay
+  classification) approved + merged =c948872= 08-12, integrated via PR #6. TASK-D6N77 *DONE* —
+  *=manager dispatch-wait= EXISTS* (wake channel: block on started-tx until reported/died).
+  TASK-4BBA6 DONE (syspolicyd watchdog inside run-tests.sh). TASK-K9WWM DONE (6 rounds).
+  TASK-GPY3H DONE (supervisor probe family; follow-up TASK-VT9FG filed). TASK-BX5SR/BX5SR.1 +
+  TASK-GRCWC/GRCWC.1 — merged + approved 08-12/13, *reconciled to done TODAY* (tx-20260818-
+  orgasmic-6121..6126) with residuals filed: BX5SR.2 (P1 idempotency collision), BX5SR.3 (P1
+  writer supervision/liveness), GRCWC.2 (P2 cause-specific remedy).
+- *BOARD TODAY (post-reconciliation):* todo = TASK-ZKZBF only (its cursor-ACP dispatch stalled
+  post-handshake and was aborted 08-16, =fbf1d7b= — needs re-dispatch on tmux/claude once the
+  suspension lifts). in_review EMPTY. in_progress = FIVE STALE AJP4A ANCESTORS (AJP4A, .1,
+  .1.1, .1.1.1, .1.1.1.1) — tip closed but ancestors never moved; unchecked acceptance boxes
+  in AJP4A mean the move needs verification, not blind bookkeeping. backlog 122.
+
 ** Next likely actions
-*NOTHING IS IN FLIGHT AND YOU MAY NOT DISPATCH. See =** In flight= — the
-operator suspended the standing authorization and owes the mode decision.* Ask
-first; the list below is what to propose, not what to start.
+*ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
+Manager-inline bookkeeping actions need no dispatch and may proceed:
 
-*ARM A COMPLETION WATCHER ON EVERY DISPATCH* once dispatching resumes. Nothing in
-orgasmic wakes a manager (TASK-D6N77), so a dispatch without a watcher stalls the
-board silently and looks exactly like a worker still working. Poll
-=manager dispatch-status= every 30s for the started_tx; emit on =[reported]= OR
-=[run-gone]=-without-report. *NEVER key on =[pid-gone]=* — tmux prints it always
-because =WORKER_PID=-=.
+1. *CLOSE THE FIVE STALE AJP4A ANCESTORS* (AJP4A, .1, .1.1, .1.1.1, .1.1.1.1 — in_progress
+   since 08-11/12, tip =.1.1.1.1.1= merged + approved =c948872=, PR #6 integrated). NOT blind
+   bookkeeping: AJP4A's acceptance checklist is unchecked boxes — verify each against HEAD
+   (lazy loading shipped: =dec_YYMSK=, single-flight boundary, unloaded/ready states), file
+   residuals FIRST, then move. Same pattern as the 08-18 BX5SR/GRCWC reconciliation.
+2. *TASK-ZKZBF* (todo, P2) — the only real todo. Re-dispatch on tmux/claude once the
+   suspension lifts (cursor-ACP stalled on it twice; =--property= silent-drop audit).
+3. *Fresh P1 residuals from 08-18:* TASK-BX5SR.2 (idempotency collision), TASK-BX5SR.3 (writer
+   supervision + status/doctor liveness). Natural next pair once dispatching resumes.
+4. Older still-open items, re-checked 08-18 against the board: P4XKT (repeat tests / pass
+   rate), 8Q92K (17/90 verify artifacts cannot replay), C7NVH (--effort never reaches codex),
+   SJA9W (dispatch-status close command), TRAEM (derivation script), VD0VB (cursor-agent
+   pre-trust flags), VT9FG (supervisor probe deadline invariant), GRCWC.2, K9WWM-family
+   leftovers. Full backlog: 122 items.
 
-*ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START.* Nothing
-enforces resolution and the harness default wins SILENTLY (TASK-A55J7). The
-2026-08-08/09 answer, which is NOT a standing setting: *implementers
-=tmux / claude / claude-opus-5 / high=; reviewers =tmux / codex / gpt-5.6-sol=.*
-Cross-family review is the norm and it earns its keep — codex rejected four of
-the six 2QK4P rounds, each time on something the same family had cleared.
-*=--effort= DOES NOT REACH CODEX AT ALL* (TASK-C7NVH): =codex --help= has no such
-flag (it is =-c model_reasoning_effort=), =--harness-arg= is refused for
-non-custom harnesses, and every codex review this session actually ran at the
-machine default =xhigh= while its tx said otherwise. Do not pass =--effort= to
-codex — recording a value that is not applied is the defect itself.
-
-THE ORDER TO PROPOSE, cheapest-leverage first. Every one of these makes the NEXT
-round cheaper, which is the answer to "we are bogged down in routine":
-
-1. *TASK-D6N77 (P1) — the wake channel.* Start with =manager dispatch-wait=; it
-   is small and it converts the autopilot loop from a habit into a command. This
-   is the single biggest source of manual babysitting.
-2. *TASK-GPY3H (P2) — the unowned supervisor probe-child family.* Ruled by the
-   round-six reviewer: file it rather than let TASK-X0PV1 absorb a different
-   family. Three rounds in a row burned an hour each proving "the host, not my
-   change".
-3. *TASK-4BBA6 (P1) — syspolicyd watchdog inside =run-tests.sh=.* Two of this
-   project's three reboots were a manager skipping a documented guard.
-4. *TASK-P4XKT (P1) — repeat passing tests / score a pass rate.* A defect at 40%
-   ships green one round in two; that is how TASK-2QK4P survived as long as it
-   did, and what made a one-run-per-commit bisect look conclusive.
-5. *TASK-8Q92K (P2) — 17 of 90 verify artifacts cannot replay and nothing reports
-   it.* The systemic half (a sweep beside =run-tests.sh --check=) is worth more
-   than the 17 repairs. *Do not mass-regenerate.*
-6. *TASK-GRCWC (P1)* — the =worktree-prune= fixtures. It is a DESTRUCTIVE verb on
-   the installed binary whose only safety argument has never been executed.
-7. *TASK-SJA9W (P2)* — =dispatch-status= prints a close command that cannot be
-   run as printed, for the whole duration of every review round.
-8. *TASK-TRAEM (P2)* — the derivation script, if a clean =approve= on the 2QK4P
-   chain is wanted. =syn= is the stated better answer.
-9. Still P1 and untouched: =4DTBZ=, =BX5SR=, =A55J7=, =48SFW=, =ADHWZ=, =NTNK0=,
-   =3X5AQ=, =VD0VB=, =YBCYQ=, =VBSG2=, =099T6=.
-
-PRACTICES THAT PAID OFF, with this session as the evidence:
-- *A WORKER THAT CHALLENGES THE BRIEF'S PREMISE IS THE BRIEF WORKING.* Write
-  briefs that make it cheap: state the premise, say how it was measured, and say
-  a REJECT of the premise is a valid outcome.
-- *NAME THE CLAIMS TO ATTACK BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST*, and TELL
-  THE REVIEWER IT MAY RUN TESTS. Three of the round-five brief's ten numbered
-  questions each produced a confirmed finding.
-- *TELL A REVIEWER ABOUT THE MANAGER'S OWN ERRORS.* A reviewer that knows the
-  manager is fallible audits the manager.
-- *A RED PROOF IS THE ACCEPTANCE, NOT THE TEST.* Round six was asked to show the
-  test failing under the defect it names, and the manager REPLAYED one
-  independently (=tx-…-5537=): deleting one =flattenRuns= line reds the two new
-  tests while =tsc --noEmit= exits 0 in the same broken state. *A typecheck could
-  never have been that pin* — structural typing ignores extra wire properties.
-  Neither the report nor the reviewer had said so; it is now measured twice.
-- *THE MANAGER VERIFIES THE REPORT, NOT THE WORKER.* Every round this session had
-  at least one claim that did not survive an independent read — most sharply,
-  round five said its regression exercised =boot_reattach_ownership= when that
-  function had exactly ONE caller in the tree and both mentions in the test file
-  were comments.
+DONE SINCE LAST HANDOFF (do not re-propose): D6N77 (dispatch-wait exists), 4BBA6 (watchdog
+inside run-tests.sh), GPY3H, K9WWM, AJP4A chain, BX5SR(.1), GRCWC(.1), ZKZBF abort cleanup.
 
 ** In flight
-NO DISPATCH IS LIVE, AND THE BOARD HAS NO WORK IN FLIGHT FOR THE FIRST TIME IN
-THIS PROJECT'S RECENT HISTORY. =In Review= IS EMPTY.
+NO DISPATCH IS LIVE (=manager dispatch-status= empty, =git worktree list= single, verified
+2026-08-18). The board has no work in flight.
 
-=== DO NOT DISPATCH ANYTHING — OPERATOR INSTRUCTION 2026-08-09
-*The standing authorization to dispatch without per-dispatch approval is
-SUSPENDED* (=tx-20260809-orgasmic-5543=). The operator asked to be shown a plan
-and to choose the next mode. Two of the three decisions are settled; *the third
-is open and it is theirs*:
+=== DO NOT DISPATCH — OPERATOR SUSPENSION 2026-08-09 STILL GOVERNS (tx-20260809-orgasmic-5543)
+Standing authorization to dispatch without per-dispatch approval remains SUSPENDED. Decision 3
+("what mode next?") was still open as of 2026-08-18; ASK before dispatching. The stale
+recommendation below is superseded by Next likely actions.
 
-: 1  reinstall the runtime now?      ANSWERED YES — done, see below
-: 2  run a round seven on the script? ANSWERED NO by closing the node; the
-:                                     findings live on as TASK-TRAEM
-: 3  what mode next?                  *OPEN. ASK. DO NOT PICK IT YOURSELF.*
+Session-harness answer when dispatching resumes (NOT standing, from 08-08/09): implementers
+tmux / claude / claude-opus-5 / high; reviewers tmux / codex / gpt-5.6-sol. *Never pass
+=--effort= to codex* (TASK-C7NVH). NOTE the runtime is now TMUX-ONLY (=010a32b=): rmux no
+longer exists, acp-stdio is gone — tmux is the only driver.
 
-The manager's recommendation on the table for (3): stop opening deep chains and
-take the four that make every future round cheaper — =D6N77= (wake channel),
-=GPY3H= (the unowned probe-child family), =4BBA6= (watchdog inside run-tests.sh),
-=P4XKT= (repeat passing tests) — plus =8Q92K= (17 of 90 verify artifacts cannot
-replay). The operator's own words for why: *"мені здається ми погрязли в рутині"*.
+THE WATCHER RULE NOW HAS A COMMAND: *=manager dispatch-wait --started-tx <tx>=* (TASK-D6N77,
+DONE) blocks until a dispatch reports or dies. USE IT INSTEAD OF hand-rolled 30s polling;
+=[run-gone]= twice remains the manual fallback. NEVER key on =[pid-gone]=.
 
-=== THE RUNTIME IS 2cf6ea7 AND IT CARRIES BOTH FINISHED CHAINS
-Reinstalled 2026-08-09. Inode =544827231= → =547698415= on both the file and the
-running process; PID 7958. Rollback dir
-=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260809= holds =ed0ebbc=.
-Recipe and EIGHT traps in session memory =orgasmic-runtime-reinstall=; two were
-learned on this run. Probe pre-tested against the OLD binary and discriminating
-(=repair_session_file=, =claim_store_unreadable=, =RepairAuthKey=,
-=recovery_unobserved= all 0 → 1..2; control =worktree-prune= unchanged at 4).
-TCC intact, 652 task ids read from the Documents-hosted project, zero permission
-errors. *Functional proof on the installed binary, not a debug build:*
-=orgasmic recovery= serves =failed_recoverable_runs= with 4 records and
-=inventory.failed_recoverable = 4=.
-
-=== BOTH CHAINS CLOSED — AND WHAT WAS CARRIED OUT OF THEM
-Twelve nodes moved to =done= on 2026-08-09: six =TASK-RMA18= (worktree
-reclamation, seven rounds) and six =TASK-2QK4P= (recovery authority, six rounds).
-*Nothing was closed over an open item* — both residuals were filed FIRST, which
-is the only reason the move was pure bookkeeping:
-
-- *=TASK-GRCWC= (P1)* — neither =walk_worktree= fail-open (=:3833= MAX_DEPTH,
-  =:3836=/=:3855= unreadable dir) has a fixture, and the =remove_contents=
-  symmetry that makes them safe has been *derived from source three times and
-  executed zero times*. =worktree-prune= is DESTRUCTIVE and IS INSTALLED. The
-  cheap fixture is =chmod 000=.
-- *=TASK-TRAEM= (P2)* — the round-six review's two open findings, both about
-  =scripts/derive-observation-surface.py=, which ships in no binary: =strip_noise=
-  closes block comments at the first =*/= though Rust NESTS them, so valid
-  functions vanish while all five self-checks pass; and the =cfg(test)= exclusion
-  is module-only, proven by the seen-set diff being eight removals PLUS TWO
-  ADDITIONS rather than a net six.
-
-*The round-six reviewer answered the shipping question YES* — "I would reinstall
-the operator runtime from this tree: the F3 operator path and recovery behavior
-are sound" — which is why the reinstall happened despite a REJECT verdict.
-
-=== TWO MITIGATIONS THAT WORK. REUSE BOTH ON EVERY REVIEW.
-1. *The brief FORBIDS reading =verify/*/injection.patch= bodies* and hands the
-   reviewer the manager's own audit instead. TASK-52NJS trip FOUR killed a review
-   after ~27 minutes of work, right after three =git diff= over those files, and
-   it filed nothing. Every review since has survived.
-2. *File each finding as a =reviewer.finding= tx the MOMENT it exists*, not
-   batched to the end. This is what made the difference between losing everything
-   and losing nothing.
-
-=== THE MANAGER RE-MEASURES THE DAEMON SUITE ON A CALM HOST, EVERY ROUND
-Rounds four, five and six ALL reported non-green honestly on a loaded host and
-the manager closed the criterion on a rested one (=tx-…-5487= 0.1554,
-=tx-…-5515= 0.0044, =tx-…-5536= 0.1070). *Load reads "elevated" while the rate
-calls the host calm — trust the RATE* (the TASK-4BBA6 divergence). Round six's
-author supplied two proper controls, which is the standard to hold: its own new
-test under =#[ignore]= produced the same failures, and the unmodified baseline in
-a sibling worktree was GREEN twice while interleaved. That family is now
-=TASK-GPY3H=.
-
-=== A MANAGER MISTAKE WORTH NOT REPEATING
-=TASK-TH906= was filed and then CANCELLED as an exact duplicate of =TASK-C7NVH=.
-The manager wrote a full task body without searching the backlog first. *At 112
-open items nobody holds the backlog in their head — search before filing.*
+DURABLE PRACTICES from the 08-09 block (kept for reuse; full narrative in git history before
+this handoff commit):
+1. Brief FORBIDS reading =verify/*/injection.patch= bodies; hand the reviewer the manager's
+   audit instead (content-filter kill, TASK-52NJS). File findings as =reviewer.finding= tx the
+   moment they exist.
+2. Re-measure the daemon suite on a calm host every round; trust the syspolicyd RATE, not the
+   load summary word.
+3. SEARCH THE BACKLOG BEFORE FILING (TASK-TH906 duplicate lesson; 122 open items).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
@@ -684,3 +612,19 @@ it spawns real billed provider turns. Never set =ORGASMIC_ALLOW_BILLED_TESTS=.
   claim that did not survive an independent read. The sharpest: round five said
   its regression exercised =boot_reattach_ownership= when that function had
   exactly ONE caller in the tree and both mentions in the test file were comments.
+
+=== CORRECTIONS 2026-08-18 (liveness reconciliation) — read after the block above
+- *THE RUNTIME IS TMUX-ONLY AND NOW 0.0.21.* =010a32b= removed the rmux driver; every rmux
+  mention above is history. acp-stdio is gone too. =2cf6ea7= / =ed0ebbc= version talk is spent.
+- *TASK-D6N77 IS DONE* — =manager dispatch-wait --started-tx= exists. The "autopilot has no
+  floor" risk is reduced to "use the command, not hand-rolled polling".
+- *TASK-4BBA6 IS DONE* — the syspolicyd watchdog lives inside =run-tests.sh= now. The
+  "never run cargo without a watchdog" rule is enforced by the tool; the reboot-on-unguarded-run
+  entries above are the historical evidence for why.
+- *TASK-K9WMM AND TASK-GPY3H ARE DONE* — their standing risk entries are closed; VT9FG carries
+  the remaining supervisor-probe test gaps.
+- STILL TRUE AND STILL SHARP: ORGASMIC_HOME kills live dispatches (48SFW); content filter on
+  bulk-reading injection patches (52NJS); [pid-gone] lies for tmux; merge-precedes-review and
+  the SJA9W close-command gap; promoted-record commits are unsigned; writer can stop persisting
+  while looking healthy (BX5SR.2/.3 own the open code work); do not stash .orgasmic for verify;
+  never run the 099T6 billed test; CI not live (main 918+ ahead of origin — now far more).

@@ -35670,3 +35670,107 @@
 :PROJECT:      orgasmic
 :REASON:       State audit of todo+in_review: moved TASK-BX5SR, TASK-BX5SR.1, TASK-GRCWC, TASK-GRCWC.1 to done (all reviewed+approved, merged 9412352/ccb86bc, residuals filed as .2 follow-ups); filed TASK-BX5SR.3 for the unfiled writer-supervision/liveness residual; TASK-ZKZBF stays todo (dispatch aborted 2026-08-16, no work landed).
 :END:
+
+* TX 2026-08-18 Tue 21:07:11 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6127
+:TIME:         [2026-08-18 Tue 21:07:11]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:20 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6128
+:TIME:         [2026-08-18 Tue 21:07:20]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:29 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6129
+:TIME:         [2026-08-18 Tue 21:07:29]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:38 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6130
+:TIME:         [2026-08-18 Tue 21:07:38]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:41 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6131
+:TIME:         [2026-08-18 Tue 21:07:41]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6132
+:TIME:         [2026-08-18 Tue 21:07:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:07:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6133
+:TIME:         [2026-08-18 Tue 21:07:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-18 Tue 21:08:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6134
+:TIME:         [2026-08-18 Tue 21:08:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
