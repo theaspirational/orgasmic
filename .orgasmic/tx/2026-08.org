@@ -35774,3 +35774,102 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-18 Tue 21:14:10 task.created TASK-AJP4A.2
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6135
+:TIME:         [2026-08-18 Tue 21:14:10]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Filed before closing the five stale AJP4A ancestors so the tip review's non-blocking notes are owned, per the nothing-closed-over-an-open-item bar
+:END:
+
+* TX 2026-08-18 Tue 21:14:16 task.state_transitioned TASK-AJP4A.1.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6136
+:TIME:         [2026-08-18 Tue 21:14:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Blocking-scan lease guard + delayed-state truthfulness (fix round for the deterministic early-return registration leak). Reviewer verdict chain: this round approved-with-medium-gap -> child .1.1.1.1.1 fixed it and received final VERDICT approve (tx-20260811-orgasmic-5836). Verified on HEAD 2026-08-18: delayed coverage segments in api.rs, race-gate test hooks in index.rs. Residual LOW notes owned by TASK-AJP4A.2.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 21:14:23 task.state_transitioned TASK-AJP4A.1.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6137
+:TIME:         [2026-08-18 Tue 21:14:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Service/queue gaps closed (scan-timeout override reach to launchd/systemd units, refresh lock-before-syscall, waiter budget, negative-cache cooldown). Its review reproduced a blocking-scan registration leak -> fixed and approved in child .1.1.1.1 (final approve tx-20260811-orgasmic-5836). Verified on HEAD 2026-08-18: captured_project_scan_timeout + service rendering in daemon_service.rs:362/950, cooldown via ensure_project_loaded_with_cooldown (index.rs:1039).
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 21:14:28 task.state_transitioned TASK-AJP4A.1.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6138
+:TIME:         [2026-08-18 Tue 21:14:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Residual availability gaps closed (coordinator queue budget, stale scan guards, full marker coverage partial outcomes, unresolved-dependency blocked counts, CLI nonzero on partial reindex, timeout override). Its review's M/L follow-ups -> fixed across children .1.1.1 and .1.1.1.1, tip VERDICT approve (tx-20260811-orgasmic-5836). Verified on HEAD 2026-08-18.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 21:14:35 task.state_transitioned TASK-AJP4A.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6139
+:TIME:         [2026-08-18 Tue 21:14:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Lazy-load hardening round (time-bounded first loads, full marker coverage beyond client timeout, home-tx exclusion from GET /tx?project, partial parse-error UI, per-project reindex failures). Its review's residual availability gaps -> fixed across .1.1 descendants, tip VERDICT approve (tx-20260811-orgasmic-5836). Verified on HEAD 2026-08-18: 32 delayed-segment references in api.rs, catalog states in UI types.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 21:14:42 task.state_transitioned TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6140
+:TIME:         [2026-08-18 Tue 21:14:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Lazy project indexing (dec_YYMSK): eager catalog + single-flight per-project materialization shipped through five nested fix rounds, tip AJP4A.1.1.1.1.1 VERDICT approve 2026-08-11 (tx-20260811-orgasmic-5836), integrated via PR #6 (c5f1653). Verified on HEAD 2026-08-18: ensure_project_loaded single-flight boundary (index.rs:1030), ProjectCatalogEntry (ui types.ts:198), scan-timeout service capture (daemon_service.rs:362). Acceptance checkboxes on disk were never ticked by the flow; satisfaction is evidenced by the review chain, git history, and this tx — not by the boxes. Residual: two LOW notes owned by TASK-AJP4A.2.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 21:14:49 manager.board_reconciled orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6141
+:TIME:         [2026-08-18 Tue 21:14:49]
+:TYPE:         manager.board_reconciled
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Closed the five stale AJP4A ancestors to done: every round had implementer+reviewer reported/done tx, tip .1.1.1.1.1 VERDICT approve (tx-20260811-orgasmic-5836), key acceptance claims re-verified on HEAD (single-flight index.rs:1030, ProjectCatalogEntry types.ts:198, scan-timeout capture daemon_service.rs:362); tip review's two LOW notes filed as TASK-AJP4A.2 before closing. in_progress now EMPTY.
+:END:
