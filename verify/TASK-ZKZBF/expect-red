@@ -1,0 +1,28 @@
+# Pinned from the real injected-red run of 2026-08-19: the patch reintroduces
+# the untyped-passthrough shape on every audited surface — no validation loop
+# in the org-node editor, none in graph create/revise, the typed glossary
+# flags silently overwriting their --property spellings again, the mute
+# "org file update failed" for an unremoveable miscased key, the unnamed
+# uppercase-snake parse error on dispatch-close, and the abort path back to
+# accepting --property values it never records.
+#
+# Pre-fix, every one of these commands returned a normal success object — the
+# character of the TASK-HXSW0 class, on the surfaces it had not yet reached.
+exit: 101
+
+# Four of six: write verbs that reported success while storing/dropping the
+# argument (node prop set, glossary create, decision create, dispatch-close
+# --status aborted).
+contains: must be refused, not silently accepted
+
+# `node prop unset <id> priority` with :PRIORITY: in the drawer: pre-fix it
+# failed INSIDE the rewriter and surfaced as the mute 400 below, naming
+# neither spelling of the key — the exact line the test quotes back.
+contains: the refusal must name the canonical key: Error: daemon returned 400 Bad Request: {"error":"org file update failed"}
+
+# `dispatch-close --property verdict=clean`: pre-fix clap refused the value
+# with a pattern, not a name — no VERDICT anywhere in the message.
+contains: the refusal must name the canonical spelling: error: invalid value 'verdict=clean' for '--property <PROPERTIES>': property key must match [A-Z][A-Z0-9_]*
+
+# Exactly six fall — one per audited surface, no collateral.
+contains: test result: FAILED. 0 passed; 6 failed

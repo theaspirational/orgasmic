@@ -1153,6 +1153,24 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     // removed.
     validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
     validate_manager_owned_close_properties(&args)?;
+    // orgasmic:task_ZKZBF
+    // `--status aborted` has no generic property channel: `close_aborted_request`
+    // records only its structured fields (--reason, worktree, lifecycle,
+    // cleanup), so every `--property` value used to be accepted here and then
+    // silently dropped — the TASK-HXSW0 shape. Refuse by name instead.
+    if args.status == DispatchCloseStatus::Aborted && !args.properties.is_empty() {
+        let keys = args
+            .properties
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "--property {keys} is not recorded by `--status aborted`: the abort tx carries only \
+             its structured fields and used to silently drop --property values; re-run without \
+             --property, or close with --status done to record them"
+        );
+    }
     // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
     // only on the close that records the reviewer's own terminal tx.
     if args.verdict.is_some()
@@ -9922,6 +9940,17 @@ fn parse_close_property(value: &str) -> Result<(String, String), String> {
         .split_once('=')
         .ok_or_else(|| "property must be KEY=VALUE".to_string())?;
     if !is_uppercase_snake_key(key) {
+        // orgasmic:task_ZKZBF — tx property readers (`extra` and friends) match
+        // keys byte for byte, same as Heading::property, so a miscased key
+        // would be recorded on the close tx and never read. Name the canonical
+        // spelling when one exists.
+        let canonical = key.to_ascii_uppercase();
+        if is_uppercase_snake_key(&canonical) {
+            return Err(format!(
+                "property key `{key}` is not the canonical spelling; close-tx readers match keys \
+                 byte for byte, so `:{key}:` would be recorded and never read — use `{canonical}`"
+            ));
+        }
         return Err("property key must match [A-Z][A-Z0-9_]*".to_string());
     }
     Ok((key.to_string(), raw_value.to_string()))

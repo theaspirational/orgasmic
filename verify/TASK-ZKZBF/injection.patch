@@ -1,0 +1,343 @@
+diff --git b/crates/orgasmic-cli/src/main.rs a/crates/orgasmic-cli/src/main.rs
+index c9c4771..0bdb8da 100644
+--- b/crates/orgasmic-cli/src/main.rs
++++ a/crates/orgasmic-cli/src/main.rs
+@@ -3202,37 +3202,6 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
+                 let project = manager::resolve_project(project)?;
+                 let mut properties: std::collections::BTreeMap<String, String> =
+                     parse_key_values(properties)?.into_iter().collect();
+-                // orgasmic:task_ZKZBF
+-                // Every typed flag is the same drawer field its `--property`
+-                // spelling writes; spelling a field both ways in one call is a
+-                // contradiction, not a merge. The typed insert below used to
+-                // silently OVERWRITE the --property value — the TASK-HXSW0
+-                // both-spellings drop, on this surface.
+-                for (flag, key, flag_value) in [
+-                    (
+-                        "--definition",
+-                        "DEFINITION",
+-                        definition.as_deref().map(str::to_string),
+-                    ),
+-                    (
+-                        "--canonical",
+-                        "CANONICAL",
+-                        canonical.as_deref().map(str::to_string),
+-                    ),
+-                    ("--avoid", "AVOID", avoid.as_deref().map(str::to_string)),
+-                    (
+-                        "--relates-to",
+-                        "RELATES_TO",
+-                        (!relates_to.is_empty()).then(|| relates_to.join(" ")),
+-                    ),
+-                ] {
+-                    if let (Some(flag_value), Some(existing)) = (flag_value, properties.get(key)) {
+-                        anyhow::bail!(
+-                            "{flag} {flag_value} and --property {key}={existing} set the same \
+-                             drawer field; pass one of them"
+-                        );
+-                    }
+-                }
+                 if let Some(value) = definition {
+                     properties.insert("DEFINITION".to_string(), value);
+                 }
+diff --git b/crates/orgasmic-cli/src/manager.rs a/crates/orgasmic-cli/src/manager.rs
+index 96909ce..a045a51 100644
+--- b/crates/orgasmic-cli/src/manager.rs
++++ a/crates/orgasmic-cli/src/manager.rs
+@@ -1153,24 +1153,6 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
+     // removed.
+     validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
+     validate_manager_owned_close_properties(&args)?;
+-    // orgasmic:task_ZKZBF
+-    // `--status aborted` has no generic property channel: `close_aborted_request`
+-    // records only its structured fields (--reason, worktree, lifecycle,
+-    // cleanup), so every `--property` value used to be accepted here and then
+-    // silently dropped — the TASK-HXSW0 shape. Refuse by name instead.
+-    if args.status == DispatchCloseStatus::Aborted && !args.properties.is_empty() {
+-        let keys = args
+-            .properties
+-            .iter()
+-            .map(|(key, _)| key.as_str())
+-            .collect::<Vec<_>>()
+-            .join(", ");
+-        bail!(
+-            "--property {keys} is not recorded by `--status aborted`: the abort tx carries only \
+-             its structured fields and used to silently drop --property values; re-run without \
+-             --property, or close with --status done to record them"
+-        );
+-    }
+     // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
+     // only on the close that records the reviewer's own terminal tx.
+     if args.verdict.is_some()
+@@ -9940,17 +9922,6 @@ fn parse_close_property(value: &str) -> Result<(String, String), String> {
+         .split_once('=')
+         .ok_or_else(|| "property must be KEY=VALUE".to_string())?;
+     if !is_uppercase_snake_key(key) {
+-        // orgasmic:task_ZKZBF — tx property readers (`extra` and friends) match
+-        // keys byte for byte, same as Heading::property, so a miscased key
+-        // would be recorded on the close tx and never read. Name the canonical
+-        // spelling when one exists.
+-        let canonical = key.to_ascii_uppercase();
+-        if is_uppercase_snake_key(&canonical) {
+-            return Err(format!(
+-                "property key `{key}` is not the canonical spelling; close-tx readers match keys \
+-                 byte for byte, so `:{key}:` would be recorded and never read — use `{canonical}`"
+-            ));
+-        }
+         return Err("property key must match [A-Z][A-Z0-9_]*".to_string());
+     }
+     Ok((key.to_string(), raw_value.to_string()))
+diff --git b/crates/orgasmic-daemon/src/api.rs a/crates/orgasmic-daemon/src/api.rs
+index 5cbdc1f..12e73e3 100644
+--- b/crates/orgasmic-daemon/src/api.rs
++++ a/crates/orgasmic-daemon/src/api.rs
+@@ -14647,25 +14647,6 @@ async fn create_graph_heading(
+             reject_unresolved_reference_token(&known_ids, key, value)?;
+         }
+     }
+-    // orgasmic:task_ZKZBF
+-    // `render_graph_heading` writes every property verbatim, so a miscased key
+-    // (`--property canonical=…`) used to be stored as `:canonical:` and read
+-    // by nothing — the TASK-HXSW0 shape on the graph layers. And `ID` is
+-    // silently force-overwritten with the minted node id, so passing it is a
+-    // drop by construction. Both are refused by name instead.
+-    if let Some(id_value) = req.properties.get("ID") {
+-        return Err(ApiError::bad_request(format!(
+-            "do not pass ID as a property; the drawer :ID: is derived from the node id (use `id` \
+-             to pin one) — ID={id_value} would be silently overwritten"
+-        )));
+-    }
+-    let (layer_label, layer_keys) = match layer {
+-        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+-        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+-    };
+-    for (key, value) in &req.properties {
+-        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
+-    }
+     let node_id = resolve_graph_create_id(layer, &req)?;
+     let mut source = read_or_seed_graph_file(&path, layer)?;
+     let file = OrgFile::parse(source.clone(), path.to_string_lossy())
+@@ -14837,16 +14818,6 @@ async fn mutate_graph_heading(
+             reject_unresolved_reference_token(&known_ids, key, value)?;
+         }
+     }
+-    // orgasmic:task_ZKZBF — same canonical-spelling rule as create: refusing a
+-    // miscased key here and not there (or vice versa) would make the accepted
+-    // key set diverge between the two verbs that write the same drawer.
+-    let (layer_label, layer_keys) = match layer {
+-        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+-        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+-    };
+-    for (key, value) in &req.properties {
+-        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
+-    }
+     let source = read_artifact(&path, layer.artifact_name())?;
+     let file = OrgFile::parse(source, path.to_string_lossy())
+         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+@@ -15476,58 +15447,6 @@ async fn post_org_node_edit(
+             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
+         ));
+     }
+-    // orgasmic:task_ZKZBF
+-    // The same drawer every task write validates (TASK-HXSW0): a key that is
+-    // not its own uppercase is stored and never read, because
+-    // `Heading::property` compares byte for byte. `node prop set/unset` passed
+-    // keys through untyped, so `node prop set TASK-… priority P1` returned a
+-    // success object while the priority stayed unset — the exact silent-drop
+-    // shape TASK-HXSW0 fixed on task create/update, still live on this route.
+-    for op in &req.ops {
+-        let (key, value) = match op {
+-            NodeEditOp::SetProperty { key, value } => (key.as_str(), Some(value.as_str())),
+-            NodeEditOp::RemoveProperty { key } => (key.as_str(), None),
+-            _ => continue,
+-        };
+-        match layer {
+-            NodeLayer::Task => {
+-                if let Some(value) = value {
+-                    // Update-shaped verb: keys that only `task update` writes
+-                    // (BLOCKED_BY, FIX_SUBTASK, KIND) are legal here, same as
+-                    // `task update --property`.
+-                    let mut properties = BTreeMap::new();
+-                    properties.insert(key.to_string(), value.to_string());
+-                    validate_task_property_keys(&properties, &[])?;
+-                } else {
+-                    validate_drawer_property_key_case(
+-                        key,
+-                        "Task",
+-                        TASK_SCHEMA_PROPERTY_KEYS,
+-                        None,
+-                    )?;
+-                    let canonical = key.trim().to_ascii_uppercase();
+-                    if let Some(refusal) = task_property_key_refusal(&canonical) {
+-                        return Err(ApiError::bad_request(refusal));
+-                    }
+-                }
+-            }
+-            other => {
+-                validate_drawer_property_key_case(
+-                    key,
+-                    // orgasmic:task_ZKZBF — capitalized for the refusal sentence.
+-                    match other {
+-                        NodeLayer::Decision => "Decision",
+-                        NodeLayer::Glossary => "Glossary",
+-                        NodeLayer::Project => "Project",
+-                        NodeLayer::Handoff => "Handoff",
+-                        NodeLayer::Task | NodeLayer::Goal => "Task",
+-                    },
+-                    node_layer_schema_property_keys(other),
+-                    value,
+-                )?;
+-            }
+-        }
+-    }
+     let (project_id, path, source_file) =
+         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
+     if !req.force {
+@@ -15640,18 +15559,8 @@ async fn post_org_node_edit(
+                 changed.insert(key, value);
+             }
+             NodeEditOp::RemoveProperty { key } => {
+-                rw.remove_property(&id, &key).map_err(|e| match e {
+-                    // orgasmic:task_ZKZBF — this refusal names the key, file and
+-                    // heading; collapsing it into "org file update failed"
+-                    // hid the one fact (the exact spelling it looked for) that
+-                    // explained why `node prop unset <id> priority` failed
+-                    // while `:PRIORITY:` sat in the drawer.
+-                    e @ orgasmic_core::OrgError::PropertyNotFound { .. } => {
+-                        tracing::warn!(node_id = %id, error = %e, "remove property refused");
+-                        ApiError::bad_request(e.to_string())
+-                    }
+-                    e => org_rewriter_error("remove property", &id, e),
+-                })?;
++                rw.remove_property(&id, &key)
++                    .map_err(|e| org_rewriter_error("remove property", &id, e))?;
+                 changed.insert(key, "<removed>".to_string());
+             }
+             NodeEditOp::SetTitle { title } => {
+@@ -16382,88 +16291,6 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
+ /// the point of use instead of being invisible (TASK-HXSW0 instance 4).
+ const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "KIND"];
+ 
+-// orgasmic:task_ZKZBF
+-/// Drawer keys the decision and glossary read models consume, in the exact
+-/// spelling [`orgasmic_core::Heading::property`] looks up — the same byte
+-/// comparison that made miscased task keys stored-and-never-read (TASK-HXSW0).
+-/// Like `TASK_SCHEMA_PROPERTY_KEYS`, the list exists to make a miscased key
+-/// *nameable* in a refusal, not to close the drawer to anything else.
+-const DECISION_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+-    "DECIDED_AT",
+-    "GLOSSARY_REFS",
+-    "PARENT",
+-    "SOURCE",
+-    "SUPERSEDES",
+-];
+-
+-const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+-    "AVOID",
+-    "CANONICAL",
+-    "DECIDED_AT",
+-    "DEFINITION",
+-    "RELATES_TO",
+-];
+-
+-// orgasmic:task_ZKZBF
+-/// Drawer keys each node layer's readers consume, for the miscased-key refusal
+-/// on `node prop set`/`node prop unset`. Task is the schema-read drawer
+-/// [`validate_task_property_keys`] already governs; the other layers name
+-/// their own vocabulary so a refusal can point at the canonical spelling.
+-fn node_layer_schema_property_keys(layer: NodeLayer) -> &'static [&'static str] {
+-    match layer {
+-        NodeLayer::Task => TASK_SCHEMA_PROPERTY_KEYS,
+-        NodeLayer::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
+-        NodeLayer::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
+-        NodeLayer::Project => &[
+-            "BRANCH",
+-            "DEFAULT_BRANCH",
+-            "ID",
+-            "LOCAL_PATH",
+-            "PATH",
+-            "STATUS",
+-        ],
+-        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "ID", "LIVENESS"],
+-    }
+-}
+-
+-// orgasmic:task_ZKZBF
+-/// The canonical-spelling check every drawer-key write surface shares: org
+-/// drawer keys are uppercase and [`orgasmic_core::Heading::property`] compares
+-/// them byte for byte, so a miscased key would be written and never read.
+-/// `value` is `Some` for writes (the refusal then shows the corrected
+-/// `KEY=VALUE` to pass) and `None` for removals (the refusal says which
+-/// canonical key to remove instead).
+-fn validate_drawer_property_key_case(
+-    key: &str,
+-    layer_label: &str,
+-    schema_keys: &[&str],
+-    value: Option<&str>,
+-) -> Result<(), ApiError> {
+-    let trimmed = key.trim();
+-    if trimmed.is_empty() {
+-        return Err(ApiError::bad_request(
+-            "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
+-        ));
+-    }
+-    let canonical = trimmed.to_ascii_uppercase();
+-    if canonical != *key {
+-        let tail = match value {
+-            Some(value) if schema_keys.contains(&canonical.as_str()) => {
+-                format!(" — pass `{canonical}={value}`")
+-            }
+-            _ => String::new(),
+-        };
+-        return Err(ApiError::bad_request(format!(
+-            "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
+-             uppercase and the reader compares them byte for byte, so `:{key}:` would be \
+-             written and never read. Use `{canonical}`{tail}. {layer_label} keys the schema \
+-             reads: {}",
+-            schema_keys.join(", ")
+-        )));
+-    }
+-    Ok(())
+-}
+-
+ /// The write-time key check TASK-HXSW0 asks for: canonical spelling first, then
+ /// the refusal table.
+ ///
+@@ -16473,12 +16300,31 @@ fn validate_task_property_keys(
+     properties: &BTreeMap<String, String>,
+     verb_only_on_update: &[&str],
+ ) -> Result<(), ApiError> {
+-    for (key, value) in properties {
+-        // orgasmic:task_ZKZBF — the case check is shared with the other
+-        // drawer-key surfaces this task audited; this task-facing spelling
+-        // keeps TASK-HXSW0's exact message.
+-        validate_drawer_property_key_case(key, "Task", TASK_SCHEMA_PROPERTY_KEYS, Some(value))?;
+-        let canonical = key.trim().to_ascii_uppercase();
++    for key in properties.keys() {
++        let trimmed = key.trim();
++        if trimmed.is_empty() {
++            return Err(ApiError::bad_request(
++                "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
++            ));
++        }
++        let canonical = trimmed.to_ascii_uppercase();
++        if canonical != *key {
++            let known = TASK_SCHEMA_PROPERTY_KEYS.contains(&canonical.as_str());
++            let tail = if known {
++                format!(
++                    " — pass `{canonical}={}`",
++                    properties.get(key).map(String::as_str).unwrap_or("…")
++                )
++            } else {
++                String::new()
++            };
++            return Err(ApiError::bad_request(format!(
++                "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
++                 uppercase and the reader compares them byte for byte, so `:{key}:` would be \
++                 written and never read. Use `{canonical}`{tail}. Task keys the schema reads: {}",
++                TASK_SCHEMA_PROPERTY_KEYS.join(", ")
++            )));
++        }
+         if let Some(refusal) = task_property_key_refusal(&canonical) {
+             return Err(ApiError::bad_request(refusal));
+         }
