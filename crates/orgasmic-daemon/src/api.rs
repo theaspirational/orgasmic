@@ -14647,6 +14647,25 @@ async fn create_graph_heading(
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
     }
+    // orgasmic:task_ZKZBF
+    // `render_graph_heading` writes every property verbatim, so a miscased key
+    // (`--property canonical=…`) used to be stored as `:canonical:` and read
+    // by nothing — the TASK-HXSW0 shape on the graph layers. And `ID` is
+    // silently force-overwritten with the minted node id, so passing it is a
+    // drop by construction. Both are refused by name instead.
+    if let Some(id_value) = req.properties.get("ID") {
+        return Err(ApiError::bad_request(format!(
+            "do not pass ID as a property; the drawer :ID: is derived from the node id (use `id` \
+             to pin one) — ID={id_value} would be silently overwritten"
+        )));
+    }
+    let (layer_label, layer_keys) = match layer {
+        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+    };
+    for (key, value) in &req.properties {
+        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
+    }
     let node_id = resolve_graph_create_id(layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
     let file = OrgFile::parse(source.clone(), path.to_string_lossy())
@@ -14817,6 +14836,16 @@ async fn mutate_graph_heading(
             }
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
+    }
+    // orgasmic:task_ZKZBF — same canonical-spelling rule as create: refusing a
+    // miscased key here and not there (or vice versa) would make the accepted
+    // key set diverge between the two verbs that write the same drawer.
+    let (layer_label, layer_keys) = match layer {
+        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+    };
+    for (key, value) in &req.properties {
+        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
     }
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
@@ -15447,6 +15476,58 @@ async fn post_org_node_edit(
             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
         ));
     }
+    // orgasmic:task_ZKZBF
+    // The same drawer every task write validates (TASK-HXSW0): a key that is
+    // not its own uppercase is stored and never read, because
+    // `Heading::property` compares byte for byte. `node prop set/unset` passed
+    // keys through untyped, so `node prop set TASK-… priority P1` returned a
+    // success object while the priority stayed unset — the exact silent-drop
+    // shape TASK-HXSW0 fixed on task create/update, still live on this route.
+    for op in &req.ops {
+        let (key, value) = match op {
+            NodeEditOp::SetProperty { key, value } => (key.as_str(), Some(value.as_str())),
+            NodeEditOp::RemoveProperty { key } => (key.as_str(), None),
+            _ => continue,
+        };
+        match layer {
+            NodeLayer::Task => {
+                if let Some(value) = value {
+                    // Update-shaped verb: keys that only `task update` writes
+                    // (BLOCKED_BY, FIX_SUBTASK, KIND) are legal here, same as
+                    // `task update --property`.
+                    let mut properties = BTreeMap::new();
+                    properties.insert(key.to_string(), value.to_string());
+                    validate_task_property_keys(&properties, &[])?;
+                } else {
+                    validate_drawer_property_key_case(
+                        key,
+                        "Task",
+                        TASK_SCHEMA_PROPERTY_KEYS,
+                        None,
+                    )?;
+                    let canonical = key.trim().to_ascii_uppercase();
+                    if let Some(refusal) = task_property_key_refusal(&canonical) {
+                        return Err(ApiError::bad_request(refusal));
+                    }
+                }
+            }
+            other => {
+                validate_drawer_property_key_case(
+                    key,
+                    // orgasmic:task_ZKZBF — capitalized for the refusal sentence.
+                    match other {
+                        NodeLayer::Decision => "Decision",
+                        NodeLayer::Glossary => "Glossary",
+                        NodeLayer::Project => "Project",
+                        NodeLayer::Handoff => "Handoff",
+                        NodeLayer::Task | NodeLayer::Goal => "Task",
+                    },
+                    node_layer_schema_property_keys(other),
+                    value,
+                )?;
+            }
+        }
+    }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
     if !req.force {
@@ -15559,8 +15640,18 @@ async fn post_org_node_edit(
                 changed.insert(key, value);
             }
             NodeEditOp::RemoveProperty { key } => {
-                rw.remove_property(&id, &key)
-                    .map_err(|e| org_rewriter_error("remove property", &id, e))?;
+                rw.remove_property(&id, &key).map_err(|e| match e {
+                    // orgasmic:task_ZKZBF — this refusal names the key, file and
+                    // heading; collapsing it into "org file update failed"
+                    // hid the one fact (the exact spelling it looked for) that
+                    // explained why `node prop unset <id> priority` failed
+                    // while `:PRIORITY:` sat in the drawer.
+                    e @ orgasmic_core::OrgError::PropertyNotFound { .. } => {
+                        tracing::warn!(node_id = %id, error = %e, "remove property refused");
+                        ApiError::bad_request(e.to_string())
+                    }
+                    e => org_rewriter_error("remove property", &id, e),
+                })?;
                 changed.insert(key, "<removed>".to_string());
             }
             NodeEditOp::SetTitle { title } => {
@@ -16291,6 +16382,88 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
 /// the point of use instead of being invisible (TASK-HXSW0 instance 4).
 const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "KIND"];
 
+// orgasmic:task_ZKZBF
+/// Drawer keys the decision and glossary read models consume, in the exact
+/// spelling [`orgasmic_core::Heading::property`] looks up — the same byte
+/// comparison that made miscased task keys stored-and-never-read (TASK-HXSW0).
+/// Like `TASK_SCHEMA_PROPERTY_KEYS`, the list exists to make a miscased key
+/// *nameable* in a refusal, not to close the drawer to anything else.
+const DECISION_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "DECIDED_AT",
+    "GLOSSARY_REFS",
+    "PARENT",
+    "SOURCE",
+    "SUPERSEDES",
+];
+
+const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "AVOID",
+    "CANONICAL",
+    "DECIDED_AT",
+    "DEFINITION",
+    "RELATES_TO",
+];
+
+// orgasmic:task_ZKZBF
+/// Drawer keys each node layer's readers consume, for the miscased-key refusal
+/// on `node prop set`/`node prop unset`. Task is the schema-read drawer
+/// [`validate_task_property_keys`] already governs; the other layers name
+/// their own vocabulary so a refusal can point at the canonical spelling.
+fn node_layer_schema_property_keys(layer: NodeLayer) -> &'static [&'static str] {
+    match layer {
+        NodeLayer::Task => TASK_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Project => &[
+            "BRANCH",
+            "DEFAULT_BRANCH",
+            "ID",
+            "LOCAL_PATH",
+            "PATH",
+            "STATUS",
+        ],
+        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "ID", "LIVENESS"],
+    }
+}
+
+// orgasmic:task_ZKZBF
+/// The canonical-spelling check every drawer-key write surface shares: org
+/// drawer keys are uppercase and [`orgasmic_core::Heading::property`] compares
+/// them byte for byte, so a miscased key would be written and never read.
+/// `value` is `Some` for writes (the refusal then shows the corrected
+/// `KEY=VALUE` to pass) and `None` for removals (the refusal says which
+/// canonical key to remove instead).
+fn validate_drawer_property_key_case(
+    key: &str,
+    layer_label: &str,
+    schema_keys: &[&str],
+    value: Option<&str>,
+) -> Result<(), ApiError> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(
+            "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
+        ));
+    }
+    let canonical = trimmed.to_ascii_uppercase();
+    if canonical != *key {
+        let tail = match value {
+            Some(value) if schema_keys.contains(&canonical.as_str()) => {
+                format!(" — pass `{canonical}={value}`")
+            }
+            _ => String::new(),
+        };
+        return Err(ApiError::bad_request(format!(
+            "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
+             uppercase and the reader compares them byte for byte, so `:{key}:` would be \
+             written and never read. Use `{canonical}`{tail}. {layer_label} keys the schema \
+             reads: {}",
+            schema_keys.join(", ")
+        )));
+    }
+    Ok(())
+}
+
 /// The write-time key check TASK-HXSW0 asks for: canonical spelling first, then
 /// the refusal table.
 ///
@@ -16300,31 +16473,12 @@ fn validate_task_property_keys(
     properties: &BTreeMap<String, String>,
     verb_only_on_update: &[&str],
 ) -> Result<(), ApiError> {
-    for key in properties.keys() {
-        let trimmed = key.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request(
-                "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
-            ));
-        }
-        let canonical = trimmed.to_ascii_uppercase();
-        if canonical != *key {
-            let known = TASK_SCHEMA_PROPERTY_KEYS.contains(&canonical.as_str());
-            let tail = if known {
-                format!(
-                    " — pass `{canonical}={}`",
-                    properties.get(key).map(String::as_str).unwrap_or("…")
-                )
-            } else {
-                String::new()
-            };
-            return Err(ApiError::bad_request(format!(
-                "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
-                 uppercase and the reader compares them byte for byte, so `:{key}:` would be \
-                 written and never read. Use `{canonical}`{tail}. Task keys the schema reads: {}",
-                TASK_SCHEMA_PROPERTY_KEYS.join(", ")
-            )));
-        }
+    for (key, value) in properties {
+        // orgasmic:task_ZKZBF — the case check is shared with the other
+        // drawer-key surfaces this task audited; this task-facing spelling
+        // keeps TASK-HXSW0's exact message.
+        validate_drawer_property_key_case(key, "Task", TASK_SCHEMA_PROPERTY_KEYS, Some(value))?;
+        let canonical = key.trim().to_ascii_uppercase();
         if let Some(refusal) = task_property_key_refusal(&canonical) {
             return Err(ApiError::bad_request(refusal));
         }

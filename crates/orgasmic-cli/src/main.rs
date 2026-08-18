@@ -3202,6 +3202,37 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                 let project = manager::resolve_project(project)?;
                 let mut properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
+                // orgasmic:task_ZKZBF
+                // Every typed flag is the same drawer field its `--property`
+                // spelling writes; spelling a field both ways in one call is a
+                // contradiction, not a merge. The typed insert below used to
+                // silently OVERWRITE the --property value — the TASK-HXSW0
+                // both-spellings drop, on this surface.
+                for (flag, key, flag_value) in [
+                    (
+                        "--definition",
+                        "DEFINITION",
+                        definition.as_deref().map(str::to_string),
+                    ),
+                    (
+                        "--canonical",
+                        "CANONICAL",
+                        canonical.as_deref().map(str::to_string),
+                    ),
+                    ("--avoid", "AVOID", avoid.as_deref().map(str::to_string)),
+                    (
+                        "--relates-to",
+                        "RELATES_TO",
+                        (!relates_to.is_empty()).then(|| relates_to.join(" ")),
+                    ),
+                ] {
+                    if let (Some(flag_value), Some(existing)) = (flag_value, properties.get(key)) {
+                        anyhow::bail!(
+                            "{flag} {flag_value} and --property {key}={existing} set the same \
+                             drawer field; pass one of them"
+                        );
+                    }
+                }
                 if let Some(value) = definition {
                     properties.insert("DEFINITION".to_string(), value);
                 }
