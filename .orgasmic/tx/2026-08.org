@@ -35585,3 +35585,88 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     todo
 :END:
+
+
+* TX 2026-08-18 Tue 20:55:03 task.created TASK-BX5SR.3
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6121
+:TIME:         [2026-08-18 Tue 20:55:03]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-BX5SR.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Residual from closing parent TASK-BX5SR: acceptance items 2-3 (writer supervision, status/doctor liveness) landed in neither merge 9412352 nor any filed follow-up
+:END:
+
+* TX 2026-08-18 Tue 20:55:07 task.state_transitioned TASK-BX5SR
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6122
+:TIME:         [2026-08-18 Tue 20:55:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-BX5SR
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Retained-descriptor writer repair (impl 6fdae3f) integrated in 9412352 and independently approved; outage root cause traced and carried by TASK-BX5SR.2 (idempotency identity collision, P1) and TASK-BX5SR.3 (writer supervision + status/doctor liveness, P1). Closed 2026-08-18 audit: impl verified on HEAD.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 20:55:12 task.state_transitioned TASK-BX5SR.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6123
+:TIME:         [2026-08-18 Tue 20:55:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-BX5SR.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Daemon-level retained-descriptor writer-sync regression and request-local panic conversion (impl 6ebd4f6) integrated in 9412352 and independently approved; cross-API identity-collision residual carried by TASK-BX5SR.2.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 20:55:17 task.state_transitioned TASK-GRCWC
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6124
+:TIME:         [2026-08-18 Tue 20:55:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GRCWC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Fail-closed worktree-prune traversal safety (impl c3c7b05) integrated in ccb86bc and independently approved. All four acceptance items verified on HEAD 2026-08-18: chmod-000 fixture (dispatch.rs:10492), over-depth fixture worktree_prune_refuses_an_over_depth_tree_before_deletion (dispatch.rs:10880), whole-worktree no-delete help wording (manager.rs:3798), fixtures-land-before-further-destructive-change ordering satisfied. Cause-specific remedy residual carried by TASK-GRCWC.2.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 20:55:22 task.state_transitioned TASK-GRCWC.1
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6125
+:TIME:         [2026-08-18 Tue 20:55:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GRCWC.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       UnsafeTraversal operator contract correction (impl 7e81524) integrated in ccb86bc; reviewer reported and closed clean 2026-08-12 (tx-20260812-orgasmic-5962/5982-5983). Cause-specific remedy residual carried by TASK-GRCWC.2.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-18 Tue 20:55:30 manager.board_reconciled orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260818-orgasmic-6126
+:TIME:         [2026-08-18 Tue 20:55:30]
+:TYPE:         manager.board_reconciled
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       State audit of todo+in_review: moved TASK-BX5SR, TASK-BX5SR.1, TASK-GRCWC, TASK-GRCWC.1 to done (all reviewed+approved, merged 9412352/ccb86bc, residuals filed as .2 follow-ups); filed TASK-BX5SR.3 for the unfiled writer-supervision/liveness residual; TASK-ZKZBF stays todo (dispatch aborted 2026-08-16, no work landed).
+:END:
