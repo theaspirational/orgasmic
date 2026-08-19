@@ -36225,3 +36225,349 @@
 :REASON:       Mark as fix round of TASK-ZKZBF (two-step: FIX_SUBTASK is not create-writable per the HXSW0/ZKZBF validation the parent just landed)
 :FIX_SUBTASK:  t
 :END:
+
+* TX 2026-08-19 Wed 07:04:02 task.state_transitioned TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6162
+:TIME:         [2026-08-19 Wed 07:04:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.1 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-19 Wed 07:04:02 manager.dispatch_started TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6163
+:TIME:         [2026-08-19 Wed 07:04:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      custom
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.1
+:BRANCH:       task-zkzbf.1-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.1/task-zkzbf.1-brief.md
+:STARTED_AT:   [2026-08-19 Wed 07:04:02]
+:LIVENESS:     29838531e13f04da4deabf9be9506150f7de55a9
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:HARNESS_ARGS: ["opencode","run","-m","zai-coding-plan/glm-5.3"]
+:REASON_INITIAL: Operator-directed round 2, same lane as round 1: opencode/glm-5.3 implementer (runtime reclassifies tmux+custom argv to the opencode stdio provider-host lane, as on tx-20260818-orgasmic-6144); reviewer will follow as claude-opus-5/high stdio. Fix round for reject verdict tx-20260818-orgasmic-6156.
+:END:
+
+* TX 2026-08-19 Wed 07:04:03 run.created TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6164
+:TIME:         [2026-08-19 Wed 07:04:03]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.1-implementer-20260819T070402.jsonl
+:REASON:       Operator-directed round 2, same lane as round 1: opencode/glm-5.3 implementer (runtime reclassifies tmux+custom argv to the opencode stdio provider-host lane, as on tx-20260818-orgasmic-6144); reviewer will follow as claude-opus-5/high stdio. Fix round for reject verdict tx-20260818-orgasmic-6156.
+:RUN_ID:       run-01M0CDB2KJ1XJJ174SHVR188K3
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-opencode-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      opencode
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.1
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.1/task-zkzbf.1-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zkzbf.1/task-zkzbf.1-df9c37e7b5ad4f1090be778e3dcbef68-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zkzbf.1/task-zkzbf.1-df9c37e7b5ad4f1090be778e3dcbef68-stdout.log
+:DISPATCH_ATTEMPT: df9c37e7b5ad4f1090be778e3dcbef68
+:PID:          98709
+:DISPATCH_TX:  tx-20260819-orgasmic-6163
+:END:
+
+* TX 2026-08-19 Wed 07:31:20 implementer.reported TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6165
+:TIME:         [2026-08-19 Wed 07:31:20]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:RUN_ID:       run-01M0CDB2KJ1XJJ174SHVR188K3
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.1
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6163/last.txt
+:END:
+
+* TX 2026-08-19 Wed 15:50:58 task.state_transitioned TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6166
+:TIME:         [2026-08-19 Wed 15:50:58]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-19 Wed 15:50:59 manager.dispatch_started TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6167
+:TIME:         [2026-08-19 Wed 15:50:59]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.1-review
+:BRANCH:       task-zkzbf.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.1/manager-review-TASK-ZKZBF.1.md
+:STARTED_AT:   [2026-08-19 Wed 15:50:59]
+:LIVENESS:     8f6e9c8dfa801d5973f7a06fc10de8a573ba2e9c
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260819-orgasmic-6163
+:REASON_INITIAL: Operator-directed reviewer round 2, same lane: claude stdio opus-5 high, cross-family vs opencode implementer. Review-before-close gate on generation tx-20260819-orgasmic-6163.
+:END:
+
+* TX 2026-08-19 Wed 15:50:59 run.created TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6168
+:TIME:         [2026-08-19 Wed 15:50:59]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.1-reviewer-20260819T155059.jsonl
+:REASON:       Operator-directed reviewer round 2, same lane: claude stdio opus-5 high, cross-family vs opencode implementer. Review-before-close gate on generation tx-20260819-orgasmic-6163.
+:RUN_ID:       run-01M0DBFXP453DKQA0XJG9A8GR1
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.1/manager-review-TASK-ZKZBF.1.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.1/manager-review-TASK-ZKZBF.1-66be2014287e4c88b3967edd13de2c24-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.1/manager-review-TASK-ZKZBF.1-66be2014287e4c88b3967edd13de2c24-stdout.log
+:DISPATCH_ATTEMPT: 66be2014287e4c88b3967edd13de2c24
+:PID:          80936
+:DISPATCH_TX:  tx-20260819-orgasmic-6167
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-19 Wed 15:59:58 reviewer.finding TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6169
+:TIME:         [2026-08-19 Wed 15:59:58]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       MEDIUM: UI/backend contract drift, chain-introduced (928d3e0, round 1), reworded-not-fixed by this round. ui/src/components/orgdoc/descriptor.ts:103 ships an editable 'Parent Task' field bound to PARENT_TASK; post_org_node_edit (api.rs:15523) routes it into validate_task_property_keys -> task_property_key_refusal_reason (api.rs:16392) which refuses PARENT_TASK, so saving that field is a 400. The unset half this diff reworded (api.rs:15537) refuses remove_property PARENT_TASK too, so the 3 real :PARENT_TASK: lines in .orgasmic/tasks/done.org (12371, 12541, 12984) have NO supported removal verb: node prop unset is the only removal door and POST /org/file has no CLI verb.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:FILE:         ui/src/components/orgdoc/descriptor.ts
+:LINE:         103
+:CLASSIFICATION: pre_existing_in_chain
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-19 Wed 16:00:05 reviewer.finding TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6170
+:TIME:         [2026-08-19 Wed 16:00:05]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       LOW: the ID special case was NOT deleted everywhere the report claims. post_task_create (api.rs:16749) still carries its own byte-exact req.properties.contains_key("ID") check whose message never says 'immutable' and points at 'use `id` to pin one'. So 'task create --property ID=x' and 'task create --property id=x' return two different sentences for one rule - exactly the LOW-3 two-messages-one-rule shape this round closed elsewhere. Only create_graph_heading lost its special case.
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-daemon/src/api.rs
+:LINE:         16749
+:CLASSIFICATION: in_scope_gap
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-19 Wed 16:00:12 reviewer.finding TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6171
+:TIME:         [2026-08-19 Wed 16:00:12]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       LOW: the two key checks now disagree on the accepted set. validate_drawer_property_key_case (api.rs:16476) accepts any key equal to its own uppercase, so FOO-BAR passes; the new tx pattern rule validate_property_key (core/tx.rs:309) rejects it by [A-Z][A-Z0-9_]*. 'task update --property FOO-BAR=1' therefore passes the drawer gate and dies inside the writer (extra: req.changed, api.rs:17920) - prepare_api_tx never validates - surfacing as HTTP 500 'failed to apply changes' (writer_transaction_error, api.rs:1713) with the real reason only in the daemon log. No data loss: append_txs_inner failure rolls back via rollback_renamed_rewrites (writer.rs:2831-2836). Pre-existing shape (colon keys did this before), widened by this diff to hyphen/dot/leading-digit keys.
+:SEVERITY:     LOW
+:KIND:         correctness
+:FILE:         crates/orgasmic-core/src/tx.rs
+:LINE:         309
+:CLASSIFICATION: pre_existing_widened
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-19 Wed 16:00:21 reviewer.finding TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6172
+:TIME:         [2026-08-19 Wed 16:00:21]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       LOW (docs/test): --extra now enforces [A-Z][A-Z0-9_]* but its help still states only 'single-line only' (main.rs:862-864), and the test that exists to keep flag help honest - reason_and_extra_flags_repeat_the_constraint_at_the_flag (main.rs:4139) - asserts only that. Nothing in shipped/ documents the uppercase rule for --extra, while 40+ live reviewer.finding entries in .orgasmic/tx/2026-08.org (e.g. :kind:/:blocks_ship:/:file: at 16671-16747) were written lowercase by prior agents; those calls now hard-fail with no shipped doc to correct the habit. No reader consumes the lowercase keys (grep for extra("[a-z] is empty), so this is documentation, not data. Also is_uppercase_snake_key is now duplicated verbatim in manager.rs:9958 and core/tx.rs:298.
+:SEVERITY:     LOW
+:KIND:         docs
+:FILE:         crates/orgasmic-cli/src/main.rs
+:LINE:         862
+:CLASSIFICATION: in_scope_gap
+:BLOCKS_SHIP:  no
+:END:
+
+* TX 2026-08-19 Wed 16:01:36 reviewer.reported TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6173
+:TIME:         [2026-08-19 Wed 16:01:36]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:RUN_ID:       run-01M0DBFXP453DKQA0XJG9A8GR1
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6167/last.txt
+:END:
+
+* TX 2026-08-19 Wed 16:03:49 reviewer.done TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6174
+:TIME:         [2026-08-19 Wed 16:03:49]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       ACCEPT: all five round-1 findings genuinely fixed; reviewer attacked all five brief claims and could not break them (enumerated every drawer-write site — five caller-keyed sites all guarded; no broken tx writer; no path leaks; no message regression). 1 MEDIUM classified chain-introduced by round 1 (UI Parent Task field -> guaranteed 400; PARENT_TASK/LAST_UPDATED unset now impossible) + 3 LOWs, all ledgered as reviewer.finding tx-20260819-orgasmic-6169..6172; to be filed as TASK-ZKZBF.2.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260819-orgasmic-6167
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6167/last.txt
+:END:
+
+* TX 2026-08-19 Wed 16:03:49 task.state_transitioned TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6175
+:TIME:         [2026-08-19 Wed 16:03:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-19 Wed 16:04:06 implementer.done TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6176
+:TIME:         [2026-08-19 Wed 16:04:06]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:REASON:       Implementer opencode/glm-5.3 reported in ~45min (fix + verify commits 4566e97/f1b3d87); merged --no-ff as 8f6e9c8; manager-verified on merged tree: fmt clean, clippy -D exit 0, focused 19/19 GREEN rate 0.0010. Reviewer approve-with-follow-ups tx-20260819-orgasmic-6174 clears the gate; follow-ups filed as TASK-ZKZBF.2.
+:MERGE_SHA:    8f6e9c8dfa801d5973f7a06fc10de8a573ba2e9c
+:BRANCH:       task-zkzbf.1-impl
+:CLOSED_TX:    tx-20260819-orgasmic-6163
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6163/last.txt
+:END:
+
+* TX 2026-08-19 Wed 16:04:06 task.state_transitioned TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6177
+:TIME:         [2026-08-19 Wed 16:04:06]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-19 Wed 16:04:30 task.created TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6178
+:TIME:         [2026-08-19 Wed 16:04:30]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Approve-with-follow-ups verdict tx-20260819-orgasmic-6174: 1 MEDIUM (chain-introduced by round 1) + 3 LOWs, ledgered as reviewer.finding tx-20260819-orgasmic-6169..6172
+:END:
+
+* TX 2026-08-19 Wed 16:04:42 task.state_transitioned TASK-ZKZBF
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6179
+:TIME:         [2026-08-19 Wed 16:04:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Fix round TASK-ZKZBF.1 landed as 8f6e9c8 and passed fresh independent review (approve-with-follow-ups, tx-20260819-orgasmic-6174) — the goal's stated bar for closing over a rejected round. Chain summary: round 1 merged 136418f (5 surfaces refused-by-name + 6 production tests + injection), review rejected (ID re-keying gap), round 2 closed all five findings (shared ID guard, tx --extra case rule, message polish; 13 tests, sibling injection artifact), review accepted with follow-ups filed as TASK-ZKZBF.2. Worked end-to-end on the new opencode-stdio implementer lane + claude-opus-5 reviewer.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-19 Wed 16:04:53 task.state_transitioned TASK-ZKZBF.1
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6180
+:TIME:         [2026-08-19 Wed 16:04:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Fix round accepted: reviewer verdict approve-with-follow-ups (tx-20260819-orgasmic-6174) after implementer close (tx-20260819-orgasmic-6176) left it in in_review. All five round-1 findings verified fixed; 19/19 tests green on merged 8f6e9c8; follow-ups carried by TASK-ZKZBF.2.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

@@ -4702,30 +4702,28 @@ Carries the two LOW, non-blocking notes from the final approving review of TASK-
 - Renderer invariant enforced structurally (newtype or debug_assert) with a test that fails loudly on bypass.
 - A multi-project test covers the delayed branch of unscoped /tx aggregation.
 
-* BACKLOG TASK-ZKZBF.1 Close the ZKZBF review findings: ID-immutability guard across all drawer writes, tx record --extra case rule, message polish    :daemon:cli:
+* BACKLOG TASK-ZKZBF.2 Close the ZKZBF.1 review follow-ups: UI Parent Task guaranteed-400 + unsettable dead keys, task-create ID message split, drawer/tx pattern mismatch 500, --extra help and lowercase finding habit    :daemon:cli:ui:
 :PROPERTIES:
-:ID: TASK-ZKZBF.1
+:ID: TASK-ZKZBF.2
 :PRIORITY: P2
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs,crates/orgasmic-core/src/tx.rs,crates/orgasmic-cli/src/manager.rs,crates/orgasmic-cli/tests
-:FIX_SUBTASK: t
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs,crates/orgasmic-core/src/tx.rs,crates/orgasmic-cli/src/main.rs,crates/orgasmic-cli/src/manager.rs,ui/src/components/orgdoc/descriptor.ts,ui/src/components/orgdoc/NodeDocEditor.tsx,crates/orgasmic-cli/tests
 :END:
 
 ** Description
-Fix round for the TASK-ZKZBF review (report promoted at .orgasmic/dispatch-records/tx-20260818-orgasmic-6148/last.txt; findings below verbatim-summarized). No regression to undo — build forward on merged =136418f=.
+Follow-ups from the TASK-ZKZBF.1 review (report promoted at .orgasmic/dispatch-records/tx-20260819-orgasmic-6167/last.txt). No regression to undo — build forward on merged =8f6e9c8=.
 
-*MEDIUM-1 (correctness):* =node prop set= writes =:ID:= on every non-task layer — the =other =>= arm runs only =validate_drawer_property_key_case= (no refusal table), =ID= is uppercase so it passes, and the upsert re-keys the node (=:15637=; =find_by_id= matches =property("ID")=, org.rs:284), dangling every reference to the old id, no =--force=. Also =node_layer_schema_property_keys= (:16412) LISTS ="ID"= for Project and Goal/Handoff, so refusal text advertises it. Same divergence: =create_graph_heading= refuses =ID= (:14652) but =mutate_graph_heading= (:14837) got only the case check. FIX: hoist an ID-is-derived refusal into the shared check called from all three sites; drop ="ID"= from the Project/Goal/Handoff key lists. Open question 1 answered by manager: NO id-repair intent exists anywhere — task layer already refuses =ID= as immutable; extend that rule, do not route a repair verb.
+*MEDIUM (ui/daemon contract, chain-introduced by round 1 =928d3e0=):* the UI ships an editable =Parent Task= field bound to =PARENT_TASK= (=ui/src/components/orgdoc/descriptor.ts:103=; =hideWhenEmpty= only hides it when NOT editing, =NodeDocEditor.tsx:291=), and saving emits =set_property PARENT_TASK= into =post_org_node_edit=, whose Task arm routes through the refusal table (=api.rs:16392=) — *a guaranteed 400*. The unset half inherits the same table, so legacy =:PARENT_TASK:= lines (done.org:12371, 12541, 12984) have NO supported removal verb (=node prop unset= is the only door; =POST /org/file= has no CLI verb). Same for =LAST_UPDATED=. FIX per reviewer direction: split the refusal table into "owned by another door" (STATE — refuse both directions) and "dead key" (PARENT_TASK, LAST_UPDATED — refuse set, ALLOW unset); drop the Parent Task field from TASK_DESCRIPTOR or make it read-only/derived (parentage derives from id grammar, =post_task_subtask= api.rs:2390).
 
-*MEDIUM-2 (correctness, scope-adjacent):* =tx record --extra= writes the same tx ledger =dispatch-close --property= now guards, through =validate_property_key= (tx.rs:292) which checks empty/reserved/colon/whitespace/control but NOT case; =extra()= (manager.rs:9783) is byte-exact, so a miscased =--extra kind=implementer= makes a dispatch INVISIBLE to =dispatch-close= (dispatch_record_from_entry :9562 returns None). The task's own test stages a dispatch with the uppercase form (:519-533). FIX: apply the decided ZKZBF rule (open key vocabulary, closed case rule, refused by name at parse) to =tx record --extra=.
+*LOW-1:* =post_task_create= (=api.rs:16749=) still carries its own byte-exact =ID= check whose message never says "immutable" — =task create --property ID=x= and =--property id=x= get two different sentences decided by case. FIX: delete the special case (shared guard at :16761 covers it). Also delete unreachable =update_task_properties= hand-checks for STATE/ID (:17991/:17998) below the shared validation.
 
-*LOW-1:* =PropertyNotFound= 400 leaks the absolute on-disk path (org.rs:176 Display via =OrgRewriter::new(&file, ..)=) and omits what the drawer has — contradicts org_parse_bad_request (:1658) and tx.rs:226 "Never a path". FIX: mirror =unknown_section_error= (:15169) — name the node, list the drawer's actual keys, no path.
+*LOW-2:* =validate_drawer_property_key_case= accepts any self-uppercase key (=FOO-BAR= passes) but the tx pattern =[^A-Z][A-Z0-9_]*= rejects it inside the writer, so =task update --property FOO-BAR=1= surfaces as 500 "failed to apply changes" instead of a 400 naming the flag (=prepare_api_tx= never validates; rollback is clean, no data loss). FIX: enforce the same pattern in the drawer check so the refusal is a 400.
 
-*LOW-2:* unset refusals reuse task_property_key_refusal phrasing about a =--property KEY=…= flag =node prop unset= does not have (:15505). FIX: unset-shaped advice (same shape the set-path already has).
-
-*LOW-3:* =glossary create --property id=x= takes two round trips (case check says "Use =ID=", then =ID= is hard-refused). FIX: check the =ID= guard case-insensitively or order it before the case check. Also remove dead =NodeLayer::Task | NodeLayer::Goal => "Task"= arm at :15521 (Task handled above, Goal rejected at :15479).
+*LOW-3:* =--extra= help still says only "single-line only" while the flag now enforces uppercase-snake; the flag-honesty test asserts only that; nothing in =shipped/= documents the rule; 40+ historical lowercase =reviewer.finding= extras in tx/2026-08.org (agent-authored, nothing reads them) would now hard-fail. FIX: help + test + a shipped doc line naming the rule; dedupe =is_uppercase_snake_key= (verbatim in manager.rs:9958 and core/tx.rs:298 — call the core one).
 
 ** Acceptance
-- =node prop set term_/dec_/project/handoff ID <anything>= refused by name as identity-immutable on ALL layers; =node prop unset <id> ID= likewise; =mutate_graph_heading= refuses =ID= like create; ="ID"= gone from the advertised key lists.
-- =tx record --extra kind=x= refused by name naming =KIND=; production-path test staging a dispatch with a miscased extra proves =dispatch-close= still finds the uppercase-staged record while the miscased form is refused.
-- PropertyNotFound body carries no filesystem path and names the drawer's actual keys; unset advice has no =--property= phrasing; =id=x= on glossary create is one refusal naming =ID= immutability.
-- Existing 12 ZKZBF+HXSW0 tests stay green (adapt where the contract legitimately changed); fmt, clippy -D, focused =run-tests.sh= gate green; extend the injection artifact or add a sibling for the ID guard.
+- Editing a task in the UI never offers a save that is a guaranteed 400; =node prop unset <task> PARENT_TASK= works (removes the dead key) while =set= still refuses by name; STATE stays refused both directions.
+- =task create --property ID=x= and =--property id=x= yield the SAME immutable refusal; the dead special case and unreachable arms are gone.
+- =task update --property FOO-BAR=1= is a 400 naming the flag and the canonical spelling, not a writer 500; a production-path test pins it.
+- =--extra= help states the uppercase-snake rule and the flag-honesty test pins it; a shipped doc names the rule; one =is_uppercase_snake_key= in core.
+- Existing 19 ZKZBF+HXSW0 tests stay green; fmt, clippy -D, focused run-tests.sh gate green; extend an injection artifact or add a sibling for the unset-split contract.
 - Independent review pass.

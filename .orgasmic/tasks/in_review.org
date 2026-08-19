@@ -1,37 +1,3 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-ZKZBF Audit the remaining --property surfaces (node prop, glossary/decision/architecture create, dispatch-close) for the HXSW0 silent-drop shape
-:PROPERTIES:
-:ID: TASK-ZKZBF
-:PRIORITY: P2
-:END:
-
-From TASK-HXSW0 (2026-07-29), which fixed key validation on task create/update
-— the surface all six measured silent-drop instances lived on. The same
-untyped-passthrough shape exists on:
-
-- `node prop set` / `node prop unset`
-- `glossary create --property`
-- `decision create --property`
-- `architecture create --property`
-- `manager dispatch-close --property`
-
-For each surface: determine whether a miscased key is stored-and-never-read
-(the `Heading::property` byte comparison in crates/orgasmic-core/src/org.rs
-makes this the DEFAULT outcome for any drawer-backed key), whether any per-key
-filter drops silently, and whether the key set diverges from a sibling verb.
-
-Reuse `validate_task_property_keys` (api.rs, TASK-HXSW0) where the target is a
-schema-read drawer. NOTE: `dispatch-close --property` writes tx metadata, not a
-node drawer — the same rule may not apply unchanged; decide and state the rule
-for it rather than assuming.
-
-=== Acceptance
-
-- A production-path test per surface asserting a miscased key is refused BY
-  NAME (real binary, drawer read off disk afterwards — the HXSW0 test shape in
-  crates/orgasmic-cli/tests/task_property_silent_drop_cli.rs is the template).
-- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
-  before reporting.
-
