@@ -1,0 +1,42 @@
+# Pinned from the real injected-red run of 2026-08-19: the patch removes the
+# round-1.1 guards only — the ID-immutability hoist out of the shared drawer
+# check (set, unset, graph create, graph revise, the org-node editor's other
+# layers), "ID" back in the advertised Project and Goal/Handoff key lists, the
+# case rule back out of the tx ledger's key parse, and the three message
+# shapes (path-carrying PropertyNotFound, --property-phrased unset advice,
+# the two-round-trip `id=` refusal) back in.
+#
+# Pre-fix, `node prop set term_… ID term_…` re-keyed the node so hard that
+# the SAME test's later `glossary get` 404s on the old id, and `node prop
+# unset … ID` removes the identity line and the post-edit re-read 404s —
+# the dangling-reference outcome the finding described, reproduced live.
+exit: 101
+
+# `node prop set <id> ID …` on term/decision/project: a 200 that re-keyed
+# the node (the refusal assertion catches the follow-up 404 on the old id),
+# and `node prop unset … ID`: the same identity write with the sign flipped.
+contains: the refusal must name ID and its immutability
+
+# Graph revise (`POST /glossary/:id`) accepted the ID property and re-keyed:
+# a 200 where the test demands a 400 — the create/revise divergence.
+contains: revise with an ID property must be refused, not re-key
+
+# `glossary create --property id=…`: the case check answered "Use `ID`"
+# first — two round trips to learn one rule (LOW-3), raw refusal pinned.
+contains: is not the canonical drawer spelling
+
+# `tx record --extra kind=implementer`: accepted and recorded, leaving the
+# staged dispatch invisible to dispatch-close (MEDIUM-2).
+contains: must be refused, not silently accepted
+
+# `node prop unset <task> PRODUCES`: the daemon's Display string, absolute
+# on-disk path included, drawer keys absent (LOW-1) — raw refusal pinned.
+contains: : property PRODUCES not found on heading
+
+# `node prop unset <task> STATE`: advice about a `--property` flag the
+# command does not have (LOW-2) — raw refusal pinned.
+contains: `--property STATE=…` is refused
+
+# Exactly the seven round-1.1 tests fall; the round-1 six stay green — no
+# collateral on the merged behaviour this fix round builds on.
+contains: test result: FAILED. 6 passed; 7 failed

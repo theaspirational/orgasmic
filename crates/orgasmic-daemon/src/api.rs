@@ -14652,13 +14652,10 @@ async fn create_graph_heading(
     // (`--property canonical=…`) used to be stored as `:canonical:` and read
     // by nothing — the TASK-HXSW0 shape on the graph layers. And `ID` is
     // silently force-overwritten with the minted node id, so passing it is a
-    // drop by construction. Both are refused by name instead.
-    if let Some(id_value) = req.properties.get("ID") {
-        return Err(ApiError::bad_request(format!(
-            "do not pass ID as a property; the drawer :ID: is derived from the node id (use `id` \
-             to pin one) — ID={id_value} would be silently overwritten"
-        )));
-    }
+    // drop by construction. Both are refused by name in the shared check
+    // below instead (orgasmic:task_ZKZBF.1 hoisted the ID guard there, so
+    // `id=…` is refused as identity-immutable in one step, and create and
+    // revise cannot diverge).
     let (layer_label, layer_keys) = match layer {
         GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
         GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
@@ -14840,6 +14837,10 @@ async fn mutate_graph_heading(
     // orgasmic:task_ZKZBF — same canonical-spelling rule as create: refusing a
     // miscased key here and not there (or vice versa) would make the accepted
     // key set diverge between the two verbs that write the same drawer.
+    // orgasmic:task_ZKZBF.1 — the shared check also refuses ID (any case) as
+    // identity-immutable, so revise cannot diverge from create on the
+    // identity key either: a revise that re-keyed the heading would dangle
+    // every reference to the old id.
     let (layer_label, layer_keys) = match layer {
         GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
         GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
@@ -15178,6 +15179,28 @@ fn unknown_section_error(rw: &OrgRewriter, id: &str, title: &str, hint: &str) ->
     ))
 }
 
+// orgasmic:task_ZKZBF.1
+/// The property twin of [`unknown_section_error`]. `PropertyNotFound`'s own
+/// Display carries the absolute on-disk path (`org.rs`), which this API never
+/// discloses (see `org_parse_bad_request`, and tx.rs: "Never a path"), and
+/// omits the one fact that explains the miss: what the drawer actually has.
+/// A miscased key is already refused earlier, so this fires for a genuinely
+/// absent canonical key — exactly the case where the real keys are the answer.
+fn unknown_property_error(heading: &Heading, id: &str, key: &str) -> ApiError {
+    let keys: Vec<&str> = heading
+        .properties
+        .iter()
+        .flat_map(|drawer| drawer.entries.iter())
+        .map(|entry| entry.key.as_str())
+        .collect();
+    let known = if keys.is_empty() {
+        "its drawer has no properties".to_string()
+    } else {
+        format!("its drawer has: {}", keys.join(", "))
+    };
+    ApiError::bad_request(format!("node {id} has no property `{key}` — {known}"))
+}
+
 /// Why a section write refuses rather than creating.
 const SECTION_WRITE_HINT: &str = "A section write edits an existing section; pass \
      `--create` to add a new one, which is the flag that distinguishes a \
@@ -15505,9 +15528,15 @@ async fn post_org_node_edit(
                         TASK_SCHEMA_PROPERTY_KEYS,
                         None,
                     )?;
+                    // orgasmic:task_ZKZBF.1 — unset-shaped advice: this command
+                    // has no `--property` flag, so the set-verb's
+                    // "`--property KEY=…` is refused" phrasing would describe a
+                    // flag the caller never passed.
                     let canonical = key.trim().to_ascii_uppercase();
-                    if let Some(refusal) = task_property_key_refusal(&canonical) {
-                        return Err(ApiError::bad_request(refusal));
+                    if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
+                        return Err(ApiError::bad_request(format!(
+                            "unsetting `{canonical}` is refused: {refusal}"
+                        )));
                     }
                 }
             }
@@ -15515,13 +15544,7 @@ async fn post_org_node_edit(
                 validate_drawer_property_key_case(
                     key,
                     // orgasmic:task_ZKZBF — capitalized for the refusal sentence.
-                    match other {
-                        NodeLayer::Decision => "Decision",
-                        NodeLayer::Glossary => "Glossary",
-                        NodeLayer::Project => "Project",
-                        NodeLayer::Handoff => "Handoff",
-                        NodeLayer::Task | NodeLayer::Goal => "Task",
-                    },
+                    node_layer_label(other),
                     node_layer_schema_property_keys(other),
                     value,
                 )?;
@@ -15646,9 +15669,13 @@ async fn post_org_node_edit(
                     // hid the one fact (the exact spelling it looked for) that
                     // explained why `node prop unset <id> priority` failed
                     // while `:PRIORITY:` sat in the drawer.
+                    // orgasmic:task_ZKZBF.1 — and the Display string itself
+                    // carries the absolute file path, which the API never
+                    // discloses; the path stays in this warn, the body names
+                    // the node and its actual keys instead.
                     e @ orgasmic_core::OrgError::PropertyNotFound { .. } => {
                         tracing::warn!(node_id = %id, error = %e, "remove property refused");
-                        ApiError::bad_request(e.to_string())
+                        unknown_property_error(heading, &id, &key)
                     }
                     e => org_rewriter_error("remove property", &id, e),
                 })?;
@@ -16344,14 +16371,18 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
     "WRITE_SCOPE",
 ];
 
-/// Keys that a task write must refuse because the value would be stored and
-/// then never read, or is owned by a mechanism the caller has to reach through
-/// a different door. Each carries the sentence that names that door.
+/// Keys a task write must refuse because the value would be stored and then
+/// never read, or is owned by a mechanism the caller has to reach through a
+/// different door. Each carries the sentence that names that door.
 ///
 /// TASK-HXSW0 was filed against the silent version of exactly this table: the
 /// keys below used to be dropped on the floor by `task create` while the call
 /// returned a normal `{id, tx_id}` success.
-fn task_property_key_refusal(key: &str) -> Option<String> {
+///
+/// `ID` is absent on purpose (orgasmic:task_ZKZBF.1): the shared
+/// [`validate_drawer_property_key_case`] guard refuses it first, on every
+/// layer, so this table never sees it.
+fn task_property_key_refusal_reason(key: &str) -> Option<&'static str> {
     let refusal = match key {
         "STATE" => {
             "STATE is owned by the lifecycle state machine — the heading keyword, the file the \
@@ -16363,17 +16394,13 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
              (`TASK-<parent>.<n>` → `TASK-<parent>`). Mint the parentage into the id instead — \
              `orgasmic task create --id TASK-<parent>.1 …` — or the edge will not exist."
         }
-        "ID" => {
-            "task identity is immutable and the drawer `:ID:` is derived from it; pass \
-             `--id` on `orgasmic task create` to pin one."
-        }
         "LAST_UPDATED" => {
             "LAST_UPDATED is not a task field; the tx ledger is the timestamped record \
              (`orgasmic tx list --project <id>`)."
         }
         _ => return None,
     };
-    Some(format!("`--property {key}=…` is refused: {refusal}"))
+    Some(refusal)
 }
 
 /// Keys `task update` writes and `task create` used to swallow. They stay
@@ -16409,30 +16436,43 @@ const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
 /// on `node prop set`/`node prop unset`. Task is the schema-read drawer
 /// [`validate_task_property_keys`] already governs; the other layers name
 /// their own vocabulary so a refusal can point at the canonical spelling.
+/// `ID` is deliberately absent from every list: it is derived from the node
+/// identity and refused by the shared guard, not a key to advertise
+/// (orgasmic:task_ZKZBF.1).
 fn node_layer_schema_property_keys(layer: NodeLayer) -> &'static [&'static str] {
     match layer {
         NodeLayer::Task => TASK_SCHEMA_PROPERTY_KEYS,
         NodeLayer::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
         NodeLayer::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
-        NodeLayer::Project => &[
-            "BRANCH",
-            "DEFAULT_BRANCH",
-            "ID",
-            "LOCAL_PATH",
-            "PATH",
-            "STATUS",
-        ],
-        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "ID", "LIVENESS"],
+        NodeLayer::Project => &["BRANCH", "DEFAULT_BRANCH", "LOCAL_PATH", "PATH", "STATUS"],
+        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "LIVENESS"],
     }
 }
 
-// orgasmic:task_ZKZBF
+// orgasmic:task_ZKZBF.1
+/// Refusal label for a node layer, so every drawer-key refusal names the
+/// vocabulary it is about. Total on purpose: no dead arms to drift.
+fn node_layer_label(layer: NodeLayer) -> &'static str {
+    match layer {
+        NodeLayer::Task => "Task",
+        NodeLayer::Decision => "Decision",
+        NodeLayer::Glossary => "Glossary",
+        NodeLayer::Project => "Project",
+        NodeLayer::Goal => "Goal",
+        NodeLayer::Handoff => "Handoff",
+    }
+}
+
+// orgasmic:task_ZKZBF.1
 /// The canonical-spelling check every drawer-key write surface shares: org
 /// drawer keys are uppercase and [`orgasmic_core::Heading::property`] compares
 /// them byte for byte, so a miscased key would be written and never read.
-/// `value` is `Some` for writes (the refusal then shows the corrected
-/// `KEY=VALUE` to pass) and `None` for removals (the refusal says which
-/// canonical key to remove instead).
+/// It also owns the identity guard: `:ID:` is derived from the node identity
+/// (`find_by_id` matches it byte for byte), so writing it would re-key the
+/// node and dangle every reference to the old id — refused on every layer,
+/// before and instead of the case check. `value` is `Some` for writes (the
+/// refusal then shows the corrected `KEY=VALUE` to pass) and `None` for
+/// removals (the refusal says which canonical key to remove instead).
 fn validate_drawer_property_key_case(
     key: &str,
     layer_label: &str,
@@ -16444,6 +16484,17 @@ fn validate_drawer_property_key_case(
         return Err(ApiError::bad_request(
             "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
         ));
+    }
+    // Case-insensitive so `id=…` gets this ONE refusal naming the immutability
+    // rule, not a case correction ("use ID") into a hard refusal — two round
+    // trips to learn one rule was the LOW-3 shape.
+    if trimmed.eq_ignore_ascii_case("ID") {
+        return Err(ApiError::bad_request(format!(
+            "{layer_label} identity is immutable and the drawer :ID: is derived from it, so ID \
+             cannot be set or unset as a property — writing it would re-key the node and dangle \
+             every reference to the old id. Pin one at create time instead (the create verb's \
+             `id` argument)"
+        )));
     }
     let canonical = trimmed.to_ascii_uppercase();
     if canonical != *key {
@@ -16479,8 +16530,10 @@ fn validate_task_property_keys(
         // keeps TASK-HXSW0's exact message.
         validate_drawer_property_key_case(key, "Task", TASK_SCHEMA_PROPERTY_KEYS, Some(value))?;
         let canonical = key.trim().to_ascii_uppercase();
-        if let Some(refusal) = task_property_key_refusal(&canonical) {
-            return Err(ApiError::bad_request(refusal));
+        if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
+            return Err(ApiError::bad_request(format!(
+                "`--property {canonical}=…` is refused: {refusal}"
+            )));
         }
         if verb_only_on_update.contains(&canonical.as_str()) {
             return Err(ApiError::bad_request(format!(
