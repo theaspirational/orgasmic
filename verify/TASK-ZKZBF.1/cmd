@@ -1,0 +1,9 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZKZBF.1`.
+#
+# The production path, not the HTTP contract: every surface this fix round
+# closed was measured at a terminal against the real binary (plus the one
+# HTTP-only surface, graph revise, driven the way its only callers can drive
+# it). Pre-fix, every one of these was either a normal success object —
+# `node prop set <id> ID …` re-keying the node — or a message that disclosed
+# the wrong thing.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test node_property_silent_drop_cli
