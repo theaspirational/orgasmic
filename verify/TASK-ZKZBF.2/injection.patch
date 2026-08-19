@@ -1,0 +1,20 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 5b699e0..0a615a1 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -15533,12 +15533,10 @@ async fn post_org_node_edit(
+                     // "`--property KEY=…` is refused" phrasing would describe a
+                     // flag the caller never passed.
+                     //
+-                    // orgasmic:task_ZKZBF.2 — and the unset half consults its
+-                    // OWN table: only door-owned keys (STATE) refuse removal;
+-                    // dead keys (PARENT_TASK, LAST_UPDATED) are exactly the
+-                    // legacy lines this verb exists to clean up.
++                    // INJECTION (TASK-ZKZBF.2): unset consults the write-only
++                    // table again — dead keys refuse removal.
+                     let canonical = key.trim().to_ascii_uppercase();
+-                    if let Some(refusal) = task_property_key_unset_refusal_reason(&canonical) {
++                    if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
+                         return Err(ApiError::bad_request(format!(
+                             "unsetting `{canonical}` is refused: {refusal}"
+                         )));
