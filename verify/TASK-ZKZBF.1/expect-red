@@ -6,6 +6,11 @@
 # shapes (path-carrying PropertyNotFound, --property-phrased unset advice,
 # the two-round-trip `id=` refusal) back in.
 #
+# Re-authored 2026-08-20 against the tree after TASK-ZKZBF.2 (same defect
+# set; the ZKZBF.2 unset-split and shape-400 stay fixed in the injected
+# state). The suite grew to 15 tests and one of them — the dead-key unset
+# contract — also pins the round-1.1 unset-shaped advice, so it falls too.
+#
 # Pre-fix, `node prop set term_… ID term_…` re-keyed the node so hard that
 # the SAME test's later `glossary get` 404s on the old id, and `node prop
 # unset … ID` removes the identity line and the post-edit re-read 404s —
@@ -37,6 +42,7 @@ contains: : property PRODUCES not found on heading
 # command does not have (LOW-2) — raw refusal pinned.
 contains: `--property STATE=…` is refused
 
-# Exactly the seven round-1.1 tests fall; the round-1 six stay green — no
-# collateral on the merged behaviour this fix round builds on.
-contains: test result: FAILED. 6 passed; 7 failed
+# The seven round-1.1 tests fall, plus the ZKZBF.2 dead-key test that also
+# pins the unset-shaped advice; the round-1 six stay green — no collateral
+# on the merged behaviour this fix round builds on.
+contains: test result: FAILED. 7 passed; 8 failed
