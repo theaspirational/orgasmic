@@ -20,6 +20,15 @@
 //! - `manager dispatch-close --property verdict=…` is refused at parse time
 //!   and names `VERDICT`, and `--status aborted` refuses `--property` keys by
 //!   name instead of accepting and silently discarding them.
+//! - TASK-ZKZBF.1: `node prop set/unset <id> ID …` is refused as
+//!   identity-immutable on EVERY layer (a set used to re-key the node and
+//!   dangle every reference to the old id); graph revise refuses `ID` exactly
+//!   like create; `glossary create --property id=…` is ONE refusal; `tx
+//!   record --extra kind=…` is refused naming `KIND` (a miscased extra used
+//!   to make a dispatch invisible to `dispatch-close`); a
+//!   `PropertyNotFound` on unset names the drawer's real keys without leaking
+//!   a filesystem path; unset refusals no longer describe a `--property`
+//!   flag the command does not have.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -572,5 +581,394 @@ async fn dispatch_close_aborted_refuses_properties_it_would_silently_drop() {
     assert!(
         out.contains("manager.dispatch_aborted"),
         "the abort close must still record its tx: {out}"
+    );
+}
+
+// orgasmic:task_ZKZBF.1
+// ---------------------------------------------------------------------------
+// The round-1 review findings: the ID-immutability guard on every drawer
+// write, the tx-record case rule, and the message polish.
+// ---------------------------------------------------------------------------
+
+/// MEDIUM-1: `node prop set <id> ID <anything>` used to be a 200 on every
+/// non-task layer — the upsert re-keyed the node (`find_by_id` matches
+/// `:ID:` byte for byte), dangling every reference to the old id, no --force
+/// required. Refused by name as identity-immutable on ALL layers, and the
+/// file must stay byte-identical: a refusal that still wrote would be a worse
+/// bug than the re-key it replaced.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_prop_set_refuses_id_as_identity_on_every_layer_and_never_rekeys() {
+    let fx = Fixture::new("nodeprop-id").await;
+
+    let term = fx.json(&[
+        "glossary",
+        "create",
+        "--project",
+        "nodeprop-id",
+        "--title",
+        "a term whose identity must not be rewritable",
+        "--definition",
+        "the id is derived, not stored from the caller",
+    ])["id"]
+        .as_str()
+        .expect("minted term id")
+        .to_string();
+    let dec = fx.json(&[
+        "decision",
+        "create",
+        "--project",
+        "nodeprop-id",
+        "--title",
+        "a decision whose identity must not be rewritable",
+    ])["id"]
+        .as_str()
+        .expect("minted decision id")
+        .to_string();
+
+    // The scaffold's project heading id, straight off disk — the layer the
+    // `--kind project` path addresses.
+    let project_node_id = fx
+        .graph_file("project.org")
+        .lines()
+        .find_map(|line| line.trim_start_matches(':').strip_prefix("ID:"))
+        .map(str::trim)
+        .expect("project.org carries :ID:")
+        .to_string();
+
+    // Glossary and Decision resolve from the id prefix; Project needs the
+    // explicit kind because a bare project name would infer Glossary.
+    for (id, kind, file) in [
+        (term.as_str(), None, "glossary.org"),
+        (dec.as_str(), None, "decisions.org"),
+        (project_node_id.as_str(), Some("project"), "project.org"),
+    ] {
+        let before = fx.graph_file(file);
+        let mut args = vec!["node", "prop", "set", id, "ID", "term_ZZZZZZZZ"];
+        if let Some(kind) = kind {
+            args.push("--kind");
+            args.push(kind);
+        }
+        let stderr = fx.refusal(&args);
+        assert!(
+            stderr.contains("immutable") && stderr.contains("ID"),
+            "the refusal must name ID and its immutability: {stderr}"
+        );
+        assert_eq!(
+            fx.graph_file(file),
+            before,
+            "the refused set must not have touched {file}"
+        );
+    }
+
+    // The term still answers to its original id — the read model never saw a
+    // re-key because none happened.
+    let got = fx.run(&["glossary", "get", "--project", "nodeprop-id", &term]);
+    assert!(
+        got.contains(&term),
+        "the term must still be reachable under its original id: {got}"
+    );
+}
+
+/// MEDIUM-1, unset half: removing `:ID:` is the same identity write with the
+/// sign flipped. Refused by name on the task layer (which already refused it)
+/// and on the layers round 1 left open.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_prop_unset_refuses_id_as_identity_on_task_and_term_layers() {
+    let fx = Fixture::new("nodeprop-unset-id").await;
+    let task_id = fx.create_task("a task whose id is not removable");
+    let term = fx.json(&[
+        "glossary",
+        "create",
+        "--project",
+        "nodeprop-unset-id",
+        "--title",
+        "a term whose id is not removable",
+        "--definition",
+        "identity is derived",
+    ])["id"]
+        .as_str()
+        .expect("minted term id")
+        .to_string();
+
+    for (id, file) in [(&task_id, None), (&term, Some("glossary.org"))] {
+        let before = file.map(|name| fx.graph_file(name));
+        let stderr = fx.refusal(&["node", "prop", "unset", id, "ID"]);
+        assert!(
+            stderr.contains("immutable") && stderr.contains("ID"),
+            "the refusal must name ID and its immutability: {stderr}"
+        );
+        if let (Some(file), Some(before)) = (file, before) {
+            assert_eq!(
+                fx.graph_file(file),
+                before,
+                "the refused unset must not have touched {file}"
+            );
+        }
+    }
+
+    // The task's drawer still carries its :ID: line.
+    assert!(
+        fx.drawer(&task_id).contains(":ID:"),
+        "the refused unset must not have removed the identity line"
+    );
+}
+
+/// MEDIUM-1, the create/revise divergence: `create_graph_heading` refused ID
+/// by name but `mutate_graph_heading` (graph revise, HTTP surface — no CLI
+/// verb reaches it) got only the case check, and `ID` is already uppercase.
+/// Both now refuse it through the same shared guard. Handoff joins through
+/// the org-node editor with an explicit kind: its validation also runs before
+/// any file is read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn graph_revise_and_handoff_refuse_id_like_create() {
+    let fx = Fixture::new("graph-id").await;
+
+    let term = fx.json(&[
+        "glossary",
+        "create",
+        "--project",
+        "graph-id",
+        "--title",
+        "a term revise must not re-key",
+        "--definition",
+        "identity is derived",
+    ])["id"]
+        .as_str()
+        .expect("minted term id")
+        .to_string();
+    let dec = fx.json(&[
+        "decision",
+        "create",
+        "--project",
+        "graph-id",
+        "--title",
+        "a decision revise must not re-key",
+    ])["id"]
+        .as_str()
+        .expect("minted decision id")
+        .to_string();
+
+    let token = std::fs::read_to_string(fx.home.auth_token())
+        .expect("daemon bearer token")
+        .trim()
+        .to_string();
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", fx.running.addr);
+
+    // Graph revise (`POST /glossary/:id`, `POST /decisions/:id`).
+    for (path, file) in [
+        (format!("/api/glossary/{term}"), "glossary.org"),
+        (format!("/api/decisions/{dec}"), "decisions.org"),
+    ] {
+        let before = fx.graph_file(file);
+        let resp = client
+            .post(format!("{base}{path}"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": fx.project_id,
+                "action": "revise",
+                "properties": { "ID": "term_ZZZZZZZZ" },
+            }))
+            .send()
+            .await
+            .expect("POST graph revise");
+        assert_eq!(
+            resp.status(),
+            400,
+            "revise with an ID property must be refused, not re-key"
+        );
+        let body: serde_json::Value = resp.json().await.expect("error body");
+        let error = body["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("immutable") && error.contains("ID"),
+            "the refusal must name ID and its immutability: {error}"
+        );
+        assert_eq!(
+            fx.graph_file(file),
+            before,
+            "the refused revise must not have touched {file}"
+        );
+    }
+
+    // Handoff layer through the org-node editor (`--kind handoff`); the key
+    // validation runs before the node or its file is read.
+    let resp = client
+        .post(format!("{base}/api/org/node/handoff-current/edit"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "project": fx.project_id,
+            "kind": "handoff",
+            "base_version": "0",
+            "ops": [ { "op": "set_property", "key": "ID", "value": "term_ZZZZZZZZ" } ],
+        }))
+        .send()
+        .await
+        .expect("POST org node edit");
+    assert_eq!(resp.status(), 400, "handoff ID write must be refused");
+    let body: serde_json::Value = resp.json().await.expect("error body");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("immutable") && error.contains("ID"),
+        "the refusal must name ID and its immutability: {error}"
+    );
+}
+
+/// LOW-3: `glossary create --property id=x` used to take two round trips —
+/// the case check said "use `ID`", and `ID` was then hard-refused. The guard
+/// is matched case-insensitively now, so any casing of the identity key gets
+/// ONE refusal naming the immutability rule.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn glossary_create_with_a_miscased_id_is_one_refusal_naming_immutability() {
+    let fx = Fixture::new("glossary-id").await;
+
+    for key in ["id", "Id", "ID"] {
+        let stderr = fx.refusal(&[
+            "glossary",
+            "create",
+            "--project",
+            "glossary-id",
+            "--title",
+            "a term filed with the identity key as a property",
+            "--property",
+            &format!("{key}=term_ZZZZZZZZ"),
+        ]);
+        assert!(
+            stderr.contains("immutable") && stderr.contains("ID"),
+            "the refusal must name ID immutability: {stderr}"
+        );
+        assert!(
+            !stderr.contains("canonical drawer spelling"),
+            "one refusal, not a case correction into a hard refusal: {stderr}"
+        );
+    }
+    assert!(
+        !fx.graph_file("glossary.org")
+            .contains("filed with the identity key"),
+        "the refused creates must not have filed a term"
+    );
+}
+
+/// MEDIUM-2: `tx record --extra kind=implementer` used to write `:kind:` —
+/// byte-exact readers like `extra()` never matched `KIND`, so the staged
+/// dispatch was INVISIBLE to `dispatch-close` (not closed wrong: unfindable).
+/// The ledger's own key parse now enforces the decided rule (open vocabulary,
+/// closed case), while the canonical form still stages and still resolves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tx_record_extra_refuses_a_miscased_key_and_the_canonical_form_stages_a_visible_dispatch() {
+    let fx = Fixture::new("tx-extra-case").await;
+    let task_id = fx.create_task("a task whose dispatch stages the tx case rule");
+
+    // The miscased extra is refused at the ledger's parse, naming the
+    // canonical spelling like `dispatch-close --property` already does.
+    let stderr = fx.refusal(&[
+        "tx",
+        "record",
+        "--project",
+        "tx-extra-case",
+        "--type",
+        "manager.dispatch_started",
+        "--task",
+        &task_id,
+        "--extra",
+        "kind=implementer",
+    ]);
+    assert!(
+        stderr.contains("kind") && stderr.contains("KIND"),
+        "the refusal must quote the passed key and name the canonical one: {stderr}"
+    );
+
+    // The canonical form still stages — and the close machinery still FINDS
+    // it: the aborted close resolves the started tx to a dispatch record,
+    // which is only possible when `:KIND:` is where `extra()` looks.
+    let started = fx.json(&[
+        "tx",
+        "record",
+        "--project",
+        "tx-extra-case",
+        "--type",
+        "manager.dispatch_started",
+        "--task",
+        &task_id,
+        "--extra",
+        "KIND=implementer",
+    ]);
+    let started_tx = started["tx_id"]
+        .as_str()
+        .expect("tx record returns tx_id")
+        .to_string();
+    let out = fx.run(&[
+        "manager",
+        "dispatch-close",
+        "--task",
+        &task_id,
+        "--started-tx",
+        &started_tx,
+        "--status",
+        "aborted",
+        "--reason",
+        "staged to prove the uppercase extra stays visible",
+    ]);
+    assert!(
+        out.contains("manager.dispatch_aborted"),
+        "the uppercase-staged dispatch must still be findable by the close: {out}"
+    );
+}
+
+/// LOW-1: a `PropertyNotFound` on unset used to surface the daemon-side
+/// Display string, which carries the ABSOLUTE on-disk path — a disclosure no
+/// sibling makes (org_parse_bad_request warns the path and returns a
+/// path-free body; tx.rs: "Never a path") — while omitting the one fact that
+/// explains the miss: the keys the drawer actually has. Mirrors
+/// `unknown_section_error` now: node named, real keys listed, no path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_prop_unset_for_an_absent_key_names_the_drawers_real_keys_without_a_path() {
+    let fx = Fixture::new("unset-absent").await;
+    let task_id = fx.create_task("a task carrying one real property");
+    fx.run(&["node", "prop", "set", &task_id, "PRIORITY", "P2"]);
+
+    // PRODUCES is canonically spelled and genuinely absent, so it sails past
+    // the case check and dies inside the rewriter: the PropertyNotFound path.
+    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "PRODUCES"]);
+    assert!(
+        stderr.contains(task_id.as_str()),
+        "the refusal must name the node: {stderr}"
+    );
+    assert!(
+        stderr.contains("PRODUCES"),
+        "the refusal must name the key that is not there: {stderr}"
+    );
+    assert!(
+        stderr.contains("PRIORITY"),
+        "the refusal must list the keys the drawer DOES have: {stderr}"
+    );
+    assert!(
+        !stderr.contains('/') && !stderr.contains(".org"),
+        "the refusal must not leak a filesystem path: {stderr}"
+    );
+
+    // The real property survived the refused call.
+    assert!(fx.drawer(&task_id).contains(":PRIORITY: P2"));
+}
+
+/// LOW-2: unset refusals used to reuse the set-verb's phrasing —
+/// "`--property KEY=…` is refused" — describing a flag `node prop unset` does
+/// not have. The advice is unset-shaped now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_prop_unset_refusal_advice_is_unset_shaped() {
+    let fx = Fixture::new("unset-shape").await;
+    let task_id = fx.create_task("a task whose STATE is not unsettable");
+
+    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "STATE"]);
+    assert!(
+        stderr.contains("STATE"),
+        "the refusal must name the refused key: {stderr}"
+    );
+    assert!(
+        stderr.contains("lifecycle"),
+        "the refusal must still name the door that owns the key: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--property"),
+        "unset advice must not describe a flag the command does not have: {stderr}"
     );
 }
