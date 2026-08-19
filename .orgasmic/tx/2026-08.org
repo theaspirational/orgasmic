@@ -36571,3 +36571,29 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-08-19 Wed 16:05:13 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6181
+:TIME:         [2026-08-19 Wed 16:05:13]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-19 Wed 16:05:13 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6182
+:TIME:         [2026-08-19 Wed 16:05:13]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

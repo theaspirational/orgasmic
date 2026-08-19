@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         614a008
+:LIVENESS:         7e8768f
 :LIVENESS_AT:      [2026-08-18 Tue]
 :UPDATED_AT:       [2026-08-18 Tue]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -405,6 +405,29 @@ summary, verified from git and tx:
   suspension lifts). in_review EMPTY. in_progress = FIVE STALE AJP4A ANCESTORS (AJP4A, .1,
   .1.1, .1.1.1, .1.1.1.1) — tip closed but ancestors never moved; unchecked acceptance boxes
   in AJP4A mean the move needs verification, not blind bookkeeping. backlog 122.
+
+SESSION 2026-08-19 — THE ZKZBF CHAIN OPENED AND CLOSED IN ONE SESSION, ON A NEW LANE.
+Operator lifted the suspension for a directed pair: *implementer = opencode stdio /
+zai-coding-plan/glm-5.3, reviewer = claude stdio / claude-opus-5 / high.* Dispatching tmux+custom
+with argv =opencode run -m zai-coding-plan/glm-5.3= lets the 0.0.21 runtime reclassify onto its
+first-class opencode-stdio provider-host lane (=implementer-opencode-stdio=) — no tmux server ever
+started. glm-5.3 has NO variant named max (=variants: null=), so no effort was recorded — recording
+an unapplied value is the C7NVH defect.
+- Round 1 (impl ~6min): five surfaces refused-by-name + 6 production tests + injection artifact;
+  merged =136418f=; manager gates green. Review (~10min) REJECT — audit missed its own class on
+  =node prop set ID= (non-task layers re-key the node; key table advertised ID; create/revise
+  diverged — the manager's own no-third-bypass claim was FALSE) + =tx record --extra= same defect.
+- Round 2 TASK-ZKZBF.1 (impl ~45min): shared ID guard at all drawer-write sites, tx --extra case
+  rule in core, message polish; 13 tests, sibling injection artifact; merged =8f6e9c8=; manager
+  gates 19/19 GREEN at rate 0.0010. Review ACCEPT — all five brief claims attacked and unbroken;
+  every drawer-write site enumerated (five caller-keyed, all guarded).
+- Chain closed: TASK-ZKZBF + ZKZBF.1 done; follow-ups filed as TASK-ZKZBF.2 (P2: UI Parent Task
+  guaranteed-400 + unsettable dead keys — chain-introduced; task-create ID message split; drawer/tx
+  pattern mismatch surfaces as 500; --extra help/doc for the now-enforced case rule).
+- Both rounds' reviewer filed findings as reviewer.finding tx the moment they existed; the
+  injection-patch prohibition held; dispatch-wait was the watcher on all four dispatches.
+- ALSO PROVEN: the FIX_SUBTASK two-step (create refuses it, update sets it) exercised by the
+  manager on ZKZBF.1; runtime review-before-close gate printed its own recipe and was followed.
 
 ** Next likely actions
 *ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
