@@ -297,7 +297,14 @@ fn describe_property_loss(
 /// hide a whole entry from its reader verb: a `manager.dispatch_started`
 /// staged with `:kind:` is invisible to `dispatch-close`, which asks for
 /// `KIND`. Same rule `parse_close_property` already enforces on the CLI side.
-fn is_uppercase_snake_key(key: &str) -> bool {
+///
+// orgasmic:task_ZKZBF.2
+/// Public since ZKZBF.2: this is the ONE definition of the drawer/ledger key
+/// shape — the daemon's `validate_drawer_property_key_case` and the CLI's
+/// close-property parse call it instead of carrying verbatim copies (a copy
+/// drifting is exactly how the drawer check and the ledger writer came to
+/// disagree on `FOO-BAR`).
+pub fn is_uppercase_snake_key(key: &str) -> bool {
     let mut chars = key.chars();
     match chars.next() {
         Some(ch) if ch.is_ascii_uppercase() => {}

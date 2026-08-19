@@ -19,6 +19,10 @@ use orgasmic_core::{
     projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
     SessionEventKind, TaskHeading, TxEntry,
 };
+// orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
+// copy of core's; a copy drifting is how the drawer check and the ledger
+// writer came to disagree on `FOO-BAR`).
+use orgasmic_core::tx::is_uppercase_snake_key;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9954,15 +9958,6 @@ fn parse_close_property(value: &str) -> Result<(String, String), String> {
         return Err("property key must match [A-Z][A-Z0-9_]*".to_string());
     }
     Ok((key.to_string(), raw_value.to_string()))
-}
-
-fn is_uppercase_snake_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    match chars.next() {
-        Some(ch) if ch.is_ascii_uppercase() => {}
-        _ => return false,
-    }
-    chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn sanitize_tx_value(value: &str) -> String {

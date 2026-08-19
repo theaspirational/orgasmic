@@ -29,6 +29,12 @@
 //!   `PropertyNotFound` on unset names the drawer's real keys without leaking
 //!   a filesystem path; unset refusals no longer describe a `--property`
 //!   flag the command does not have.
+//! - TASK-ZKZBF.2: the refusal table is split by DIRECTION — legacy dead-key
+//!   drawer lines (`:PARENT_TASK:`, `:LAST_UPDATED:`) are removable through
+//!   `node prop unset` while writing them stays refused, and STATE (owned by
+//!   the lifecycle door) still refuses both directions; a self-uppercase but
+//!   wrong-SHAPE key (`FOO-BAR`) is refused by the shared drawer check as a
+//!   400 naming the flag instead of dying inside the tx writer as a 500.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -259,6 +265,42 @@ impl Fixture {
     fn graph_file(&self, name: &str) -> String {
         let path = self.project_root.join(".orgasmic").join(name);
         std::fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    /// Writes drawer lines into a task's drawer the way the pre-refusal
+    /// daemon left them: a direct file write standing in for an old write no
+    /// supported verb can produce anymore (every current door refuses these
+    /// keys). The next node op reads the artifact fresh off disk, so no
+    /// reindex is needed to make the seeded lines visible to `node prop`.
+    fn seed_drawer_lines(&self, task_id: &str, lines: &[String]) {
+        let dir = self.project_root.join(".orgasmic").join("tasks");
+        for entry in std::fs::read_dir(&dir).expect("read tasks dir") {
+            let path = entry.expect("dir entry").path();
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let mut file_lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+            let mut in_target = false;
+            let mut insert_at = None;
+            for (idx, line) in file_lines.iter().enumerate() {
+                if line.starts_with("* ") {
+                    in_target = line.contains(task_id);
+                    continue;
+                }
+                if in_target && line.trim() == ":PROPERTIES:" {
+                    insert_at = Some(idx + 1);
+                    break;
+                }
+            }
+            if let Some(at) = insert_at {
+                for (offset, line) in lines.iter().enumerate() {
+                    file_lines.insert(at + offset, line.clone());
+                }
+                std::fs::write(&path, file_lines.join("\n")).unwrap();
+                return;
+            }
+        }
+        panic!("no drawer for {task_id} under {}", dir.display());
     }
 }
 
@@ -970,5 +1012,167 @@ async fn node_prop_unset_refusal_advice_is_unset_shaped() {
     assert!(
         !stderr.contains("--property"),
         "unset advice must not describe a flag the command does not have: {stderr}"
+    );
+}
+
+// orgasmic:task_ZKZBF.2
+// ---------------------------------------------------------------------------
+// The round-2 review findings: the unset-split contract (dead keys removable,
+// STATE still door-owned both directions) and the drawer-shape 400.
+// ---------------------------------------------------------------------------
+
+/// MEDIUM: the refusal table used to be write-only but was consulted for
+/// removals too, so legacy `:PARENT_TASK:`/`:LAST_UPDATED:` drawer lines
+/// (the real ones in `done.org` were written before any door refused them)
+/// had NO supported removal verb: `node prop unset` is the only drawer-key
+/// removal door and it refused them by inheritance. The table is split by
+/// direction now — dead keys are removable, STATE (whose removal would
+/// desynchronise the lifecycle state machine) still refuses BOTH ways.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dead_drawer_keys_are_removable_while_state_stays_door_owned() {
+    let fx = Fixture::new("dead-key-unset").await;
+    let parent = fx.create_task("the id-grammar parent");
+    let task_id = fx.create_task("a task carrying pre-refusal dead keys");
+    fx.seed_drawer_lines(
+        &task_id,
+        &[
+            format!(":PARENT_TASK: {parent}"),
+            ":LAST_UPDATED: [2026-01-01 Thu 00:00:00]".to_string(),
+        ],
+    );
+    assert!(
+        fx.drawer(&task_id).contains(":PARENT_TASK:"),
+        "seeding must land the legacy dead-key lines"
+    );
+
+    // The removal door that did not exist before the split.
+    fx.run(&["node", "prop", "unset", &task_id, "PARENT_TASK"]);
+    fx.run(&["node", "prop", "unset", &task_id, "LAST_UPDATED"]);
+    let drawer = fx.drawer(&task_id);
+    assert!(
+        !drawer.contains("PARENT_TASK") && !drawer.contains("LAST_UPDATED"),
+        "the dead keys must be gone after the unsets:\n{drawer}"
+    );
+    assert!(
+        drawer.contains(":ID:"),
+        "the removals must not have touched the identity line:\n{drawer}"
+    );
+
+    // Writing them is still refused BY NAME, and the refusal names the
+    // removal door for the legacy lines instead of a dead end.
+    let stderr = fx.refusal(&["node", "prop", "set", &task_id, "PARENT_TASK", &parent]);
+    assert!(
+        stderr.contains("PARENT_TASK"),
+        "the set refusal must name the dead key: {stderr}"
+    );
+    assert!(
+        stderr.contains("node prop unset"),
+        "the set refusal must name the removal door for legacy lines: {stderr}"
+    );
+
+    // STATE is owned by another door, not merely dead: BOTH directions refuse.
+    let stderr = fx.refusal(&["node", "prop", "set", &task_id, "STATE", "DONE"]);
+    assert!(
+        stderr.contains("lifecycle"),
+        "the STATE set refusal must name the owning door: {stderr}"
+    );
+    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "STATE"]);
+    assert!(
+        stderr.contains("unsetting `STATE` is refused"),
+        "the STATE unset refusal must stay: {stderr}"
+    );
+}
+
+/// LOW-2: `FOO-BAR` is its own uppercase, so the canonical-spelling check
+/// passed it — and the tx ledger (where every changed key is also recorded)
+/// refused the shape only INSIDE the writer, surfacing as a 500 "failed to
+/// apply changes" with the real reason confined to the daemon log. The shared
+/// drawer check enforces the same `[A-Z][A-Z0-9_]*` now: a 400 naming the
+/// flag, the passed key, and the underscored spelling — before any file is
+/// read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wrong_shaped_drawer_keys_are_refused_as_400s_naming_the_flag() {
+    let fx = Fixture::new("drawer-shape").await;
+    let task_id = fx.create_task("a task offered a hyphenated key");
+
+    let stderr = fx.refusal(&[
+        "task",
+        "update",
+        "--project",
+        "drawer-shape",
+        &task_id,
+        "--property",
+        "FOO-BAR=1",
+    ]);
+    assert!(
+        stderr.contains("--property") && stderr.contains("FOO-BAR"),
+        "the refusal must name the flag and the passed key: {stderr}"
+    );
+    assert!(
+        stderr.contains("[A-Z][A-Z0-9_]*") && stderr.contains("FOO_BAR"),
+        "the refusal must state the shape rule and the underscored spelling: {stderr}"
+    );
+    assert!(
+        !stderr.contains("failed to apply changes"),
+        "the drawer 400 must arrive before the writer 500 could: {stderr}"
+    );
+    assert!(
+        !fx.drawer(&task_id).contains("FOO"),
+        "the refused write must not have touched the drawer:\n{}",
+        fx.drawer(&task_id)
+    );
+
+    // The shared guard covers the node-editor verbs too, set and unset.
+    let stderr = fx.refusal(&["node", "prop", "set", &task_id, "FOO-BAR", "1"]);
+    assert!(
+        stderr.contains("FOO_BAR"),
+        "node prop set must refuse the shape with the spelling to use: {stderr}"
+    );
+    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "FOO-BAR"]);
+    assert!(
+        stderr.contains("FOO_BAR"),
+        "node prop unset must name the spelling it would mean: {stderr}"
+    );
+
+    // A MISCASED compound gets ONE refusal pointing at the shape-correct
+    // spelling — not a case correction into the shape refusal (the two-round-
+    // trips-to-learn-one-rule shape this chain keeps closing).
+    let stderr = fx.refusal(&[
+        "task",
+        "update",
+        "--project",
+        "drawer-shape",
+        &task_id,
+        "--property",
+        "foo-bar=1",
+    ]);
+    assert!(
+        stderr.contains("FOO_BAR"),
+        "the miscased compound must be corrected all the way: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Use `FOO-BAR`"),
+        "correcting to a shape the ledger refuses is not a correction: {stderr}"
+    );
+
+    // The underscored shape is open vocabulary and still writes — the refusal
+    // is about the shape, not about the name.
+    let changed = fx.json(&[
+        "task",
+        "update",
+        "--project",
+        "drawer-shape",
+        &task_id,
+        "--property",
+        "FOO_BAR=1",
+    ]);
+    assert_eq!(
+        changed["changed"]["FOO_BAR"].as_str(),
+        Some("1"),
+        "the underscored shape must write and echo: {changed}"
+    );
+    assert!(
+        fx.drawer(&task_id).contains(":FOO_BAR: 1"),
+        "the underscored shape must land in the drawer"
     );
 }

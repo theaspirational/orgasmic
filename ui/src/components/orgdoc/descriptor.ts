@@ -100,7 +100,11 @@ export const TASK_DESCRIPTOR: NodeDescriptor = {
     { label: 'Worklog', binding: { kind: 'section', title: 'Worklog' }, editor: 'prose', placeholder: 'Record worklog entries...', hideWhenEmpty: true },
     { label: 'Reviewer Pass', binding: { kind: 'section', title: 'Reviewer pass' }, editor: 'prose', placeholder: 'Record reviewer pass notes...', hideWhenEmpty: true },
     { label: 'Tags', binding: { kind: 'tags' }, editor: 'chips', placeholder: 'Add tag...' },
-    { label: 'Parent Task', binding: { kind: 'property', key: 'PARENT_TASK' }, editor: 'chips', separator: 'space', link: true, suggest: 'task', placeholder: 'Link a parent task...', hideWhenEmpty: true },
+    // orgasmic:task_ZKZBF.2 — no Parent Task field: PARENT_TASK is a dead key
+    // (the daemon refuses to write it; parentage derives from the id grammar
+    // `TASK-<parent>.<n>`), so an editable field bound to it was a save that
+    // could only ever come back a 400. Legacy :PARENT_TASK: drawer lines are
+    // removable with `orgasmic node prop unset <task> PARENT_TASK`.
     { label: 'Depends On', binding: { kind: 'property', key: 'DEPENDS_ON' }, editor: 'chips', separator: 'space', link: true, suggest: 'task', placeholder: 'Link a dependency...', hideWhenEmpty: true },
     { label: 'Blocked By', binding: { kind: 'property', key: 'BLOCKED_BY' }, editor: 'chips', separator: 'space', link: true, suggest: 'task', placeholder: 'Link a blocker...', hideWhenEmpty: true },
     { label: 'Write Scope', binding: { kind: 'property', key: 'WRITE_SCOPE' }, editor: 'chips', separator: 'space', placeholder: 'Add write scope...', hideWhenEmpty: true },
