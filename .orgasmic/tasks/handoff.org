@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         7e8768f
+:LIVENESS:         4aeb189
 :LIVENESS_AT:      [2026-08-18 Tue]
 :UPDATED_AT:       [2026-08-18 Tue]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -428,6 +428,27 @@ an unapplied value is the C7NVH defect.
   injection-patch prohibition held; dispatch-wait was the watcher on all four dispatches.
 - ALSO PROVEN: the FIX_SUBTASK two-step (create refuses it, update sets it) exercised by the
   manager on ZKZBF.1; runtime review-before-close gate printed its own recipe and was followed.
+
+SESSION 2026-08-19/20 — ZKZBF.2 ROUND (chain continues). Operator pair: implementer opencode stdio
+zai-coding-plan/glm-5.3 effort high; reviewer claude stdio opus-5 high.
+- *DISPATCH FORM CORRECTED:* rounds 1-2 passed the model inside tmux+custom argv — the provider
+  host never received it and the tx recorded NO model (unidentified worker, convention violation;
+  found by reading run.created tx vs ps output). ZKZBF.2 passed =--model=/--effort= on the dispatch
+  CLI: chat lane plumbs both to =provider-host --model zai-coding-plan/glm-5.3 --effort high=
+  (chat_sdk.rs:277-280) — verified on the live process. THIS IS THE FORM TO REUSE for opencode.
+- Implementer (~35min): all four ZKZBF.1 follow-ups fixed — refusal table split by direction
+  (dead keys PARENT_TASK/LAST_UPDATED removable for the first time, STATE both-direction), UI
+  Parent Task field dropped, one ID sentence, drawer shape 400 with one-step FOO-BAR→FOO_BAR
+  correction, --extra help+doc+dedupe. 22/22 Rust + 352/352 UI. ALSO re-authored the stale
+  ZKZBF.1 injection artifact unprompted (verify/README discipline; 8Q92K class handled right).
+  Merged =b5df13e=.
+- Reviewer APPROVE WITH FOLLOW-UPS: all fixes real, artifact re-authoring audited NOT weakened
+  (every substantive pin byte-identical). New MEDIUM — *the case+shape checks still apply to the
+  REMOVAL direction*: 29 legacy miscased lines cannot be removed by their actual spelling, and the
+  two dual-spelling live P1s (TASK-099T6, TASK-A55J7) lose the LIVE line while the dead one
+  survives when an operator follows the refusal's advice. Manager verified the dual lines directly.
+  +2 LOWs. Filed as TASK-ZKZBF.3 (P2).
+- ZKZBF.2 done; chain total: 4 rounds, 2 accepts, 1 reject, 1 approve-with-follow-ups.
 
 ** Next likely actions
 *ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
