@@ -11,8 +11,11 @@
 //!
 //! - `node prop set <id> priority P1` is refused and names `PRIORITY` (used to
 //!   store `:priority:` and return `{"changed":{"priority":"P1"}}`).
-//! - `node prop unset <id> priority` is refused and names `PRIORITY` (used to
-//!   fail with a mute "org file update failed" while `:PRIORITY:` sat there).
+//! - `node prop unset <id> priority` removes the byte-present `:priority:` line
+//!   by its own spelling — removal matches the drawer byte-exactly
+//!   (orgasmic:task_ZKZBF.3); only keys owned by another door (`STATE`, and
+//!   `ID` as identity) are refused on unset, and an absent key refuses via
+//!   `PropertyNotFound`.
 //! - `glossary create --property canonical=…` is refused and names `CANONICAL`;
 //!   spelling one field both ways (`--definition` + `--property DEFINITION=`)
 //!   is a contradiction, not a silent overwrite by the typed flag.
