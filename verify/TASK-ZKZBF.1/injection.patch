@@ -1,32 +1,8 @@
 diff --git a/crates/orgasmic-core/src/tx.rs b/crates/orgasmic-core/src/tx.rs
-index e20f8e8..47606eb 100644
+index 7813402..ddeb5f0 100644
 --- a/crates/orgasmic-core/src/tx.rs
 +++ b/crates/orgasmic-core/src/tx.rs
-@@ -289,23 +289,6 @@ fn describe_property_loss(
-     }
- }
- 
--// orgasmic:task_ZKZBF.1
--/// The decided tx-metadata rule, enforced where every ledger writer already
--/// passes: open key vocabulary (any `[A-Z][A-Z0-9_]*` name is accepted),
--/// CLOSED case rule. Readers — `extra()` and friends — match keys byte for
--/// byte, so a miscased key would be recorded and never read; worse, it can
--/// hide a whole entry from its reader verb: a `manager.dispatch_started`
--/// staged with `:kind:` is invisible to `dispatch-close`, which asks for
--/// `KIND`. Same rule `parse_close_property` already enforces on the CLI side.
--fn is_uppercase_snake_key(key: &str) -> bool {
--    let mut chars = key.chars();
--    match chars.next() {
--        Some(ch) if ch.is_ascii_uppercase() => {}
--        _ => return false,
--    }
--    chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
--}
--
- fn validate_property_key(key: &str) -> Result<(), TxError> {
-     let invalid = |detail: &str| TxError::InvalidValue {
-         key: key.to_string(),
-@@ -314,6 +297,9 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
+@@ -321,6 +321,9 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
      if key.is_empty() {
          return Err(invalid("key must not be empty"));
      }
@@ -36,7 +12,7 @@ index e20f8e8..47606eb 100644
      if let Some(ch) = key
          .chars()
          .find(|ch| *ch == ':' || ch.is_whitespace() || ch.is_control())
-@@ -323,19 +309,6 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
+@@ -330,19 +333,6 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
              ch
          )));
      }
@@ -56,7 +32,7 @@ index e20f8e8..47606eb 100644
      Ok(())
  }
  
-@@ -738,39 +711,6 @@ mod tests {
+@@ -745,39 +735,6 @@ mod tests {
          ));
      }
  
@@ -97,7 +73,7 @@ index e20f8e8..47606eb 100644
      fn a_canonical_key_carried_in_extra_still_round_trips() {
          // The daemon's artifact generation-state revert does exactly this: it
 diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
-index 98aef21..5cbdc1f 100644
+index 5b699e0..2d68412 100644
 --- a/crates/orgasmic-daemon/src/api.rs
 +++ b/crates/orgasmic-daemon/src/api.rs
 @@ -14652,10 +14652,13 @@ async fn create_graph_heading(
@@ -158,7 +134,7 @@ index 98aef21..5cbdc1f 100644
  /// Why a section write refuses rather than creating.
  const SECTION_WRITE_HINT: &str = "A section write edits an existing section; pass \
       `--create` to add a new one, which is the flag that distinguishes a \
-@@ -15528,15 +15505,9 @@ async fn post_org_node_edit(
+@@ -15528,19 +15505,10 @@ async fn post_org_node_edit(
                          TASK_SCHEMA_PROPERTY_KEYS,
                          None,
                      )?;
@@ -166,17 +142,20 @@ index 98aef21..5cbdc1f 100644
 -                    // has no `--property` flag, so the set-verb's
 -                    // "`--property KEY=…` is refused" phrasing would describe a
 -                    // flag the caller never passed.
+-                    //
+-                    // orgasmic:task_ZKZBF.2 — and the unset half consults its
+-                    // OWN table: only door-owned keys (STATE) refuse removal;
+-                    // dead keys (PARENT_TASK, LAST_UPDATED) are exactly the
+-                    // legacy lines this verb exists to clean up.
                      let canonical = key.trim().to_ascii_uppercase();
--                    if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
--                        return Err(ApiError::bad_request(format!(
+                     if let Some(refusal) = task_property_key_unset_refusal_reason(&canonical) {
+                         return Err(ApiError::bad_request(format!(
 -                            "unsetting `{canonical}` is refused: {refusal}"
--                        )));
-+                    if let Some(refusal) = task_property_key_refusal(&canonical) {
-+                        return Err(ApiError::bad_request(refusal));
++                            "`--property {canonical}=…` is refused: {refusal}"
+                         )));
                      }
                  }
-             }
-@@ -15544,7 +15515,13 @@ async fn post_org_node_edit(
+@@ -15549,7 +15517,13 @@ async fn post_org_node_edit(
                  validate_drawer_property_key_case(
                      key,
                      // orgasmic:task_ZKZBF — capitalized for the refusal sentence.
@@ -191,7 +170,7 @@ index 98aef21..5cbdc1f 100644
                      node_layer_schema_property_keys(other),
                      value,
                  )?;
-@@ -15669,13 +15646,9 @@ async fn post_org_node_edit(
+@@ -15674,13 +15648,9 @@ async fn post_org_node_edit(
                      // hid the one fact (the exact spelling it looked for) that
                      // explained why `node prop unset <id> priority` failed
                      // while `:PRIORITY:` sat in the drawer.
@@ -206,49 +185,7 @@ index 98aef21..5cbdc1f 100644
                      }
                      e => org_rewriter_error("remove property", &id, e),
                  })?;
-@@ -16371,18 +16344,14 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
-     "WRITE_SCOPE",
- ];
- 
--/// Keys a task write must refuse because the value would be stored and then
--/// never read, or is owned by a mechanism the caller has to reach through a
--/// different door. Each carries the sentence that names that door.
-+/// Keys that a task write must refuse because the value would be stored and
-+/// then never read, or is owned by a mechanism the caller has to reach through
-+/// a different door. Each carries the sentence that names that door.
- ///
- /// TASK-HXSW0 was filed against the silent version of exactly this table: the
- /// keys below used to be dropped on the floor by `task create` while the call
- /// returned a normal `{id, tx_id}` success.
--///
--/// `ID` is absent on purpose (orgasmic:task_ZKZBF.1): the shared
--/// [`validate_drawer_property_key_case`] guard refuses it first, on every
--/// layer, so this table never sees it.
--fn task_property_key_refusal_reason(key: &str) -> Option<&'static str> {
-+fn task_property_key_refusal(key: &str) -> Option<String> {
-     let refusal = match key {
-         "STATE" => {
-             "STATE is owned by the lifecycle state machine — the heading keyword, the file the \
-@@ -16394,13 +16363,17 @@ fn task_property_key_refusal_reason(key: &str) -> Option<&'static str> {
-              (`TASK-<parent>.<n>` → `TASK-<parent>`). Mint the parentage into the id instead — \
-              `orgasmic task create --id TASK-<parent>.1 …` — or the edge will not exist."
-         }
-+        "ID" => {
-+            "task identity is immutable and the drawer `:ID:` is derived from it; pass \
-+             `--id` on `orgasmic task create` to pin one."
-+        }
-         "LAST_UPDATED" => {
-             "LAST_UPDATED is not a task field; the tx ledger is the timestamped record \
-              (`orgasmic tx list --project <id>`)."
-         }
-         _ => return None,
-     };
--    Some(refusal)
-+    Some(format!("`--property {key}=…` is refused: {refusal}"))
- }
- 
- /// Keys `task update` writes and `task create` used to swallow. They stay
-@@ -16436,43 +16409,30 @@ const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+@@ -16468,30 +16438,20 @@ const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
  /// on `node prop set`/`node prop unset`. Task is the schema-read drawer
  /// [`validate_task_property_keys`] already governs; the other layers name
  /// their own vocabulary so a refusal can point at the canonical spelling.
@@ -288,6 +225,10 @@ index 98aef21..5cbdc1f 100644
      }
  }
  
+@@ -16517,16 +16477,13 @@ fn shaped_drawer_key_suggestion(key: &str) -> Option<String> {
+     (mapped != key && orgasmic_core::tx::is_uppercase_snake_key(&mapped)).then_some(mapped)
+ }
+ 
 -// orgasmic:task_ZKZBF.1
 +// orgasmic:task_ZKZBF
  /// The canonical-spelling check every drawer-key write surface shares: org
@@ -302,10 +243,10 @@ index 98aef21..5cbdc1f 100644
 +/// `value` is `Some` for writes (the refusal then shows the corrected
 +/// `KEY=VALUE` to pass) and `None` for removals (the refusal says which
 +/// canonical key to remove instead).
- fn validate_drawer_property_key_case(
-     key: &str,
-     layer_label: &str,
-@@ -16485,17 +16445,6 @@ fn validate_drawer_property_key_case(
+ ///
+ // orgasmic:task_ZKZBF.2
+ /// It also enforces the ledger's own key SHAPE (`[A-Z][A-Z0-9_]*`, the core
+@@ -16546,17 +16503,6 @@ fn validate_drawer_property_key_case(
              "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
          ));
      }
@@ -322,17 +263,4 @@ index 98aef21..5cbdc1f 100644
 -    }
      let canonical = trimmed.to_ascii_uppercase();
      if canonical != *key {
-         let tail = match value {
-@@ -16530,10 +16479,8 @@ fn validate_task_property_keys(
-         // keeps TASK-HXSW0's exact message.
-         validate_drawer_property_key_case(key, "Task", TASK_SCHEMA_PROPERTY_KEYS, Some(value))?;
-         let canonical = key.trim().to_ascii_uppercase();
--        if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
--            return Err(ApiError::bad_request(format!(
--                "`--property {canonical}=…` is refused: {refusal}"
--            )));
-+        if let Some(refusal) = task_property_key_refusal(&canonical) {
-+            return Err(ApiError::bad_request(refusal));
-         }
-         if verb_only_on_update.contains(&canonical.as_str()) {
-             return Err(ApiError::bad_request(format!(
+         // The canonical spelling to advertise must itself be a shape the

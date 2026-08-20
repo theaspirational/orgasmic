@@ -859,8 +859,10 @@ enum TxCmd {
         /// daemon returns the original result without double-appending.
         #[arg(long = "request-id")]
         request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable. Values are
-        /// single-line only, same as `--reason`.
+        /// Additional `KEY=VALUE` properties; repeatable. Keys are
+        /// UPPERCASE_SNAKE (`[A-Z][A-Z0-9_]*`) — the ledger records and
+        /// reads keys byte for byte, so a lowercase or hyphenated key is
+        /// refused — and values are single-line only, same as `--reason`.
         #[arg(long = "extra", value_name = "KEY=VALUE")]
         extra: Vec<String>,
         /// Write to an explicit tx file instead of a project ledger. Suppresses
@@ -4160,6 +4162,14 @@ mod tx_record_help_tests {
         assert!(
             extra.contains("single-line only"),
             "--extra help must state the constraint: {extra}"
+        );
+        // orgasmic:task_ZKZBF.2 — the flag also enforces the ledger's key
+        // shape (`[A-Z][A-Z0-9_]*`, refused at parse since ZKZBF.1); the help
+        // must say so at the flag, where the refusal will point the caller
+        // back to.
+        assert!(
+            extra.contains("UPPERCASE_SNAKE") && extra.contains("[A-Z][A-Z0-9_]*"),
+            "--extra help must state the uppercase-snake key rule: {extra}"
         );
     }
 }

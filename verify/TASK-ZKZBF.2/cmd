@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZKZBF.2`.
+#
+# The production path: the round-2 review measured the unset-split contract
+# at the terminal against the real binary, so the proof replays it there —
+# a real daemon over a scaffolded project, drawer read back off disk.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test node_property_silent_drop_cli dead_drawer_keys

@@ -20,6 +20,9 @@
 //!   `{"changed":{"STATE":…}}` with the properties dropped.
 //! - `tx record` without `--project` lands on the PROJECT ledger, not the
 //!   global home file.
+//! - TASK-ZKZBF.2: `task create --property ID=x` and `--property id=x` get
+//!   the SAME immutable refusal — the verb's byte-exact special case (whose
+//!   sentence never said "immutable") is gone; the shared guard decides.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -539,5 +542,54 @@ async fn tx_record_defaults_to_the_cwd_project_like_its_siblings() {
         std::fs::canonicalize(recorded["tx_path"].as_str().expect("tx_path")).ok(),
         std::fs::canonicalize(&explicit).ok(),
         "--tx-path must still win: {recorded}"
+    );
+}
+
+// orgasmic:task_ZKZBF.2
+/// LOW-1: one rule, one sentence. `task create --property ID=x` used to hit
+/// the verb's own byte-exact special case ("do not pass ID as a property…")
+/// while `--property id=x` reached the shared guard's immutability refusal —
+/// which sentence you got was decided by the case of the key. The special
+/// case is deleted; every casing of the identity key gets the shared guard's
+/// ONE refusal, and nothing is filed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_create_id_property_refusal_is_one_sentence_in_any_case() {
+    let fx = Fixture::new("create-id-case").await;
+
+    let mut first: Option<String> = None;
+    for key in ["ID", "id", "Id"] {
+        let stderr = fx.refusal(&[
+            "task",
+            "create",
+            "--project",
+            "create-id-case",
+            "--title",
+            "filed with the identity key as a property",
+            "--property",
+            &format!("{key}=TASK-ZZZZZZZZ"),
+        ]);
+        assert!(
+            stderr.contains("immutable") && stderr.contains("ID"),
+            "the refusal must name ID immutability whatever the case: {stderr}"
+        );
+        assert!(
+            !stderr.contains("do not pass ID"),
+            "the special-case sentence must be gone: {stderr}"
+        );
+        match &first {
+            None => first = Some(stderr),
+            Some(prev) => assert_eq!(
+                prev, &stderr,
+                "ID/id/Id must yield the SAME sentence, not case-dependent ones"
+            ),
+        }
+    }
+
+    // Nothing was filed by any of the refused creates.
+    let listed = fx.json(&["tasks", "list", "--project", "create-id-case"]);
+    let body = serde_json::to_string(&listed).unwrap();
+    assert!(
+        !body.contains("identity key as a property"),
+        "the refused creates must not have filed a task: {body}"
     );
 }
