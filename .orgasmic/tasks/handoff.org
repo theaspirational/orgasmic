@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         1b6e52c
+:LIVENESS:         62b28cc
 :LIVENESS_AT:      [2026-08-18 Tue]
 :UPDATED_AT:       [2026-08-18 Tue]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -476,6 +476,30 @@ charter); reviewer codex stdio gpt-5.6-sol high (first codex review on the chain
   Reinstall + cleanup is an operator decision.
 - BOARD: ZKZBF chain fully closed (ZKZBF done, .1 .2 .3 done); in_review/in_progress EMPTY,
   todo EMPTY. First time in the project's recorded history all four active columns are clear.
+
+SESSION 2026-08-20, SECOND BLOCK — RUNTIME REINSTALLED + FULL HOUSEKEEPING (operator-authorized).
+- *RUNTIME 0.0.22-dev.20260820* (commit =b12ae98=, built today) installed via the sanctioned
+  surface: =package-runtime.sh= (cargo release + bun provider-host) → =install.sh --bundle=
+  with sha256 — exercised the 2cbf380 TCC-identity path; =bin/orgasmic= swapped atomically,
+  =current= flipped, install.json updated. Daemon restarted: pid 57239, boot =df281f0f=,
+  parse_errors 0, failed_projects EMPTY (even ddd's old unreadable-project entry is gone —
+  lazy-index era). *Rollback: =~/.orgasmic/runtimes/0.0.21-darwin-aarch64= remains intact.*
+  Binary prints workspace =0.0.18= (Cargo version); the =0.0.22-dev.20260820= label lives in
+  runtime-manifest.json — expected, not drift.
+- *LEGACY DRAWER CLEANUP EXECUTED:* all 29 miscased lines removed via =node prop unset <task>
+  <lowercase>= (the ZKZBF.3 direction split working on live state — TASK-099T6 was the probe:
+  dead line gone, live =:PRIORITY: P1= intact; then 28 more across 17 tasks). Verified 0
+  miscased drawer lines remain in every state file; parse_errors 0 throughout. Committed.
+- *STALE-PROCESS SWEEP:* ~60 orphaned =exec cat >> orgasmic-pane-*.fifo= helpers (Aug 8-16
+  vintage, readers long gone) killed; 11-day-old 2QK4P watchdog (target pid dead) killed and
+  its scratchpad dir removed; tmux =orgasmic-keepalive= (daemon-owned, today) PRESERVED.
+  *This pane-cat leak is a recurring defect — every tmux dispatch capture leaves one on some
+  paths; worth a task if it recurs after the new runtime.*
+- *LEGACY RMUX AGENT DISABLED:* =orgasmic.rmux= LaunchAgent was still loaded and running
+  (pid 62511) six days after the driver's removal (010a32b). Booted out; plist renamed
+  =orgasmic.rmux.plist.disabled= (rename back + =launchctl bootstrap gui/501/...= to restore).
+  Daemon unaffected.
+- BOARD: todo/in_progress/in_review EMPTY; backlog 123 (goal not yet reached — backlog counts).
 
 ** Next likely actions
 *ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
