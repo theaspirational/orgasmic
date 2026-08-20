@@ -262,8 +262,6 @@ The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted b
 :PROPERTIES:
 :ID: TASK-Q07Y5
 :PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-cli
-:write_scope: crates/orgasmic-cli/src/daemon_service.rs crates/orgasmic-cli/src/daemon_lifecycle.rs crates/orgasmic-cli/tests/daemon_lifecycle.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/writer.rs
 :END:
 
 Fix round for the reviewer BLOCK SHIP on TASK-WGXKD.2 (merged `6a518f3`).

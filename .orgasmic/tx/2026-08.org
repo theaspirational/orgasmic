@@ -37258,3 +37258,410 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+
+* TX 2026-08-20 Thu 14:22:39 task.edited TASK-099T6
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6220
+:TIME:         [2026-08-20 Thu 14:22:39]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-099T6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-099T6
+:NODE_ID:      TASK-099T6
+:END:
+
+* TX 2026-08-20 Thu 14:23:08 task.edited TASK-A55J7
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6221
+:TIME:         [2026-08-20 Thu 14:23:08]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A55J7
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-A55J7
+:NODE_ID:      TASK-A55J7
+:END:
+
+* TX 2026-08-20 Thu 14:23:08 task.edited TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6222
+:TIME:         [2026-08-20 Thu 14:23:08]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/cancelled.org
+:REASON:       edited task node TASK-Q07Y5
+:NODE_ID:      TASK-Q07Y5
+:END:
+
+* TX 2026-08-20 Thu 14:23:09 task.edited TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6223
+:TIME:         [2026-08-20 Thu 14:23:09]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/cancelled.org
+:REASON:       edited task node TASK-Q07Y5
+:NODE_ID:      TASK-Q07Y5
+:END:
+
+* TX 2026-08-20 Thu 14:23:09 task.edited TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6224
+:TIME:         [2026-08-20 Thu 14:23:09]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-2BPWM
+:NODE_ID:      TASK-2BPWM
+:END:
+
+* TX 2026-08-20 Thu 14:23:09 task.edited TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6225
+:TIME:         [2026-08-20 Thu 14:23:09]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-2BPWM
+:NODE_ID:      TASK-2BPWM
+:END:
+
+* TX 2026-08-20 Thu 14:23:09 task.edited TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6226
+:TIME:         [2026-08-20 Thu 14:23:09]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-2BPWM
+:NODE_ID:      TASK-2BPWM
+:END:
+
+* TX 2026-08-20 Thu 14:23:10 task.edited TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6227
+:TIME:         [2026-08-20 Thu 14:23:10]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-R2HDN
+:NODE_ID:      TASK-R2HDN
+:END:
+
+* TX 2026-08-20 Thu 14:23:10 task.edited TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6228
+:TIME:         [2026-08-20 Thu 14:23:10]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-R2HDN
+:NODE_ID:      TASK-R2HDN
+:END:
+
+* TX 2026-08-20 Thu 14:23:10 task.edited TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6229
+:TIME:         [2026-08-20 Thu 14:23:10]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-69CW6
+:NODE_ID:      TASK-69CW6
+:END:
+
+* TX 2026-08-20 Thu 14:23:11 task.edited TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6230
+:TIME:         [2026-08-20 Thu 14:23:11]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-69CW6
+:NODE_ID:      TASK-69CW6
+:END:
+
+* TX 2026-08-20 Thu 14:23:11 task.edited TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6231
+:TIME:         [2026-08-20 Thu 14:23:11]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-6FNAY
+:NODE_ID:      TASK-6FNAY
+:END:
+
+* TX 2026-08-20 Thu 14:23:11 task.edited TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6232
+:TIME:         [2026-08-20 Thu 14:23:11]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-6FNAY
+:NODE_ID:      TASK-6FNAY
+:END:
+
+* TX 2026-08-20 Thu 14:23:12 task.edited TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6233
+:TIME:         [2026-08-20 Thu 14:23:12]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-6FNAY
+:NODE_ID:      TASK-6FNAY
+:END:
+
+* TX 2026-08-20 Thu 14:23:12 task.edited TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6234
+:TIME:         [2026-08-20 Thu 14:23:12]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-8W30B
+:NODE_ID:      TASK-8W30B
+:END:
+
+* TX 2026-08-20 Thu 14:23:12 task.edited TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6235
+:TIME:         [2026-08-20 Thu 14:23:12]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-8W30B
+:NODE_ID:      TASK-8W30B
+:END:
+
+* TX 2026-08-20 Thu 14:23:13 task.edited TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6236
+:TIME:         [2026-08-20 Thu 14:23:13]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-8W30B
+:NODE_ID:      TASK-8W30B
+:END:
+
+* TX 2026-08-20 Thu 14:23:13 task.edited TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6237
+:TIME:         [2026-08-20 Thu 14:23:13]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-1T3FZ
+:NODE_ID:      TASK-1T3FZ
+:END:
+
+* TX 2026-08-20 Thu 14:23:13 task.edited TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6238
+:TIME:         [2026-08-20 Thu 14:23:13]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-1T3FZ
+:NODE_ID:      TASK-1T3FZ
+:END:
+
+* TX 2026-08-20 Thu 14:23:14 task.edited TASK-S2KM0
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6239
+:TIME:         [2026-08-20 Thu 14:23:14]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S2KM0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-S2KM0
+:NODE_ID:      TASK-S2KM0
+:END:
+
+* TX 2026-08-20 Thu 14:23:14 task.edited TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6240
+:TIME:         [2026-08-20 Thu 14:23:14]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-HXSW0
+:NODE_ID:      TASK-HXSW0
+:END:
+
+* TX 2026-08-20 Thu 14:23:14 task.edited TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6241
+:TIME:         [2026-08-20 Thu 14:23:14]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-HXSW0
+:NODE_ID:      TASK-HXSW0
+:END:
+
+* TX 2026-08-20 Thu 14:23:15 task.edited TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6242
+:TIME:         [2026-08-20 Thu 14:23:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-Z3093
+:NODE_ID:      TASK-Z3093
+:END:
+
+* TX 2026-08-20 Thu 14:23:15 task.edited TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6243
+:TIME:         [2026-08-20 Thu 14:23:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-QSSQH
+:NODE_ID:      TASK-QSSQH
+:END:
+
+* TX 2026-08-20 Thu 14:23:15 task.edited TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6244
+:TIME:         [2026-08-20 Thu 14:23:15]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-QSSQH
+:NODE_ID:      TASK-QSSQH
+:END:
+
+* TX 2026-08-20 Thu 14:23:16 task.edited TASK-KPMFK
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6245
+:TIME:         [2026-08-20 Thu 14:23:16]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KPMFK
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-KPMFK
+:NODE_ID:      TASK-KPMFK
+:END:
+
+* TX 2026-08-20 Thu 14:23:16 task.edited TASK-VSWZT
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6246
+:TIME:         [2026-08-20 Thu 14:23:16]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VSWZT
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-VSWZT
+:NODE_ID:      TASK-VSWZT
+:END:
+
+* TX 2026-08-20 Thu 14:23:16 task.edited TASK-37TAF
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6247
+:TIME:         [2026-08-20 Thu 14:23:16]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-37TAF
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-37TAF
+:NODE_ID:      TASK-37TAF
+:END:
+
+* TX 2026-08-20 Thu 14:23:17 task.edited TASK-BCYMM
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6248
+:TIME:         [2026-08-20 Thu 14:23:17]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-BCYMM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-BCYMM
+:NODE_ID:      TASK-BCYMM
+:END:

@@ -240,7 +240,6 @@ daemon or an rmux server is live, not by running it alone.
 * BACKLOG TASK-099T6 driver_modes equivalence test spawns real claude twice on one session id and now collides    :drivers:test:claude:bug:
 :PROPERTIES:
 :ID: TASK-099T6
-:priority: P1
 :PRIORITY: P1
 :END:
 
@@ -298,7 +297,6 @@ Acceptance:
 * BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
 :PROPERTIES:
 :ID: TASK-A55J7
-:priority: P1
 :PRIORITY: P1
 :END:
 

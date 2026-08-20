@@ -13144,10 +13144,7 @@ TASK-2BPWM's BLOCK SHIP is cleared by this change.
 * DONE TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check) :dispatch:recovery:data-loss:bug:
 :PROPERTIES:
 :ID: TASK-2BPWM
-:priority: 
 :PRIORITY: P1
-:test_cmd: 
-:write_scope: 
 :WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
 :READ_SCOPE:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
 :TEST_CMD:    cargo test -p orgasmic-cli
@@ -13430,8 +13427,6 @@ Implemented by Codex gpt-5.6-terra/high in 4c0a151 and merged to main as e4b6b7b
 :PROPERTIES:
 :ID: TASK-R2HDN
 :PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs .orgasmic/gotchas.org
 :END:
 
 Fix round for the reviewer BLOCK SHIP on TASK-RRT4T (merged `f894a7a`).
@@ -13796,8 +13791,6 @@ FIX DIRECTION: normalize/tokenize git command examples instead of using fixed by
 :PROPERTIES:
 :ID: TASK-69CW6
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs crates/orgasmic-drivers/src/modes/rmux.rs
 :END:
 
 Fix round for the reviewer BLOCK SHIP on TASK-6FNAY (merged `83ea420`).
@@ -13907,9 +13900,6 @@ define it with a test or record why those kinds are exempt.
 * DONE TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
 :PROPERTIES:
 :ID: TASK-6FNAY
-:priority: P1
-:test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/ crates/orgasmic-daemon/src/supervisor.rs
 :PRIORITY:    P1
 :END:
 
@@ -13993,9 +13983,6 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-8W30B
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs
-:read_scope:  crates/orgasmic-drivers/src/ crates/orgasmic-daemon/src/supervisor.rs .orgasmic/gotchas.org
 :END:
 
 Production defect, root-caused by the TASK-STWVB implementer while diagnosing a
@@ -15852,8 +15839,6 @@ The reviewer cleared two things I had flagged, and they should not be re-litigat
 :PROPERTIES:
 :ID: TASK-1T3FZ
 :PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-cli
-:write_scope: crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/tests/shipped_conventions.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs
 :BLOCKED_BY:  
 :END:
 
@@ -16903,7 +16888,6 @@ the client gave up. Client timeout is not server failure. Two consequences:
 * DONE TASK-S2KM0 No CI workflow runs the test suite; every green gate in this project is a local claim :ci:process:test:
 :PROPERTIES:
 :ID: TASK-S2KM0
-:priority: P1
 :PRIORITY: P1
 :END:
 
@@ -17195,8 +17179,6 @@ Acceptance:
 * DONE TASK-HXSW0 Make the CLI self-documenting for agents: real help per verb and flag, no silent no-ops, a drivers listing verb :cli:agent-ergonomics:docs:
 :PROPERTIES:
 :ID: TASK-HXSW0
-:priority: P1
-:write_scope: crates/orgasmic-cli/src/
 :PRIORITY:    P1
 :END:
 
@@ -18049,7 +18031,6 @@ THE SIGNAL THAT EXISTS: the worker's tool subprocess (cargo/run-tests.sh) was al
 :PROPERTIES:
 :ID: TASK-Z3093
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-daemon
 :END:
 
 `LiveSessionGuard` serializes live-session tests and reaps nothing. Every one of
@@ -18151,8 +18132,6 @@ One shared guard that owns cleanup, not nine that own a file lock.
 :PROPERTIES:
 :ID: TASK-QSSQH
 :PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-daemon
-:write_scope: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs
 :END:
 
 Fix round for the reviewer BLOCK SHIP on TASK-C0XMR (merged `0533735`).
@@ -18438,7 +18417,6 @@ This is the durable fix 5FEN5 declined to smuggle into its scope.
 :PROPERTIES:
 :ID: TASK-KPMFK
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-daemon
 :END:
 
 Found 2026-07-28 by the TASK-C0XMR reviewer (reviewer-codex-rmux,
@@ -18494,7 +18472,6 @@ never has one, not to weaken the branch for everybody.
 * DONE TASK-VSWZT A run can appear live with no release surface able to clear it, blocking the update fence :runtime:supervisor:recovery:bug:
 :PROPERTIES:
 :ID: TASK-VSWZT
-:priority: P1
 :PRIORITY: P1
 :END:
 
@@ -18617,7 +18594,6 @@ Handoff from TASK-KWSTJ: `GET /api/runs` now classifies from a bounded prefix/ta
 :PROPERTIES:
 :ID: TASK-37TAF
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-daemon
 :END:
 
 Found 2026-07-28 by the TASK-WGXKD.2 reviewer (reviewer-codex-rmux,
@@ -18744,7 +18720,6 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-BCYMM
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-daemon
 :END:
 
 A second leak class, measured 2026-07-28 11:35Z and **not** covered by
