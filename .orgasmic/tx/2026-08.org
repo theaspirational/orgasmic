@@ -36597,3 +36597,334 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-19 Wed 22:07:54 task.state_transitioned TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6183
+:TIME:         [2026-08-19 Wed 22:07:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.2 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-19 Wed 22:07:54 manager.dispatch_started TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6184
+:TIME:         [2026-08-19 Wed 22:07:54]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:
+:KIND:         implementer
+:MODE:         tmux
+:HARNESS:      custom
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.2
+:BRANCH:       task-zkzbf.2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.2/task-zkzbf.2-brief.md
+:STARTED_AT:   [2026-08-19 Wed 22:07:54]
+:LIVENESS:     c68d5ea2bf4087228fb964e4d97c7dadfb0ef80a
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:HARNESS_ARGS: ["opencode"]
+:MODEL:        zai-coding-plan/glm-5.3
+:EFFORT:       high
+:REASON_INITIAL: Operator-directed, same lane as ZKZBF rounds 1-2 but with model/effort on the dispatch CLI this time so the chat lane records and plumbs them (round 1-2 argv -m never reached the provider host — unidentified model, convention violation, corrected). opencode/glm-5.3/high implementer; reviewer follows as claude-opus-5/high stdio.
+:END:
+
+* TX 2026-08-19 Wed 22:07:55 run.created TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6185
+:TIME:         [2026-08-19 Wed 22:07:55]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.2-implementer-20260819T220754.jsonl
+:REASON:       Operator-directed, same lane as ZKZBF rounds 1-2 but with model/effort on the dispatch CLI this time so the chat lane records and plumbs them (round 1-2 argv -m never reached the provider host — unidentified model, convention violation, corrected). opencode/glm-5.3/high implementer; reviewer follows as claude-opus-5/high stdio.
+:RUN_ID:       run-01M0E123FTF883F9ZFC370BSW9
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-opencode-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      opencode
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.2/task-zkzbf.2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zkzbf.2/task-zkzbf.2-3178e6dc4bc147609ac792b3df0aebfc-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zkzbf.2/task-zkzbf.2-3178e6dc4bc147609ac792b3df0aebfc-stdout.log
+:DISPATCH_ATTEMPT: 3178e6dc4bc147609ac792b3df0aebfc
+:PID:          1318
+:DISPATCH_TX:  tx-20260819-orgasmic-6184
+:MODEL_OVERRIDE: zai-coding-plan/glm-5.3
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-19 Wed 22:33:31 implementer.reported TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260819-orgasmic-6186
+:TIME:         [2026-08-19 Wed 22:33:31]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:RUN_ID:       run-01M0E123FTF883F9ZFC370BSW9
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.2
+:SHA:          4c9ffaa022c0e646cd922a93308a2152c9f8d412
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6184/last.txt
+:END:
+
+* TX 2026-08-20 Thu 07:03:15 task.state_transitioned TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6187
+:TIME:         [2026-08-20 Thu 07:03:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-20 Thu 07:03:16 manager.dispatch_started TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6188
+:TIME:         [2026-08-20 Thu 07:03:16]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.2-review
+:BRANCH:       task-zkzbf.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.2/manager-review-TASK-ZKZBF.2.md
+:STARTED_AT:   [2026-08-20 Thu 07:03:16]
+:LIVENESS:     b5df13eae881320460821d1373509ced5f065c62
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260819-orgasmic-6184
+:REASON_INITIAL: Operator-directed reviewer, same lane as chain rounds: claude stdio opus-5 high, cross-family vs opencode implementer. Review-before-close gate on generation tx-20260819-orgasmic-6184.
+:END:
+
+* TX 2026-08-20 Thu 07:03:16 run.created TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6189
+:TIME:         [2026-08-20 Thu 07:03:16]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.2-reviewer-20260820T070316.jsonl
+:REASON:       Operator-directed reviewer, same lane as chain rounds: claude stdio opus-5 high, cross-family vs opencode implementer. Review-before-close gate on generation tx-20260819-orgasmic-6184.
+:RUN_ID:       run-01M0EZPBT8KQFY1KGP6D5S9QQC
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-sdk-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.2/manager-review-TASK-ZKZBF.2.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.2/manager-review-TASK-ZKZBF.2-d2c5835c91ae4de487d783cbff4f2c65-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.2/manager-review-TASK-ZKZBF.2-d2c5835c91ae4de487d783cbff4f2c65-stdout.log
+:DISPATCH_ATTEMPT: d2c5835c91ae4de487d783cbff4f2c65
+:PID:          18485
+:DISPATCH_TX:  tx-20260820-orgasmic-6188
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-20 Thu 07:07:02 reviewer.finding TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6190
+:TIME:         [2026-08-20 Thu 07:07:02]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:       MEDIUM: dead-key removal door closed only for PARENT_TASK/LAST_UPDATED; legacy lowercase drawer lines (:priority:, :test_cmd:, :write_scope:, :read_scope:) in live task files still have NO removal door, and the only spelling the guard accepts removes the LIVE uppercase line instead
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:LOCATION:     crates/orgasmic-daemon/src/api.rs:16560
+:EVIDENCE:     .orgasmic/tasks/backlog.org:243 TASK-099T6 carries both :priority: P1 and :PRIORITY: P1; crates/orgasmic-core/src/org.rs:1216 remove_property matches e.key == key byte-exact
+:REVIEW_RANGE: dbf6bcd^..4c9ffaa
+:END:
+
+* TX 2026-08-20 Thu 07:07:12 reviewer.finding TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6191
+:TIME:         [2026-08-20 Thu 07:07:12]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:       LOW: LOW-1 acceptance says the unreachable hand-checks are gone, but task_create_lifecycle_stage still carries a byte-exact contains_key(STATE) refusal that validate_task_property_keys already refuses case-insensitively one call earlier
+:SEVERITY:     LOW
+:KIND:         deadcode
+:LOCATION:     crates/orgasmic-daemon/src/api.rs:16755
+:EVIDENCE:     post_task_create calls validate_task_property_keys at api.rs:16854 before task_create_lifecycle_stage at 16866; refusal table api.rs:16402 covers STATE for every case-spelling
+:REVIEW_RANGE: dbf6bcd^..4c9ffaa
+:END:
+
+* TX 2026-08-20 Thu 07:07:12 reviewer.finding TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6192
+:TIME:         [2026-08-20 Thu 07:07:12]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:       LOW: the new shape rule is applied to the unset direction too, so a self-uppercase non-snake drawer line (:FOO-BAR:) becomes unremovable and the refusal suggests unsetting FOO_BAR, a key the drawer does not carry - the same write-side-rule-applied-to-removal shape this round split the refusal table to fix
+:SEVERITY:     LOW
+:KIND:         design
+:LOCATION:     crates/orgasmic-daemon/src/api.rs:16588
+:EVIDENCE:     shape branch runs regardless of value.is_none(); node-edit tx does not carry the key so the pre-round unset path did not hit the ledger writer refusal. No such key exists in the repo today (swept .orgasmic + shipped + fixtures: zero uppercase non-snake drawer keys)
+:REVIEW_RANGE: dbf6bcd^..4c9ffaa
+:END:
+
+* TX 2026-08-20 Thu 07:13:23 reviewer.reported TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6193
+:TIME:         [2026-08-20 Thu 07:13:23]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:RUN_ID:       run-01M0EZPBT8KQFY1KGP6D5S9QQC
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6188/last.txt
+:END:
+
+* TX 2026-08-20 Thu 07:16:02 reviewer.done TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6194
+:TIME:         [2026-08-20 Thu 07:16:02]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:       APPROVE with follow-ups: all four claimed fixes real and pinned (reviewer re-ran gates and both artifact replays; re-authored ZKZBF.1 artifact confirmed not weakened — every substantive pin byte-identical). 1 MEDIUM same-class residual: case+shape checks still apply to the UNSET direction, so 29 legacy miscased lines (incl. dual-spelling P1s TASK-099T6/TASK-A55J7) cannot be removed by their actual spelling while the accepted spelling deletes the LIVE line; +1 LOW unreachable STATE hand-check survived; +1 LOW shape-suggests-wrong-key on unset. All ledgered reviewer.finding tx-20260820-orgasmic-6190..6192; manager verified dual-spelling lines against backlog.org directly.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260820-orgasmic-6188
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6188/last.txt
+:END:
+
+* TX 2026-08-20 Thu 07:16:02 task.state_transitioned TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6195
+:TIME:         [2026-08-20 Thu 07:16:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.2 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-20 Thu 07:16:17 implementer.done TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6196
+:TIME:         [2026-08-20 Thu 07:16:17]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:REASON:       Implementer opencode/glm-5.3/high (first dispatch with model+effort on the CLI — provider-host carried --model/--effort, verified on the live process) reported in ~35min; merged --no-ff as b5df13e; manager-verified on merged tree: fmt, clippy -D, 22/22 focused GREEN rate 0.26, UI typecheck + 352/352 UI tests, BOTH injection artifacts replay PASS under manager's own runs. Reviewer approve-with-follow-ups tx-20260820-orgasmic-6194.
+:MODEL:        zai-coding-plan/glm-5.3
+:EFFORT:       high
+:MERGE_SHA:    b5df13eae881320460821d1373509ced5f065c62
+:BRANCH:       task-zkzbf.2-impl
+:CLOSED_TX:    tx-20260819-orgasmic-6184
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260819-orgasmic-6184/last.txt
+:END:
+
+* TX 2026-08-20 Thu 07:16:17 task.state_transitioned TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6197
+:TIME:         [2026-08-20 Thu 07:16:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-20 Thu 07:16:36 task.created TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6198
+:TIME:         [2026-08-20 Thu 07:16:36]
+:TYPE:         task.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Approve-with-follow-ups verdict tx-20260820-orgasmic-6194 on ZKZBF.2: reviewer.finding tx-20260820-orgasmic-6190..6192 (MEDIUM same-class residual + 2 LOWs)
+:END:
+
+* TX 2026-08-20 Thu 07:16:36 task.property_updated TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6199
+:TIME:         [2026-08-20 Thu 07:16:36]
+:TYPE:         task.property_updated
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Fix round of TASK-ZKZBF.2 (two-step: FIX_SUBTASK not create-writable)
+:FIX_SUBTASK:  t
+:END:
+
+* TX 2026-08-20 Thu 07:16:47 task.state_transitioned TASK-ZKZBF.2
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6200
+:TIME:         [2026-08-20 Thu 07:16:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Round accepted: approve-with-follow-ups (tx-20260820-orgasmic-6194) — all four follow-ups from ZKZBF.1 verified fixed and pinned; 22/22 + 352/352 green on merged b5df13e; both artifacts replay PASS. Same-class residual carried by TASK-ZKZBF.3.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
