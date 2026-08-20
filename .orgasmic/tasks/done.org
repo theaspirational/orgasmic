@@ -32866,3 +32866,27 @@ Follow-ups from the TASK-ZKZBF.1 review (report promoted at .orgasmic/dispatch-r
 - =--extra= help states the uppercase-snake rule and the flag-honesty test pins it; a shipped doc names the rule; one =is_uppercase_snake_key= in core.
 - Existing 19 ZKZBF+HXSW0 tests stay green; fmt, clippy -D, focused run-tests.sh gate green; extend an injection artifact or add a sibling for the unset-split contract.
 - Independent review pass.
+
+* DONE TASK-ZKZBF.3 Direction-split the drawer case+shape checks (removal by actual spelling), delete the last unreachable STATE hand-check :daemon:cli:
+:PROPERTIES:
+:ID: TASK-ZKZBF.3
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs,crates/orgasmic-cli/tests
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Follow-ups from the TASK-ZKZBF.2 review (report promoted at .orgasmic/dispatch-records/tx-20260820-orgasmic-6188/last.txt). Build forward on merged =b5df13e=.
+
+*MEDIUM (tx-20260820-orgasmic-6190):* =validate_drawer_property_key_case= applies its write-side argument (case check, api.rs ~:16560) AND the new shape check (~:16588) to the REMOVAL direction too, while =OrgRewriter::remove_property= matches byte-exact (org.rs:1216). Consequence, pinned green today by =node_prop_unset_refuses_a_miscased_task_key…= (:356-384): =node prop unset <task> priority= is a 400 saying "Use =PRIORITY=", and =node prop unset <task> PRIORITY= removes the LIVE line leaving the dead =:priority:= stranded. 29 real lines affected (done.org 25, backlog 2, cancelled 2; keys priority/read_scope/test_cmd/write_scope); TASK-099T6 and TASK-A55J7 (live BACKLOG P1s) carry BOTH spellings. FIX per reviewer: skip case+shape checks when =value.is_none()= — the removal door refuses only keys owned by another door (STATE via the direction-split table); every byte-present line removable by the spelling actually in the drawer; =PropertyNotFound= stays the refusal for absent keys. Adapt the two pinned halves of the existing test to the new contract (miscased spelling of a byte-present line REMOVES it; absent canonical key still 404s/400s via PropertyNotFound).
+
+*LOW (tx-…-6191):* =task_create_lifecycle_stage= (~api.rs:16755) still carries a byte-exact =contains_key("STATE")= third sentence, unreachable below =validate_task_property_keys= refusing STATE case-insensitively thirty lines earlier. FIX: delete the if; return =Ok(LifecycleStage::Backlog)=.
+
+*LOW (tx-…-6192):* the shape branch on removals suggests a key the drawer does not carry ("Unset =FOO_BAR=…" when the line is =:FOO-BAR:=). Same one-line direction split closes it; zero such keys exist repo-wide today (reviewer swept).
+
+** Acceptance
+- Removal direction runs NO case/shape check: =node prop unset <task> priority= removes the =:priority:= line it names; the refusal table (STATE, both directions) still guards; absent keys refuse via =PropertyNotFound= naming the node and its drawer's actual keys.
+- =task_create_lifecycle_stage= has no STATE branch; one sentence everywhere for STATE-on-create.
+- Production-path tests pin the dual-spelling case EXACTLY (seed both spellings the way legacy left them; miscased unset removes ONLY the miscased line; canonical unset removes ONLY the canonical line).
+- Existing suites stay green (adapt the two now-stale halves honestly); fmt, clippy -D, focused =run-tests.sh= gate green; extend/add injection artifact for the direction-split contract.
+- Independent review pass.

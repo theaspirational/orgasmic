@@ -36954,3 +36954,281 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-08-20 Thu 08:27:39 task.state_transitioned TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6203
+:TIME:         [2026-08-20 Thu 08:27:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.3 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-20 Thu 08:27:40 manager.dispatch_started TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6204
+:TIME:         [2026-08-20 Thu 08:27:40]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:REASON:
+:KIND:         implementer
+:MODE:         stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3
+:BRANCH:       task-zkzbf.3-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.3/task-zkzbf.3-brief.md
+:STARTED_AT:   [2026-08-20 Thu 08:27:40]
+:LIVENESS:     fc195b887960580782182eaddbf8493c32f8e46d
+:NEXT:         fix-implementer-watch-then-integrate
+:RUNTIME:      canonical_chat
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: Operator-directed role swap: claude stdio opus-5 high IMPLEMENTER (was reviewer), with an explicit class-sweep charter beyond the three findings; reviewer will be codex/gpt-5.6-sol.
+:END:
+
+* TX 2026-08-20 Thu 08:27:40 run.created TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6205
+:TIME:         [2026-08-20 Thu 08:27:40]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.3-implementer-20260820T082740.jsonl
+:REASON:       Operator-directed role swap: claude stdio opus-5 high IMPLEMENTER (was reviewer), with an explicit class-sweep charter beyond the three findings; reviewer will be codex/gpt-5.6-sol.
+:RUN_ID:       run-01M0F4GX6A7DRPE38RC1ZRTZH5
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-sdk-stdio
+:KIND:         implementer
+:DRIVER:       stdio
+:HARNESS:      claude-sdk
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-zkzbf.3/task-zkzbf.3-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-zkzbf.3/task-zkzbf.3-67445e0332d34b9685510918457251f9-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-zkzbf.3/task-zkzbf.3-67445e0332d34b9685510918457251f9-stdout.log
+:DISPATCH_ATTEMPT: 67445e0332d34b9685510918457251f9
+:PID:          34754
+:DISPATCH_TX:  tx-20260820-orgasmic-6204
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-20 Thu 08:42:44 implementer.reported TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6206
+:TIME:         [2026-08-20 Thu 08:42:44]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:RUN_ID:       run-01M0F4GX6A7DRPE38RC1ZRTZH5
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3
+:SHA:          83199375e1fe577c87f76e1f67d2f40611e243f0
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6204/last.txt
+:END:
+
+* TX 2026-08-20 Thu 12:04:17 task.state_transitioned TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6207
+:TIME:         [2026-08-20 Thu 12:04:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-20 Thu 12:04:19 manager.dispatch_started TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6208
+:TIME:         [2026-08-20 Thu 12:04:19]
+:TYPE:         manager.dispatch_started
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:REASON:
+:KIND:         reviewer
+:MODE:         stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3-review
+:BRANCH:       task-zkzbf.3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.3/manager-review-TASK-ZKZBF.3.md
+:STARTED_AT:   [2026-08-20 Thu 12:04:19]
+:LIVENESS:     450af070b151b63c506e892ce358c499ecd3f06d
+:NEXT:         reviewer-watch-then-fix-or-close
+:RUNTIME:      canonical_chat
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWS_TX:   tx-20260820-orgasmic-6204
+:REASON_INITIAL: Operator-directed reviewer: codex stdio gpt-5.6-sol. Effort plumbing on the NEW chat lane unverified for codex (TASK-C7NVH was the old tmux driver) — manager will confirm --effort on the live provider-host argv before trusting the tx value, else record the miss honestly.
+:END:
+
+* TX 2026-08-20 Thu 12:04:19 run.created TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6209
+:TIME:         [2026-08-20 Thu 12:04:19]
+:TYPE:         run.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZKZBF.3-reviewer-20260820T120417.jsonl
+:REASON:       Operator-directed reviewer: codex stdio gpt-5.6-sol. Effort plumbing on the NEW chat lane unverified for codex (TASK-C7NVH was the old tmux driver) — manager will confirm --effort on the live provider-host argv before trusting the tx value, else record the miss honestly.
+:RUN_ID:       run-01M0FGXJ7VEXA6CM1RJDVNC4MH
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-chat-stdio
+:KIND:         reviewer
+:DRIVER:       stdio
+:HARNESS:      codex-chat
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.3/manager-review-TASK-ZKZBF.3.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.3/manager-review-TASK-ZKZBF.3-cca81f7f031b489face45eb1be5d263e-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/manager-review-TASK-ZKZBF.3/manager-review-TASK-ZKZBF.3-cca81f7f031b489face45eb1be5d263e-stdout.log
+:DISPATCH_ATTEMPT: cca81f7f031b489face45eb1be5d263e
+:PID:          38867
+:DISPATCH_TX:  tx-20260820-orgasmic-6208
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-08-20 Thu 12:10:26 reviewer.finding TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6210
+:TIME:         [2026-08-20 Thu 12:10:26]
+:TYPE:         reviewer.finding
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       crates/orgasmic-cli/tests/node_property_silent_drop_cli.rs:14
+:REASON:       LOW docs: lines 14-15 still say node prop unset <id> priority is refused and names PRIORITY, contradicting the new exact-spelling removal contract documented at lines 38-42 and pinned at 369-424; update the stale suite-overview bullet.
+:SEVERITY:     LOW
+:KIND:         docs
+:END:
+
+* TX 2026-08-20 Thu 12:11:14 reviewer.reported TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6211
+:TIME:         [2026-08-20 Thu 12:11:14]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:RUN_ID:       run-01M0FGXJ7VEXA6CM1RJDVNC4MH
+:WORKTREE:     /Users/aspirational/.orgasmic/worktrees/orgasmic/task-zkzbf.3-review
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6208/last.txt
+:END:
+
+* TX 2026-08-20 Thu 12:14:59 reviewer.done TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6212
+:TIME:         [2026-08-20 Thu 12:14:59]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:REASON:       APPROVE with one LOW docs follow-up (tx-20260820-orgasmic-6210: stale suite-overview bullet contradicting the new unset contract; manager will fix inline as trivial). No HIGH/MEDIUM — the sweep ended the chain's pattern of each review finding a new instance. Reviewer traced every remove_property caller, confirmed the DROPPED-list deletion safe on the sole production path, read the dual-spelling test beyond its name, replayed all three artifacts independently. Model gpt-5.6-sol verified on the session wire; EFFORT_OVERRIDE high recorded but not wire-verifiable in the session log — noted as C7NVH-shaped uncertainty, not proof of a drop. Open Q1 (node.rs help edit outside declared WRITE_SCOPE) accepted as benign, noted for bookkeeping.
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:VERDICT:      approve-with-follow-ups
+:CLOSED_TX:    tx-20260820-orgasmic-6208
+:LIFECYCLE_FROM: in_review
+:LIFECYCLE_TO: in_progress
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6208/last.txt
+:END:
+
+* TX 2026-08-20 Thu 12:14:59 task.state_transitioned TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6213
+:TIME:         [2026-08-20 Thu 12:14:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZKZBF.3 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-20 Thu 12:15:11 implementer.done TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6214
+:TIME:         [2026-08-20 Thu 12:15:11]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:REASON:       Implementer claude-opus-5/high (role swap per operator; model+effort verified on live process) reported in ~40min: one-line direction split at the shared guard, last dead STATE arm deleted, class sweep executed with evidence (found+fixed render_new_task_heading silent-drop list; enumerated all removal routes, byte-exact checks, asymmetries; read-only probe of the 29 legacy lines + cleanup recipe). Manager-verified on merged 450af07: fmt, clippy -D, 22/22 focused GREEN rate 0.26, all three artifacts replay PASS. Reviewer approve-with-follow-ups tx-20260820-orgasmic-6212.
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    450af070b151b63c506e892ce358c499ecd3f06d
+:BRANCH:       task-zkzbf.3-impl
+:CLOSED_TX:    tx-20260820-orgasmic-6204
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: in_review
+:CLEANUP_STATUS: ok
+:REPORT_PATH:  .orgasmic/dispatch-records/tx-20260820-orgasmic-6204/last.txt
+:END:
+
+* TX 2026-08-20 Thu 12:15:11 task.state_transitioned TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6215
+:TIME:         [2026-08-20 Thu 12:15:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-ZKZBF.3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-08-20 Thu 12:16:04 task.state_transitioned TASK-ZKZBF.3
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6216
+:TIME:         [2026-08-20 Thu 12:16:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZKZBF.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Round accepted: approve-with-follow-ups (tx-20260820-orgasmic-6212), LOW docs residual fixed manager-inline as c08bdd8. Chain complete: direction split landed at the shared guard, class sweep found+fixed render_new_task_heading's silent-drop list, no instance of the class remains per two independent enumerations.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-20 Thu 12:16:05 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6217
+:TIME:         [2026-08-20 Thu 12:16:05]
+:TYPE:         manager.note
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       ZKZBF.3 open Q1 bookkeeping: implementer edited crates/orgasmic-cli/src/node.rs (unset --help wording) outside declared WRITE_SCOPE; reviewer judged it necessary and correct; scope recorded here rather than rewritten.
+:END:
