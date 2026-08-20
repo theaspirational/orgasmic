@@ -1,0 +1,21 @@
+# Pinned from the real injected-red run of 2026-08-20: the patch removes the
+# direction split, so `validate_drawer_property_key_case` applies its two
+# WRITE-side arguments (canonical case, ledger key shape) to the REMOVAL
+# direction again. `OrgRewriter::remove_property` matches the drawer byte for
+# byte, so the only spelling those checks accept is the one the legacy line
+# does NOT carry — the round-2 MEDIUM, measured on 29 real drawer lines.
+exit: 101
+
+# Half 1, the case check on a removal: the drawer's dead `:priority:` line is
+# refused by the spelling it actually has, and the guard advertises the
+# canonical spelling — which removes the LIVE `:PRIORITY:` instead.
+contains: property key `priority` is not the canonical drawer spelling
+
+# Half 2, the shape check on a removal: a hand-written `:FOO-BAR:` line is
+# refused, and the suggestion (`FOO_BAR`) names a key the drawer does not have.
+contains: property key `FOO-BAR` is not a drawer-key shape
+
+# Exactly the two removal-direction halves fall; the other thirteen — including
+# the ZKZBF.2 dead-key split and the `PropertyNotFound` absence refusal, which
+# the split must NOT weaken — stay green.
+contains: test result: FAILED. 13 passed; 2 failed

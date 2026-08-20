@@ -73,7 +73,7 @@ index 7813402..ddeb5f0 100644
      fn a_canonical_key_carried_in_extra_still_round_trips() {
          // The daemon's artifact generation-state revert does exactly this: it
 diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
-index 5b699e0..2d68412 100644
+index d054644..8225a3a 100644
 --- a/crates/orgasmic-daemon/src/api.rs
 +++ b/crates/orgasmic-daemon/src/api.rs
 @@ -14652,10 +14652,13 @@ async fn create_graph_heading(
@@ -225,7 +225,7 @@ index 5b699e0..2d68412 100644
      }
  }
  
-@@ -16517,16 +16477,13 @@ fn shaped_drawer_key_suggestion(key: &str) -> Option<String> {
+@@ -16517,15 +16477,10 @@ fn shaped_drawer_key_suggestion(key: &str) -> Option<String> {
      (mapped != key && orgasmic_core::tx::is_uppercase_snake_key(&mapped)).then_some(mapped)
  }
  
@@ -237,16 +237,12 @@ index 5b699e0..2d68412 100644
 -/// It also owns the identity guard: `:ID:` is derived from the node identity
 -/// (`find_by_id` matches it byte for byte), so writing it would re-key the
 -/// node and dangle every reference to the old id — refused on every layer,
--/// before and instead of the case check. `value` is `Some` for writes (the
--/// refusal then shows the corrected `KEY=VALUE` to pass) and `None` for
--/// removals (the refusal says which canonical key to remove instead).
-+/// `value` is `Some` for writes (the refusal then shows the corrected
-+/// `KEY=VALUE` to pass) and `None` for removals (the refusal says which
-+/// canonical key to remove instead).
- ///
- // orgasmic:task_ZKZBF.2
- /// It also enforces the ledger's own key SHAPE (`[A-Z][A-Z0-9_]*`, the core
-@@ -16546,17 +16503,6 @@ fn validate_drawer_property_key_case(
+-/// before and instead of the case check.
+-///
+ // orgasmic:task_ZKZBF.3
+ /// `value` is the DIRECTION: `Some` for writes, `None` for removals. Only the
+ /// empty-key and identity refusals are direction-free. Everything after them
+@@ -16549,17 +16504,6 @@ fn validate_drawer_property_key_case(
              "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
          ));
      }
@@ -261,6 +257,6 @@ index 5b699e0..2d68412 100644
 -             `id` argument)"
 -        )));
 -    }
-     let canonical = trimmed.to_ascii_uppercase();
-     if canonical != *key {
-         // The canonical spelling to advertise must itself be a shape the
+     // orgasmic:task_ZKZBF.3 — direction split. Everything below is a WRITE-side
+     // argument: a miscased or wrong-shaped key would be *written* and never
+     // read. A removal writes no key — `OrgRewriter::remove_property` matches

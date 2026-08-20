@@ -225,8 +225,9 @@ pub enum NodePropCmd {
     Unset {
         /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `term_XXXXX`.
         id: String,
-        /// Drawer property key. UPPERCASE org drawer spelling — the reader
-        /// compares keys byte for byte.
+        /// Drawer property key, in the spelling the drawer actually carries —
+        /// removal matches byte for byte, so a legacy `:priority:` line is
+        /// removed by `priority`, not by `PRIORITY`.
         key: String,
         /// Project id; omitted → resolved from the `.orgasmic/project.org`
         /// above the current directory.
