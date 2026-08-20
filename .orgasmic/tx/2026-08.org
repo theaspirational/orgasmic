@@ -37232,3 +37232,29 @@
 :PROJECT:      orgasmic
 :REASON:       ZKZBF.3 open Q1 bookkeeping: implementer edited crates/orgasmic-cli/src/node.rs (unset --help wording) outside declared WRITE_SCOPE; reviewer judged it necessary and correct; scope recorded here rather than rewritten.
 :END:
+
+* TX 2026-08-20 Thu 12:16:24 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6218
+:TIME:         [2026-08-20 Thu 12:16:24]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-08-20 Thu 12:16:24 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260820-orgasmic-6219
+:TIME:         [2026-08-20 Thu 12:16:24]
+:TYPE:         graph.handoff.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

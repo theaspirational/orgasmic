@@ -5,7 +5,7 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         4aeb189
+:LIVENESS:         1b6e52c
 :LIVENESS_AT:      [2026-08-18 Tue]
 :UPDATED_AT:       [2026-08-18 Tue]
 :GOAL_ID:          goal-20260728-drive-the-whole
@@ -449,6 +449,33 @@ zai-coding-plan/glm-5.3 effort high; reviewer claude stdio opus-5 high.
   survives when an operator follows the refusal's advice. Manager verified the dual lines directly.
   +2 LOWs. Filed as TASK-ZKZBF.3 (P2).
 - ZKZBF.2 done; chain total: 4 rounds, 2 accepts, 1 reject, 1 approve-with-follow-ups.
+
+SESSION 2026-08-20 — ZKZBF.3: THE CHAIN CLOSED CLEAN (four rounds, and the sweep worked). Operator
+pair this round: implementer claude stdio opus-5 high (ROLE SWAP, with an explicit class-sweep
+charter); reviewer codex stdio gpt-5.6-sol high (first codex review on the chain).
+- Implementer (~40min, model+effort verified on live process): ONE-LINE root fix — =let Some(value)
+  = value else { return Ok(()) }= in the shared guard: only empty-key and ID refusals are
+  direction-free; case+shape are write-side only, so EVERY removal route is covered at once.
+  Deleted the last unreachable STATE arm AND — the sweep's own find — =render_new_task_heading='s
+  DROPPED list, a SECOND SILENT COPY of the guard's rule (the original HXSW0 shape). Enumerations
+  with greps for removal routes, byte-exact checks, asymmetries; read-only probe of the 29 legacy
+  lines + cleanup recipe (no state hand-edited). 22/22 + all three artifacts PASS. Merged =450af07=.
+- Reviewer (codex/gpt-5.6-sol): APPROVE WITH ONE LOW DOCS FOLLOW-UP — *no HIGH/MEDIUM, the first
+  review on this chain to find no new instance of the class.* Traced every remove_property caller,
+  confirmed the DROPPED deletion safe on the sole production path, read the dual-spelling test
+  beyond its name, replayed all three artifacts independently. LOW docs residual (stale suite
+  overview) fixed manager-inline as =c08bdd8=.
+- *CODEX EFFORT ON THE CHAT LANE (C7NVH follow-up data):* run records MODEL_OVERRIDE gpt-5.6-sol
+  + EFFORT_OVERRIDE high; MODEL verified on the session wire (="model":"gpt-5.6-sol"= in the
+  jsonl); EFFORT not visible in the session log either way — =codex app-server= rides options over
+  JSON-RPC, not argv, so argv absence proves nothing. Unresolved, honestly recorded.
+- *LEGACY CLEANUP AVAILABLE, GATED ON RUNTIME REINSTALL:* 29 miscased drawer lines (4 on live
+  tasks: TASK-099T6, TASK-A55J7 dual-spelling P1s in backlog; 2 cancelled; 25 inert in done) are
+  now removable via =node prop unset <task> <lowercase-spelling>= — but only on a runtime WITH
+  these four merges; the installed 0.0.21 daemon predates the whole chain and still refuses.
+  Reinstall + cleanup is an operator decision.
+- BOARD: ZKZBF chain fully closed (ZKZBF done, .1 .2 .3 done); in_review/in_progress EMPTY,
+  todo EMPTY. First time in the project's recorded history all four active columns are clear.
 
 ** Next likely actions
 *ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
