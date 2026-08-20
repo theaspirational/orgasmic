@@ -1,0 +1,15 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index d054644..145da05 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -16568,9 +16568,7 @@ fn validate_drawer_property_key_case(
+     // it names. The removal door refuses only keys another door owns (the
+     // per-layer unset refusal tables, checked by the caller) and identity
+     // (above); an absent key refuses as `PropertyNotFound`.
+-    let Some(value) = value else {
+-        return Ok(());
+-    };
++    let value = value.unwrap_or("");
+     let canonical = trimmed.to_ascii_uppercase();
+     if canonical != *key {
+         // The canonical spelling to advertise must itself be a shape the

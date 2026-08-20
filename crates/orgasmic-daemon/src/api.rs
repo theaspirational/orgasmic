@@ -16524,9 +16524,12 @@ fn shaped_drawer_key_suggestion(key: &str) -> Option<String> {
 /// It also owns the identity guard: `:ID:` is derived from the node identity
 /// (`find_by_id` matches it byte for byte), so writing it would re-key the
 /// node and dangle every reference to the old id — refused on every layer,
-/// before and instead of the case check. `value` is `Some` for writes (the
-/// refusal then shows the corrected `KEY=VALUE` to pass) and `None` for
-/// removals (the refusal says which canonical key to remove instead).
+/// before and instead of the case check.
+///
+// orgasmic:task_ZKZBF.3
+/// `value` is the DIRECTION: `Some` for writes, `None` for removals. Only the
+/// empty-key and identity refusals are direction-free. Everything after them
+/// is a write-side argument and is skipped on removals — see the split inside.
 ///
 // orgasmic:task_ZKZBF.2
 /// It also enforces the ledger's own key SHAPE (`[A-Z][A-Z0-9_]*`, the core
@@ -16557,6 +16560,17 @@ fn validate_drawer_property_key_case(
              `id` argument)"
         )));
     }
+    // orgasmic:task_ZKZBF.3 — direction split. Everything below is a WRITE-side
+    // argument: a miscased or wrong-shaped key would be *written* and never
+    // read. A removal writes no key — `OrgRewriter::remove_property` matches
+    // the drawer byte for byte (`crates/orgasmic-core/src/org.rs`), so the
+    // spelling actually in the drawer is the only one that can delete the line
+    // it names. The removal door refuses only keys another door owns (the
+    // per-layer unset refusal tables, checked by the caller) and identity
+    // (above); an absent key refuses as `PropertyNotFound`.
+    let Some(value) = value else {
+        return Ok(());
+    };
     let canonical = trimmed.to_ascii_uppercase();
     if canonical != *key {
         // The canonical spelling to advertise must itself be a shape the
@@ -16565,11 +16579,10 @@ fn validate_drawer_property_key_case(
         // rule, the LOW-3 shape again.
         let suggested =
             shaped_drawer_key_suggestion(&canonical).unwrap_or_else(|| canonical.clone());
-        let tail = match value {
-            Some(value) if schema_keys.contains(&canonical.as_str()) => {
-                format!(" — pass `{canonical}={value}`")
-            }
-            _ => String::new(),
+        let tail = if schema_keys.contains(&canonical.as_str()) {
+            format!(" — pass `{canonical}={value}`")
+        } else {
+            String::new()
         };
         return Err(ApiError::bad_request(format!(
             "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
@@ -16585,16 +16598,10 @@ fn validate_drawer_property_key_case(
     // `task update --property FOO-BAR=1` is the shape that arrives) so the
     // caller gets one 400, not a 500 with the reason in the daemon log.
     if let Some(suggested) = shaped_drawer_key_suggestion(trimmed) {
-        let shape_sentence = match value {
-            Some(_) => format!(
-                "so `--property {trimmed}=…` would pass the drawer and die inside the tx \
-                 writer as a 500. Use `{suggested}`"
-            ),
-            None => format!(
-                "so `:{trimmed}:` is not a line this daemon writes. Unset `{suggested}` if \
-                 that is the line the drawer carries"
-            ),
-        };
+        let shape_sentence = format!(
+            "so `--property {trimmed}=…` would pass the drawer and die inside the tx \
+             writer as a 500. Use `{suggested}`"
+        );
         return Err(ApiError::bad_request(format!(
             "property key `{trimmed}` is not a drawer-key shape: org drawer keys and the tx \
              ledger both accept `[A-Z][A-Z0-9_]*` only, {shape_sentence}. {layer_label} keys \
@@ -16751,12 +16758,9 @@ fn resolve_task_create_id(req: &TaskCreateRequest) -> Result<String, ApiError> {
     }
 }
 
-fn task_create_lifecycle_stage(req: &TaskCreateRequest) -> Result<LifecycleStage, ApiError> {
-    if req.properties.contains_key("STATE") {
-        return Err(ApiError::bad_request(
-            "STATE is owned by the lifecycle state machine; new tasks land in BACKLOG",
-        ));
-    }
+// orgasmic:task_ZKZBF.3 — no STATE branch here: `validate_task_property_keys`
+// refuses STATE case-insensitively via the refusal table, before this runs.
+fn task_create_lifecycle_stage(_req: &TaskCreateRequest) -> Result<LifecycleStage, ApiError> {
     Ok(LifecycleStage::Backlog)
 }
 
@@ -16784,21 +16788,14 @@ fn render_new_task_heading(
     props
         .entry("ID".to_string())
         .or_insert_with(|| id.to_string());
-    const DROPPED: &[&str] = &[
-        "STATE",
-        "KIND",
-        "PARENT_TASK",
-        "FIX_SUBTASK",
-        "BLOCKED_BY",
-        "LAST_UPDATED",
-    ];
+    // orgasmic:task_ZKZBF.3 — no drop list here. STATE, PARENT_TASK and
+    // LAST_UPDATED are refused by `task_property_key_refusal_reason`, and
+    // KIND, BLOCKED_BY and FIX_SUBTASK by `TASK_PROPERTY_KEYS_UPDATE_ONLY` —
+    // both inside `validate_task_property_keys`, which `post_task_create`
+    // (this renderer's only caller) runs first and case-insensitively. A
+    // second, silent copy of that rule was the exact shape TASK-HXSW0 filed:
+    // if the guard ever regresses, a visible bad line beats a mute drop.
     for (key, value) in props {
-        if DROPPED
-            .iter()
-            .any(|dropped| key.eq_ignore_ascii_case(dropped))
-        {
-            continue;
-        }
         line.push_str(&format!(":{key}: {value}\n"));
     }
     line.push_str(":END:\n");

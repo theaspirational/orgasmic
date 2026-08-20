@@ -11,6 +11,13 @@
 # state). The suite grew to 15 tests and one of them — the dead-key unset
 # contract — also pins the round-1.1 unset-shaped advice, so it falls too.
 #
+# Re-authored again 2026-08-20 after TASK-ZKZBF.3 rebased the api.rs hunks
+# (the removal-direction split moved the lines the ID-guard hunk sat on).
+# Same defect set, same eight failures, same signature: the ZKZBF.3 split
+# stays FIXED in the injected state, so its two tests are among the seven
+# that pass. Every `contains:` below is unchanged and was re-confirmed
+# against the new injected-red run, not carried over on faith.
+#
 # Pre-fix, `node prop set term_… ID term_…` re-keyed the node so hard that
 # the SAME test's later `glossary get` 404s on the old id, and `node prop
 # unset … ID` removes the identity line and the post-edit re-read 404s —
@@ -43,6 +50,9 @@ contains: : property PRODUCES not found on heading
 contains: `--property STATE=…` is refused
 
 # The seven round-1.1 tests fall, plus the ZKZBF.2 dead-key test that also
-# pins the unset-shaped advice; the round-1 six stay green — no collateral
-# on the merged behaviour this fix round builds on.
+# pins the unset-shaped advice. The seven that stay green are the round-1
+# six plus the ZKZBF.2 shape test — no collateral on the merged behaviour
+# this fix round builds on. (After ZKZBF.3 the split shifted which seven:
+# the ZKZBF.3 removal-direction test is green and the ZKZBF.2 dead-key test
+# is one of the eight, but the counts and every pin above are unchanged.)
 contains: test result: FAILED. 7 passed; 8 failed

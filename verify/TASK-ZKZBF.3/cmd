@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZKZBF.3`.
+#
+# The whole suite file, not one filter: the direction split is a single line
+# and BOTH removal-side halves it closes (the case check and the shape check)
+# have to be seen falling together — one filter string cannot name both tests.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test node_property_silent_drop_cli

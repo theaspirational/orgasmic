@@ -35,6 +35,11 @@
 //!   the lifecycle door) still refuses both directions; a self-uppercase but
 //!   wrong-SHAPE key (`FOO-BAR`) is refused by the shared drawer check as a
 //!   400 naming the flag instead of dying inside the tx writer as a 500.
+//! - TASK-ZKZBF.3: the case and shape checks are split by DIRECTION too — they
+//!   are write-side arguments, so `node prop unset` removes the line in the
+//!   spelling the drawer actually carries (the legacy `:priority:`/`:PRIORITY:`
+//!   pair is cleanable one line at a time); absence still refuses as
+//!   `PropertyNotFound`.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -349,37 +354,72 @@ async fn node_prop_set_refuses_a_miscased_task_key_and_names_the_canonical_one()
     );
 }
 
+// orgasmic:task_ZKZBF.3
 /// SURFACE 2: `node prop unset`. A miscased key used to die inside the
 /// rewriter as `PropertyNotFound` and surface as a mute "org file update
-/// failed" — no spelling of the key anywhere in the message.
+/// failed". TASK-ZKZBF then gave it the write-side case check — which refused
+/// the miscased key by name and accepted only the canonical spelling. On the
+/// real files that was strictly worse: a drawer left by the pre-refusal daemon
+/// carries BOTH `:priority:` (dead) and `:PRIORITY:` (live), and the only
+/// accepted spelling deleted the LIVE line while the dead one survived.
+///
+/// Removal is byte-exact (`OrgRewriter::remove_property`), so the direction
+/// split: unset names the line it deletes, in the spelling the drawer carries.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn node_prop_unset_refuses_a_miscased_task_key_and_names_the_canonical_one() {
+async fn node_prop_unset_removes_the_spelling_the_drawer_actually_carries() {
     let fx = Fixture::new("nodeprop-unset").await;
-    let task_id = fx.create_task("a task carrying a real priority");
+    let task_id = fx.create_task("a task carrying both spellings");
     fx.run(&["node", "prop", "set", &task_id, "PRIORITY", "P2"]);
-
-    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "priority"]);
+    // The legacy pair, exactly as the pre-refusal daemon left the 29 real
+    // lines in this repo: a dead lowercase line beside the live canonical one.
+    fx.seed_drawer_lines(&task_id, &[":priority: P1".to_string()]);
+    let drawer = fx.drawer(&task_id);
     assert!(
-        stderr.contains("PRIORITY"),
-        "the refusal must name the canonical key: {stderr}"
-    );
-    assert!(
-        stderr.contains("priority"),
-        "the refusal must quote the key that was passed: {stderr}"
+        drawer.contains(":priority: P1") && drawer.contains(":PRIORITY: P2"),
+        "seeding must land BOTH spellings:\n{drawer}"
     );
 
-    // The real property survived the refused call.
+    // The miscased spelling removes the miscased line — and ONLY it.
+    fx.run(&["node", "prop", "unset", &task_id, "priority"]);
+    let drawer = fx.drawer(&task_id);
     assert!(
-        fx.drawer(&task_id).contains(":PRIORITY: P2"),
-        "the refused unset must not have removed the canonical key"
+        !drawer.contains(":priority: P1"),
+        "the dead line must be removable by the spelling it carries:\n{drawer}"
+    );
+    assert!(
+        drawer.contains(":PRIORITY: P2"),
+        "removing the dead line must not touch the live one:\n{drawer}"
+    );
+    let detail = fx.json(&["task", "get", "--project", "nodeprop-unset", &task_id]);
+    assert_eq!(
+        detail["priority"].as_str(),
+        Some("P2"),
+        "the live priority must still be READ back after the cleanup: {detail}"
     );
 
-    // The mechanism that DOES work.
+    // And the canonical spelling removes the canonical line — and ONLY it.
+    fx.seed_drawer_lines(&task_id, &[":priority: P1".to_string()]);
     fx.run(&["node", "prop", "unset", &task_id, "PRIORITY"]);
     let drawer = fx.drawer(&task_id);
     assert!(
-        !drawer.contains("PRIORITY"),
-        "the canonical unset must remove the key:\n{drawer}"
+        !drawer.contains(":PRIORITY:"),
+        "the canonical unset must remove the canonical line:\n{drawer}"
+    );
+    assert!(
+        drawer.contains(":priority: P1"),
+        "the canonical unset must not touch the other spelling:\n{drawer}"
+    );
+
+    // An absent key is still refused — by `PropertyNotFound`, naming the node,
+    // not by a case argument.
+    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "PRIORITY"]);
+    assert!(
+        stderr.contains("PRIORITY") && stderr.contains(task_id.as_str()),
+        "an absent key must refuse naming the key and the node: {stderr}"
+    );
+    assert!(
+        !stderr.contains("canonical drawer spelling"),
+        "the refusal must be absence, not a case argument: {stderr}"
     );
 }
 
@@ -1122,16 +1162,27 @@ async fn wrong_shaped_drawer_keys_are_refused_as_400s_naming_the_flag() {
         fx.drawer(&task_id)
     );
 
-    // The shared guard covers the node-editor verbs too, set and unset.
+    // The shared guard covers the node-editor set verb too.
     let stderr = fx.refusal(&["node", "prop", "set", &task_id, "FOO-BAR", "1"]);
     assert!(
         stderr.contains("FOO_BAR"),
         "node prop set must refuse the shape with the spelling to use: {stderr}"
     );
-    let stderr = fx.refusal(&["node", "prop", "unset", &task_id, "FOO-BAR"]);
+
+    // orgasmic:task_ZKZBF.3 — but NOT the removal direction. The shape rule is
+    // a write-side argument; it used to answer a removal with "Unset `FOO_BAR`"
+    // while the line the drawer carries is `:FOO-BAR:`, so no accepted spelling
+    // could delete it. A hand-written line is removable by its own spelling.
+    fx.seed_drawer_lines(&task_id, &[":FOO-BAR: 1".to_string()]);
     assert!(
-        stderr.contains("FOO_BAR"),
-        "node prop unset must name the spelling it would mean: {stderr}"
+        fx.drawer(&task_id).contains(":FOO-BAR: 1"),
+        "seeding must land the wrong-shaped line"
+    );
+    fx.run(&["node", "prop", "unset", &task_id, "FOO-BAR"]);
+    assert!(
+        !fx.drawer(&task_id).contains("FOO-BAR"),
+        "unset must remove the wrong-shaped line it names:\n{}",
+        fx.drawer(&task_id)
     );
 
     // A MISCASED compound gets ONE refusal pointing at the shape-correct
