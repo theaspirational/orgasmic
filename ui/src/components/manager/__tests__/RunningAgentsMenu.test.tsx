@@ -183,6 +183,16 @@ describe('RunningAgentsMenu external manager row', () => {
     expect(openRunMock).toHaveBeenCalledWith({ runId: 'run-worker-1' });
   });
 
+  it('hides running agents from other projects (their rows target this dock)', async () => {
+    fetchRecoveryInventoryMock.mockResolvedValue(
+      runsResponse([{ ...workerRun('run-other-1'), project_id: 'other' }]),
+    );
+    render(<RunningAgentsMenu projectId="proj" />);
+    await openMenu();
+
+    expect(await screen.findByText(/No running agents/i)).toBeInTheDocument();
+  });
+
   it('raises the pinned Chat surface for a native manager conversation', async () => {
     fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([nativeChatRun('run-chat-1')]));
     render(<RunningAgentsMenu projectId="proj" />);

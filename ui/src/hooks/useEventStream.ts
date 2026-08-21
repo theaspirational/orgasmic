@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { notifyResync } from '../lib/resync';
 import { transport } from '../lib/transport';
 import type { DaemonEvent, WsConnectionState } from '../lib/types';
 
@@ -55,8 +56,13 @@ function connect(): void {
   socket = transport.openWebSocket('/ws');
 
   socket.onopen = () => {
+    // Events that fired while the socket was down are gone for good — the
+    // stream has no replay. Anything derived from them (live runs, manager
+    // state) is stale until it refetches, so a reconnect is a resync signal.
+    const missedEvents = reconnectAttempt > 0;
     reconnectAttempt = 0;
     setConnectionState('open');
+    if (missedEvents) notifyResync();
   };
 
   socket.onmessage = (event) => {
