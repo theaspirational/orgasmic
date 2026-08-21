@@ -61,7 +61,7 @@ export function ChatSetup({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-muted/20">
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10 text-center">
+      <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-6 py-10 text-center [align-items:safe_center]">
         <div className="max-w-md">
           <span className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-muted text-foreground">
             <MessageCircle className="size-5" />

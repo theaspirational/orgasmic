@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyWorkerTabUpdate,
   clampDockHeight,
-  dockHeightFromPointer,
+  dockHeightFromDrag,
   DEFAULT_DOCK_HEIGHT,
   MAX_DOCK_HEIGHT,
   MIN_DOCK_HEIGHT,
@@ -61,25 +61,31 @@ describe('clampDockHeight', () => {
   });
 });
 
-describe('dockHeightFromPointer — top-border drag', () => {
-  it('maps the pointer to the fraction of viewport below it', () => {
-    expect(dockHeightFromPointer(400, 1000)).toEqual({ collapse: false, height: 0.6 });
+describe('dockHeightFromDrag — top-border drag', () => {
+  it('grows the dock by how far the drag moved up', () => {
+    expect(dockHeightFromDrag(0.5, -100, 1000)).toEqual({ collapse: false, height: 0.6 });
   });
 
-  it('reads a drag to the top of the screen as full screen', () => {
-    expect(dockHeightFromPointer(0, 1000)).toEqual({ collapse: false, height: 1 });
+  it('shrinks the dock by how far the drag moved down', () => {
+    expect(dockHeightFromDrag(0.5, 100, 1000)).toEqual({ collapse: false, height: 0.4 });
+  });
+
+  // The tap regression: the height must come from the movement, not from where
+  // the finger landed on the bar.
+  it('leaves the height untouched when the pointer did not move', () => {
+    expect(dockHeightFromDrag(0.5, 0, 1000)).toEqual({ collapse: false, height: 0.5 });
+  });
+
+  it('snaps a drag past the top to full screen', () => {
+    expect(dockHeightFromDrag(0.9, -400, 1000)).toEqual({ collapse: false, height: 1 });
   });
 
   it('collapses once the drag crosses below the bottom threshold', () => {
-    expect(dockHeightFromPointer(950, 1000)).toEqual({ collapse: true });
-  });
-
-  it('collapses rather than clamping when dragged past the viewport bottom', () => {
-    expect(dockHeightFromPointer(1200, 1000)).toEqual({ collapse: true });
+    expect(dockHeightFromDrag(0.5, 400, 1000)).toEqual({ collapse: true });
   });
 
   it('never divides by a zero viewport', () => {
-    expect(dockHeightFromPointer(0, 0)).toEqual({
+    expect(dockHeightFromDrag(0.5, 100, 0)).toEqual({
       collapse: false,
       height: DEFAULT_DOCK_HEIGHT,
     });
