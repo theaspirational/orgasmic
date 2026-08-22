@@ -1,29 +1,3 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
-* IN_PROGRESS TASK-AP971.9 Migration plan :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.9
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
-:END:
-
-** Question
-Scope a CHEAP cut-over migration, not a full backfill (owner decision 2026-08-14): migrate only the live main things — task headings/bodies into per-task dirs — and from cutover day simply write new things to the new schema. Do NOT move dispatch-records/ content; do NOT backfill historical tx entries into journals; tx/ history stays as a read-only archive.
-Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze as archive files — and if frozen, does the indexer still parse them read-only so DEPENDS_ON/IMPLEMENTS/graph lints keep resolving old task ids (else the dangling-edge lint goes red or blind)? (b) does the activity projection read both sources (old tx + new journals) forever, or only post-cutover journals? (c) what marks the cutover (version stamp in project.org?). Prototype the migrator for whatever subset survives this scoping, on real .orgasmic data.
-** Resolution
-Grilled with owner 2026-08-22; decisions (a)–(c) plus the migrator's contract. Facts: 562 done + 20 cancelled tasks; 23 of the 46 DEPENDS_ON/IMPLEMENTS/… refs on live tasks point into them and 68 done ids are named in decisions/glossary, so old ids must resolve natively; every state file and project.org already carry #+orgasmic_version: 1.
-(a) done/cancelled tasks MIGRATE too — 582 dirs, one converter, one read path. 'Cheap cut-over' was about tx/ and dispatch-records/ history; a second, read-only legacy parser kept forever is the expensive thing.
-(b) The activity projection reads old tx/ + new journals forever; tx/ is a read-only archive, never backfilled.
-(c) Cut-over marker: bump #+orgasmic_version to 2 on project.org as a label only. Owner (2026-08-22): there is one user of orgasmic today, so NO backward-compatibility layer — the daemon does not detect or refuse a v1 layout and keeps no v1 read path; the migrator is run once per project and the old readers are deleted in the same change.
-Migrator: orgasmic project migrate — one-shot, idempotent, refuses on a dirty git tree, --dry-run, writes node dirs (node.org from the heading; journal starts empty), deletes the old state files and glossary.org/decisions.org (git keeps them), bumps the stamp, commits nothing. dispatch-records/ and tx/ untouched.
-Prototype (this ticket's deliverable): the migrator run against this repo's real .orgasmic on a throwaway branch — see the worklog.
-
-* IN_PROGRESS TASK-AP971.6 Kernel extraction boundary :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.6
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.2
-:END:
-
-** Question
-Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
-

@@ -4559,6 +4559,8 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 - Incremental refresh (TASK-AP971.7) — per-node reload from classified watcher paths; writer applies its own write to the snapshot before the HTTP response returns (required-refresh wait gone); daemon dispatch-wait folds the coherent snapshot, CLI keeps the disk fold; full rescan only on boot/add/reindex/unclassifiable.
 - Regeneration (TASK-AP971.10) — regenerate recompiles node content + open comments through the descriptor's :REGENERATE_PROMPT: spec (prompt-studio, no per-type Rust); task regenerate rewrites the task and never re-dispatches; the artifact consume rule is universal; runner is the artifactor path as node.regenerate:<id>; no spec → no regenerate.
 - Migration scope (TASK-AP971.9) — done/cancelled migrate too (one read path); activity reads old tx/ + journals forever; #+orgasmic_version: 2 is a label only — no v1 compatibility layer (single user); migrator = orgasmic project migrate, one-shot, idempotent, --dry-run, deletes old state files. Prototype pending.
+- Kernel extraction boundary (TASK-AP971.6) — orgasmic-core::node_kernel prototyped on branch ap971-prototype: pure over file contents (writer owns bytes) except mkdir-as-collision-check; node/journal parse+render, in-place comment edit, tombstone, consume-on-regenerate; artifacts.rs→kernel mapping table in the ticket.
+- Migration (TASK-AP971.9) — migrator prototyped on real data: 873 nodes, 0 anomalies, byte-for-byte round trip, 0.24s.
 ** Not yet specified
 - UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
 - CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary

@@ -32972,3 +32972,34 @@ Grilled with owner 2026-08-22; four decisions. Facts: artifact regenerate today 
 3. Universal consume rule, unchanged from artifacts: on close-out every open comment is marked consumed, the regenerated journal entry lists CONSUMED_CIDS, content is replaced (git keeps the old). A type with no :REGENERATE_PROMPT: has no regenerate (no button).
 4. Runner: the existing artifactor-style supervisor path, run task id node.regenerate:<id> (today artifact.generate:<id>), one live regenerate per node.
 
+* DONE TASK-AP971.6 Kernel extraction boundary :wf_prototype:
+:PROPERTIES:
+:ID: TASK-AP971.6
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.2
+:END:
+
+** Question
+Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
+** Resolution
+Prototyped 2026-08-22 on the throwaway branch ap971-prototype (commit 41a1faf): crates/orgasmic-core/src/node_kernel.rs — compiles, 3 unit tests + a real-data test that parses all 873 migrated nodes (0.25s).
+Boundary: the kernel lives in orgasmic-core (the CLI reads nodes without the daemon). It is pure over file contents — the daemon writer keeps owning every byte — except create_node_dir, whose mkdir IS the id-collision check (.3). API: node_dir / create_node_dir / node_org_header / journal_header; Node + parse_node (one heading: id, title, state=TODO keyword, properties, free body); JournalEntry + parse_journal / journal_entry_block / append_entry (tx drawer grammar + prose body, AP971.1); edit_comment_body (in place, stamps :EDITED_AT:; caller does OCC), tombstone_comment (drops prose, keeps the entry), consume_open_comments → (new content, consumed ids) = the regenerate hook (.10).
+artifacts.rs → kernel map: artifacts_dir/artifact_dir→node_dir; new_artifact_id/validate_art_id→mint_node_id(descriptor)+create_node_dir; artifact_org_content/update_artifact_org→node.org header + node write (artifact props stay artifact's); reviews_org_header/comment_org_block/append_comment→journal_header/journal_entry_block/append_entry (CID→TX_ID, ANCHOR/RESOLUTION_TARGET/REPLY_TO→extras, CONSUMED kernel-owned); parse_comments→parse_journal filtered ty=comment; consume_all_open_comments→consume_open_comments; load_artifact/load_project_artifacts→parse_node + dir listing. Stays artifact-only: BLOCK_TYPES, validate_mdx, launch address, versions_dir, artifact.mdx, the RESOLVED axis (set_comment_resolved). The kernel has no regenerate runner and no type knowledge: descriptors (.2) and the supervisor path (.10) sit above it.
+
+* DONE TASK-AP971.9 Migration plan :wf_prototype:
+:PROPERTIES:
+:ID: TASK-AP971.9
+:DEPENDS_ON: TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
+:END:
+
+** Question
+Scope a CHEAP cut-over migration, not a full backfill (owner decision 2026-08-14): migrate only the live main things — task headings/bodies into per-task dirs — and from cutover day simply write new things to the new schema. Do NOT move dispatch-records/ content; do NOT backfill historical tx entries into journals; tx/ history stays as a read-only archive.
+Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze as archive files — and if frozen, does the indexer still parse them read-only so DEPENDS_ON/IMPLEMENTS/graph lints keep resolving old task ids (else the dangling-edge lint goes red or blind)? (b) does the activity projection read both sources (old tx + new journals) forever, or only post-cutover journals? (c) what marks the cutover (version stamp in project.org?). Prototype the migrator for whatever subset survives this scoping, on real .orgasmic data.
+** Resolution
+Grilled with owner 2026-08-22; decisions (a)–(c) plus the migrator's contract. Facts: 562 done + 20 cancelled tasks; 23 of the 46 DEPENDS_ON/IMPLEMENTS/… refs on live tasks point into them and 68 done ids are named in decisions/glossary, so old ids must resolve natively; every state file and project.org already carry #+orgasmic_version: 1.
+(a) done/cancelled tasks MIGRATE too — 582 dirs, one converter, one read path. 'Cheap cut-over' was about tx/ and dispatch-records/ history; a second, read-only legacy parser kept forever is the expensive thing.
+(b) The activity projection reads old tx/ + new journals forever; tx/ is a read-only archive, never backfilled.
+(c) Cut-over marker: bump #+orgasmic_version to 2 on project.org as a label only. Owner (2026-08-22): there is one user of orgasmic today, so NO backward-compatibility layer — the daemon does not detect or refuse a v1 layout and keeps no v1 read path; the migrator is run once per project and the old readers are deleted in the same change.
+Migrator: orgasmic project migrate — one-shot, idempotent, refuses on a dirty git tree, --dry-run, writes node dirs (node.org from the heading; journal starts empty), deletes the old state files and glossary.org/decisions.org (git keeps them), bumps the stamp, commits nothing. dispatch-records/ and tx/ untouched.
+Prototype (this ticket's deliverable): the migrator run against this repo's real .orgasmic on a throwaway branch — see the worklog.
+Prototype (2026-08-22, branch ap971-prototype 41a1faf, scripts/ap971-migrate-proto.py): converted this repo's real .orgasmic — 699 tasks + 114 decisions + 60 terms = 873 nodes, 1,746 files, 0.24s, 0 anomalies (no missing ids, no duplicate ids, no unsafe dir names); byte-for-byte round trip asserted (heading blocks reassemble every source file). Layout cost: 8.4MB on disk for 3.3MB of content; cold read of all nodes 75ms vs 3ms for the six legacy files. node.org = header + heading block verbatim (state stays the TODO keyword); journal.org = header only. The kernel's real_data test parses every migrated node.
+

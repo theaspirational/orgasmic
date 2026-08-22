@@ -38191,3 +38191,99 @@
 :REASON:       edited task node TASK-AP971
 :NODE_ID:      TASK-AP971
 :END:
+
+* TX 2026-08-22 Sat 14:26:54 task.edited TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6287
+:TIME:         [2026-08-22 Sat 14:26:54]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-AP971.6
+:NODE_ID:      TASK-AP971.6
+:END:
+
+* TX 2026-08-22 Sat 14:26:54 comment TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6288
+:TIME:         [2026-08-22 Sat 14:26:54]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:REASON:       Prototyped: orgasmic-core::node_kernel on branch ap971-prototype (41a1faf), pure-over-contents API + mkdir collision check, artifacts.rs mapping table in Resolution; real-data test parses 873 nodes
+:END:
+
+* TX 2026-08-22 Sat 14:26:54 task.state_transitioned TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6289
+:TIME:         [2026-08-22 Sat 14:26:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.6 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:26:54 task.edited TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6290
+:TIME:         [2026-08-22 Sat 14:26:54]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-AP971.9
+:NODE_ID:      TASK-AP971.9
+:END:
+
+* TX 2026-08-22 Sat 14:26:55 comment TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6291
+:TIME:         [2026-08-22 Sat 14:26:55]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:REASON:       Prototyped: migrator on real data — 873 nodes, 0 anomalies, byte-for-byte round trip, 0.24s; branch ap971-prototype
+:END:
+
+* TX 2026-08-22 Sat 14:26:55 task.state_transitioned TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6292
+:TIME:         [2026-08-22 Sat 14:26:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.9 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:26:55 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6293
+:TIME:         [2026-08-22 Sat 14:26:55]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
