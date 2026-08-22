@@ -37721,3 +37721,58 @@
 :FROM_STATE:   backlog
 :TO_STATE:     todo
 :END:
+
+* TX 2026-08-22 Sat 12:48:13 comment TASK-AP971.11
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6253
+:TIME:         [2026-08-22 Sat 12:48:13]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.11
+:REASON:       Resolved: dispatch lifecycle stays in monthly tx/, one shared fold in core for CLI+daemon, type-set guard test, dispatch.linked derived, no compaction v1; projection deferred to AP971.7
+:END:
+
+* TX 2026-08-22 Sat 12:48:13 task.state_transitioned TASK-AP971.11
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6254
+:TIME:         [2026-08-22 Sat 12:48:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.11
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.11 to done
+:FROM_STATE:   todo
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 12:48:13 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6255
+:TIME:         [2026-08-22 Sat 12:48:13]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-22 Sat 12:48:38 task.edited TASK-AP971.11
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6256
+:TIME:         [2026-08-22 Sat 12:48:38]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.11
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-AP971.11
+:NODE_ID:      TASK-AP971.11
+:END:
