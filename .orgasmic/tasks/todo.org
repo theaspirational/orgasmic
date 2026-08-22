@@ -1,11 +1,3 @@
 #+title: Todo
 #+orgasmic_version: 1
 
-* TODO TASK-AP971.2 Node type descriptor format :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.2
-:END:
-
-** Question
-What does a shipped node-type descriptor declare (required properties, allowed states, regenerate prompt template, UI labeling), where does it live in shipped/, and how does the daemon treat a collection directory with no descriptor?
-

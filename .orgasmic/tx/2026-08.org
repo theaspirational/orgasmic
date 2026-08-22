@@ -37846,3 +37846,223 @@
 :REASON:       edited task node TASK-AP971
 :NODE_ID:      TASK-AP971
 :END:
+
+* TX 2026-08-22 Sat 14:15:43 task.edited TASK-AP971.2
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6262
+:TIME:         [2026-08-22 Sat 14:15:43]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.2
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-AP971.2
+:NODE_ID:      TASK-AP971.2
+:END:
+
+* TX 2026-08-22 Sat 14:15:43 comment TASK-AP971.2
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6263
+:TIME:         [2026-08-22 Sat 14:15:43]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.2
+:REASON:       Resolved: org descriptor per type in shipped/schema/node-types/, minimal property set, shipped-only v1, task/decision/glossary/artifact at cut-over
+:END:
+
+* TX 2026-08-22 Sat 14:15:43 task.state_transitioned TASK-AP971.2
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6264
+:TIME:         [2026-08-22 Sat 14:15:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.2 to done
+:FROM_STATE:   todo
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:15:44 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6265
+:TIME:         [2026-08-22 Sat 14:15:44]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-22 Sat 14:15:44 task.edited TASK-AP971.3
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6266
+:TIME:         [2026-08-22 Sat 14:15:44]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.3
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.3
+:NODE_ID:      TASK-AP971.3
+:END:
+
+* TX 2026-08-22 Sat 14:15:44 comment TASK-AP971.3
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6267
+:TIME:         [2026-08-22 Sat 14:15:44]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.3
+:REASON:       Resolved: keep prefixes verbatim, descriptor-declared for new types; dir = id, flat; mkdir is the uniqueness check
+:END:
+
+* TX 2026-08-22 Sat 14:15:45 task.state_transitioned TASK-AP971.3
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6268
+:TIME:         [2026-08-22 Sat 14:15:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.3 to done
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:15:45 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6269
+:TIME:         [2026-08-22 Sat 14:15:45]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-22 Sat 14:15:45 task.edited TASK-AP971.8
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6270
+:TIME:         [2026-08-22 Sat 14:15:45]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.8
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.8
+:NODE_ID:      TASK-AP971.8
+:END:
+
+* TX 2026-08-22 Sat 14:15:45 comment TASK-AP971.8
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6271
+:TIME:         [2026-08-22 Sat 14:15:45]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.8
+:REASON:       Resolved: views/{board,glossary,decisions}.org, daemon-written after refresh + views build, gitignored
+:END:
+
+* TX 2026-08-22 Sat 14:15:46 task.state_transitioned TASK-AP971.8
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6272
+:TIME:         [2026-08-22 Sat 14:15:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.8
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.8 to done
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:15:46 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6273
+:TIME:         [2026-08-22 Sat 14:15:46]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-22 Sat 14:15:46 task.edited TASK-AP971.7
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6274
+:TIME:         [2026-08-22 Sat 14:15:46]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.7
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.7
+:NODE_ID:      TASK-AP971.7
+:END:
+
+* TX 2026-08-22 Sat 14:15:46 comment TASK-AP971.7
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6275
+:TIME:         [2026-08-22 Sat 14:15:46]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.7
+:REASON:       Resolved: per-node reload, writer apply-own-write (no required-refresh wait), daemon dispatch fold from snapshot, full rescan only boot/add/reindex/unclassifiable
+:END:
+
+* TX 2026-08-22 Sat 14:15:47 task.state_transitioned TASK-AP971.7
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6276
+:TIME:         [2026-08-22 Sat 14:15:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.7
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.7 to done
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:15:47 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6277
+:TIME:         [2026-08-22 Sat 14:15:47]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:

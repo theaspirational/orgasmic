@@ -4553,6 +4553,10 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 - Journal entry schema (TASK-AP971.1) — tx-grammar reuse with real multi-line prose bodies; facts append-only, comment edits IN PLACE (OCC + :EDITED_AT:, git is history, tombstones for deletes); global tx-style entry ids; reserved names node.org/journal.org/attachments/<entry-id>//dispatches/<started-tx>/; unknown files ignored + lint; structured-daemon-writes-only enforcement; no rotation v1; prose-only (no :BODY: dual-write). Full 12-point spec in the ticket's Resolution.
 - Dispatch-open discovery (TASK-AP971.11) — dispatch lifecycle stays in monthly tx/ (no dedicated file, no cache); ONE shared fold in orgasmic-core for CLI and daemon (they diverge today); a test pins the dispatch type set to project tx; dispatch.linked is derived, never written; no compaction v1; the writer-coherent daemon projection is AP971.7's.
 - tx split semantics (TASK-AP971.5) — journal iff the event is about exactly one dir-backed node, else project tx/ (full table in the ticket); singletons (handoff/goal/project) stay files + tx/; creation = journal entry #1, deletion = tx/ tombstone; the dispatch close stays ONE tx append + N node.org rewrites with no journal flip (derived), deleting inventory risk #1 and retiring torn-close repair to legacy-only; one shared id sequence whose cold scan covers journals; recovery claims untouched.
+- Node type descriptor (TASK-AP971.2) — one org file per type in shipped/schema/node-types/<collection>.org (drawer + prose); declares COLLECTION, ID_PREFIX, LABEL(S), REQUIRED_PROPERTIES, STATES+transitions, REGENERATE_PROMPT, optional reserved files; shipped-only in v1; task/decision/glossary/artifact at cut-over, gotchas/conventions stay prose files for now.
+- ID scheme (TASK-AP971.3) — prefixes stay verbatim, new types declare theirs in the descriptor; dir name = id, dotted subtasks flat; mint keeps the 5-char stem and mkdir is the collision check.
+- Derived read views (TASK-AP971.8) — .orgasmic/views/{board,glossary,decisions}.org in today's file shapes, written by the daemon after each affected refresh (plus orgasmic views build), gitignored; context-packs/router/skills/OrgView repoint by path.
+- Incremental refresh (TASK-AP971.7) — per-node reload from classified watcher paths; writer applies its own write to the snapshot before the HTTP response returns (required-refresh wait gone); daemon dispatch-wait folds the coherent snapshot, CLI keeps the disk fold; full rescan only on boot/add/reindex/unclassifiable.
 ** Not yet specified
 - UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
 - CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary
@@ -4563,14 +4567,6 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 ** Out of scope
 - Implementing the refactor itself — this map ends at the implementation-ready task chain
 
-* BACKLOG TASK-AP971.3 ID scheme and type-aware minting    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.3
-:END:
-
-** Question
-One mint, many prefixes: keep existing styles (TASK-XXXXX, dec_XXXXX, term_...) or normalize? How are dir names derived from ids, and what does the mint need to become type-aware?
-
 * BACKLOG TASK-AP971.6 Kernel extraction boundary    :wf_prototype:
 :PROPERTIES:
 :ID: TASK-AP971.6
@@ -4579,23 +4575,6 @@ One mint, many prefixes: keep existing styles (TASK-XXXXX, dec_XXXXX, term_...) 
 
 ** Question
 Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
-
-* BACKLOG TASK-AP971.7 Incremental refresh design    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.7
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.5
-:END:
-
-** Question
-Per-node watcher granularity, apply-own-write projection (no full rescan on comment), and the derived cross-project activity feed. Kills the current full-reparse-per-mutation behaviour (index.rs load_project).
-
-* BACKLOG TASK-AP971.8 Derived read views    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.8
-:END:
-
-** Question
-Humans lose the one-file glossary/backlog view when nodes become dirs. What compiled read views exist (glossary, board), when are they generated, where do they live, and are they gitignored?
 
 * BACKLOG TASK-AP971.9 Migration plan    :wf_prototype:
 :PROPERTIES:
