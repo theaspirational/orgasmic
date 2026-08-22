@@ -5,9 +5,9 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         62b28cc
-:LIVENESS_AT:      [2026-08-18 Tue]
-:UPDATED_AT:       [2026-08-18 Tue]
+:LIVENESS:         bf8efe3
+:LIVENESS_AT:      [2026-08-22 Sat]
+:UPDATED_AT:       [2026-08-22 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
@@ -80,6 +80,17 @@ and any anomalous cargo exit, now red whatever else classified.
 UPDATE 08-18: the runtime is TMUX-ONLY (rmux and acp-stdio drivers removed,
 =010a32b=) and now 0.0.21. The operator suspension on dispatching (2026-08-09)
 still governs — see In flight.
+UPDATE 08-22 (this session, non-manager: owner + Claude, no dispatches). Three things
+changed that the next manager must know: (1) THE dec_E01MC MAP IS AT ITS DESTINATION —
+TASK-AP971's 11 tickets are resolved and an 11-task implementation chain is filed
+(TASK-GCXB7 … TASK-KA934, DEPENDS_ON-wired, IMPLEMENTS dec_E01MC); see Next likely actions.
+(2) Two mobile RunDock defects were fixed in ui/ (=ff1afcf= resync after a dropped event
+stream + project-scoped Running Agents; =9a2c154= tap-vs-drag resize + panel clipping) —
+they are on main LOCALLY and on =origin/fix/rundock-mobile=; =origin/main= is PROTECTED
+(PR + =local/release-certified= check required), so main is 40+ commits ahead of origin and
+NOTHING IS LANDED REMOTELY. =gh= auth token is invalid; =origin= now uses SSH. (3) Prototype
+code for the kernel + migrator sits on branch =ap971-prototype= (=41a1faf=) — reference
+only, never merge it.
 
 ** Done so far
 SESSION 2026-08-06/07. SEVEN MERGES, SIX REVIEWS (five REJECT, one approve), and
@@ -501,54 +512,71 @@ SESSION 2026-08-20, SECOND BLOCK — RUNTIME REINSTALLED + FULL HOUSEKEEPING (op
   Daemon unaffected.
 - BOARD: todo/in_progress/in_review EMPTY; backlog 123 (goal not yet reached — backlog counts).
 
+SESSION 2026-08-22 (owner + Claude, no dispatches). dec_E01MC WAYFINDER MAP COMPLETED:
+AP971.11 dispatch lifecycle stays in monthly tx/, one shared fold, type-set guard,
+dispatch.linked derived; AP971.5 tx split table (journal iff about exactly one dir-backed
+node), singletons stay files, creation=journal#1 / deletion=tx tombstone, dispatch close
+stays ONE tx append + N rewrites (inventory risk #1 deleted, torn-close repair legacy-only),
+one shared id sequence; AP971.2 org descriptors in shipped/schema/node-types/; AP971.3
+prefixes kept, dir=id, mkdir is the collision check; AP971.8 views/{board,glossary,decisions}
+daemon-written + gitignored; AP971.7 per-node reload + writer apply-own-write; AP971.10
+regenerate over descriptor specs, task regenerate never re-dispatches; AP971.9 migrate
+done/cancelled too, no v1 compat; AP971.6 kernel boundary prototyped
+(orgasmic-core::node_kernel, branch ap971-prototype 41a1faf); migrator prototyped on real
+data (873 nodes, 0 anomalies, 0.24s). 11-task implementation chain filed (=abb2d12=,
+edges =bf8efe3=). RunDock mobile: stale 'run no longer live' after a dropped WebSocket
+(useResource now refetches on resync/foreground, =ff1afcf=) and tap-jump + overlap
+(dockHeightFromDrag + clipping, =9a2c154=).
+
 ** Next likely actions
-*ALL DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
-Manager-inline bookkeeping actions need no dispatch and may proceed:
+*DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
 
-1. *CLOSE THE FIVE STALE AJP4A ANCESTORS* (AJP4A, .1, .1.1, .1.1.1, .1.1.1.1 — in_progress
-   since 08-11/12, tip =.1.1.1.1.1= merged + approved =c948872=, PR #6 integrated). NOT blind
-   bookkeeping: AJP4A's acceptance checklist is unchecked boxes — verify each against HEAD
-   (lazy loading shipped: =dec_YYMSK=, single-flight boundary, unloaded/ready states), file
-   residuals FIRST, then move. Same pattern as the 08-18 BX5SR/GRCWC reconciliation.
-2. *TASK-ZKZBF* (todo, P2) — the only real todo. Re-dispatch on tmux/claude once the
-   suspension lifts (cursor-ACP stalled on it twice; =--property= silent-drop audit).
-3. *Fresh P1 residuals from 08-18:* TASK-BX5SR.2 (idempotency collision), TASK-BX5SR.3 (writer
-   supervision + status/doctor liveness). Natural next pair once dispatching resumes.
-4. Older still-open items, re-checked 08-18 against the board: P4XKT (repeat tests / pass
-   rate), 8Q92K (17/90 verify artifacts cannot replay), C7NVH (--effort never reaches codex),
-   SJA9W (dispatch-status close command), TRAEM (derivation script), VD0VB (cursor-agent
-   pre-trust flags), VT9FG (supervisor probe deadline invariant), GRCWC.2, K9WWM-family
-   leftovers. Full backlog: 122 items.
+1. *START THE dec_E01MC IMPLEMENTATION CHAIN* (filed 2026-08-22, all backlog, tags =e01mc=
+   =node_kernel=). Three roots have no deps and can run in parallel:
+   - TASK-GCXB7 shared dispatch fold in core + type-set guard (smallest; stands alone)
+   - TASK-TP593 node kernel in core + writer ops — start from
+     =crates/orgasmic-core/src/node_kernel.rs= on branch =ap971-prototype= (=41a1faf=)
+   - TASK-7A0H4 node type descriptors + descriptor-driven mint
+   Then, in dependency order: TASK-SRBGS migrator (← TP593 7A0H4; port
+   =scripts/ap971-migrate-proto.py= from the same branch — proven on this repo: 873 nodes, 0
+   anomalies, byte-for-byte round trip) → TASK-EPG6H tx split → TASK-8AV8B incremental
+   refresh; TASK-JWHXH views and TASK-AN992 CLI/shipped (← SRBGS); TASK-ARRV8 artifacts onto
+   the kernel (← TP593 7A0H4) → TASK-8DMQS regenerate; TASK-KA934 UI last (← 8AV8B 8DMQS).
+   Every design decision is in the AP971.x ticket Resolutions and the map's 'Decisions so
+   far' — workers should read their ticket's referenced Resolution before coding. Owner
+   stance: single user, NO v1 compatibility layer, version stamp is a label only.
+2. *LAND main ON origin.* Local main is ~40 commits ahead; =origin/main= is protected (PR +
+   =local/release-certified=). =orgasmic integrate --dry-run= shows the sequence; it needs a
+   valid =gh= token (=gh auth login -h github.com=). Until then the work exists only locally
+   and on =origin/fix/rundock-mobile=.
+3. Everything from the 08-18 list still stands: AJP4A ancestors to close, ZKZBF (todo),
+   BX5SR.2/.3 P1 residuals, the older P1s (YBCYQ worker-commits-to-main, 48SFW staged-home
+   kills dispatches, C7NVH --effort never reaches codex). A four-group reading of the 123-item
+   backlog exists in this session's scratch only; the P1s of group A are the real risk.
 
-DONE SINCE LAST HANDOFF (do not re-propose): D6N77 (dispatch-wait exists), 4BBA6 (watchdog
-inside run-tests.sh), GPY3H, K9WWM, AJP4A chain, BX5SR(.1), GRCWC(.1), ZKZBF abort cleanup.
+DONE SINCE LAST HANDOFF (do not re-propose): TASK-AP971.2/.3/.5/.6/.7/.8/.9/.10/.11 (map
+complete); RunDock mobile fixes (ui/, local main).
 
 ** In flight
-NO DISPATCH IS LIVE (=manager dispatch-status= empty, =git worktree list= single, verified
-2026-08-18). The board has no work in flight.
+NO DISPATCH IS LIVE (verified 2026-08-22: =orgasmic manager dispatch-status= empty; =git
+worktree list= shows main plus the throwaway =ap971-prototype= worktree in the session
+scratchpad — safe to =git worktree prune= if it is gone). The board has no work in flight.
 
 === DO NOT DISPATCH — OPERATOR SUSPENSION 2026-08-09 STILL GOVERNS (tx-20260809-orgasmic-5543)
-Standing authorization to dispatch without per-dispatch approval remains SUSPENDED. Decision 3
-("what mode next?") was still open as of 2026-08-18; ASK before dispatching. The stale
-recommendation below is superseded by Next likely actions.
+Standing authorization to dispatch without per-dispatch approval remains SUSPENDED; ASK before
+dispatching. The owner asks for model/effort at session start (never a project default) and
+wants driver/harness/model/effort echoed after each dispatch.
 
 Session-harness answer when dispatching resumes (NOT standing, from 08-08/09): implementers
 tmux / claude / claude-opus-5 / high; reviewers tmux / codex / gpt-5.6-sol. *Never pass
-=--effort= to codex* (TASK-C7NVH). NOTE the runtime is now TMUX-ONLY (=010a32b=): rmux no
-longer exists, acp-stdio is gone — tmux is the only driver.
+=--effort= to codex* (TASK-C7NVH). The runtime is TMUX-ONLY (=010a32b=), 0.0.22-dev installed.
 
-THE WATCHER RULE NOW HAS A COMMAND: *=manager dispatch-wait --started-tx <tx>=* (TASK-D6N77,
-DONE) blocks until a dispatch reports or dies. USE IT INSTEAD OF hand-rolled 30s polling;
-=[run-gone]= twice remains the manual fallback. NEVER key on =[pid-gone]=.
+THE WATCHER RULE HAS A COMMAND: *=manager dispatch-wait --started-tx <tx>=* blocks until a
+dispatch reports or dies. USE IT. NEVER key on =[pid-gone]=.
 
-DURABLE PRACTICES from the 08-09 block (kept for reuse; full narrative in git history before
-this handoff commit):
-1. Brief FORBIDS reading =verify/*/injection.patch= bodies; hand the reviewer the manager's
-   audit instead (content-filter kill, TASK-52NJS). File findings as =reviewer.finding= tx the
-   moment they exist.
-2. Re-measure the daemon suite on a calm host every round; trust the syspolicyd RATE, not the
-   load summary word.
-3. SEARCH THE BACKLOG BEFORE FILING (TASK-TH906 duplicate lesson; 122 open items).
+DURABLE PRACTICES (unchanged): brief forbids reading =verify/*/injection.patch= bodies; file
+=reviewer.finding= tx the moment findings exist; re-measure the daemon suite on a calm host,
+trust the syspolicyd RATE; SEARCH THE BACKLOG BEFORE FILING (125 open items now).
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
@@ -723,3 +751,9 @@ it spawns real billed provider turns. Never set =ORGASMIC_ALLOW_BILLED_TESTS=.
   the SJA9W close-command gap; promoted-record commits are unsigned; writer can stop persisting
   while looking healthy (BX5SR.2/.3 own the open code work); do not stash .orgasmic for verify;
   never run the 099T6 billed test; CI not live (main 918+ ahead of origin — now far more).
+
+08-22: =orgasmic task create --property DEPENDS_ON=…= wrote an EMPTY =:DEPENDS_ON:= on all 11
+chain tasks; the edges were repaired with =task update --property= (=bf8efe3=). Root cause
+was the caller's zsh word-splitting, not orgasmic — but if you see empty =:DEPENDS_ON:= lines
+anywhere, check the create path before trusting the graph. Also: =origin/main= is protected
+and =gh= is unauthenticated, so NOTHING from 08-18 onward is on the remote main.
