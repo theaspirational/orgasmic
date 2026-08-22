@@ -4651,6 +4651,7 @@ Carries the two LOW, non-blocking notes from the final approving review of TASK-
 :ID: TASK-GCXB7
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P2
+:DEPENDS_ON: 
 :END:
 
 ** Description
@@ -4665,6 +4666,7 @@ AP971.11: one dispatch fold in orgasmic-core, called by both manager.rs scan_dis
 :ID: TASK-TP593
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P1
+:DEPENDS_ON: 
 :END:
 
 ** Description
@@ -4679,6 +4681,7 @@ AP971.1/.6: land crates/orgasmic-core/src/node_kernel.rs from the ap971-prototyp
 :ID: TASK-7A0H4
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P1
+:DEPENDS_ON: 
 :END:
 
 ** Description
@@ -4690,7 +4693,7 @@ AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — 
 
 * BACKLOG TASK-SRBGS Migrator orgasmic project migrate; indexer reads node dirs; old state-file readers deleted    :e01mc:node_kernel:
 :PROPERTIES:
-:DEPENDS_ON: 
+:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
 :ID: TASK-SRBGS
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P1
@@ -4749,7 +4752,7 @@ AP971.8: daemon writes .orgasmic/views/board.org (tasks by state), glossary.org,
 
 * BACKLOG TASK-ARRV8 Artifacts onto the node kernel    :e01mc:node_kernel:
 :PROPERTIES:
-:DEPENDS_ON: 
+:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
 :ID: TASK-ARRV8
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P2
@@ -4791,7 +4794,7 @@ task/decision/glossary verbs and orgasmic node body operate on node dirs; commen
 
 * BACKLOG TASK-KA934 UI: per-node comments and regenerate; OrgView over views    :e01mc:node_kernel:
 :PROPERTIES:
-:DEPENDS_ON: 
+:DEPENDS_ON:  TASK-8AV8B TASK-8DMQS
 :ID: TASK-KA934
 :IMPLEMENTS: dec_E01MC
 :PRIORITY: P2
