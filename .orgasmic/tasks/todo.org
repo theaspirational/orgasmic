@@ -1,3 +1,19 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-AP971.11 Dispatch-open discovery: dedicated ledger or index :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.11
+:END:
+
+** Question
+'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.
+
+* TODO TASK-AP971.2 Node type descriptor format :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.2
+:END:
+
+** Question
+What does a shipped node-type descriptor declare (required properties, allowed states, regenerate prompt template, UI labeling), where does it live in shipped/, and how does the daemon treat a collection directory with no descriptor?
+

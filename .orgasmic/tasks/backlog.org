@@ -4561,14 +4561,6 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 ** Out of scope
 - Implementing the refactor itself — this map ends at the implementation-ready task chain
 
-* BACKLOG TASK-AP971.2 Node type descriptor format    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.2
-:END:
-
-** Question
-What does a shipped node-type descriptor declare (required properties, allowed states, regenerate prompt template, UI labeling), where does it live in shipped/, and how does the daemon treat a collection directory with no descriptor?
-
 * BACKLOG TASK-AP971.3 ID scheme and type-aware minting    :wf_grilling:
 :PROPERTIES:
 :ID: TASK-AP971.3
@@ -4630,14 +4622,6 @@ Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze 
 
 ** Question
 Per-type regenerate prompts and the universal consume-on-regenerate rule. What does regenerate even mean for a task or a decision (vs a glossary term or artifact)?
-
-* BACKLOG TASK-AP971.11 Dispatch-open discovery: dedicated ledger or index    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.11
-:END:
-
-** Question
-'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.
 
 * BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
 :PROPERTIES:
