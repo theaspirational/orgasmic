@@ -90,6 +90,8 @@ Measured production evidence: 197 orgasmic session files occupy 2,404,385,576 by
 Execute the child tasks independently in priority order. P0 restores and proves the control plane. P1 separates current lifecycle inventory from historical evidence and bounds retained event volume. Service and registry hardening follow without blocking P0. Manual retro materialization is a separate explicit feature built on the bounded evidence architecture; it is not required for `/api/runs` to work and must not become an automatic startup/completion hook.
 
 Done only when the production-shaped wire regression completes inside its deadline, exact-run close/finalize do not enumerate history, run enumeration cost is independent of historical transcript bytes, default storage cannot recreate rendered-TUI growth, stale/missing records stop producing recurring warnings, and an explicit multi-run retro can analyze selected Claude sessions through derived bounded evidence.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 12). Day four of one manager session: `run list` live 3, 273 ambiguous / 129 interrupted / 10 failed_recoverable, 1.7 GB of session files, 1.69 GB origin index, 1153 ms catalog scan on every command; nothing prunes. Expected: `orgasmic run gc` (and an automatic pass at daemon start) resolving ambiguous against the pid table, compressing/deleting sessions older than N days for closed dispatches, rebuilding the index; catalog scan cached and invalidated on write. Retention must keep what a reviewer still references (TASK-SJD10 evidence dir).
 
 * BACKLOG TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch    :retro:claude:evidence:
 :PROPERTIES:
@@ -3761,6 +3763,8 @@ The harm is not that =xhigh= is worse than =high= — it is higher. The harm is
 that *the dispatch record asserts a parameter that was never sent*, so any later
 comparison of review quality against effort reads a fabricated column. Fail
 loudly on an unsupported flag, or map it, but do not record it as sent.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 5). `--model` is unvalidated passthrough too: a wrong id does not fail loudly; the manager confirmed the model by grepping the session jsonl for `"model":"…"`. The driver/harness substitution half of item 5 is TASK-XC9N4.
 
 * BACKLOG TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive    :testing:ci:
 :PROPERTIES:
@@ -3971,6 +3975,8 @@ and the same refusal on both dispatches.
 5. A stall-kill whose pane shows the harness at an idle input prompt is reported
    as a distinct terminal state (worker stopped) from an unresponsive subtree,
    and the reason names which.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 4). `stall_timeout_exceeded: no work evidence for 600s (work threshold 5.0%)` reaped a worker that had launched a long pytest suite and was polling it — CPU in the worker process ~1% because the work was in a child. Reaped unreported; uncommitted edits survived only because the worktree did. Expected: liveness from stream events / worktree file mtimes / live child processes, a warning at 60% of the budget the worker can answer (heartbeat file or stream event), and a kill that finalizes whatever report file exists instead of leaving [unreported]. See also TASK-ZMYEN (ORGASMIC_REPORT_PATH).
 
 * BACKLOG TASK-52NJS a provider content filter blocks cross-family review of parser, deletion and permission code — the class where independent review is worth most    :dispatch:review:
 :PROPERTIES:
@@ -4253,6 +4259,8 @@ considers normal.
 =--cleanup-failed=, the other suggestion in the same message, is documented as
 "Record the orphan close tx for dispatches whose worker died" — also wrong for
 this state, and it is a WRITE.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 6). The real loop is implementer→reviewer→(fix→reviewer)→merge→close; `dispatch-close --status done` on an implementer demands a merge-sha that must be a merge commit, so a successful round handed to review is recorded as `--status aborted --worker-commit <sha>`. A fast-forward merge cannot close a dispatch at all. A dispatch that fails to spawn leaves the task in_progress (manual `task update --state todo`). `task update --state done` prints `tx_id: ""`. Expected statuses: reported, handed_to_review, merged, superseded, aborted, failed; --merge-sha accepting any commit containing the worker commit; failed spawn rolls the task back; every mutating command prints a one-line human result. Filed alongside TASK-XQCNA..TASK-38Z7K (tag vscode-orsl-letter).
 
 * BACKLOG TASK-TRAEM derive-observation-surface.py can green its own self-check after silently dropping valid Rust, and its cfg(test) exclusion is module-only
 :PROPERTIES:
@@ -4805,3 +4813,165 @@ Per-node comment threads (reply, edit, delete) and a regenerate button wherever 
 ** Acceptance
 - [ ] comment on a task from the UI, edit it, delete it, regenerate the task
 - [ ] no UI code path reads tasks/<state>.org / decisions.org / glossary.org
+
+* BACKLOG TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XQCNA
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 1.
+Four failures looked identical on the surface (`[pid-gone] [run-gone] [unreported]`, empty `-last.txt`) while the truth sat in the session jsonl or daemon log: fd exhaustion (`failed to acquire worker run` 500 hid `Too many open files`), codex quota exhausted, hermes transport crash after the review was written, stall kill while waiting on tests. The manager re-dispatched blind twice and reads an empty report as an approval.
+** Expected
+- Every terminal state has a classified `exit` reason: reported, provider_quota (with retry-after), provider_auth, transport_error, stall_killed, spawn_failed(<os error>), worktree_setup_failed, operator_aborted.
+- `dispatch-status` prints the reason and the evidence path (session jsonl) under the flags line.
+- API 500s carry the inner error verbatim: `{"error":"failed to acquire worker run","cause":"spawn: Too many open files (os error 24)"}` and name the next command (`orgasmic daemon status`).
+** Acceptance
+- A fixture per reason class; dispatch-status output shows `exit:` + `evidence:` lines; the 500 body includes `cause`.
+
+* BACKLOG TASK-0Y363 Daemon leaked one session-log fd per dispatch and died at macOS default 256; fix shipped in 8bd8287, health-starvation leftover    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-0Y363
+:PRIORITY: P0
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 2. Measured on the live daemon: 253 open fds / 256 soft limit, 223 session .jsonl handles held, 3 live runs. Root cause: writer.rs `session_handles` only evicted on LeaseSessions/shutdown.
+** Shipped (commit 8bd8287)
+- writer drops the handle on the `release` lifecycle append; `WriterStatus.open_session_handles` gauge + regression test.
+- daemon raises RLIMIT_NOFILE at start (65536/10240/4096 fallback), logged at boot.
+- `/status` carries `open_fds`/`fd_limit`; `orgasmic daemon status` prints `fds: N/limit (writer session handles: H)`.
+** Leftover (d)
+The exhausted daemon could not accept the health probe socket, so the supervisor logged `incumbent is not healthy … Refusing to start a competing daemon` and the sick daemon stayed up. Either answer health before the spawn path can starve it, or treat a held lock whose owner cannot answer health as dead.
+
+* BACKLOG TASK-ZMYEN Hermes stdio: unknown event type must log-and-skip, protocol_end_without_finalize reassembles text_chunks, ORGASMIC_REPORT_PATH is the report    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-ZMYEN
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 3. Two hermes-stdio reviewers finished the analysis, then died with `driver transport unavailable: hermes event missing type`; the text was in the jsonl as text_chunk events, the verdict was not. Manager reassembled by hand and re-dispatched for the verdict.
+Code: crates/orgasmic-daemon/src/drivers/hermes.rs — `hermes event missing type` and `unknown hermes event type` are fatal today.
+** Expected
+- (a) unknown/missing event type → warn + skip, never fatal.
+- (b) protocol_end_without_finalize → reassemble text_chunk stream into `-last.txt` with a `PARTIAL` header.
+- (c) export `ORGASMIC_REPORT_PATH` into the worker env; whatever is at that path when the run ends IS the report (beats the transport-carried final message).
+** Acceptance
+- Fixture: hermes stream with an unknown event mid-run still yields the report; fixture: stream cut before finalize yields a PARTIAL -last.txt; env var visible in a dispatched worker.
+** Progress
+(a) shipped in 5033cce: HermesAdapter::parse_event warns and skips unknown/untyped events (test hermes_unknown_and_untyped_events_are_skipped_not_fatal). Open: (b) partial -last.txt reassembly on protocol_end_without_finalize, (c) ORGASMIC_REPORT_PATH.
+
+* BACKLOG TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XC9N4
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 5. `--mode tmux --harness codex` accepted, dry-run said `mode: tmux`, run came back DRIVER=stdio WORKER=implementer-codex-chat-stdio. `--mode stdio --harness opencode` is refused (unsupported pair) yet the working `--mode tmux --harness custom --harness-arg opencode …` is substituted to driver=stdio harness=opencode. `--mode ws --harness hermes` is an accepted simulated stub (runs sh, reports clean). `--model` is unvalidated passthrough.
+Code: api.rs canonicalize_dispatch_worker (~4998).
+** Expected
+- Resolve the driver before accepting; print the resolved driver/harness/model; refuse or warn on stderr when it differs from the request.
+- `--dry-run` prints the resolution (what will launch), including the substitution.
+- `--harness opencode` accepted with the mode it actually runs under.
+- Simulated drivers out of the normal catalog, or gated behind `--allow-simulated`.
+- Empty model catalog says: catalog unavailable, --model passed through unvalidated.
+** Acceptance
+- dry-run output equals the tx-recorded driver/harness/model for every catalog pair; simulated dispatch without the flag is refused.
+** Progress
+Partial in 5033cce: --dry-run prints `resolves: driver=… harness=…` from the shared addressing::canonical_chat_address when the canonical chat runtime re-addresses the request. Open: refuse/warn at accept time, --harness opencode under its real mode, simulated drivers gated, empty-catalog message.
+
+* BACKLOG TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-TWCP9
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 7. The daemon writes `.orgasmic/tx/*.org` and `.orgasmic/tasks/*.org` into the main checkout every few minutes. Costs: `git checkout <branch>` refused until unauthored churn is committed; every worker branch carries ledger churn that must be stripped at merge; a reviewer cannot tell its writes from the daemon's.
+** Expected
+- Live ledger not in the tracked tree being worked on (sibling directory, dedicated branch, or its own worktree); `orgasmic ledger commit` as an explicit atomic action.
+- Worker worktrees do not contain the ledger (sparse checkout or .git/info/exclude).
+** Note
+This is a decision task (grill first). Overlaps the dec_E01MC node-kernel redesign (TASK-AP971 chain) — the per-node dir layout should be decided with ledger placement in mind.
+
+* BACKLOG TASK-SJD10 Per-run evidence directory outside the worktree (ORGASMIC_EVIDENCE_DIR), retained past close, referenced from dispatch-status and handed to --for reviewers    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-SJD10
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 8. Briefs ask for durable logs; `.orgasmic/tmp` is gitignored so workers write inside the worktree; the manager prunes the worktree after close; the reviewer on TASK-GVQM0 found none of five mutation logs. Only the report is copied out.
+** Expected
+- `~/.orgasmic/runs/<run-id>/evidence/` exported as `ORGASMIC_EVIDENCE_DIR`, retained past close, shown in dispatch-status; a reviewer dispatched `--for <run>` gets the implementer's path in its env.
+Related: TASK-CQM2X (run inventory / retention).
+
+* BACKLOG TASK-RSPG0 Worktree provisioning ignores submodules: hydrate scoped submodules with --reference, avoid per-worker LFS fetch, route or refuse submodule-scoped tasks    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-RSPG0
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 10. Fresh worktrees have un-hydrated submodules → 62 spurious test failures; five parallel workers serialised behind one git-lfs filter-process on an unneeded LFS docs submodule (one died in setup); a submodule inside a worktree is read-only/uninitialised so a worker commit there dies with the worktree — forced the operator to split the server into its own project (dec_00M3W).
+** Expected
+- `project init` records the submodule graph; dispatch hydrates only the submodules a task's write_scope touches, once per worktree, via `git submodule update --reference <main checkout>`; never LFS over the network per worker.
+- A task whose write_scope is inside a submodule is routed to that submodule's project or refused with the reason.
+
+* BACKLOG TASK-40ZMJ Provider/quota health invisible until a worker dies: manager drivers --health probe + dispatch pre-flight refusing provider_quota/provider_auth    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-40ZMJ
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 11. Codex locked out five days; glm-5.2/5.3 share one z.ai quota so a 429 on one kills the other; `claude` harness reports "no catalog available" which reads as cannot-run but means cannot-enumerate.
+** Expected
+- `orgasmic manager drivers --health`: per configured provider auth ok / quota ok / retry-after.
+- dispatch pre-flight refuses with `provider_quota: codex locked until …` instead of spawning a worker that dies in two seconds.
+- Empty catalog message: catalog unavailable; --model passed through unvalidated.
+Related: item 1 (reason classification) supplies the provider_quota class.
+
+* BACKLOG TASK-EXN3N Read-only reviewer is a request, not a guarantee: pin cwd to the worktree and report main_checkout_dirty in dispatch-status    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-EXN3N
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 13. A reviewer mutated the main checkout (ran an in-place script after cd'ing there to read implementer logs). Found only by `git status` on main; every reviewer brief now carries a STAY OUT paragraph.
+** Expected
+- Reviewer run pinned to its worktree (cwd fixed; main checkout not writable from the worker process — sandbox profile), or at minimum a post-run `git status` diff on main reported in dispatch-status as `main_checkout_dirty: <files>`.
+Related: orphaned-acp-reverts-tx memory (same class: workers touching main).
+
+* BACKLOG TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-CS2TM
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 14. Each is small; they compound because an agent cannot remember across sessions.
+- `orgasmic task list` does not exist (it is `tasks list`).
+- `task create --body` returns 500 "bad substitution" on `***` sub-headings or nested `**`.
+- `node prop set --kind` has no `config` kind; `--kind project` silently writes into project.org.
+- `--brief` must be absolute; relative fails late.
+- two write surfaces for one thing: `task update` vs `node body set --section`.
+- `dispatch-status` is line text, no `--json`.
+** Expected
+One noun→verb family with `list` under each; `--json` on every read; bodies accepted as the org the files hold; `--kind` inferred from the node id; relative paths resolved against cwd.
+
+* BACKLOG TASK-7NPAB Task-level exclusivity for dispatch: --exclusive / resources tag so the daemon queues a quiet-host task behind live runs    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-7NPAB
+:PRIORITY: P3
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 15. Two measurement tasks each carried a refuse-while-sibling-live rule; dispatched together, the second always lost. Nothing lets a task say it needs a quiet host.
+** Expected
+`--exclusive` on dispatch (or a `resources:` property on the task) so the daemon queues it behind live runs instead of the worker discovering the conflict and aborting.
+

@@ -33003,3 +33003,34 @@ Migrator: orgasmic project migrate — one-shot, idempotent, refuses on a dirty 
 Prototype (this ticket's deliverable): the migrator run against this repo's real .orgasmic on a throwaway branch — see the worklog.
 Prototype (2026-08-22, branch ap971-prototype 41a1faf, scripts/ap971-migrate-proto.py): converted this repo's real .orgasmic — 699 tasks + 114 decisions + 60 terms = 873 nodes, 1,746 files, 0.24s, 0 anomalies (no missing ids, no duplicate ids, no unsafe dir names); byte-for-byte round trip asserted (heading blocks reassemble every source file). Layout cost: 8.4MB on disk for 3.3MB of content; cold read of all nodes 75ms vs 3ms for the six legacy files. node.org = header + heading block verbatim (state stays the TODO keyword); journal.org = header only. The kernel's real_data test parses every migrated node.
 
+* DONE TASK-547MT dispatch-wait 503 claim_store_unreadable because ~/.orgasmic/state/recovery-claims did not exist; a lost wait must say worker state unknown :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-547MT
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 9. `dispatch-wait` returned 503 `claim_store_unreadable`; cause: `~/.orgasmic/state/recovery-claims/` missing. mkdir -p + chmod made it intermittent. Every dead wait had to be re-checked with dispatch-status.
+Code: crates/orgasmic-daemon/src/recovery_claim.rs read path.
+** Expected
+- The daemon creates every directory it reads (missing claim dir == empty store, created on first use).
+- A wait that loses its connection prints `wait lost — worker state unknown, re-run dispatch-status` and exits non-zero distinct from run-ended.
+** Acceptance
+- Test: claim store read on a fresh HOME returns empty, not 503; CLI message on connection loss.
+** Resolution
+Root cause of the 503: the claim store opens `~/.orgasmic/state` and `recovery-claims` via openat; with the daemon at the 256-fd ceiling that open fails EMFILE, which classifies as Unobserved → claim_store_unreadable (an absent recovery-claims dir is already read as an empty store, and Home::ensure creates state/ at boot). Fixed by the fd-leak fix 8bd8287. (b) shipped in 5033cce: a failed dispatch-wait request prints "dispatch-wait lost … worker state unknown, not ended; re-run dispatch-status".
+
+* DONE TASK-38Z7K ws driver reports pid=0 so [pid-gone] is always set on a live ws run; omit the flag when the driver cannot report a pid :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-38Z7K
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 16. The ws driver reports pid=0, so dispatch-status shows `[pid-gone]` on every live ws run; the manager's monitor fired false DONEs until it keyed on [reported]/[run-gone] only.
+** Expected
+A driver that cannot report a pid omits the flag rather than setting it.
+** Acceptance
+Fixture: live ws run → no `[pid-gone]`; stdio run with dead pid → flag present.
+** Resolution
+5033cce: dispatch_health treats pid 0 as unknown; pid_flag() prints nothing when no pid is known, [pid-alive]/[pid-gone] only with a real pid. Covered by test unknown_pid_prints_no_flag_and_zero_counts_as_unknown.
