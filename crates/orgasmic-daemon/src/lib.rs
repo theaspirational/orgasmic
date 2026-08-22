@@ -882,6 +882,74 @@ async fn bind_listener_with_retry(addr: SocketAddr) -> std::io::Result<TcpListen
     }
 }
 
+/// Writer session handles, supervisor pipes and request sockets all cost
+/// descriptors; macOS's default soft cap of 256 runs out after a busy week of
+/// dispatches (vscode-orsl letter #2). Lift the soft limit as far as the
+/// kernel lets us. Returns (soft, hard) after the attempt.
+#[cfg(unix)]
+pub fn raise_fd_limit() -> Option<(u64, u64)> {
+    // SAFETY: getrlimit/setrlimit only read/write the caller-owned struct.
+    unsafe {
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            return None;
+        }
+        // macOS reports an infinite hard limit but refuses anything above
+        // kern.maxfilesperproc, so step down until the kernel accepts.
+        for target in [65_536u64, 10_240, 4_096] {
+            let target = target.min(lim.rlim_max);
+            if target <= lim.rlim_cur {
+                break;
+            }
+            let mut next = lim;
+            next.rlim_cur = target;
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &next) == 0 {
+                lim = next;
+                break;
+            }
+        }
+        Some((lim.rlim_cur, lim.rlim_max))
+    }
+}
+
+#[cfg(not(unix))]
+pub fn raise_fd_limit() -> Option<(u64, u64)> {
+    None
+}
+
+/// (open descriptors, soft limit) for this process — the headroom `daemon
+/// status` prints so an fd leak is visible before `Too many open files`.
+pub fn fd_usage() -> (Option<usize>, Option<u64>) {
+    let open = std::fs::read_dir("/dev/fd").ok().map(|d| d.count());
+    #[cfg(unix)]
+    let limit = {
+        // SAFETY: getrlimit only writes the caller-owned struct.
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        (unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } == 0).then_some(lim.rlim_cur)
+    };
+    #[cfg(not(unix))]
+    let limit = None;
+    (open, limit)
+}
+
+#[cfg(all(test, unix))]
+mod fd_limit_tests {
+    #[test]
+    fn raise_fd_limit_lifts_soft_limit_and_usage_reports_headroom() {
+        let (soft, hard) = super::raise_fd_limit().expect("rlimit readable");
+        assert!(soft >= 4_096 || soft == hard, "soft {soft} hard {hard}");
+        let (open, limit) = super::fd_usage();
+        assert!(open.unwrap() > 0);
+        assert_eq!(limit, Some(soft));
+    }
+}
+
 pub struct Daemon;
 
 impl Daemon {
@@ -894,6 +962,7 @@ impl Daemon {
         // pre-bind phase so the CLI can distinguish progress from death.
         let mut boot_progress = boot_state::BootProgress::start(&home, "loading config")?;
         home.ensure().context("ensure orgasmic home")?;
+        let fd_limit = raise_fd_limit();
         let mut cfg = DaemonConfig::load(&home)?;
         if let Some(bind) = opts.bind_override {
             cfg = cfg.with_bind(bind);
@@ -961,6 +1030,8 @@ impl Daemon {
             address = %prebind_addr,
             boot_id = %boot.boot_id,
             home = %home.root.display(),
+            fd_soft_limit = fd_limit.map(|(soft, _)| soft),
+            fd_hard_limit = fd_limit.map(|(_, hard)| hard),
             "orgasmic daemon starting pre-bind boot work"
         );
 

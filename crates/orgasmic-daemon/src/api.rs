@@ -8469,12 +8469,16 @@ pub struct StatusResponse {
     pub rebuilt_at: Option<String>,
     pub writer: crate::writer::WriterStatus,
     pub index_refresh: crate::index::IndexRefreshStatus,
+    /// Descriptor headroom: an fd leak shows here long before EMFILE.
+    pub open_fds: Option<usize>,
+    pub fd_limit: Option<u64>,
 }
 
 async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let snap: IndexSnapshot = state.index.snapshot().await;
     let writer = state.writer.status();
     let index_refresh = state.index.refresh_status().await;
+    let (open_fds, fd_limit) = crate::fd_usage();
     let unloaded_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Unloaded);
     let loading_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Loading);
     let ready_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Ready);
@@ -8529,6 +8533,8 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
         writer,
         index_refresh,
+        open_fds,
+        fd_limit,
     })
 }
 

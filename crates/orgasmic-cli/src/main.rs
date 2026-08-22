@@ -2709,6 +2709,18 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
             print_daemon_persistence(home);
             println!("  pid:     {}", status.pid);
             println!("  boot_id: {}", status.boot_id);
+            if let Some(open) = status.open_fds {
+                let limit = status
+                    .fd_limit
+                    .map(|l| l.to_string())
+                    .unwrap_or_else(|| "?".into());
+                let handles = status
+                    .writer
+                    .as_ref()
+                    .map(|w| w.open_session_handles)
+                    .unwrap_or(0);
+                println!("  fds:     {open}/{limit} (writer session handles: {handles})");
+            }
         }
         daemon_lifecycle::LocalDaemonState::Starting(starting) => {
             match (&starting.phase, starting.started_at) {
