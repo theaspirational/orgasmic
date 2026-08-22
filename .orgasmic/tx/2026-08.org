@@ -37776,3 +37776,73 @@
 :REASON:       edited task node TASK-AP971.11
 :NODE_ID:      TASK-AP971.11
 :END:
+
+* TX 2026-08-22 Sat 13:09:45 task.state_transitioned TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6257
+:TIME:         [2026-08-22 Sat 13:09:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-AP971.5 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-22 Sat 14:01:58 task.edited TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6258
+:TIME:         [2026-08-22 Sat 14:01:58]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-AP971.5
+:NODE_ID:      TASK-AP971.5
+:END:
+
+* TX 2026-08-22 Sat 14:01:58 comment TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6259
+:TIME:         [2026-08-22 Sat 14:01:58]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:REASON:       Resolved: journal iff about exactly one dir-backed node, else tx/; singletons stay tx/; created=journal#1, deleted=tx/ tombstone; dispatch close stays one tx append + N rewrites (no journal flip, derived); one shared id sequence, cold scan covers journals
+:END:
+
+* TX 2026-08-22 Sat 14:01:59 task.state_transitioned TASK-AP971.5
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6260
+:TIME:         [2026-08-22 Sat 14:01:59]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.5 to done
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:01:59 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6261
+:TIME:         [2026-08-22 Sat 14:01:59]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
