@@ -4557,6 +4557,8 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 - ID scheme (TASK-AP971.3) — prefixes stay verbatim, new types declare theirs in the descriptor; dir name = id, dotted subtasks flat; mint keeps the 5-char stem and mkdir is the collision check.
 - Derived read views (TASK-AP971.8) — .orgasmic/views/{board,glossary,decisions}.org in today's file shapes, written by the daemon after each affected refresh (plus orgasmic views build), gitignored; context-packs/router/skills/OrgView repoint by path.
 - Incremental refresh (TASK-AP971.7) — per-node reload from classified watcher paths; writer applies its own write to the snapshot before the HTTP response returns (required-refresh wait gone); daemon dispatch-wait folds the coherent snapshot, CLI keeps the disk fold; full rescan only on boot/add/reindex/unclassifiable.
+- Regeneration (TASK-AP971.10) — regenerate recompiles node content + open comments through the descriptor's :REGENERATE_PROMPT: spec (prompt-studio, no per-type Rust); task regenerate rewrites the task and never re-dispatches; the artifact consume rule is universal; runner is the artifactor path as node.regenerate:<id>; no spec → no regenerate.
+- Migration scope (TASK-AP971.9) — done/cancelled migrate too (one read path); activity reads old tx/ + journals forever; #+orgasmic_version: 2 is a label only — no v1 compatibility layer (single user); migrator = orgasmic project migrate, one-shot, idempotent, --dry-run, deletes old state files. Prototype pending.
 ** Not yet specified
 - UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
 - CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary
@@ -4566,34 +4568,6 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 - Folding wayfinder itself into orgasmic as a native agent (owner intent, separate effort)
 ** Out of scope
 - Implementing the refactor itself — this map ends at the implementation-ready task chain
-
-* BACKLOG TASK-AP971.6 Kernel extraction boundary    :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.6
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.2
-:END:
-
-** Question
-Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
-
-* BACKLOG TASK-AP971.9 Migration plan    :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.9
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
-:END:
-
-** Question
-Scope a CHEAP cut-over migration, not a full backfill (owner decision 2026-08-14): migrate only the live main things — task headings/bodies into per-task dirs — and from cutover day simply write new things to the new schema. Do NOT move dispatch-records/ content; do NOT backfill historical tx entries into journals; tx/ history stays as a read-only archive.
-Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze as archive files — and if frozen, does the indexer still parse them read-only so DEPENDS_ON/IMPLEMENTS/graph lints keep resolving old task ids (else the dangling-edge lint goes red or blind)? (b) does the activity projection read both sources (old tx + new journals) forever, or only post-cutover journals? (c) what marks the cutover (version stamp in project.org?). Prototype the migrator for whatever subset survives this scoping, on real .orgasmic data.
-
-* BACKLOG TASK-AP971.10 Regeneration generalization    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.10
-:DEPENDS_ON: TASK-AP971.2
-:END:
-
-** Question
-Per-type regenerate prompts and the universal consume-on-regenerate rule. What does regenerate even mean for a task or a decision (vs a glossary term or artifact)?
 
 * BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
 :PROPERTIES:

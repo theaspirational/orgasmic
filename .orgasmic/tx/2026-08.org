@@ -38066,3 +38066,128 @@
 :REASON:       edited task node TASK-AP971
 :NODE_ID:      TASK-AP971
 :END:
+
+* TX 2026-08-22 Sat 14:22:28 task.edited TASK-AP971.10
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6278
+:TIME:         [2026-08-22 Sat 14:22:28]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.10
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.10
+:NODE_ID:      TASK-AP971.10
+:END:
+
+* TX 2026-08-22 Sat 14:22:28 comment TASK-AP971.10
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6279
+:TIME:         [2026-08-22 Sat 14:22:28]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.10
+:REASON:       Resolved: regenerate = recompile node+open comments through the descriptor's spec; task regenerate rewrites the task, never re-dispatches; consume rule unchanged; node.regenerate:<id> runner
+:END:
+
+* TX 2026-08-22 Sat 14:22:29 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6280
+:TIME:         [2026-08-22 Sat 14:22:29]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
+
+* TX 2026-08-22 Sat 14:22:29 task.state_transitioned TASK-AP971.10
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6281
+:TIME:         [2026-08-22 Sat 14:22:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.10
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-AP971.10 to done
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-08-22 Sat 14:22:29 task.edited TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6282
+:TIME:         [2026-08-22 Sat 14:22:29]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971.9
+:NODE_ID:      TASK-AP971.9
+:END:
+
+* TX 2026-08-22 Sat 14:22:30 comment TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6283
+:TIME:         [2026-08-22 Sat 14:22:30]
+:TYPE:         comment
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:REASON:       Scoped: migrate done/cancelled too; activity reads old tx + journals forever; version stamp is a label only, no v1 compat (single user); migrator = one-shot idempotent project migrate with --dry-run; prototype next
+:END:
+
+* TX 2026-08-22 Sat 14:22:30 task.state_transitioned TASK-AP971.9
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6284
+:TIME:         [2026-08-22 Sat 14:22:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.9
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-AP971.9 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-22 Sat 14:22:30 task.state_transitioned TASK-AP971.6
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6285
+:TIME:         [2026-08-22 Sat 14:22:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971.6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-AP971.6 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-08-22 Sat 14:22:30 task.edited TASK-AP971
+:PROPERTIES:
+:TX_ID:        tx-20260822-orgasmic-6286
+:TIME:         [2026-08-22 Sat 14:22:30]
+:TYPE:         task.edited
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AP971
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AP971
+:NODE_ID:      TASK-AP971
+:END:
