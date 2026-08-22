@@ -48,8 +48,8 @@ use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::addressing::{
-    compatibility_worker_id, dispatch_chat_provider, resolve_address_governance,
-    validate_address_harness_args, validate_supported_pair,
+    compatibility_worker_id, resolve_address_governance, validate_address_harness_args,
+    validate_supported_pair,
 };
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
@@ -4996,19 +4996,15 @@ fn canonical_dispatch_runtime_requested(runtime: Option<&str>) -> Result<bool, A
 }
 
 fn canonicalize_dispatch_worker(mut worker: StageWorker) -> StageWorker {
-    let Some(provider) =
-        dispatch_chat_provider(&worker.driver, &worker.harness, &worker.harness_args)
-    else {
+    let Some((driver, harness)) = crate::addressing::canonical_chat_address(
+        &worker.driver,
+        &worker.harness,
+        &worker.harness_args,
+    ) else {
         return worker;
     };
-    worker.driver = "stdio".to_string();
-    worker.harness = match provider {
-        "codex" => "codex-chat",
-        "claude" => "claude-sdk",
-        "opencode" => "opencode",
-        _ => unreachable!("dispatch_chat_provider returned an unknown provider"),
-    }
-    .to_string();
+    worker.driver = driver.to_string();
+    worker.harness = harness.to_string();
     worker.harness_args.clear();
     worker.id = compatibility_worker_id(worker.kind, &worker.driver, &worker.harness);
     worker
