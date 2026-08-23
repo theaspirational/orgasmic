@@ -528,6 +528,36 @@ edges =bf8efe3=). RunDock mobile: stale 'run no longer live' after a dropped Web
 (useResource now refetches on resync/foreground, =ff1afcf=) and tap-jump + overlap
 (dockHeightFromDrag + clipping, =9a2c154=).
 
+SESSION 2026-08-23 — VSCODE-ORSL LETTER EMERGENCY (operator said GO). The manager agent driving
+vscode-orsl wrote a 16-item letter (operator-forwarded; copy in this session's uploads, items
+recorded on each task). Triage: 13 new tasks filed (tag =vscode-orsl-letter=: TASK-XQCNA reason
+classification, TASK-0Y363 fd leak, TASK-ZMYEN hermes report loss, TASK-XC9N4 dispatch
+substitution, TASK-TWCP9 ledger-out-of-tree DECISION, TASK-SJD10 evidence dir, TASK-547MT
+claim_store_unreadable, TASK-RSPG0 submodules, TASK-40ZMJ provider health, TASK-EXN3N read-only
+reviewer, TASK-CS2TM CLI rough edges, TASK-7NPAB exclusivity, TASK-38Z7K pid-gone on ws), 4 existing
+tasks got a =Letter evidence= section (SJA9W item 6, 8VBXR item 4, CQM2X item 12, C7NVH item 5 model
+passthrough).
+Shipped in source (local main, not on origin):
+- =8bd8287= fd leak (letter #2, the outage-maker: 253/256 fds, 223 session handles held): writer
+  drops the session handle on the =release= lifecycle append; RLIMIT_NOFILE raised at daemon start
+  (65536→10240→4096 fallback); =/status= carries =open_fds=/=fd_limit=; =orgasmic daemon status=
+  prints =fds: N/limit (writer session handles: H)=. TASK-0Y363 stays open only for (d): the
+  starved daemon could not answer the health probe and the supervisor refused to replace it.
+- =5033cce= letter #3a/#5/#9b/#16: hermes unknown/untyped events warn+skip (was fatal, lost two
+  finished reviews); =--dry-run= prints =resolves: driver=… harness=…= from the new shared
+  =addressing::canonical_chat_address=; pid 0 (ws) is unknown → no =[pid-gone]=; =dispatch-wait=
+  request failure says worker state unknown, not ended. TASK-547MT and TASK-38Z7K DONE;
+  ZMYEN/XC9N4 carry a =Progress= section with what remains.
+- =6a9b765= the .orgasmic filing above.
+RUNTIME REINSTALL: bundle =0.0.22-dev.20260823= built+codesigned from =5033cce= (sha
+e59bfc5f…5675, probe string =writer session handles= 0→1, control =worktree-prune= 4→4). Trap
+learned: codesign fails =errSecInternalComponent= when the login keychain is locked to the
+session — operator runs =security unlock-keychain ~/Library/Keychains/login.keychain-db=.
+A detached watcher (=scratchpad/rt/reinstall-when-idle.sh=, own session, PPID 1) waits for
+ZERO live runs (vscode-orsl had 2 live) and then does bootout → install.sh → bootstrap, logging
+to =scratchpad/rt/reinstall.log=; it exits without acting if =install.json= already says
+0.0.22-dev.20260823, and gives up after 6h.
+
 ** Next likely actions
 *DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
 
@@ -557,6 +587,14 @@ edges =bf8efe3=). RunDock mobile: stale 'run no longer live' after a dropped Web
 DONE SINCE LAST HANDOFF (do not re-propose): TASK-AP971.2/.3/.5/.6/.7/.8/.9/.10/.11 (map
 complete); RunDock mobile fixes (ui/, local main).
 
+0. *VSCODE-ORSL LETTER FOLLOW-UPS* (tag =vscode-orsl-letter=, filed 2026-08-23). Confirm the
+   runtime swap landed (=orgasmic daemon status= shows an =fds:= line; =install.json= version
+   0.0.22-dev.20260823) — if not, the watcher timed out: rerun it or do the memory recipe by hand
+   in a zero-live window. Then the cheapest high-value items: TASK-XQCNA (reason + evidence path on
+   dispatch-status; 500s carry =cause=), TASK-ZMYEN (b)(c) (partial -last.txt, ORGASMIC_REPORT_PATH),
+   TASK-XC9N4 remainder (refuse/warn at accept, simulated gating). TASK-TWCP9 is a DECISION — grill
+   before anything; fold it into the dec_E01MC per-node-dir layout thinking.
+
 ** In flight
 NO DISPATCH IS LIVE (verified 2026-08-22: =orgasmic manager dispatch-status= empty; =git
 worktree list= shows main plus the throwaway =ap971-prototype= worktree in the session
@@ -577,6 +615,10 @@ dispatch reports or dies. USE IT. NEVER key on =[pid-gone]=.
 DURABLE PRACTICES (unchanged): brief forbids reading =verify/*/injection.patch= bodies; file
 =reviewer.finding= tx the moment findings exist; re-measure the daemon suite on a calm host,
 trust the syspolicyd RATE; SEARCH THE BACKLOG BEFORE FILING (125 open items now).
+
+2026-08-23: the runtime-reinstall watcher described in Done so far may still be waiting on a
+zero-live window (vscode-orsl's manager dispatches continuously). It is the only thing in flight
+from this session; no orgasmic dispatch was made.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
