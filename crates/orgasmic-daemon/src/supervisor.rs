@@ -5239,30 +5239,33 @@ fn open_turn_status_row(raw: &str) -> bool {
 /// the expensive direction — a turn frozen on it is read as a wedge and a
 /// healthy worker dies at the stall deadline, which is TASK-JQ8AV verbatim.
 ///
-/// So the six claude frames below come out of the INSTALLED harness binary.
+/// So the claude frames below come out of the INSTALLED harness binary.
 /// Re-derive them with:
 ///
 /// ```text
 /// # `command -v claude` if no shell function shadows it.
 /// bin=$(readlink -f ~/.local/bin/claude)
-/// LC_ALL=C grep -a -o \
-///   'TERM==="xterm-ghostty")return\[[^]]*\];return\[[^]]*\]' "$bin"
+/// LC_ALL=C grep -a -o '\["\\xB7","\\u2722",[^]]*\]' "$bin"
 /// ```
 ///
-/// Against Claude Code 2.1.220 (`~/.local/share/claude/versions/2.1.220`, a
-/// 245 MiB bundled-JS executable; the match is at byte offset 238701938) that
-/// prints one line, byte for byte:
+/// Against Claude Code 2.1.241 (`~/.local/share/claude/versions/2.1.241`,
+/// a 310 MiB bundled-JS executable) that prints three array literals, byte
+/// for byte:
 ///
 /// ```text
-/// TERM==="xterm-ghostty")return["\xB7","\u2722","\u2733","\u2736","\u273B","\u273B"];
-///                        return["\xB7","\u2722","\u2733","\u2736","\u273B","\u273D"]
+/// ["\xB7","\u2722","\u2733","\u2736","\u273B","\u273B"]
+/// ["\xB7","\u2722","\u2733","\u2736","\u273B","\u273D"]
+/// ["\xB7","\u2722","*","\u2736","\u273B","\u273D"]
 /// ```
 ///
-/// (wrapped here; the binary emits it unwrapped). The escapes are the
-/// binary's own — it ships the frames as JS source text, never as UTF-8 — so
-/// a grep for the literal glyph finds nothing. Decoded, both sequences open
-/// `· ✢ ✳ ✶ ✻` and close on `✻` under ghostty, `✽` everywhere else: six
-/// frames, two sequences, differing only in the last slot.
+/// (2.1.220–2.1.238 printed only the first two, inline in
+/// `TERM==="xterm-ghostty")return[…];return[…]`; 2.1.241 hoisted them into
+/// `D9l=[…],M9l=[…],b0h=[…]` and added the third, ASCII set, which is why the
+/// needle is the array prefix and not the surrounding code.) The escapes are
+/// the binary's own — it ships the frames as JS source text, never as UTF-8
+/// — so a grep for the literal glyph finds nothing. Decoded, the sequences
+/// open `· ✢ ✳ ✶ ✻` and close on `✻` under ghostty, `✽` everywhere else,
+/// and the ASCII set swaps `✳` for a bare `*`.
 /// `status_spinner_glyphs_cover_the_installed_claude_frame_set` runs
 /// that same extraction as a test and fails when this table stops being a
 /// superset of it, so the next drift in claude's frame set is loud instead of
@@ -5277,6 +5280,7 @@ const STATUS_SPINNER_GLYPHS: &[char] = &[
     '\u{2736}', // ✶ claude frame 3
     '\u{273B}', // ✻ claude frame 4 (and frame 5 under ghostty)
     '\u{273D}', // ✽ claude frame 5, also measured, claude live pane
+    '*',        // claude ASCII frame 2 (2.1.241 third sequence, in place of ✳)
     '\u{25E6}', // ◦ measured, codex live pane
 ];
 
@@ -6494,8 +6498,15 @@ mod tests {
         &[
             '\u{00B7}', '\u{2722}', '\u{2733}', '\u{2736}', '\u{273B}', '\u{273D}',
         ],
+        // 2.1.241's ASCII set; older installs ship only the two above.
+        &[
+            '\u{00B7}', '\u{2722}', '*', '\u{2736}', '\u{273B}', '\u{273D}',
+        ],
     ];
-    const CLAUDE_FRAME_NEEDLE: &str = "TERM===\"xterm-ghostty\")return[";
+    /// The array-literal prefix every claude frame sequence opens with. The
+    /// code around the arrays changed shape in 2.1.241 (inline `return[…]` →
+    /// hoisted `X=[…]`); the literals did not.
+    const CLAUDE_FRAME_NEEDLE: &str = "[\"\\xB7\",\"\\u2722\",";
     const SMALLEST_PLAUSIBLE_CLAUDE_BINARY: u64 = 1 << 20;
 
     #[cfg(unix)]
@@ -13517,7 +13528,8 @@ mod tests {
 
     /// The byte offset of `needle` in `path`, streamed so a 245 MiB harness
     /// never lands in the test process's heap.
-    fn find_needle_offset(path: &Path, needle: &str) -> Option<u64> {
+    /// Every byte offset at which `needle` occurs in the file, in order.
+    fn find_needle_offsets(path: &Path, needle: &str) -> Option<Vec<u64>> {
         use std::io::Read;
 
         const CHUNK: usize = 1 << 20;
@@ -13526,17 +13538,20 @@ mod tests {
         let mut buf = vec![0u8; carry + CHUNK];
         let mut filled = 0usize;
         let mut base = 0u64;
+        let mut offsets = Vec::new();
         loop {
             let read = file.read(&mut buf[filled..]).ok()?;
             if read == 0 {
-                return None;
+                return Some(offsets);
             }
             filled += read;
-            if let Some(at) = buf[..filled]
-                .windows(needle.len())
-                .position(|window| window == needle.as_bytes())
-            {
-                return Some(base + at as u64);
+            // Hits inside the carried tail were already recorded by the
+            // previous pass; only scan windows that start past it.
+            let scan_from = if base == 0 { 0 } else { carry };
+            for (at, window) in buf[..filled].windows(needle.len()).enumerate() {
+                if at >= scan_from && window == needle.as_bytes() {
+                    offsets.push(base + at as u64);
+                }
             }
             if filled > carry {
                 let dropped = filled - carry;
@@ -13617,22 +13632,26 @@ mod tests {
     fn extract_claude_spinner_frames(path: &Path) -> Option<Vec<Vec<char>>> {
         use std::io::{Read, Seek, SeekFrom};
 
-        let offset = find_needle_offset(path, CLAUDE_FRAME_NEEDLE)?;
+        let offsets = find_needle_offsets(path, CLAUDE_FRAME_NEEDLE)?;
+        if offsets.is_empty() {
+            return None;
+        }
         let mut file = std::fs::File::open(path).ok()?;
-        file.seek(SeekFrom::Start(offset)).ok()?;
-        // Both arrays plus the `;return` between them fit in well under 512
-        // bytes; the source region is pure ASCII, so lossy decoding can only
-        // damage a boundary we do not read.
-        let mut raw = vec![0u8; 512];
-        let read = file.read(&mut raw).ok()?;
-        raw.truncate(read);
-        let window = String::from_utf8_lossy(&raw).into_owned();
-
-        // `CLAUDE_FRAME_NEEDLE` ends ON the opening bracket.
-        let arrays = window.get(CLAUDE_FRAME_NEEDLE.len() - 1..)?;
-        let (ghostty, used) = decode_js_char_array(arrays)?;
-        let (fallback, _) = decode_js_char_array(arrays.get(used..)?.strip_prefix(";return")?)?;
-        Some(vec![ghostty, fallback])
+        let mut sequences = Vec::new();
+        for offset in offsets {
+            file.seek(SeekFrom::Start(offset)).ok()?;
+            // One array fits in well under 256 bytes; the source region is
+            // pure ASCII, so lossy decoding can only damage a boundary we do
+            // not read.
+            let mut raw = vec![0u8; 256];
+            let read = file.read(&mut raw).ok()?;
+            raw.truncate(read);
+            let window = String::from_utf8_lossy(&raw).into_owned();
+            // `CLAUDE_FRAME_NEEDLE` starts ON the opening bracket.
+            let (frames, _) = decode_js_char_array(&window)?;
+            sequences.push(frames);
+        }
+        Some(sequences)
     }
 
     /// TASK-4CSMY.2, the completeness guard — and the deliverable that
@@ -13687,7 +13706,7 @@ mod tests {
                      longer where the recipe on STATUS_SPINNER_GLYPHS looks for them \
                      (needle {CLAUDE_FRAME_NEEDLE:?}). Either claude reshaped that code or the \
                      recipe rotted; re-derive by hand with\n  \
-                     LC_ALL=C grep -a -o 'TERM===\"xterm-ghostty\")return\\[[^]]*\\];return\\[[^]]*\\]' {}\n\
+                     LC_ALL=C grep -a -o '\\[\"\\\\xB7\",\"\\\\u2722\",[^]]*\\]' {}\n\
                      and update STATUS_SPINNER_GLYPHS, MEASURED_CLAUDE_SPINNER_FRAMES and \
                      CLAUDE_FRAME_NEEDLE together. Do NOT relax this to a skip: an unreadable \
                      harness is not a harness that agrees with us.",
@@ -13713,19 +13732,19 @@ mod tests {
 
             // Cheaper failure, same test: the classifier is safe, the
             // citation is not.
-            let cited = MEASURED_CLAUDE_SPINNER_FRAMES
-                .iter()
-                .map(|sequence| sequence.to_vec())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                extracted,
-                cited,
-                "{TEST}: STATUS_SPINNER_GLYPHS still covers every frame {} animates, so the \
-                 classifier is safe — but the in-tree transcription no longer matches the \
-                 binary. Re-cut MEASURED_CLAUDE_SPINNER_FRAMES and the quoted output on \
-                 STATUS_SPINNER_GLYPHS.",
-                binary.display(),
-            );
+            // Every install ships a subset of the cited sequences (2.1.241
+            // added the ASCII set; 2.1.238 and older have two), so the check
+            // is containment, not equality.
+            for sequence in &extracted {
+                assert!(
+                    MEASURED_CLAUDE_SPINNER_FRAMES.contains(&sequence.as_slice()),
+                    "{TEST}: STATUS_SPINNER_GLYPHS still covers every frame {} animates, so \
+                     the classifier is safe — but the in-tree transcription no longer matches \
+                     the binary ({sequence:?}). Re-cut MEASURED_CLAUDE_SPINNER_FRAMES and the \
+                     quoted output on STATUS_SPINNER_GLYPHS.",
+                    binary.display(),
+                );
+            }
         }
     }
 
