@@ -289,6 +289,30 @@ fn describe_property_loss(
     }
 }
 
+// orgasmic:task_ZKZBF.1
+/// The decided tx-metadata rule, enforced where every ledger writer already
+/// passes: open key vocabulary (any `[A-Z][A-Z0-9_]*` name is accepted),
+/// CLOSED case rule. Readers — `extra()` and friends — match keys byte for
+/// byte, so a miscased key would be recorded and never read; worse, it can
+/// hide a whole entry from its reader verb: a `manager.dispatch_started`
+/// staged with `:kind:` is invisible to `dispatch-close`, which asks for
+/// `KIND`. Same rule `parse_close_property` already enforces on the CLI side.
+///
+// orgasmic:task_ZKZBF.2
+/// Public since ZKZBF.2: this is the ONE definition of the drawer/ledger key
+/// shape — the daemon's `validate_drawer_property_key_case` and the CLI's
+/// close-property parse call it instead of carrying verbatim copies (a copy
+/// drifting is exactly how the drawer check and the ledger writer came to
+/// disagree on `FOO-BAR`).
+pub fn is_uppercase_snake_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    match chars.next() {
+        Some(ch) if ch.is_ascii_uppercase() => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+}
+
 fn validate_property_key(key: &str) -> Result<(), TxError> {
     let invalid = |detail: &str| TxError::InvalidValue {
         key: key.to_string(),
@@ -297,9 +321,6 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
     if key.is_empty() {
         return Err(invalid("key must not be empty"));
     }
-    if RESERVED_PROPERTY_KEYS.contains(&key) {
-        return Err(invalid("key is reserved by the property drawer syntax"));
-    }
     if let Some(ch) = key
         .chars()
         .find(|ch| *ch == ':' || ch.is_whitespace() || ch.is_control())
@@ -307,6 +328,19 @@ fn validate_property_key(key: &str) -> Result<(), TxError> {
         return Err(invalid(&format!(
             "key must not contain {:?}; a drawer key is `:KEY:` on one line",
             ch
+        )));
+    }
+    let canonical = key.to_ascii_uppercase();
+    if RESERVED_PROPERTY_KEYS.contains(&canonical.as_str()) {
+        return Err(invalid("key is reserved by the property drawer syntax"));
+    }
+    if !is_uppercase_snake_key(&canonical) {
+        return Err(invalid("key must match [A-Z][A-Z0-9_]*"));
+    }
+    if key != canonical {
+        return Err(invalid(&format!(
+            "key is not the canonical spelling; tx readers match keys byte for byte, so `:{key}:` \
+             would be recorded and never read — use `{canonical}`"
         )));
     }
     Ok(())
@@ -709,6 +743,39 @@ mod tests {
             entry.validate().unwrap_err(),
             TxError::InvalidValue { .. }
         ));
+    }
+
+    // orgasmic:task_ZKZBF.1 — the closed case rule on every tx writer.
+    #[test]
+    fn miscased_extra_key_is_rejected_naming_the_canonical_spelling() {
+        let mut entry = sample_entry();
+        entry.extra.push(("kind".into(), "implementer".into()));
+        let msg = entry.validate().unwrap_err().to_string();
+        assert!(msg.contains("kind"), "must quote the key passed: {msg}");
+        assert!(
+            msg.contains("KIND"),
+            "must name the canonical spelling: {msg}"
+        );
+        assert!(msg.contains("byte for byte"), "must state the rule: {msg}");
+    }
+
+    #[test]
+    fn a_key_outside_uppercase_snake_is_rejected_by_pattern() {
+        let mut entry = sample_entry();
+        entry.extra.push(("MY-KEY".into(), "v".into()));
+        let msg = entry.validate().unwrap_err().to_string();
+        assert!(
+            msg.contains("[A-Z][A-Z0-9_]*"),
+            "must name the pattern: {msg}"
+        );
+    }
+
+    #[test]
+    fn reserved_key_is_refused_in_any_case_spelling() {
+        let mut entry = sample_entry();
+        entry.extra.push(("end".into(), "x".into()));
+        let msg = entry.validate().unwrap_err().to_string();
+        assert!(msg.contains("reserved"), "{msg}");
     }
 
     #[test]

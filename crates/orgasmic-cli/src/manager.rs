@@ -19,6 +19,10 @@ use orgasmic_core::{
     projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
     SessionEventKind, TaskHeading, TxEntry,
 };
+// orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
+// copy of core's; a copy drifting is how the drawer check and the ledger
+// writer came to disagree on `FOO-BAR`).
+use orgasmic_core::tx::is_uppercase_snake_key;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -1153,6 +1157,24 @@ pub fn cmd_dispatch_close(home: &Home, mut args: DispatchCloseArgs) -> Result<()
     // removed.
     validate_fix_round_final(&project_root, &tasks, &args, tx_type)?;
     validate_manager_owned_close_properties(&args)?;
+    // orgasmic:task_ZKZBF
+    // `--status aborted` has no generic property channel: `close_aborted_request`
+    // records only its structured fields (--reason, worktree, lifecycle,
+    // cleanup), so every `--property` value used to be accepted here and then
+    // silently dropped — the TASK-HXSW0 shape. Refuse by name instead.
+    if args.status == DispatchCloseStatus::Aborted && !args.properties.is_empty() {
+        let keys = args
+            .properties
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "--property {keys} is not recorded by `--status aborted`: the abort tx carries only \
+             its structured fields and used to silently drop --property values; re-run without \
+             --property, or close with --status done to record them"
+        );
+    }
     // Fenced the same way as `--no-review-required`: `--verdict` is meaningful
     // only on the close that records the reviewer's own terminal tx.
     if args.verdict.is_some()
@@ -2934,11 +2956,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             } else {
                 "[missing]"
             },
-            if health.pid_alive {
-                "[pid-alive]"
-            } else {
-                "[pid-gone]"
-            },
+            pid_flag(&health),
             if health.run_alive {
                 "[run-live]"
             } else {
@@ -3026,13 +3044,18 @@ pub fn cmd_dispatch_wait(home: &Home, args: DispatchWaitArgs) -> Result<()> {
             project_id: &'a str,
             started_tx: Vec<&'a str>,
         }
-        let response: ManagerDispatchWaitHttpResponse = runtime.block_on(client.post_json(
-            "/manager/dispatch-wait",
-            &Request {
-                project_id: &project_id,
-                started_tx: requested.iter().map(String::as_str).collect(),
-            },
-        ))?;
+        let response: ManagerDispatchWaitHttpResponse = runtime
+            .block_on(client.post_json(
+                "/manager/dispatch-wait",
+                &Request {
+                    project_id: &project_id,
+                    started_tx: requested.iter().map(String::as_str).collect(),
+                },
+            ))
+            .context(
+                "dispatch-wait lost (daemon unreachable or errored) — worker state unknown, \
+                 not ended; re-run `orgasmic manager dispatch-status`",
+            )?;
         match classify_dispatch_wait_round(&response.generations) {
             DispatchWaitRound::Unknown(generation) => {
                 bail!(
@@ -3992,10 +4015,10 @@ fn held_by_dispatch_detail(record: &DispatchRecord, live_runs: &[RunSummary]) ->
             } else {
                 "run-gone"
             },
-            if health.pid_alive {
-                " pid-alive"
-            } else {
-                " pid-gone"
+            match pid_flag(&health) {
+                "" => "",
+                "[pid-alive]" => " pid-alive",
+                _ => " pid-gone",
             }
         )
     } else {
@@ -5813,6 +5836,20 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     println!("  tx:       manager.dispatch_started on daemon dispatch");
     println!("  mode:     {}", plan.mode);
     println!("  harness:  {}", plan.harness);
+    // The daemon re-addresses chat-capable harnesses onto the canonical chat
+    // runtime; say so here or the plan describes a launch that never happens.
+    if let Some((driver, harness)) = orgasmic_daemon::addressing::canonical_chat_address(
+        &plan.mode,
+        &plan.harness,
+        &plan.harness_args,
+    ) {
+        if driver != plan.mode || harness != plan.harness {
+            println!(
+                "  resolves: driver={driver} harness={harness} (canonical chat runtime; \
+                 requested mode and harness args are not used)"
+            );
+        }
+    }
     if !plan.harness_args.is_empty() {
         println!("  argv:     {:?}", plan.harness_args);
     }
@@ -9785,17 +9822,31 @@ fn extra_compat<'a>(entry: &'a TxEntry, key: &str, legacy_key: &str) -> Option<&
 // Do not reintroduce a CLI-side copy: a second opinion that cannot see the
 // reservation is exactly the thing that read as safe and was not.
 
+/// `[pid-alive]` / `[pid-gone]`, or nothing when no pid is known: a driver
+/// that cannot report a pid must not read as a dead worker.
+fn pid_flag(health: &DispatchHealth) -> &'static str {
+    match (health.pid, health.pid_alive) {
+        (None, _) => "",
+        (Some(_), true) => "[pid-alive]",
+        (Some(_), false) => "[pid-gone]",
+    }
+}
+
 fn dispatch_health(record: &DispatchRecord, live_runs: &[RunSummary]) -> DispatchHealth {
     let worktree_exists = record
         .worktree
         .as_ref()
         .map(|path| path.exists())
         .unwrap_or(false);
+    // pid 0 is "the driver could not report one" (ws transports), not a dead
+    // process; keep it unknown so the status line omits the pid flag rather
+    // than printing a [pid-gone] that is always true for a live ws run.
     let derived_pid = match record.worker_pid {
         Some(pid) => Some(pid),
         None if record.pid.is_some() => record.pid,
         None => derive_worker_pid(record),
-    };
+    }
+    .filter(|pid| *pid != 0);
     let pid_alive = derived_pid.map(pid_is_alive).unwrap_or(false);
     let run_alive = record
         .run_id
@@ -9922,18 +9973,20 @@ fn parse_close_property(value: &str) -> Result<(String, String), String> {
         .split_once('=')
         .ok_or_else(|| "property must be KEY=VALUE".to_string())?;
     if !is_uppercase_snake_key(key) {
+        // orgasmic:task_ZKZBF — tx property readers (`extra` and friends) match
+        // keys byte for byte, same as Heading::property, so a miscased key
+        // would be recorded on the close tx and never read. Name the canonical
+        // spelling when one exists.
+        let canonical = key.to_ascii_uppercase();
+        if is_uppercase_snake_key(&canonical) {
+            return Err(format!(
+                "property key `{key}` is not the canonical spelling; close-tx readers match keys \
+                 byte for byte, so `:{key}:` would be recorded and never read — use `{canonical}`"
+            ));
+        }
         return Err("property key must match [A-Z][A-Z0-9_]*".to_string());
     }
     Ok((key.to_string(), raw_value.to_string()))
-}
-
-fn is_uppercase_snake_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    match chars.next() {
-        Some(ch) if ch.is_ascii_uppercase() => {}
-        _ => return false,
-    }
-    chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn sanitize_tx_value(value: &str) -> String {
@@ -9967,6 +10020,20 @@ mod tests {
         assert_eq!(parse_wait_duration("2m").unwrap(), Duration::from_secs(120));
         assert!(parse_wait_duration("0s").is_err());
         assert!(parse_wait_duration("30").is_err());
+    }
+
+    #[test]
+    fn unknown_pid_prints_no_flag_and_zero_counts_as_unknown() {
+        let mut record = architector_record();
+        record.worker_pid = Some(0);
+        record.pid = None;
+        record.harness = Some("hermes".to_string());
+        let health = dispatch_health(&record, &[]);
+        assert_eq!(health.pid, None);
+        assert_eq!(pid_flag(&health), "");
+        record.worker_pid = Some(std::process::id());
+        let health = dispatch_health(&record, &[]);
+        assert_eq!(pid_flag(&health), "[pid-alive]");
     }
 
     fn architector_record() -> DispatchRecord {

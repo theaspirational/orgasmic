@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { subscribeResync } from '@/lib/resync';
+
 export type UseResourceOptions = {
   enabled?: boolean;
   immediate?: boolean;
@@ -59,6 +61,23 @@ export function useResource<T>(
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled, immediate]);
+
+  // Every resource here is kept fresh by daemon events, which have no replay:
+  // a backgrounded phone or a dropped socket silently freezes the data (a live
+  // run then renders as "no longer live"). Refetch whenever the stream
+  // reconnects or the app comes back to the foreground.
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const unsubscribe = subscribeResync(() => void refresh());
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      unsubscribe();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [enabled, refresh]);
 
   return { data, error, loading, refresh };
 }

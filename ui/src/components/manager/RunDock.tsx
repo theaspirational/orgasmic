@@ -24,7 +24,7 @@ import {
 } from '@/lib/api';
 import { useContainedWheelRef } from '@/lib/containedWheel';
 import { CHAT_TAB_ID, useRunDock } from '@/lib/runDock';
-import { dockHeightFromPointer } from '@/lib/runDockUtils';
+import { dockHeightFromDrag, DOCK_DRAG_THRESHOLD_PX } from '@/lib/runDockUtils';
 import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RunSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -74,7 +74,13 @@ export function RunDock() {
   const [resizing, setResizing] = useState(false);
   const [runLabelCache, setRunLabelCache] = useState<Record<string, string>>({});
   const dockRef = useContainedWheelRef<HTMLElement>();
-  const resizeCaptureRef = useRef<{ element: HTMLElement; pointerId: number } | null>(null);
+  const resizeCaptureRef = useRef<{
+    element: HTMLElement;
+    pointerId: number;
+    startY: number;
+    startHeight: number;
+    dragging: boolean;
+  } | null>(null);
 
   const manager = useResource('rundock-manager-state', fetchManagerState);
   // Run buttons need summaries (driver/kind/task) to label and render.
@@ -228,13 +234,27 @@ export function RunDock() {
           return;
         const element = event.currentTarget;
         element.setPointerCapture(event.pointerId);
-        resizeCaptureRef.current = { element, pointerId: event.pointerId };
-        setResizing(true);
+        resizeCaptureRef.current = {
+          element,
+          pointerId: event.pointerId,
+          startY: event.clientY,
+          startHeight: height,
+          dragging: false,
+        };
         event.preventDefault();
       },
       onPointerMove: (event: PointerEvent<HTMLElement>) => {
-        if (!resizeCaptureRef.current) return;
-        const outcome = dockHeightFromPointer(event.clientY, window.innerHeight);
+        const capture = resizeCaptureRef.current;
+        if (!capture) return;
+        const delta = event.clientY - capture.startY;
+        // Below the threshold this is still a tap; resizing here would move the
+        // dock a little on every touch of the bar.
+        if (!capture.dragging) {
+          if (Math.abs(delta) < DOCK_DRAG_THRESHOLD_PX) return;
+          capture.dragging = true;
+          setResizing(true);
+        }
+        const outcome = dockHeightFromDrag(capture.startHeight, delta, window.innerHeight);
         if (outcome.collapse) {
           releaseResizeCapture();
           minimize();
@@ -245,7 +265,7 @@ export function RunDock() {
       onPointerUp: () => releaseResizeCapture(),
       onPointerCancel: () => releaseResizeCapture(),
     }),
-    [minimize, releaseResizeCapture, setHeight],
+    [height, minimize, releaseResizeCapture, setHeight],
   );
 
   async function handleTerminalLaunch() {
@@ -466,7 +486,7 @@ export function RunDock() {
         runningAgents={<RunningAgentsMenu projectId={activeProjectId} />}
       />
       {open ? (
-        <div className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-hidden">
           {activeTabId === CHAT_TAB_ID ? (
             chatRun ? (
               <RunSurface
@@ -519,7 +539,7 @@ function OccupiedManagerPanel({
   onEnd: () => void;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="flex h-full flex-col items-center gap-4 overflow-y-auto p-6 text-center [justify-content:safe_center]">
       <div className="max-w-md">
         <h2 className="text-lg font-semibold tracking-tight">Chat is currently unavailable</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
@@ -546,7 +566,7 @@ function MissingRunPanel({
   onClose: () => void;
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="flex h-full flex-col items-center gap-3 overflow-y-auto p-6 text-center [justify-content:safe_center]">
       <p className="text-sm text-muted-foreground">
         Run {runId ? <code className="font-mono">{runId}</code> : 'this run'} is no longer live.
       </p>

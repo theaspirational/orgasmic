@@ -1,0 +1,241 @@
+# TASK-ZKZBF (remaining --property surfaces) — reviewer report
+
+## Verdict
+
+**REJECT (changes requested), scoped.** The fix is correct, the tests are real,
+and the injection proof replays PASS on my own run. But the task is an *audit*,
+and the audit missed one instance of the audited class on a surface it was
+explicitly assigned (`node prop set`, key `ID` on the non-task layers) — and
+the diff ships a new per-layer key table that lists `ID` as a legal Project /
+Handoff schema key, actively advertising it. One MEDIUM in-scope gap, one
+MEDIUM scope-adjacent gap, three LOWs. No regression found; every acceptance
+gate I re-ran independently is green.
+
+Manager's audit: claims 1, 2, 3(mechanically true, see LOW-1), 5, 6, 7 all hold
+under attack. **Claim 4 is false** — create and revise DO diverge, on `ID`.
+
+## Findings
+
+### MEDIUM-1 (correctness) — `node prop set` writes `:ID:` on every non-task layer; the key set diverges by layer
+`crates/orgasmic-daemon/src/api.rs:15476` (validation loop), `:15637` (apply)
+
+The new loop routes `NodeLayer::Task` through `validate_task_property_keys`,
+which refuses `ID` by name ("task identity is immutable…", `:16365`). Every
+other layer falls to the `other =>` arm, which runs only
+`validate_drawer_property_key_case` — a case check with no refusal table. `ID`
+is already uppercase, so it passes, and `:15638` upserts it.
+
+`crates/orgasmic-core/src/org.rs:284`: `find_by_id` matches on `property("ID")`.
+So the write re-keys the node.
+
+    orgasmic node prop set term_XXXXX ID term_YYYYY     # 200, identity rewritten
+    orgasmic node prop set dec_XXXXX  ID dec_YYYYY      # 200, identity rewritten
+
+Every `RELATES_TO` / `GLOSSARY_REFS` / `PARENT` / task `IMPLEMENTS` reference to
+the old id dangles afterwards, and `--force` is not required — the check is
+unconditional but the arm has nothing to check.
+
+Worse for the audit's own stated goal: `node_layer_schema_property_keys`
+(`:16412`) *lists* `"ID"` as a Project key and a Goal/Handoff key, so the
+refusal text for a miscased key on those layers ends with "Project keys the
+schema reads: BRANCH, DEFAULT_BRANCH, **ID**, LOCAL_PATH, PATH, STATUS" — the
+new code names `ID` as something to pass.
+
+Same divergence one route over: `create_graph_heading` refuses `ID` by name
+(`:14652`), `mutate_graph_heading` (decision/glossary revise, `:14837`) got only
+the case check. This is exactly what manager claim 4 says cannot happen
+("create/revise cannot diverge").
+
+Fix direction: hoist an `ID`-is-derived refusal to `validate_drawer_property_key_case`
+(or a sibling called from all three sites), and drop `"ID"` from the
+Project/Goal/Handoff key lists. One guard, three callers — the same shape the
+task already used for the case check.
+
+### MEDIUM-2 (correctness, scope-adjacent) — `tx record --extra` is the same defect, on the same drawer `dispatch-close --property` now guards
+`crates/orgasmic-core/src/tx.rs:292`, `crates/orgasmic-cli/src/manager.rs:9783`, `:9562`
+
+The worker's decided rule for tx metadata — "open key vocabulary, CLOSED case
+rule, refused at parse" — was implemented on `dispatch-close --property`
+(`parse_close_property`, `manager.rs:9942`) and nowhere else.
+`tx record --extra` writes the same ledger through `validate_property_key`,
+which bans only empty / reserved / colon / whitespace / control. Case is not
+checked.
+
+`extra()` (`manager.rs:9783`) is a byte-exact `got == key`. So:
+
+    orgasmic tx record --type manager.dispatch_started --task TASK-X --extra kind=implementer
+
+writes `:kind: implementer`, `dispatch_record_from_entry` (`:9562`) hits
+`extra(entry, "KIND")?` and returns `None`, and the dispatch is **invisible to
+`dispatch-close` entirely** — not "closes wrong", *unfindable*. The task's own
+new test stages a dispatch with exactly this command
+(`node_property_silent_drop_cli.rs:519-533`, uppercase), so the miscased form is
+one keystroke away from a documented workflow.
+
+I accept this sits just outside the five named surfaces. I file it MEDIUM
+anyway because the task's per-surface question is "does the key set diverge
+from a sibling verb", the answer here is yes, and the worker had to *invent* the
+tx-metadata rule to close the dispatch-close surface — applying it to one of the
+two verbs that write that drawer is the divergence the task exists to find.
+
+### LOW-1 (design/disclosure) — `PropertyNotFound` 400 returns the absolute on-disk path and omits what the drawer actually has
+`crates/orgasmic-daemon/src/api.rs:15649`
+
+`OrgRewriter::new(&file, path.to_string_lossy())` (`:15568`) carries the
+absolute path, and `OrgError::PropertyNotFound`'s Display is
+`"{file}: property {key} not found on heading {heading}"` (`org.rs:176`). So the
+new body is e.g. `/Users/…/proj/.orgasmic/tasks/todo.org: property PRODUCES not
+found on heading TASK-X`.
+
+That contradicts this file's own convention twice:
+- `org_parse_bad_request` (`api.rs:1658`) deliberately `tracing::warn!`s the
+  path and returns a path-free body.
+- `crates/orgasmic-core/src/tx.rs:226`: *"Never a path: this string can reach an
+  API client inside a parse error."*
+
+And it is weaker than its own sibling. `unknown_section_error` (`api.rs:15169`)
+— the not-found error for sections — names the node and lists what it *does*
+have. Since miscased keys are now refused earlier, this message only fires for a
+genuinely absent canonical key, which is precisely the case where "the drawer
+has: PRIORITY, DEPENDS_ON" is the useful answer. Mirror `unknown_section_error`
+and the path disclosure goes away with it.
+
+### LOW-2 (design) — unset refusals talk about a flag the command doesn't have
+`crates/orgasmic-daemon/src/api.rs:15505`
+
+The `RemoveProperty` / Task branch calls `task_property_key_refusal`, whose
+sentences are all phrased `` `--property KEY=…` is refused: … ``. So
+`orgasmic node prop unset TASK-X STATE` answers with a message about
+`--property STATE=…`. `node prop unset` has no `--property` flag.
+
+### LOW-3 (design) — the case refusal steers into a second refusal
+`crates/orgasmic-daemon/src/api.rs:14652` vs `:14663`
+
+`glossary create --property id=x`: the `ID` guard checks the exact key `"ID"`,
+misses `"id"`, so the case check fires and says "Use `ID`" — and `ID` is then
+hard-refused by name. Two round trips to learn one rule. Checking the guard
+case-insensitively (or listing `ID` in the refusal-worthy set before the case
+check) collapses it to one.
+
+Also dead, while you are in there: `api.rs:15521`'s inner
+`NodeLayer::Task | NodeLayer::Goal => "Task"` is unreachable — `Task` is handled
+by the arm above and `Goal` is rejected at `:15479`. Were `Goal` ever reachable
+it would print the label "Task" beside Goal's key list.
+
+## Open Questions
+
+1. Is rewriting a decision/glossary `:ID:` ever intended (an id-repair path)? If
+   yes, MEDIUM-1's fix is "state the rule and route it through a verb", not a
+   flat refusal — but the audit stated nothing either way, which is the gap.
+2. `--status aborted` + `--property` is now a hard error. I found no doc, script
+   or historical invocation that used it (grepped `shipped/`, `.orgasmic/`,
+   `dispatch-records/*/last.txt`), and `close_aborted_request` (`manager.rs:6763`)
+   provably never recorded them, so nothing is lost. Confirming there is no
+   out-of-repo manager habit is a manager call, not mine.
+
+## Verification Notes
+
+Everything below I ran myself on the merged tree (`136418f`), read-only, working
+tree clean before and after (`git status --porcelain` empty at both ends).
+
+**Independently reproduced, all green:**
+- `orgasmic verify --artifact verify/TASK-ZKZBF TASK-ZKZBF` → **PASS**. Clean
+  tree → patch applied → red exit 101 matching the pinned signature → reverted,
+  tree byte-identical → green exit 0. Log `/tmp/zkzbf-verify.log`.
+  I did **not** open `injection.patch` (brief prohibition); the replay is my
+  only evidence about its contents.
+- Green run: 6 passed, 0 failed
+  (`…/T/orgasmic-verify/TASK-ZKZBF/green.log`).
+- HXSW0 regression suite `cargo test -p orgasmic-cli --test task_property_silent_drop_cli`
+  → 6 passed, 0 failed. This is my evidence for manager claim 1: the refactor
+  did not drift the task-path messages.
+- `cargo fmt --all -- --check` → exit 0.
+- `cargo clippy --workspace --all-targets -- -D warnings` → exit 0, zero
+  warnings (re-run without a pipe so the exit code is clippy's own, not
+  `tail`'s — the first run's `CLIPPY_EXIT` was measuring the wrong process).
+- `git diff 15fe600..136418f` is byte-identical to `git diff 928d3e0^..2c85a43`
+  — the merge added nothing.
+
+**Manager claims attacked, one at a time:**
+1. *Byte-identical messages* — TRUE. Read the pre/post text side by side: same
+   empty-key branch, same `canonical != *key` compare, same tail computed from
+   the same value, `layer_label = "Task"` reproduces "Task keys the schema
+   reads: …". HXSW0 suite green confirms behaviourally.
+2. *`node prop set` update-shaped, `&[]` correct* — TRUE. `task update`'s own
+   route (`api.rs:17923`) passes `&[]`; only `task create` (`:16708`) passes
+   `TASK_PROPERTY_KEYS_UPDATE_ONLY`. `node prop set` matching `task update` is
+   right.
+3. *`PropertyNotFound` surfacing* — mechanically true, but see LOW-1.
+4. *No third bypass path* — **FALSE as stated.** `mutate_graph_heading` diverges
+   from create on `ID` (MEDIUM-1). Sweep I actually ran: enumerated every
+   `upsert_property`/`remove_property` call in `api.rs` (10 sites) and every
+   graph/node route (`api.rs:751-827`). Beyond the three fixed routes the only
+   drawer writers are `supersede`/`clear`/handoff-`GOAL_ID` (hardcoded keys,
+   no caller channel) and `write_task_property_and_record` (`:17835`, single
+   caller at `:17959`, validated at `:17923`). `POST /org/file` (`:14023`) is a
+   whole-file raw rewrite — a deliberate escape hatch, not a `--property`
+   channel; out of scope but named here so it is not mistaken for coverage.
+5. *Aborted refusal precedes side effects* — TRUE. Read `cmd_dispatch_close`
+   from its first line (`manager.rs:1056`): the refusal sits at `:1156`, inside
+   the early-refusal block, after `reconcile_torn_closes_best_effort` and
+   `resolve_close_target` (both read/repair, no cleanup) and **before** worktree
+   cleanup, tx append and lifecycle transition. Also checked the one thing that
+   could break it: `normalize_report_path_property` (`:2446`) takes
+   `&mut [(String,String)]` and only rewrites existing `REPORT_PATH` values — it
+   can never *insert*, so it cannot make `properties` non-empty and break a
+   plain aborted close. The test proves that end-to-end (refusal, then the same
+   close without `--property` succeeds).
+6. *Tests are real* — TRUE. Read all 6. Real binary via `orgasmic_command()`
+   against a real `Daemon::run` fixture; `drawer()` (`:220`) and `graph_file()`
+   (`:250`) read `.orgasmic/**` straight off disk; `run_cli_refusal` (`:82`)
+   asserts non-zero exit *and* both spellings appear in stderr; the positive
+   half of each test proves the canonical key is read back
+   (`task get` → `detail["priority"] == "P1"`), not merely stored. No mocks, no
+   exit-code-only assertions. One honest caveat: the `dispatch-close
+   --property verdict=` test is a clap parse-time refusal, so there is no drawer
+   to read after it — correct for that surface, not a gap.
+7. *Skipping a calm-host daemon-lib run was acceptable* — **SOUND**, and now
+   backed by evidence rather than deference. The change can only newly refuse a
+   miscased or `--property ID` write. I grepped the daemon and CLI suites for
+   both: `"op": "set_property"` / `"remove_property"` appears exactly **once**
+   in the whole daemon suite (`integration.rs:2580`, `"key": "LIVENESS"`,
+   canonical, legal under the Handoff key list), and there is not a single
+   lowercase key in any `"properties"` map or `"key"` field anywhere in
+   `crates/orgasmic-daemon/tests` or `crates/orgasmic-cli/tests`. Nothing in the
+   suite can trip the new refusals. A calm-host re-run would confirm what the
+   grep already shows.
+
+**What I did NOT check:**
+- Never opened `verify/TASK-ZKZBF/injection.patch` (brief prohibition). My only
+  evidence about it is that `orgasmic verify` replayed it red-then-green.
+- Did **not** run the full gate suite or the daemon lib suite. Claim 7 is
+  answered by static evidence (above), not by execution.
+- Did **not** measure MEDIUM-1 or MEDIUM-2 live. Both are read-only-forbidden
+  (a probe needs `ORGASMIC_HOME`, which the brief forbids), so both rest on
+  traced code paths, cited line by line, not on a terminal transcript. A
+  manager can settle MEDIUM-1 in one command in a scratch project.
+- Did not review UI/app consumers of these routes — `ui/` has no glossary or
+  decision property-write call site that grep could find.
+- Did not audit `prompt compile/lint --value` or other `parse_key_values`
+  callers (`main.rs:3709`, `:3727`); they feed template values, not drawers.
+
+## Fix Directions
+
+1. **MEDIUM-1** — put the `ID`-is-derived refusal in
+   `validate_drawer_property_key_case` (it already receives the layer label and
+   key list) so `create_graph_heading`, `mutate_graph_heading` and
+   `post_org_node_edit` inherit it from one place; delete `"ID"` from the
+   Project and Goal/Handoff entries of `node_layer_schema_property_keys`. Then
+   the create-side special case at `api.rs:14652` collapses into the shared
+   check and LOW-3 disappears with it. Test: `node prop set term_… ID term_…`
+   refused by name, `glossary.org` byte-identical afterwards.
+2. **MEDIUM-2** — either apply the closed-case rule in `validate_property_key`
+   (`core/tx.rs:292`) so every tx writer inherits it, or state explicitly on the
+   task record why `dispatch-close` is fenced and `tx record` is not. My
+   preference is the former: it is one `if` in the function both verbs already
+   call, and it makes the rule the worker decided actually true of the ledger.
+3. **LOW-1** — mirror `unknown_section_error`: name the node, list the drawer
+   keys it has, drop the path from the body and keep it in the `tracing::warn!`
+   that is already there.
+4. **LOW-2** — thread a verb noun into `task_property_key_refusal`, or give the
+   unset path its own one-line phrasing.

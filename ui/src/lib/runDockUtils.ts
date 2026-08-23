@@ -35,14 +35,22 @@ export function clampDockHeight(value: number): number {
   return Math.min(MAX_DOCK_HEIGHT, Math.max(MIN_DOCK_HEIGHT, value));
 }
 
-// Translate a pointer's viewport Y into the dock outcome: the height the panel
-// should take, or a collapse once the drag crosses below the minimum.
-export function dockHeightFromPointer(
-  clientY: number,
+// A tap is not a drag: the pointer must travel this far before the bar starts
+// resizing, so tapping the bar never nudges the dock.
+export const DOCK_DRAG_THRESHOLD_PX = 6;
+
+// Translate a top-border drag into the dock outcome: the height the panel
+// should take, or a collapse once the drag crosses below the minimum. The
+// height moves by how far the pointer moved from where the drag started —
+// mapping the raw pointer position onto the height instead would snap the
+// border to the finger, which on touch turns every tap into a jump.
+export function dockHeightFromDrag(
+  startHeight: number,
+  deltaY: number,
   viewportHeight: number,
 ): { collapse: true } | { collapse: false; height: number } {
   if (viewportHeight <= 0) return { collapse: false, height: DEFAULT_DOCK_HEIGHT };
-  const fraction = 1 - clientY / viewportHeight;
+  const fraction = startHeight - deltaY / viewportHeight;
   if (fraction < DOCK_COLLAPSE_HEIGHT) return { collapse: true };
   return { collapse: false, height: clampDockHeight(fraction) };
 }

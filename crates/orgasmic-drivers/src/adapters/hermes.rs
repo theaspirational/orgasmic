@@ -280,10 +280,13 @@ impl HarnessEventAdapter for HermesAdapter {
                 self.record_terminal(&event);
                 vec![event]
             }
-            Err(err) => vec![DriverEvent::DriverError {
-                fatal: true,
-                message: err.to_string(),
-            }],
+            // An event this adapter does not know is not a transport failure:
+            // killing the run here lost two finished reviews to a harness
+            // that emitted a new event type (vscode-orsl letter item 3).
+            Err(err) => {
+                tracing::warn!("hermes: skipping unrecognized event: {err}");
+                Vec::new()
+            }
         }
     }
 
@@ -1271,6 +1274,23 @@ mod tests {
         );
         assert_eq!(catalog.models[1].speeds, vec![RuntimeSpeed::Normal]);
         assert!(catalog.models[1].reasoning_efforts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn hermes_unknown_and_untyped_events_are_skipped_not_fatal() {
+        let mut adapter = HermesAdapter::new();
+        let unknown = adapter
+            .parse_event(json!({"type": "usage.snapshot", "tokens": 12}))
+            .await;
+        let untyped = adapter.parse_event(json!({"tokens": 12})).await;
+        assert!(unknown.is_empty(), "{unknown:?}");
+        assert!(untyped.is_empty(), "{untyped:?}");
+        let text = adapter
+            .parse_event(json!({"type": "text", "text": "still alive"}))
+            .await;
+        assert!(
+            matches!(text.as_slice(), [DriverEvent::TextChunk { chunk, .. }] if chunk == "still alive")
+        );
     }
 
     #[tokio::test]

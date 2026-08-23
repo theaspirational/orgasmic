@@ -1,0 +1,120 @@
+# TASK-ZKZBF.2 implementer report — dead-key unset split, one ID sentence, drawer-shape 400, extra-flag honesty
+
+Built forward on merged 8f6e9c8 (branch task-zkzbf.2-impl, base c68d5ea). No
+regression to undo. Three commits: dbf6bcd (fix), dd7e9d5 (ZKZBF.2 proof),
+4c9ffaa (ZKZBF.1 proof re-author).
+
+## Per-finding outcome
+
+### MEDIUM — UI Parent Task guaranteed-400 + unsettable dead keys — FIXED
+- `crates/orgasmic-daemon/src/api.rs`: refusal table split by direction.
+  `task_property_key_refusal_reason` (set) still refuses STATE/PARENT_TASK/
+  LAST_UPDATED, and both dead-key sentences now name the removal door
+  (`node prop unset <task> PARENT_TASK` / `LAST_UPDATED`). New
+  `task_property_key_unset_refusal_reason` (unset) refuses STATE only —
+  `post_org_node_edit`'s RemoveProperty arm consults it, so legacy
+  `:PARENT_TASK:`/`:LAST_UPDATED:` lines are removable for the first time.
+- `ui/src/components/orgdoc/descriptor.ts`: Parent Task field DROPPED from
+  TASK_DESCRIPTOR (reviewer's option A; parentage derives from the id grammar,
+  `post_task_subtask`). A comment at the old site names the rule.
+- Adapted tests: `dead_drawer_keys_are_removable_while_state_stays_door_owned`
+  (node suite) seeds legacy lines the way the pre-refusal daemon left them,
+  proves both unsets land off disk, set still refuses by name naming the
+  removal door, STATE refuses BOTH directions. UI:
+  `NodeDocEditor.test.tsx` gains "offers no unsaveable Parent Task field"
+  (2 tests) — edit mode renders no Parent Task field even for a task carrying
+  a legacy `:PARENT_TASK:`, and a save emits no PARENT_TASK op.
+
+### LOW-1 — two ID sentences on task create — FIXED
+- Deleted `post_task_create`'s byte-exact `contains_key("ID")` special case
+  (api.rs, was :16751) — `validate_task_property_keys` below it covers every
+  casing via the shared guard.
+- Deleted the unreachable STATE/ID hand-checks in `update_task_properties`
+  (was :17992/:17998) below the shared validation; a comment marks why.
+- Pinned: `task_create_id_property_refusal_is_one_sentence_in_any_case`
+  (task suite) — ID/id/Id yield byte-identical stderr containing "immutable",
+  the special-case sentence is gone, nothing is filed.
+
+### LOW-2 — drawer/tx pattern mismatch 500 — FIXED
+- `validate_drawer_property_key_case` now enforces the ledger's own shape via
+  the core `is_uppercase_snake_key`; new helper `shaped_drawer_key_suggestion`
+  maps `FOO-BAR` → `FOO_BAR` (None when no clean spelling exists). A
+  self-uppercase wrong-shape key is a 400 naming `--property`, the passed key,
+  the `[A-Z][A-Z0-9_]*` rule, and the underscored spelling — BEFORE any file
+  is read, so the writer 500 ("failed to apply changes") cannot happen. The
+  miscased compound `foo-bar` is corrected all the way to `FOO_BAR` in ONE
+  refusal (no case-correction-into-shape-refusal round trip).
+- Pinned: `wrong_shaped_drawer_keys_are_refused_as_400s_naming_the_flag`
+  (node suite) — production path: task update --property FOO-BAR=1 refused
+  with the flag named and no "failed to apply changes", node prop set/unset
+  share the guard, `foo-bar` → one-step `FOO_BAR`, and `FOO_BAR=1` still
+  writes (open vocabulary) and lands in the drawer.
+
+### LOW-3 — --extra honesty — FIXED
+- Help (main.rs): `--extra` now states keys are UPPERCASE_SNAKE
+  (`[A-Z][A-Z0-9_]*`) and refused otherwise, alongside the single-line rule.
+- Flag-honesty test `reason_and_extra_flags_repeat_the_constraint_at_the_flag`
+  extended to pin both spellings of the rule at the flag.
+- Shipped doc: `shipped/schema/tx.org` gains "Key shape on every tx property"
+  naming the rule, why (byte-for-byte readers), the enforcement point
+  (`tx record --extra` and every ledger writer), and a note not to copy the
+  historical lowercase agent-authored extras.
+- Dedupe: `is_uppercase_snake_key` is now `pub` in `crates/orgasmic-core/src/tx.rs`
+  (the one definition — also used by the daemon's new shape check);
+  `manager.rs`'s verbatim copy deleted, imports core's.
+
+## Verification gates (run from the worktree, clean tree at start/end)
+
+- `cargo fmt --all` / `--check` — clean.
+- `cargo clippy --workspace --all-targets -- -D warnings` — "Finished" no warnings.
+- `scripts/run-tests.sh -p orgasmic-cli --test node_property_silent_drop_cli --test task_property_silent_drop_cli`:
+  VERDICT `verdict: GREEN — no failures.` / `failures : 0` —
+  node suite `test result: ok. 15 passed; 0 failed` (13 prior + 2 new),
+  task suite `test result: ok. 7 passed; 0 failed` (6 prior + 1 new) — 22/22,
+  all 19 pre-existing ZKZBF+HXSW0 tests stay green.
+- `cargo test -p orgasmic-cli --bin orgasmic reason_and_extra_flags_repeat` — 1 passed.
+- `cargo test -p orgasmic-core --lib tx::` — 20 passed.
+- UI (after `npm --prefix ui ci` — node_modules was absent in this worktree):
+  `npm --prefix ui run typecheck` — clean (tsc 5.9.3);
+  `npm --prefix ui test -- --run` — `Test Files 58 passed (58)`,
+  `Tests 352 passed (352)`; focused NodeDocEditor file 6/6 (4 prior + 2 new).
+- Injection proofs, replayed via `orgasmic verify`:
+  - `verify TASK-ZKZBF.2: PASS — red-then-green replay reproduced` (new
+    artifact: injection flips the unset arm back to the write-only table;
+    red pinned from a real injected run — `unsetting \`PARENT_TASK\` is
+    refused`, `FAILED. 0 passed; 1 failed`).
+  - `verify TASK-ZKZBF.1: PASS — red-then-green replay reproduced`
+    (re-authored — see Surprise 2).
+
+## Surprises measured
+
+1. **UI typecheck was red on the BASE commit** (`TS5101: baseUrl deprecated`):
+   the worktree had no `ui/node_modules`, so `npm run typecheck` picked a
+   PATH-resident tsc 7-nightly. Classification: pre-existing, environment.
+   Fix: `npm --prefix ui ci` (package-lock-pinned tsc 5.9.3) → clean.
+   `ui/package-lock.json` unchanged; node_modules is untracked.
+2. **TASK-ZKZBF.1's injection artifact went stale by my own fix** —
+   `git apply` failed (my ZKZBF.2 edits sit inside its hunks: the shared
+   drawer check, the unset arm, tx.rs). Per verify/README.md a stale artifact
+   is a failure and must be re-authored, so I re-authored it against the
+   current tree (same round-1.1 defect set; the ZKZBF.2 split and shape check
+   stay fixed in the injected state) and re-pinned expect-red from a real
+   injected-red run: now `FAILED. 7 passed; 8 failed` — the 7 round-1.1 tests
+   plus `dead_drawer_keys…`, which also pins the round-1.1 unset-shaped
+   advice. Both replays PASS. Named as collateral: verify/TASK-ZKZBF.1/{injection.patch,expect-red}.
+3. The injected-red run confirmed the MEDIUM defect verbatim pre-fix behavior:
+   `node prop unset <task> PARENT_TASK` → 400 "unsetting `PARENT_TASK` is
+   refused" — the exact no-removal-verb trap measured on done.org's lines.
+
+## Boundaries and residual risk
+
+- Write scope held: api.rs, core/tx.rs, cli main.rs + manager.rs, cli tests,
+  descriptor.ts, NodeDocEditor.tsx (read-only this round — the field drop
+  lives in the descriptor), plus the two named verify artifacts and the
+  shipped schema doc. No daemon-managed state files hand-edited; no
+  ORGASMIC_HOME ever set on an orgasmic invocation; flake-registry untouched;
+  the billed drivers test never ran.
+- `POST /org/file` whole-file escape hatch remains validation-free (flagged
+  out-of-scope by the round-1 reviewer; unchanged).
+- Independent review pass: not performed here — assignment ends at finalize;
+  the brief's reviewer dispatch owns it.

@@ -1,0 +1,12 @@
+# Pinned from the real injected-red run of 2026-08-20: the patch points the
+# unset arm back at the write-only refusal table, so a legacy `:PARENT_TASK:`
+# drawer line (seeded the way the pre-refusal daemon left it) again has NO
+# supported removal verb — `node prop unset` refuses it, the exact MEDIUM
+# outcome the round-2 review measured on done.org's real lines.
+exit: 101
+
+# The refusal the test's unset assertion dies on: dead key, removal refused.
+contains: unsetting `PARENT_TASK` is refused
+
+# Exactly the one unset-split test falls; nothing else moves.
+contains: test result: FAILED. 0 passed; 1 failed

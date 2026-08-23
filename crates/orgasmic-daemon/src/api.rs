@@ -48,8 +48,8 @@ use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::addressing::{
-    compatibility_worker_id, dispatch_chat_provider, resolve_address_governance,
-    validate_address_harness_args, validate_supported_pair,
+    compatibility_worker_id, resolve_address_governance, validate_address_harness_args,
+    validate_supported_pair,
 };
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
@@ -4996,19 +4996,15 @@ fn canonical_dispatch_runtime_requested(runtime: Option<&str>) -> Result<bool, A
 }
 
 fn canonicalize_dispatch_worker(mut worker: StageWorker) -> StageWorker {
-    let Some(provider) =
-        dispatch_chat_provider(&worker.driver, &worker.harness, &worker.harness_args)
-    else {
+    let Some((driver, harness)) = crate::addressing::canonical_chat_address(
+        &worker.driver,
+        &worker.harness,
+        &worker.harness_args,
+    ) else {
         return worker;
     };
-    worker.driver = "stdio".to_string();
-    worker.harness = match provider {
-        "codex" => "codex-chat",
-        "claude" => "claude-sdk",
-        "opencode" => "opencode",
-        _ => unreachable!("dispatch_chat_provider returned an unknown provider"),
-    }
-    .to_string();
+    worker.driver = driver.to_string();
+    worker.harness = harness.to_string();
     worker.harness_args.clear();
     worker.id = compatibility_worker_id(worker.kind, &worker.driver, &worker.harness);
     worker
@@ -8469,12 +8465,16 @@ pub struct StatusResponse {
     pub rebuilt_at: Option<String>,
     pub writer: crate::writer::WriterStatus,
     pub index_refresh: crate::index::IndexRefreshStatus,
+    /// Descriptor headroom: an fd leak shows here long before EMFILE.
+    pub open_fds: Option<usize>,
+    pub fd_limit: Option<u64>,
 }
 
 async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
     let snap: IndexSnapshot = state.index.snapshot().await;
     let writer = state.writer.status();
     let index_refresh = state.index.refresh_status().await;
+    let (open_fds, fd_limit) = crate::fd_usage();
     let unloaded_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Unloaded);
     let loading_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Loading);
     let ready_projects = snap.project_ids_in_state(crate::index::ProjectLoadState::Ready);
@@ -8529,6 +8529,8 @@ async fn get_status(State(state): State<ApiState>) -> Json<StatusResponse> {
         rebuilt_at: snap.rebuilt_at.map(|t| t.to_rfc3339()),
         writer,
         index_refresh,
+        open_fds,
+        fd_limit,
     })
 }
 
@@ -14647,6 +14649,22 @@ async fn create_graph_heading(
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
     }
+    // orgasmic:task_ZKZBF
+    // `render_graph_heading` writes every property verbatim, so a miscased key
+    // (`--property canonical=…`) used to be stored as `:canonical:` and read
+    // by nothing — the TASK-HXSW0 shape on the graph layers. And `ID` is
+    // silently force-overwritten with the minted node id, so passing it is a
+    // drop by construction. Both are refused by name in the shared check
+    // below instead (orgasmic:task_ZKZBF.1 hoisted the ID guard there, so
+    // `id=…` is refused as identity-immutable in one step, and create and
+    // revise cannot diverge).
+    let (layer_label, layer_keys) = match layer {
+        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+    };
+    for (key, value) in &req.properties {
+        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
+    }
     let node_id = resolve_graph_create_id(layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
     let file = OrgFile::parse(source.clone(), path.to_string_lossy())
@@ -14817,6 +14835,20 @@ async fn mutate_graph_heading(
             }
             reject_unresolved_reference_token(&known_ids, key, value)?;
         }
+    }
+    // orgasmic:task_ZKZBF — same canonical-spelling rule as create: refusing a
+    // miscased key here and not there (or vice versa) would make the accepted
+    // key set diverge between the two verbs that write the same drawer.
+    // orgasmic:task_ZKZBF.1 — the shared check also refuses ID (any case) as
+    // identity-immutable, so revise cannot diverge from create on the
+    // identity key either: a revise that re-keyed the heading would dangle
+    // every reference to the old id.
+    let (layer_label, layer_keys) = match layer {
+        GraphLayer::Decision => ("Decision", DECISION_SCHEMA_PROPERTY_KEYS),
+        GraphLayer::Glossary => ("Glossary", GLOSSARY_SCHEMA_PROPERTY_KEYS),
+    };
+    for (key, value) in &req.properties {
+        validate_drawer_property_key_case(key, layer_label, layer_keys, Some(value))?;
     }
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
@@ -15149,6 +15181,28 @@ fn unknown_section_error(rw: &OrgRewriter, id: &str, title: &str, hint: &str) ->
     ))
 }
 
+// orgasmic:task_ZKZBF.1
+/// The property twin of [`unknown_section_error`]. `PropertyNotFound`'s own
+/// Display carries the absolute on-disk path (`org.rs`), which this API never
+/// discloses (see `org_parse_bad_request`, and tx.rs: "Never a path"), and
+/// omits the one fact that explains the miss: what the drawer actually has.
+/// A miscased key is already refused earlier, so this fires for a genuinely
+/// absent canonical key — exactly the case where the real keys are the answer.
+fn unknown_property_error(heading: &Heading, id: &str, key: &str) -> ApiError {
+    let keys: Vec<&str> = heading
+        .properties
+        .iter()
+        .flat_map(|drawer| drawer.entries.iter())
+        .map(|entry| entry.key.as_str())
+        .collect();
+    let known = if keys.is_empty() {
+        "its drawer has no properties".to_string()
+    } else {
+        format!("its drawer has: {}", keys.join(", "))
+    };
+    ApiError::bad_request(format!("node {id} has no property `{key}` — {known}"))
+}
+
 /// Why a section write refuses rather than creating.
 const SECTION_WRITE_HINT: &str = "A section write edits an existing section; pass \
      `--create` to add a new one, which is the flag that distinguishes a \
@@ -15447,6 +15501,63 @@ async fn post_org_node_edit(
             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
         ));
     }
+    // orgasmic:task_ZKZBF
+    // The same drawer every task write validates (TASK-HXSW0): a key that is
+    // not its own uppercase is stored and never read, because
+    // `Heading::property` compares byte for byte. `node prop set/unset` passed
+    // keys through untyped, so `node prop set TASK-… priority P1` returned a
+    // success object while the priority stayed unset — the exact silent-drop
+    // shape TASK-HXSW0 fixed on task create/update, still live on this route.
+    for op in &req.ops {
+        let (key, value) = match op {
+            NodeEditOp::SetProperty { key, value } => (key.as_str(), Some(value.as_str())),
+            NodeEditOp::RemoveProperty { key } => (key.as_str(), None),
+            _ => continue,
+        };
+        match layer {
+            NodeLayer::Task => {
+                if let Some(value) = value {
+                    // Update-shaped verb: keys that only `task update` writes
+                    // (BLOCKED_BY, FIX_SUBTASK, KIND) are legal here, same as
+                    // `task update --property`.
+                    let mut properties = BTreeMap::new();
+                    properties.insert(key.to_string(), value.to_string());
+                    validate_task_property_keys(&properties, &[])?;
+                } else {
+                    validate_drawer_property_key_case(
+                        key,
+                        "Task",
+                        TASK_SCHEMA_PROPERTY_KEYS,
+                        None,
+                    )?;
+                    // orgasmic:task_ZKZBF.1 — unset-shaped advice: this command
+                    // has no `--property` flag, so the set-verb's
+                    // "`--property KEY=…` is refused" phrasing would describe a
+                    // flag the caller never passed.
+                    //
+                    // orgasmic:task_ZKZBF.2 — and the unset half consults its
+                    // OWN table: only door-owned keys (STATE) refuse removal;
+                    // dead keys (PARENT_TASK, LAST_UPDATED) are exactly the
+                    // legacy lines this verb exists to clean up.
+                    let canonical = key.trim().to_ascii_uppercase();
+                    if let Some(refusal) = task_property_key_unset_refusal_reason(&canonical) {
+                        return Err(ApiError::bad_request(format!(
+                            "unsetting `{canonical}` is refused: {refusal}"
+                        )));
+                    }
+                }
+            }
+            other => {
+                validate_drawer_property_key_case(
+                    key,
+                    // orgasmic:task_ZKZBF — capitalized for the refusal sentence.
+                    node_layer_label(other),
+                    node_layer_schema_property_keys(other),
+                    value,
+                )?;
+            }
+        }
+    }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
     if !req.force {
@@ -15559,8 +15670,22 @@ async fn post_org_node_edit(
                 changed.insert(key, value);
             }
             NodeEditOp::RemoveProperty { key } => {
-                rw.remove_property(&id, &key)
-                    .map_err(|e| org_rewriter_error("remove property", &id, e))?;
+                rw.remove_property(&id, &key).map_err(|e| match e {
+                    // orgasmic:task_ZKZBF — this refusal names the key, file and
+                    // heading; collapsing it into "org file update failed"
+                    // hid the one fact (the exact spelling it looked for) that
+                    // explained why `node prop unset <id> priority` failed
+                    // while `:PRIORITY:` sat in the drawer.
+                    // orgasmic:task_ZKZBF.1 — and the Display string itself
+                    // carries the absolute file path, which the API never
+                    // discloses; the path stays in this warn, the body names
+                    // the node and its actual keys instead.
+                    e @ orgasmic_core::OrgError::PropertyNotFound { .. } => {
+                        tracing::warn!(node_id = %id, error = %e, "remove property refused");
+                        unknown_property_error(heading, &id, &key)
+                    }
+                    e => org_rewriter_error("remove property", &id, e),
+                })?;
                 changed.insert(key, "<removed>".to_string());
             }
             NodeEditOp::SetTitle { title } => {
@@ -16253,14 +16378,23 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
     "WRITE_SCOPE",
 ];
 
-/// Keys that a task write must refuse because the value would be stored and
-/// then never read, or is owned by a mechanism the caller has to reach through
-/// a different door. Each carries the sentence that names that door.
+/// Keys a task write must refuse because the value would be stored and then
+/// never read, or is owned by a mechanism the caller has to reach through a
+/// different door. Each carries the sentence that names that door.
 ///
 /// TASK-HXSW0 was filed against the silent version of exactly this table: the
 /// keys below used to be dropped on the floor by `task create` while the call
 /// returned a normal `{id, tx_id}` success.
-fn task_property_key_refusal(key: &str) -> Option<String> {
+///
+/// Set-direction only (orgasmic:task_ZKZBF.2): the unset half is
+/// [`task_property_key_unset_refusal_reason`], because "refuse to write a key
+/// nothing reads" must not extend to "refuse to delete a legacy line that is
+/// already there" — dead keys get REMOVED, not re-pointed.
+///
+/// `ID` is absent on purpose (orgasmic:task_ZKZBF.1): the shared
+/// [`validate_drawer_property_key_case`] guard refuses it first, on every
+/// layer, so this table never sees it.
+fn task_property_key_refusal_reason(key: &str) -> Option<&'static str> {
     let refusal = match key {
         "STATE" => {
             "STATE is owned by the lifecycle state machine — the heading keyword, the file the \
@@ -16270,19 +16404,37 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
         "PARENT_TASK" => {
             "PARENT_TASK is never read: `parent_task` is derived from the id grammar \
              (`TASK-<parent>.<n>` → `TASK-<parent>`). Mint the parentage into the id instead — \
-             `orgasmic task create --id TASK-<parent>.1 …` — or the edge will not exist."
-        }
-        "ID" => {
-            "task identity is immutable and the drawer `:ID:` is derived from it; pass \
-             `--id` on `orgasmic task create` to pin one."
+             `orgasmic task create --id TASK-<parent>.1 …` — or the edge will not exist. A \
+             legacy `:PARENT_TASK:` line is removable with `orgasmic node prop unset <task> \
+             PARENT_TASK`."
         }
         "LAST_UPDATED" => {
             "LAST_UPDATED is not a task field; the tx ledger is the timestamped record \
-             (`orgasmic tx list --project <id>`)."
+             (`orgasmic tx list --project <id>`). A legacy `:LAST_UPDATED:` line is removable \
+             with `orgasmic node prop unset <task> LAST_UPDATED`."
         }
         _ => return None,
     };
-    Some(format!("`--property {key}=…` is refused: {refusal}"))
+    Some(refusal)
+}
+
+// orgasmic:task_ZKZBF.2
+/// The unset-direction half of the refusal table: only keys owned by another
+/// door, where removal would desynchronise that door. The dead keys
+/// (PARENT_TASK, LAST_UPDATED) are deliberately absent — round 1's unset arm
+/// inherited the write-only table wholesale, so legacy drawer lines carrying
+/// them had NO supported removal verb (`node prop unset` is the only door;
+/// `POST /org/file` has no CLI verb). Removing them is the cleanup.
+fn task_property_key_unset_refusal_reason(key: &str) -> Option<&'static str> {
+    let refusal = match key {
+        "STATE" => {
+            "STATE is owned by the lifecycle state machine — the heading keyword, the file the \
+             task lives in and a `task.state_transitioned` tx all move together. Use \
+             `orgasmic task update <id> --state <stage>`."
+        }
+        _ => return None,
+    };
+    Some(refusal)
 }
 
 /// Keys `task update` writes and `task create` used to swallow. They stay
@@ -16290,6 +16442,186 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
 /// that may not exist yet at create time — but the divergence is now stated at
 /// the point of use instead of being invisible (TASK-HXSW0 instance 4).
 const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "KIND"];
+
+// orgasmic:task_ZKZBF
+/// Drawer keys the decision and glossary read models consume, in the exact
+/// spelling [`orgasmic_core::Heading::property`] looks up — the same byte
+/// comparison that made miscased task keys stored-and-never-read (TASK-HXSW0).
+/// Like `TASK_SCHEMA_PROPERTY_KEYS`, the list exists to make a miscased key
+/// *nameable* in a refusal, not to close the drawer to anything else.
+const DECISION_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "DECIDED_AT",
+    "GLOSSARY_REFS",
+    "PARENT",
+    "SOURCE",
+    "SUPERSEDES",
+];
+
+const GLOSSARY_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "AVOID",
+    "CANONICAL",
+    "DECIDED_AT",
+    "DEFINITION",
+    "RELATES_TO",
+];
+
+// orgasmic:task_ZKZBF
+/// Drawer keys each node layer's readers consume, for the miscased-key refusal
+/// on `node prop set`/`node prop unset`. Task is the schema-read drawer
+/// [`validate_task_property_keys`] already governs; the other layers name
+/// their own vocabulary so a refusal can point at the canonical spelling.
+/// `ID` is deliberately absent from every list: it is derived from the node
+/// identity and refused by the shared guard, not a key to advertise
+/// (orgasmic:task_ZKZBF.1).
+fn node_layer_schema_property_keys(layer: NodeLayer) -> &'static [&'static str] {
+    match layer {
+        NodeLayer::Task => TASK_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Decision => DECISION_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Glossary => GLOSSARY_SCHEMA_PROPERTY_KEYS,
+        NodeLayer::Project => &["BRANCH", "DEFAULT_BRANCH", "LOCAL_PATH", "PATH", "STATUS"],
+        NodeLayer::Goal | NodeLayer::Handoff => &["GOAL_ID", "LIVENESS"],
+    }
+}
+
+// orgasmic:task_ZKZBF.1
+/// Refusal label for a node layer, so every drawer-key refusal names the
+/// vocabulary it is about. Total on purpose: no dead arms to drift.
+fn node_layer_label(layer: NodeLayer) -> &'static str {
+    match layer {
+        NodeLayer::Task => "Task",
+        NodeLayer::Decision => "Decision",
+        NodeLayer::Glossary => "Glossary",
+        NodeLayer::Project => "Project",
+        NodeLayer::Goal => "Goal",
+        NodeLayer::Handoff => "Handoff",
+    }
+}
+
+// orgasmic:task_ZKZBF.2
+/// The underscored spelling of a key that is its own uppercase but not
+/// `[A-Z][A-Z0-9_]*` (`FOO-BAR` → `FOO_BAR`), when that mapping is itself a
+/// valid shape. `None` when the key already conforms or no clean spelling
+/// exists (`1FOO` has no uppercase first character to offer).
+fn shaped_drawer_key_suggestion(key: &str) -> Option<String> {
+    if orgasmic_core::tx::is_uppercase_snake_key(key) {
+        return None;
+    }
+    let mapped = key
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    (mapped != key && orgasmic_core::tx::is_uppercase_snake_key(&mapped)).then_some(mapped)
+}
+
+// orgasmic:task_ZKZBF.1
+/// The canonical-spelling check every drawer-key write surface shares: org
+/// drawer keys are uppercase and [`orgasmic_core::Heading::property`] compares
+/// them byte for byte, so a miscased key would be written and never read.
+/// It also owns the identity guard: `:ID:` is derived from the node identity
+/// (`find_by_id` matches it byte for byte), so writing it would re-key the
+/// node and dangle every reference to the old id — refused on every layer,
+/// before and instead of the case check.
+///
+// orgasmic:task_ZKZBF.3
+/// `value` is the DIRECTION: `Some` for writes, `None` for removals. Only the
+/// empty-key and identity refusals are direction-free. Everything after them
+/// is a write-side argument and is skipped on removals — see the split inside.
+///
+// orgasmic:task_ZKZBF.2
+/// It also enforces the ledger's own key SHAPE (`[A-Z][A-Z0-9_]*`, the core
+/// `is_uppercase_snake_key`). A key that is its own uppercase but not that
+/// shape (`FOO-BAR`) used to pass here and die only inside the tx writer —
+/// a 500 "failed to apply changes" with the real reason confined to the
+/// daemon log. One rule, refused here as a 400 before any file is read.
+fn validate_drawer_property_key_case(
+    key: &str,
+    layer_label: &str,
+    schema_keys: &[&str],
+    value: Option<&str>,
+) -> Result<(), ApiError> {
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::bad_request(
+            "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
+        ));
+    }
+    // Case-insensitive so `id=…` gets this ONE refusal naming the immutability
+    // rule, not a case correction ("use ID") into a hard refusal — two round
+    // trips to learn one rule was the LOW-3 shape.
+    if trimmed.eq_ignore_ascii_case("ID") {
+        return Err(ApiError::bad_request(format!(
+            "{layer_label} identity is immutable and the drawer :ID: is derived from it, so ID \
+             cannot be set or unset as a property — writing it would re-key the node and dangle \
+             every reference to the old id. Pin one at create time instead (the create verb's \
+             `id` argument)"
+        )));
+    }
+    // orgasmic:task_ZKZBF.3 — direction split. Everything below is a WRITE-side
+    // argument: a miscased or wrong-shaped key would be *written* and never
+    // read. A removal writes no key — `OrgRewriter::remove_property` matches
+    // the drawer byte for byte (`crates/orgasmic-core/src/org.rs`), so the
+    // spelling actually in the drawer is the only one that can delete the line
+    // it names. The removal door refuses only keys another door owns (the
+    // per-layer unset refusal tables, checked by the caller) and identity
+    // (above); an absent key refuses as `PropertyNotFound`.
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let canonical = trimmed.to_ascii_uppercase();
+    if canonical != *key {
+        // The canonical spelling to advertise must itself be a shape the
+        // ledger accepts: correcting `foo-bar` to `FOO-BAR` would send the
+        // caller into the shape refusal below — two round trips to learn one
+        // rule, the LOW-3 shape again.
+        let suggested =
+            shaped_drawer_key_suggestion(&canonical).unwrap_or_else(|| canonical.clone());
+        let tail = if schema_keys.contains(&canonical.as_str()) {
+            format!(" — pass `{canonical}={value}`")
+        } else {
+            String::new()
+        };
+        return Err(ApiError::bad_request(format!(
+            "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
+             uppercase and the reader compares them byte for byte, so `:{key}:` would be \
+             written and never read. Use `{suggested}`{tail}. {layer_label} keys the schema \
+             reads: {}",
+            schema_keys.join(", ")
+        )));
+    }
+    // orgasmic:task_ZKZBF.2 — self-uppercase but wrong SHAPE (`FOO-BAR`): the
+    // tx ledger this write is also recorded on refuses it inside the writer.
+    // Refused here instead, naming the flag on the set path (where
+    // `task update --property FOO-BAR=1` is the shape that arrives) so the
+    // caller gets one 400, not a 500 with the reason in the daemon log.
+    if let Some(suggested) = shaped_drawer_key_suggestion(trimmed) {
+        let shape_sentence = format!(
+            "so `--property {trimmed}=…` would pass the drawer and die inside the tx \
+             writer as a 500. Use `{suggested}`"
+        );
+        return Err(ApiError::bad_request(format!(
+            "property key `{trimmed}` is not a drawer-key shape: org drawer keys and the tx \
+             ledger both accept `[A-Z][A-Z0-9_]*` only, {shape_sentence}. {layer_label} keys \
+             the schema reads: {}",
+            schema_keys.join(", ")
+        )));
+    }
+    if !orgasmic_core::tx::is_uppercase_snake_key(trimmed) {
+        // No underscored spelling to offer (`1FOO`, `FOO__—BAR`, …): state the
+        // rule without inventing a correction.
+        return Err(ApiError::bad_request(format!(
+            "property key `{trimmed}` is not a drawer-key shape: org drawer keys and the tx \
+             ledger both accept `[A-Z][A-Z0-9_]*` only. {layer_label} keys the schema reads: {}",
+            schema_keys.join(", ")
+        )));
+    }
+    Ok(())
+}
 
 /// The write-time key check TASK-HXSW0 asks for: canonical spelling first, then
 /// the refusal table.
@@ -16300,33 +16632,16 @@ fn validate_task_property_keys(
     properties: &BTreeMap<String, String>,
     verb_only_on_update: &[&str],
 ) -> Result<(), ApiError> {
-    for key in properties.keys() {
-        let trimmed = key.trim();
-        if trimmed.is_empty() {
-            return Err(ApiError::bad_request(
-                "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
-            ));
-        }
-        let canonical = trimmed.to_ascii_uppercase();
-        if canonical != *key {
-            let known = TASK_SCHEMA_PROPERTY_KEYS.contains(&canonical.as_str());
-            let tail = if known {
-                format!(
-                    " — pass `{canonical}={}`",
-                    properties.get(key).map(String::as_str).unwrap_or("…")
-                )
-            } else {
-                String::new()
-            };
+    for (key, value) in properties {
+        // orgasmic:task_ZKZBF — the case check is shared with the other
+        // drawer-key surfaces this task audited; this task-facing spelling
+        // keeps TASK-HXSW0's exact message.
+        validate_drawer_property_key_case(key, "Task", TASK_SCHEMA_PROPERTY_KEYS, Some(value))?;
+        let canonical = key.trim().to_ascii_uppercase();
+        if let Some(refusal) = task_property_key_refusal_reason(&canonical) {
             return Err(ApiError::bad_request(format!(
-                "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
-                 uppercase and the reader compares them byte for byte, so `:{key}:` would be \
-                 written and never read. Use `{canonical}`{tail}. Task keys the schema reads: {}",
-                TASK_SCHEMA_PROPERTY_KEYS.join(", ")
+                "`--property {canonical}=…` is refused: {refusal}"
             )));
-        }
-        if let Some(refusal) = task_property_key_refusal(&canonical) {
-            return Err(ApiError::bad_request(refusal));
         }
         if verb_only_on_update.contains(&canonical.as_str()) {
             return Err(ApiError::bad_request(format!(
@@ -16445,12 +16760,9 @@ fn resolve_task_create_id(req: &TaskCreateRequest) -> Result<String, ApiError> {
     }
 }
 
-fn task_create_lifecycle_stage(req: &TaskCreateRequest) -> Result<LifecycleStage, ApiError> {
-    if req.properties.contains_key("STATE") {
-        return Err(ApiError::bad_request(
-            "STATE is owned by the lifecycle state machine; new tasks land in BACKLOG",
-        ));
-    }
+// orgasmic:task_ZKZBF.3 — no STATE branch here: `validate_task_property_keys`
+// refuses STATE case-insensitively via the refusal table, before this runs.
+fn task_create_lifecycle_stage(_req: &TaskCreateRequest) -> Result<LifecycleStage, ApiError> {
     Ok(LifecycleStage::Backlog)
 }
 
@@ -16478,21 +16790,14 @@ fn render_new_task_heading(
     props
         .entry("ID".to_string())
         .or_insert_with(|| id.to_string());
-    const DROPPED: &[&str] = &[
-        "STATE",
-        "KIND",
-        "PARENT_TASK",
-        "FIX_SUBTASK",
-        "BLOCKED_BY",
-        "LAST_UPDATED",
-    ];
+    // orgasmic:task_ZKZBF.3 — no drop list here. STATE, PARENT_TASK and
+    // LAST_UPDATED are refused by `task_property_key_refusal_reason`, and
+    // KIND, BLOCKED_BY and FIX_SUBTASK by `TASK_PROPERTY_KEYS_UPDATE_ONLY` —
+    // both inside `validate_task_property_keys`, which `post_task_create`
+    // (this renderer's only caller) runs first and case-insensitively. A
+    // second, silent copy of that rule was the exact shape TASK-HXSW0 filed:
+    // if the guard ever regresses, a visible bad line beats a mute drop.
     for (key, value) in props {
-        if DROPPED
-            .iter()
-            .any(|dropped| key.eq_ignore_ascii_case(dropped))
-        {
-            continue;
-        }
         line.push_str(&format!(":{key}: {value}\n"));
     }
     line.push_str(":END:\n");
@@ -16540,11 +16845,6 @@ async fn post_task_create(
     }
     if let Some(body) = req.body.as_deref() {
         reject_structural_task_body(body)?;
-    }
-    if req.properties.contains_key("ID") {
-        return Err(ApiError::bad_request(
-            "do not pass ID as a property; the drawer :ID: is derived from the task id (use `id` to pin one)",
-        ));
     }
     // orgasmic:task_HXSW0
     // The keys `render_new_task_heading` would drop on the floor. Refusing here
@@ -17782,14 +18082,10 @@ async fn update_task_properties(
         if key.is_empty() {
             continue;
         }
-        if key.eq_ignore_ascii_case("STATE") {
-            return Err(ApiError::bad_request(
-                "STATE is owned by the lifecycle state machine; use `--state` (the heading keyword and task.state_transitioned tx must move with it)",
-            ));
-        }
-        if key.eq_ignore_ascii_case("ID") {
-            return Err(ApiError::bad_request("task identity is immutable"));
-        }
+        // orgasmic:task_ZKZBF.2 — STATE and ID are refused by
+        // `validate_task_property_keys` above (refusal table + shared guard,
+        // case-insensitively); the hand-checks that used to sit here were
+        // unreachable and said it in two more sentences.
         changed.push((key.to_string(), value));
     }
     if changed.is_empty() {

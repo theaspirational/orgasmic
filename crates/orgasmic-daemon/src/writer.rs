@@ -461,6 +461,11 @@ pub struct PendingWrite {
 #[derive(Debug, Default)]
 struct WriterMetrics {
     in_flight_started: std::sync::Mutex<Option<Instant>>,
+    /// Session files the writer currently holds open — one per run that has
+    /// appended and not yet released. A run's handle is dropped on its
+    /// `release` lifecycle append; before that fix this grew by one fd per
+    /// dispatch for the daemon's whole life and hit the 256 soft limit.
+    open_session_handles: AtomicUsize,
     completed_total: AtomicU64,
     failed_total: AtomicU64,
     last_duration_ms: AtomicU64,
@@ -472,6 +477,8 @@ struct WriterMetrics {
 pub struct WriterStatus {
     pub liveness: bool,
     pub queue_depth: usize,
+    /// Session files held open right now (see `WriterMetrics`).
+    pub open_session_handles: usize,
     pub in_flight_operation: Option<PendingWrite>,
     pub in_flight_age_ms: Option<u64>,
     pub completed_total: u64,
@@ -1328,6 +1335,7 @@ impl WriterHandle {
             .map(|started| started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
         WriterStatus {
             liveness: !self.tx.is_closed(),
+            open_session_handles: self.metrics.open_session_handles.load(Ordering::Relaxed),
             queue_depth: self
                 .tx
                 .max_capacity()
@@ -1609,6 +1617,9 @@ async fn writer_loop(
                         #[cfg(test)]
                         injected_failure,
                     );
+                    metrics
+                        .open_session_handles
+                        .store(session_handles.len(), Ordering::Relaxed);
                 }
             }
             WriterCommand::Rewrite { req, reply } => {
@@ -1852,6 +1863,9 @@ async fn writer_loop(
                             session_handles.retain(|_, writer| writer.path() != path);
                             leased.insert(path);
                         }
+                        metrics
+                            .open_session_handles
+                            .store(session_handles.len(), Ordering::Relaxed);
                         let _ = reply.send(Ok(()));
                     }
                 }
@@ -1893,6 +1907,9 @@ async fn writer_loop(
                         #[cfg(test)]
                         entry.injected_failure,
                     );
+                    metrics
+                        .open_session_handles
+                        .store(session_handles.len(), Ordering::Relaxed);
                     record_writer_command(
                         &metrics,
                         deferred_started.elapsed(),
@@ -1907,6 +1924,7 @@ async fn writer_loop(
             WriterCommand::Shutdown { reply } => {
                 tx_handles.clear();
                 session_handles.clear();
+                metrics.open_session_handles.store(0, Ordering::Relaxed);
                 // A deferred append is not written on the way out: the file it
                 // names may be mid-transaction, and reporting the loss is more
                 // honest than appending to whatever inode happens to be there.
@@ -2035,6 +2053,14 @@ fn run_session_append(
                 seq: ok.seq,
             },
         );
+        // `release` is the run's terminal lifecycle line: nothing appends to
+        // this session afterwards in the ordinary course, so the handle goes
+        // with it. Holding it leaked one fd per ended run until the daemon hit
+        // macOS's 256 soft limit (vscode-orsl letter, 2026-08-22). A late
+        // append (recovery note) simply reopens the file.
+        if lifecycle_phase.as_deref() == Some("release") {
+            session_handles.remove(&run_id);
+        }
         if let Some(phase) = lifecycle_phase {
             // orgasmic:TASK-FZB6T — the catalog update runs through this
             // boundary, before the event is published, so no consumer woken by
@@ -3129,6 +3155,57 @@ mod tests {
             }
             other => panic!("expected RunLifecycle, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn release_lifecycle_append_drops_the_session_handle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let handle = spawn(EventBus::new());
+        let append = |run: &str, event: serde_json::Value| SessionAppend {
+            run_id: run.into(),
+            session_path: tmp.path().join(format!("{run}.jsonl")),
+            identity: RuntimeIdentity::new(run, "boot-test"),
+            authority: None,
+            kind: SessionEventKind::Lifecycle,
+            event,
+        };
+        for run in ["run-a", "run-b"] {
+            handle
+                .append_session(append(
+                    run,
+                    serde_json::json!({"phase": "acquire", "task_id": "T", "kind": "worker", "worker_id": "w"}),
+                ))
+                .await
+                .expect("acquire");
+        }
+        assert_eq!(
+            handle.status().open_session_handles,
+            2,
+            "one handle per live run"
+        );
+        handle
+            .append_session(append(
+                "run-a",
+                serde_json::json!({"phase": "release", "outcome": "completed", "reason": "done"}),
+            ))
+            .await
+            .expect("release");
+        assert_eq!(
+            handle.status().open_session_handles,
+            1,
+            "the released run's handle is gone, the live run's stays"
+        );
+        // A late append after release reopens and re-holds; it must not panic
+        // or lose the line.
+        handle
+            .append_session(append(
+                "run-a",
+                serde_json::json!({"phase": "run_meta", "transport": "tmux"}),
+            ))
+            .await
+            .expect("late append");
+        let text = std::fs::read_to_string(tmp.path().join("run-a.jsonl")).unwrap();
+        assert_eq!(text.lines().count(), 3);
     }
 
     #[tokio::test]

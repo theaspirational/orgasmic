@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-ZKZBF`.
+#
+# The production path, not the HTTP contract: every surface audited was
+# measured at a terminal against the real binary, and the pre-fix behaviour on
+# every one of them was a NORMAL SUCCESS OBJECT (or, for `node prop unset`, a
+# mute "org file update failed" that named neither spelling of the key).
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test node_property_silent_drop_cli

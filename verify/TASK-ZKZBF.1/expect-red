@@ -1,0 +1,58 @@
+# Pinned from the real injected-red run of 2026-08-19: the patch removes the
+# round-1.1 guards only — the ID-immutability hoist out of the shared drawer
+# check (set, unset, graph create, graph revise, the org-node editor's other
+# layers), "ID" back in the advertised Project and Goal/Handoff key lists, the
+# case rule back out of the tx ledger's key parse, and the three message
+# shapes (path-carrying PropertyNotFound, --property-phrased unset advice,
+# the two-round-trip `id=` refusal) back in.
+#
+# Re-authored 2026-08-20 against the tree after TASK-ZKZBF.2 (same defect
+# set; the ZKZBF.2 unset-split and shape-400 stay fixed in the injected
+# state). The suite grew to 15 tests and one of them — the dead-key unset
+# contract — also pins the round-1.1 unset-shaped advice, so it falls too.
+#
+# Re-authored again 2026-08-20 after TASK-ZKZBF.3 rebased the api.rs hunks
+# (the removal-direction split moved the lines the ID-guard hunk sat on).
+# Same defect set, same eight failures, same signature: the ZKZBF.3 split
+# stays FIXED in the injected state, so its two tests are among the seven
+# that pass. Every `contains:` below is unchanged and was re-confirmed
+# against the new injected-red run, not carried over on faith.
+#
+# Pre-fix, `node prop set term_… ID term_…` re-keyed the node so hard that
+# the SAME test's later `glossary get` 404s on the old id, and `node prop
+# unset … ID` removes the identity line and the post-edit re-read 404s —
+# the dangling-reference outcome the finding described, reproduced live.
+exit: 101
+
+# `node prop set <id> ID …` on term/decision/project: a 200 that re-keyed
+# the node (the refusal assertion catches the follow-up 404 on the old id),
+# and `node prop unset … ID`: the same identity write with the sign flipped.
+contains: the refusal must name ID and its immutability
+
+# Graph revise (`POST /glossary/:id`) accepted the ID property and re-keyed:
+# a 200 where the test demands a 400 — the create/revise divergence.
+contains: revise with an ID property must be refused, not re-key
+
+# `glossary create --property id=…`: the case check answered "Use `ID`"
+# first — two round trips to learn one rule (LOW-3), raw refusal pinned.
+contains: is not the canonical drawer spelling
+
+# `tx record --extra kind=implementer`: accepted and recorded, leaving the
+# staged dispatch invisible to dispatch-close (MEDIUM-2).
+contains: must be refused, not silently accepted
+
+# `node prop unset <task> PRODUCES`: the daemon's Display string, absolute
+# on-disk path included, drawer keys absent (LOW-1) — raw refusal pinned.
+contains: : property PRODUCES not found on heading
+
+# `node prop unset <task> STATE`: advice about a `--property` flag the
+# command does not have (LOW-2) — raw refusal pinned.
+contains: `--property STATE=…` is refused
+
+# The seven round-1.1 tests fall, plus the ZKZBF.2 dead-key test that also
+# pins the unset-shaped advice. The seven that stay green are the round-1
+# six plus the ZKZBF.2 shape test — no collateral on the merged behaviour
+# this fix round builds on. (After ZKZBF.3 the split shifted which seven:
+# the ZKZBF.3 removal-direction test is green and the ZKZBF.2 dead-key test
+# is one of the eight, but the counts and every pin above are unchanged.)
+contains: test result: FAILED. 7 passed; 8 failed

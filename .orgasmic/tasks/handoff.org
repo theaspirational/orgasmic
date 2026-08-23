@@ -5,65 +5,67 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         6b1f6ef
-:LIVENESS_AT:      [2026-08-08 Sat]
-:UPDATED_AT:       [2026-08-08 Sat]
+:LIVENESS:         5033cce
+:LIVENESS_AT:      [2026-08-23 Sun]
+:UPDATED_AT:       [2026-08-22 Sat]
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-08-08. *THREE MERGES, TWO REVIEWS, TWO EXPENSIVE MANAGER ERRORS*,
-and a P0 fix round in flight on the prune delete path — round FOUR.
+Session 2026-08-18 (reconciliation; previous manager session 2026-08-08 — its narrative and
+errors are preserved below and in Done so far). NOTHING IS IN FLIGHT; the board was reconciled
+today. The five rules below are durable, with 08-18 status notes where the product moved.
 
 THE FIVE THINGS TO KNOW BEFORE YOU DO ANYTHING
 
 1. *ARM A COMPLETION WATCHER ON EVERY DISPATCH, BEFORE ANYTHING ELSE.* Nothing in
-   orgasmic wakes a manager. The daemon knows the instant a run ends and CANNOT
-   TELL YOU; a manager learns only by polling. On 2026-08-08 a reviewer finished
-   and *the manager sat idle until the operator pinged it.* A dispatch without a
-   watcher stalls the whole board silently and is indistinguishable from a worker
-   still working. Poll =manager dispatch-status= every 30s on the started_tx;
-   emit on =[reported]= OR =[run-gone]=-without-report. *NEVER key on
-   =[pid-gone]=* — tmux prints it always because =WORKER_PID=-=. TASK-D6N77 (P1)
-   owns the product fix.
+orgasmic wakes a manager. The daemon knows the instant a run ends and CANNOT
+TELL YOU; a manager learns only by polling. On 2026-08-08 a reviewer finished
+and *the manager sat idle until the operator pinged it.* A dispatch without a
+watcher stalls the whole board silently and is indistinguishable from a worker
+still working. Poll =manager dispatch-status= every 30s on the started_tx;
+emit on =[reported]= OR =[run-gone]=-without-report. *NEVER key on
+=[pid-gone]=* — tmux prints it always because =WORKER_PID=-=. *UPDATE 08-18:
+TASK-D6N77 IS DONE — =manager dispatch-wait --started-tx <tx>= blocks until the
+dispatch reports or dies. Use the command.*
 
 2. *NEVER RUN CARGO WITHOUT A SYSPOLICYD WATCHDOG. THERE IS NO "ATTENDED"
-   EXEMPTION.* Sample =ps -o pcpu= -p $(pgrep -x syspolicyd)= every 10s, kill at
-   ≥400% held 60s. This machine rebooted on 2026-08-08 —
-   =WindowServer-2026-08-08-105749.ips=, the THIRD occurrence — because the
-   manager read the guard and classified itself as attending. *The burst comes
-   from test EXECUTION and does not care who is watching.* TASK-4BBA6 (P1) moves
-   the guard inside =run-tests.sh=, because a protection that lives in a document
-   is not a protection.
+EXEMPTION.* Sample =ps -o pcpu= -p 520= every 10s, kill at
+≥400% held 60s. This machine rebooted on 2026-08-08 —
+=WindowServer-2026-08-08-105749.ips=, the THIRD occurrence — because the
+manager read the guard and classified itself as attending. *The burst comes
+from test EXECUTION and does not care who is watching.* *UPDATE 08-18:
+TASK-4BBA6 IS DONE — the watchdog is INSIDE =scripts/run-tests.sh= now. The
+manual guard remains for any bare =cargo test= you run.*
 
 3. *NEVER SET =ORGASMIC_HOME= INSIDE A DISPATCH, FOR ANY =orgasmic= INVOCATION.*
-   =ensure_running= → =start_via_selected_adapter= → =daemon_service::start=
-   writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
-   not scope; a staged home restarts the real daemon and kills every live
-   dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
-   safe. TASK-48SFW carries the source chain.
+=ensure_running= → =start_via_selected_adapter= → =daemon_service::start=
+writes and loads the PER-USER LaunchAgent plist, which =ORGASMIC_HOME= does
+not scope; a staged home restarts the real daemon and kills every live
+dispatch. Five workers died this way. =ORGASMIC_DAEMON_URL= on the CHILD is
+safe. TASK-48SFW carries the source chain.
 
 4. *ONE RUN IS NOT A MEASUREMENT ON AN INTERMITTENT TEST, AND ONE TEST BINARY IS
-   NOT A CRATE.* The manager made both mistakes on 2026-08-08. It filed a P0
-   "regression bisected to TASK-RMA18" from one run per commit on a test that
-   fails ~40% of the time — the implementer overturned it, base fails 3 of 8. And
-   it reported "738 passed / 0 failed" for a crate with *23 test binaries*.
-   *Repeat before you conclude, and quote =run-tests.sh='s VERDICT block rather
-   than a raw =test result:= line.* Sibling of the standing rule below.
+NOT A CRATE.* The manager made both mistakes on 2026-08-08. It filed a P0
+"regression bisected to TASK-RMA18" from one run per commit on a test that
+fails ~40% of the time — the implementer overturned it, base fails 3 of 8. And
+it reported "738 passed / 0 failed" for a crate with *23 test binaries*.
+*Repeat before you conclude, and quote =run-tests.sh='s VERDICT block rather
+than a raw =test result:= line.* Sibling of the standing rule below.
 
 5. *A CLAIM MEASURED ON SOME CASES AND WRITTEN DOWN AS A UNIVERSAL IS THIS
-   PROJECT'S MOST EXPENSIVE DEFECT.* Still true, and 2026-08-08 added the
-   sharpest instance yet: =worktree_submodule_refusal= reproduced git's
-   =validate_no_submodules= by reading =.gitmodules= — *git reads the INDEX* — and
-   the round that "closed" it passed its own tests because every fixture it built
-   satisfied both predicates at once. *When a report says a predicate REPRODUCES
-   another system's behaviour, ask what the other system's SOURCE OF TRUTH is,
-   not whether the tests pass.*
+PROJECT'S MOST EXPENSIVE DEFECT.* Still true, and 2026-08-08 added the
+sharpest instance yet: =worktree_submodule_refusal= reproduced git's
+=validate_no_submodules= by reading =.gitmodules= — *git reads the INDEX* — and
+the round that "closed" it passed its own tests because every fixture it built
+satisfied both predicates at once. *When a report says a predicate REPRODUCES
+another system's behaviour, ask what the other system's SOURCE OF TRUTH is,
+not whether the tests pass.*
 
 CROSS-FAMILY REVIEW IS RESTORED [2026-08-08]. codex works again and the operator
 authorised =gpt-5.6-sol= for review; the same-family exception that governed
 08-07 is RETIRED. The first cross-family review immediately produced a BLOCK SHIP
 on a path three same-family rounds had cleared — do not let it lapse again.
-Caveat: *=--effort= does not actually reach codex* (TASK-C7NVH), so a tx recording
+Caveat: *=--effort= does not actually reach codex* (TASK-C7NVH, still open), so a tx recording
 =:EFFORT: high= on a codex dispatch is recording something that was never sent.
 
 THE CLOSE COMMITS ITS OWN RECORD — *PROVEN FOUR TIMES* (=f03949e=, =d8ae56f=,
@@ -74,6 +76,21 @@ ALSO STILL TRUE, from the 08-05 measurements: SHARED =CARGO_TARGET_DIR= IS
 UNSOUND, and STABLE WORKTREE SLOTS DO NOT FIX THE TCC PROMPTS. Do not implement
 either. And =scripts/run-tests.sh='s false greens are FIXED — a crashed target,
 and any anomalous cargo exit, now red whatever else classified.
+
+UPDATE 08-18: the runtime is TMUX-ONLY (rmux and acp-stdio drivers removed,
+=010a32b=) and now 0.0.21. The operator suspension on dispatching (2026-08-09)
+still governs — see In flight.
+UPDATE 08-22 (this session, non-manager: owner + Claude, no dispatches). Three things
+changed that the next manager must know: (1) THE dec_E01MC MAP IS AT ITS DESTINATION —
+TASK-AP971's 11 tickets are resolved and an 11-task implementation chain is filed
+(TASK-GCXB7 … TASK-KA934, DEPENDS_ON-wired, IMPLEMENTS dec_E01MC); see Next likely actions.
+(2) Two mobile RunDock defects were fixed in ui/ (=ff1afcf= resync after a dropped event
+stream + project-scoped Running Agents; =9a2c154= tap-vs-drag resize + panel clipping) —
+they are on main LOCALLY and on =origin/fix/rundock-mobile=; =origin/main= is PROTECTED
+(PR + =local/release-certified= check required), so main is 40+ commits ahead of origin and
+NOTHING IS LANDED REMOTELY. =gh= auth token is invalid; =origin= now uses SSH. (3) Prototype
+code for the kernel + migrator sits on branch =ap971-prototype= (=41a1faf=) — reference
+only, never merge it.
 
 ** Done so far
 SESSION 2026-08-06/07. SEVEN MERGES, SIX REVIEWS (five REJECT, one approve), and
@@ -375,157 +392,220 @@ tmux — found by reading the live pane: =gpt-5.6-sol xhigh= against a tx saying
 =:EFFORT: high=), TASK-K9WWM (P2, the 10s daemon budget timeouts, which recurred
 on a calm host and so became the real finding the 08-07 handoff predicted).
 
+SESSION 2026-08-18 — LIVENESS RECONCILIATION (manager, recall drift 6b1f6ef..a90c5d8, 230 commits).
+The operator and external agents landed a week of work no manager session recorded. Folded
+summary, verified from git and tx:
+
+- *PR WAVE #9-#18 (operator, via GitHub):* tmux-only runtime refactor (=010a32b= — *the rmux
+  driver is REMOVED*; every rmux reference below is history), canonical chat provider runtime
+  (PR #15), fast macOS ARM release path + cert reuse (PR #11/#12), release fixes (PR #9/#10),
+  simulated-claude test serialization (PR #16), marker grammar retirement + dec_BP4NH superseded
+  (PR #18), task comments + ledger hardening — rewrite guard, 5-digit tx rollover (PR #14),
+  dec_E01MC per-node directory schema. *Runtime now 0.0.21* (was 2cf6ea7 at last handoff).
+- *AGENT CHAINS LANDED (codex/claude via operator-side flows):* TASK-AJP4A lazy project indexing
+  — implemented, hardened through FIVE nested review rounds, tip =AJP4A.1.1.1.1.1= (delay
+  classification) approved + merged =c948872= 08-12, integrated via PR #6. TASK-D6N77 *DONE* —
+  *=manager dispatch-wait= EXISTS* (wake channel: block on started-tx until reported/died).
+  TASK-4BBA6 DONE (syspolicyd watchdog inside run-tests.sh). TASK-K9WWM DONE (6 rounds).
+  TASK-GPY3H DONE (supervisor probe family; follow-up TASK-VT9FG filed). TASK-BX5SR/BX5SR.1 +
+  TASK-GRCWC/GRCWC.1 — merged + approved 08-12/13, *reconciled to done TODAY* (tx-20260818-
+  orgasmic-6121..6126) with residuals filed: BX5SR.2 (P1 idempotency collision), BX5SR.3 (P1
+  writer supervision/liveness), GRCWC.2 (P2 cause-specific remedy).
+- *BOARD TODAY (post-reconciliation):* todo = TASK-ZKZBF only (its cursor-ACP dispatch stalled
+  post-handshake and was aborted 08-16, =fbf1d7b= — needs re-dispatch on tmux/claude once the
+  suspension lifts). in_review EMPTY. in_progress = FIVE STALE AJP4A ANCESTORS (AJP4A, .1,
+  .1.1, .1.1.1, .1.1.1.1) — tip closed but ancestors never moved; unchecked acceptance boxes
+  in AJP4A mean the move needs verification, not blind bookkeeping. backlog 122.
+
+SESSION 2026-08-19 — THE ZKZBF CHAIN OPENED AND CLOSED IN ONE SESSION, ON A NEW LANE.
+Operator lifted the suspension for a directed pair: *implementer = opencode stdio /
+zai-coding-plan/glm-5.3, reviewer = claude stdio / claude-opus-5 / high.* Dispatching tmux+custom
+with argv =opencode run -m zai-coding-plan/glm-5.3= lets the 0.0.21 runtime reclassify onto its
+first-class opencode-stdio provider-host lane (=implementer-opencode-stdio=) — no tmux server ever
+started. glm-5.3 has NO variant named max (=variants: null=), so no effort was recorded — recording
+an unapplied value is the C7NVH defect.
+- Round 1 (impl ~6min): five surfaces refused-by-name + 6 production tests + injection artifact;
+  merged =136418f=; manager gates green. Review (~10min) REJECT — audit missed its own class on
+  =node prop set ID= (non-task layers re-key the node; key table advertised ID; create/revise
+  diverged — the manager's own no-third-bypass claim was FALSE) + =tx record --extra= same defect.
+- Round 2 TASK-ZKZBF.1 (impl ~45min): shared ID guard at all drawer-write sites, tx --extra case
+  rule in core, message polish; 13 tests, sibling injection artifact; merged =8f6e9c8=; manager
+  gates 19/19 GREEN at rate 0.0010. Review ACCEPT — all five brief claims attacked and unbroken;
+  every drawer-write site enumerated (five caller-keyed, all guarded).
+- Chain closed: TASK-ZKZBF + ZKZBF.1 done; follow-ups filed as TASK-ZKZBF.2 (P2: UI Parent Task
+  guaranteed-400 + unsettable dead keys — chain-introduced; task-create ID message split; drawer/tx
+  pattern mismatch surfaces as 500; --extra help/doc for the now-enforced case rule).
+- Both rounds' reviewer filed findings as reviewer.finding tx the moment they existed; the
+  injection-patch prohibition held; dispatch-wait was the watcher on all four dispatches.
+- ALSO PROVEN: the FIX_SUBTASK two-step (create refuses it, update sets it) exercised by the
+  manager on ZKZBF.1; runtime review-before-close gate printed its own recipe and was followed.
+
+SESSION 2026-08-19/20 — ZKZBF.2 ROUND (chain continues). Operator pair: implementer opencode stdio
+zai-coding-plan/glm-5.3 effort high; reviewer claude stdio opus-5 high.
+- *DISPATCH FORM CORRECTED:* rounds 1-2 passed the model inside tmux+custom argv — the provider
+  host never received it and the tx recorded NO model (unidentified worker, convention violation;
+  found by reading run.created tx vs ps output). ZKZBF.2 passed =--model=/--effort= on the dispatch
+  CLI: chat lane plumbs both to =provider-host --model zai-coding-plan/glm-5.3 --effort high=
+  (chat_sdk.rs:277-280) — verified on the live process. THIS IS THE FORM TO REUSE for opencode.
+- Implementer (~35min): all four ZKZBF.1 follow-ups fixed — refusal table split by direction
+  (dead keys PARENT_TASK/LAST_UPDATED removable for the first time, STATE both-direction), UI
+  Parent Task field dropped, one ID sentence, drawer shape 400 with one-step FOO-BAR→FOO_BAR
+  correction, --extra help+doc+dedupe. 22/22 Rust + 352/352 UI. ALSO re-authored the stale
+  ZKZBF.1 injection artifact unprompted (verify/README discipline; 8Q92K class handled right).
+  Merged =b5df13e=.
+- Reviewer APPROVE WITH FOLLOW-UPS: all fixes real, artifact re-authoring audited NOT weakened
+  (every substantive pin byte-identical). New MEDIUM — *the case+shape checks still apply to the
+  REMOVAL direction*: 29 legacy miscased lines cannot be removed by their actual spelling, and the
+  two dual-spelling live P1s (TASK-099T6, TASK-A55J7) lose the LIVE line while the dead one
+  survives when an operator follows the refusal's advice. Manager verified the dual lines directly.
+  +2 LOWs. Filed as TASK-ZKZBF.3 (P2).
+- ZKZBF.2 done; chain total: 4 rounds, 2 accepts, 1 reject, 1 approve-with-follow-ups.
+
+SESSION 2026-08-20 — ZKZBF.3: THE CHAIN CLOSED CLEAN (four rounds, and the sweep worked). Operator
+pair this round: implementer claude stdio opus-5 high (ROLE SWAP, with an explicit class-sweep
+charter); reviewer codex stdio gpt-5.6-sol high (first codex review on the chain).
+- Implementer (~40min, model+effort verified on live process): ONE-LINE root fix — =let Some(value)
+  = value else { return Ok(()) }= in the shared guard: only empty-key and ID refusals are
+  direction-free; case+shape are write-side only, so EVERY removal route is covered at once.
+  Deleted the last unreachable STATE arm AND — the sweep's own find — =render_new_task_heading='s
+  DROPPED list, a SECOND SILENT COPY of the guard's rule (the original HXSW0 shape). Enumerations
+  with greps for removal routes, byte-exact checks, asymmetries; read-only probe of the 29 legacy
+  lines + cleanup recipe (no state hand-edited). 22/22 + all three artifacts PASS. Merged =450af07=.
+- Reviewer (codex/gpt-5.6-sol): APPROVE WITH ONE LOW DOCS FOLLOW-UP — *no HIGH/MEDIUM, the first
+  review on this chain to find no new instance of the class.* Traced every remove_property caller,
+  confirmed the DROPPED deletion safe on the sole production path, read the dual-spelling test
+  beyond its name, replayed all three artifacts independently. LOW docs residual (stale suite
+  overview) fixed manager-inline as =c08bdd8=.
+- *CODEX EFFORT ON THE CHAT LANE (C7NVH follow-up data):* run records MODEL_OVERRIDE gpt-5.6-sol
+  + EFFORT_OVERRIDE high; MODEL verified on the session wire (="model":"gpt-5.6-sol"= in the
+  jsonl); EFFORT not visible in the session log either way — =codex app-server= rides options over
+  JSON-RPC, not argv, so argv absence proves nothing. Unresolved, honestly recorded.
+- *LEGACY CLEANUP AVAILABLE, GATED ON RUNTIME REINSTALL:* 29 miscased drawer lines (4 on live
+  tasks: TASK-099T6, TASK-A55J7 dual-spelling P1s in backlog; 2 cancelled; 25 inert in done) are
+  now removable via =node prop unset <task> <lowercase-spelling>= — but only on a runtime WITH
+  these four merges; the installed 0.0.21 daemon predates the whole chain and still refuses.
+  Reinstall + cleanup is an operator decision.
+- BOARD: ZKZBF chain fully closed (ZKZBF done, .1 .2 .3 done); in_review/in_progress EMPTY,
+  todo EMPTY. First time in the project's recorded history all four active columns are clear.
+
+SESSION 2026-08-20, SECOND BLOCK — RUNTIME REINSTALLED + FULL HOUSEKEEPING (operator-authorized).
+- *RUNTIME 0.0.22-dev.20260820* (commit =b12ae98=, built today) installed via the sanctioned
+  surface: =package-runtime.sh= (cargo release + bun provider-host) → =install.sh --bundle=
+  with sha256 — exercised the 2cbf380 TCC-identity path; =bin/orgasmic= swapped atomically,
+  =current= flipped, install.json updated. Daemon restarted: pid 57239, boot =df281f0f=,
+  parse_errors 0, failed_projects EMPTY (even ddd's old unreadable-project entry is gone —
+  lazy-index era). *Rollback: =~/.orgasmic/runtimes/0.0.21-darwin-aarch64= remains intact.*
+  Binary prints workspace =0.0.18= (Cargo version); the =0.0.22-dev.20260820= label lives in
+  runtime-manifest.json — expected, not drift.
+- *LEGACY DRAWER CLEANUP EXECUTED:* all 29 miscased lines removed via =node prop unset <task>
+  <lowercase>= (the ZKZBF.3 direction split working on live state — TASK-099T6 was the probe:
+  dead line gone, live =:PRIORITY: P1= intact; then 28 more across 17 tasks). Verified 0
+  miscased drawer lines remain in every state file; parse_errors 0 throughout. Committed.
+- *STALE-PROCESS SWEEP:* ~60 orphaned =exec cat >> orgasmic-pane-*.fifo= helpers (Aug 8-16
+  vintage, readers long gone) killed; 11-day-old 2QK4P watchdog (target pid dead) killed and
+  its scratchpad dir removed; tmux =orgasmic-keepalive= (daemon-owned, today) PRESERVED.
+  *This pane-cat leak is a recurring defect — every tmux dispatch capture leaves one on some
+  paths; worth a task if it recurs after the new runtime.*
+- *LEGACY RMUX AGENT DISABLED:* =orgasmic.rmux= LaunchAgent was still loaded and running
+  (pid 62511) six days after the driver's removal (010a32b). Booted out; plist renamed
+  =orgasmic.rmux.plist.disabled= (rename back + =launchctl bootstrap gui/501/...= to restore).
+  Daemon unaffected.
+- BOARD: todo/in_progress/in_review EMPTY; backlog 123 (goal not yet reached — backlog counts).
+
+SESSION 2026-08-22 (owner + Claude, no dispatches). dec_E01MC WAYFINDER MAP COMPLETED:
+AP971.11 dispatch lifecycle stays in monthly tx/, one shared fold, type-set guard,
+dispatch.linked derived; AP971.5 tx split table (journal iff about exactly one dir-backed
+node), singletons stay files, creation=journal#1 / deletion=tx tombstone, dispatch close
+stays ONE tx append + N rewrites (inventory risk #1 deleted, torn-close repair legacy-only),
+one shared id sequence; AP971.2 org descriptors in shipped/schema/node-types/; AP971.3
+prefixes kept, dir=id, mkdir is the collision check; AP971.8 views/{board,glossary,decisions}
+daemon-written + gitignored; AP971.7 per-node reload + writer apply-own-write; AP971.10
+regenerate over descriptor specs, task regenerate never re-dispatches; AP971.9 migrate
+done/cancelled too, no v1 compat; AP971.6 kernel boundary prototyped
+(orgasmic-core::node_kernel, branch ap971-prototype 41a1faf); migrator prototyped on real
+data (873 nodes, 0 anomalies, 0.24s). 11-task implementation chain filed (=abb2d12=,
+edges =bf8efe3=). RunDock mobile: stale 'run no longer live' after a dropped WebSocket
+(useResource now refetches on resync/foreground, =ff1afcf=) and tap-jump + overlap
+(dockHeightFromDrag + clipping, =9a2c154=).
+
+SESSION 2026-08-23 — VSCODE-ORSL LETTER EMERGENCY (operator said GO). The manager agent driving
+vscode-orsl wrote a 16-item letter (operator-forwarded; copy in this session's uploads, items
+recorded on each task). Triage: 13 new tasks filed (tag =vscode-orsl-letter=: TASK-XQCNA reason
+classification, TASK-0Y363 fd leak, TASK-ZMYEN hermes report loss, TASK-XC9N4 dispatch
+substitution, TASK-TWCP9 ledger-out-of-tree DECISION, TASK-SJD10 evidence dir, TASK-547MT
+claim_store_unreadable, TASK-RSPG0 submodules, TASK-40ZMJ provider health, TASK-EXN3N read-only
+reviewer, TASK-CS2TM CLI rough edges, TASK-7NPAB exclusivity, TASK-38Z7K pid-gone on ws), 4 existing
+tasks got a =Letter evidence= section (SJA9W item 6, 8VBXR item 4, CQM2X item 12, C7NVH item 5 model
+passthrough).
+Shipped in source (local main, not on origin):
+- =8bd8287= fd leak (letter #2, the outage-maker: 253/256 fds, 223 session handles held): writer
+  drops the session handle on the =release= lifecycle append; RLIMIT_NOFILE raised at daemon start
+  (65536→10240→4096 fallback); =/status= carries =open_fds=/=fd_limit=; =orgasmic daemon status=
+  prints =fds: N/limit (writer session handles: H)=. TASK-0Y363 stays open only for (d): the
+  starved daemon could not answer the health probe and the supervisor refused to replace it.
+- =5033cce= letter #3a/#5/#9b/#16: hermes unknown/untyped events warn+skip (was fatal, lost two
+  finished reviews); =--dry-run= prints =resolves: driver=… harness=…= from the new shared
+  =addressing::canonical_chat_address=; pid 0 (ws) is unknown → no =[pid-gone]=; =dispatch-wait=
+  request failure says worker state unknown, not ended. TASK-547MT and TASK-38Z7K DONE;
+  ZMYEN/XC9N4 carry a =Progress= section with what remains.
+- =6a9b765= the .orgasmic filing above.
+RUNTIME REINSTALL: bundle =0.0.22-dev.20260823= built+codesigned from =5033cce= (sha
+e59bfc5f…5675, probe string =writer session handles= 0→1, control =worktree-prune= 4→4). Trap
+learned: codesign fails =errSecInternalComponent= when the login keychain is locked to the
+session — operator runs =security unlock-keychain ~/Library/Keychains/login.keychain-db=.
+A detached watcher (=scratchpad/rt/reinstall-when-idle.sh=, own session, PPID 1) waits for
+ZERO live runs (vscode-orsl had 2 live) and then does bootout → install.sh → bootstrap, logging
+to =scratchpad/rt/reinstall.log=; it exits without acting if =install.json= already says
+0.0.22-dev.20260823, and gives up after 6h.
+
+2026-08-23 (later): RUNTIME SWAP LANDED at 11:37 in an idle gap (watcher); binary inode 618696074,
+install.json 0.0.22-dev.20260823, launchd-managed (pid 2567 at close of session). New trap learned
+and recorded in the reinstall memory: the 08-20 install had been AD-HOC signed, so TCC held a
+cdhash csreq for ~/.orgasmic/bin/orgasmic; the identity-signed build mismatched → under launchd every
+Documents open() blocked on a consent prompt (scan timed out 5s, tasks list 0 rows), CLIs declared it
+unhealthy and spawned detached daemons (fds N/1048576 = CLI-spawned, N/65536 = launchd-spawned).
+Operator clicked Allow at 12:07; TCC csreq is now identity-based, so future identity-signed builds
+keep the grant. Verified: tasks list 723 rows, fds 18/65536, launchctl print shows the pid.
+
 ** Next likely actions
-*NOTHING IS IN FLIGHT AND YOU MAY NOT DISPATCH. See =** In flight= — the
-operator suspended the standing authorization and owes the mode decision.* Ask
-first; the list below is what to propose, not what to start.
+*DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
 
-*ARM A COMPLETION WATCHER ON EVERY DISPATCH* once dispatching resumes. Nothing in
-orgasmic wakes a manager (TASK-D6N77), so a dispatch without a watcher stalls the
-board silently and looks exactly like a worker still working. Poll
-=manager dispatch-status= every 30s for the started_tx; emit on =[reported]= OR
-=[run-gone]=-without-report. *NEVER key on =[pid-gone]=* — tmux prints it always
-because =WORKER_PID=-=.
+1. *START THE dec_E01MC IMPLEMENTATION CHAIN* (filed 2026-08-22, all backlog, tags =e01mc=
+   =node_kernel=). Three roots have no deps and can run in parallel:
+   - TASK-GCXB7 shared dispatch fold in core + type-set guard (smallest; stands alone)
+   - TASK-TP593 node kernel in core + writer ops — start from
+     =crates/orgasmic-core/src/node_kernel.rs= on branch =ap971-prototype= (=41a1faf=)
+   - TASK-7A0H4 node type descriptors + descriptor-driven mint
+   Then, in dependency order: TASK-SRBGS migrator (← TP593 7A0H4; port
+   =scripts/ap971-migrate-proto.py= from the same branch — proven on this repo: 873 nodes, 0
+   anomalies, byte-for-byte round trip) → TASK-EPG6H tx split → TASK-8AV8B incremental
+   refresh; TASK-JWHXH views and TASK-AN992 CLI/shipped (← SRBGS); TASK-ARRV8 artifacts onto
+   the kernel (← TP593 7A0H4) → TASK-8DMQS regenerate; TASK-KA934 UI last (← 8AV8B 8DMQS).
+   Every design decision is in the AP971.x ticket Resolutions and the map's 'Decisions so
+   far' — workers should read their ticket's referenced Resolution before coding. Owner
+   stance: single user, NO v1 compatibility layer, version stamp is a label only.
+2. *LAND main ON origin.* Local main is ~40 commits ahead; =origin/main= is protected (PR +
+   =local/release-certified=). =orgasmic integrate --dry-run= shows the sequence; it needs a
+   valid =gh= token (=gh auth login -h github.com=). Until then the work exists only locally
+   and on =origin/fix/rundock-mobile=.
+3. Everything from the 08-18 list still stands: AJP4A ancestors to close, ZKZBF (todo),
+   BX5SR.2/.3 P1 residuals, the older P1s (YBCYQ worker-commits-to-main, 48SFW staged-home
+   kills dispatches, C7NVH --effort never reaches codex). A four-group reading of the 123-item
+   backlog exists in this session's scratch only; the P1s of group A are the real risk.
 
-*ASK THE OPERATOR FOR DRIVER/HARNESS/MODEL/EFFORT AT SESSION START.* Nothing
-enforces resolution and the harness default wins SILENTLY (TASK-A55J7). The
-2026-08-08/09 answer, which is NOT a standing setting: *implementers
-=tmux / claude / claude-opus-5 / high=; reviewers =tmux / codex / gpt-5.6-sol=.*
-Cross-family review is the norm and it earns its keep — codex rejected four of
-the six 2QK4P rounds, each time on something the same family had cleared.
-*=--effort= DOES NOT REACH CODEX AT ALL* (TASK-C7NVH): =codex --help= has no such
-flag (it is =-c model_reasoning_effort=), =--harness-arg= is refused for
-non-custom harnesses, and every codex review this session actually ran at the
-machine default =xhigh= while its tx said otherwise. Do not pass =--effort= to
-codex — recording a value that is not applied is the defect itself.
+DONE SINCE LAST HANDOFF (do not re-propose): TASK-AP971.2/.3/.5/.6/.7/.8/.9/.10/.11 (map
+complete); RunDock mobile fixes (ui/, local main).
 
-THE ORDER TO PROPOSE, cheapest-leverage first. Every one of these makes the NEXT
-round cheaper, which is the answer to "we are bogged down in routine":
-
-1. *TASK-D6N77 (P1) — the wake channel.* Start with =manager dispatch-wait=; it
-   is small and it converts the autopilot loop from a habit into a command. This
-   is the single biggest source of manual babysitting.
-2. *TASK-GPY3H (P2) — the unowned supervisor probe-child family.* Ruled by the
-   round-six reviewer: file it rather than let TASK-X0PV1 absorb a different
-   family. Three rounds in a row burned an hour each proving "the host, not my
-   change".
-3. *TASK-4BBA6 (P1) — syspolicyd watchdog inside =run-tests.sh=.* Two of this
-   project's three reboots were a manager skipping a documented guard.
-4. *TASK-P4XKT (P1) — repeat passing tests / score a pass rate.* A defect at 40%
-   ships green one round in two; that is how TASK-2QK4P survived as long as it
-   did, and what made a one-run-per-commit bisect look conclusive.
-5. *TASK-8Q92K (P2) — 17 of 90 verify artifacts cannot replay and nothing reports
-   it.* The systemic half (a sweep beside =run-tests.sh --check=) is worth more
-   than the 17 repairs. *Do not mass-regenerate.*
-6. *TASK-GRCWC (P1)* — the =worktree-prune= fixtures. It is a DESTRUCTIVE verb on
-   the installed binary whose only safety argument has never been executed.
-7. *TASK-SJA9W (P2)* — =dispatch-status= prints a close command that cannot be
-   run as printed, for the whole duration of every review round.
-8. *TASK-TRAEM (P2)* — the derivation script, if a clean =approve= on the 2QK4P
-   chain is wanted. =syn= is the stated better answer.
-9. Still P1 and untouched: =4DTBZ=, =BX5SR=, =A55J7=, =48SFW=, =ADHWZ=, =NTNK0=,
-   =3X5AQ=, =VD0VB=, =YBCYQ=, =VBSG2=, =099T6=.
-
-PRACTICES THAT PAID OFF, with this session as the evidence:
-- *A WORKER THAT CHALLENGES THE BRIEF'S PREMISE IS THE BRIEF WORKING.* Write
-  briefs that make it cheap: state the premise, say how it was measured, and say
-  a REJECT of the premise is a valid outcome.
-- *NAME THE CLAIMS TO ATTACK BY NUMBER, WITH A DO-NOT-RE-DERIVE LIST*, and TELL
-  THE REVIEWER IT MAY RUN TESTS. Three of the round-five brief's ten numbered
-  questions each produced a confirmed finding.
-- *TELL A REVIEWER ABOUT THE MANAGER'S OWN ERRORS.* A reviewer that knows the
-  manager is fallible audits the manager.
-- *A RED PROOF IS THE ACCEPTANCE, NOT THE TEST.* Round six was asked to show the
-  test failing under the defect it names, and the manager REPLAYED one
-  independently (=tx-…-5537=): deleting one =flattenRuns= line reds the two new
-  tests while =tsc --noEmit= exits 0 in the same broken state. *A typecheck could
-  never have been that pin* — structural typing ignores extra wire properties.
-  Neither the report nor the reviewer had said so; it is now measured twice.
-- *THE MANAGER VERIFIES THE REPORT, NOT THE WORKER.* Every round this session had
-  at least one claim that did not survive an independent read — most sharply,
-  round five said its regression exercised =boot_reattach_ownership= when that
-  function had exactly ONE caller in the tree and both mentions in the test file
-  were comments.
+0. *VSCODE-ORSL LETTER FOLLOW-UPS* (tag =vscode-orsl-letter=, filed 2026-08-23). Confirm the
+   runtime swap landed (=orgasmic daemon status= shows an =fds:= line; =install.json= version
+   0.0.22-dev.20260823) — if not, the watcher timed out: rerun it or do the memory recipe by hand
+   in a zero-live window. Then the cheapest high-value items: TASK-XQCNA (reason + evidence path on
+   dispatch-status; 500s carry =cause=), TASK-ZMYEN (b)(c) (partial -last.txt, ORGASMIC_REPORT_PATH),
+   TASK-XC9N4 remainder (refuse/warn at accept, simulated gating). TASK-TWCP9 is a DECISION — grill
+   before anything; fold it into the dec_E01MC per-node-dir layout thinking.
 
 ** In flight
-NO DISPATCH IS LIVE, AND THE BOARD HAS NO WORK IN FLIGHT FOR THE FIRST TIME IN
-THIS PROJECT'S RECENT HISTORY. =In Review= IS EMPTY.
-
-=== DO NOT DISPATCH ANYTHING — OPERATOR INSTRUCTION 2026-08-09
-*The standing authorization to dispatch without per-dispatch approval is
-SUSPENDED* (=tx-20260809-orgasmic-5543=). The operator asked to be shown a plan
-and to choose the next mode. Two of the three decisions are settled; *the third
-is open and it is theirs*:
-
-: 1  reinstall the runtime now?      ANSWERED YES — done, see below
-: 2  run a round seven on the script? ANSWERED NO by closing the node; the
-:                                     findings live on as TASK-TRAEM
-: 3  what mode next?                  *OPEN. ASK. DO NOT PICK IT YOURSELF.*
-
-The manager's recommendation on the table for (3): stop opening deep chains and
-take the four that make every future round cheaper — =D6N77= (wake channel),
-=GPY3H= (the unowned probe-child family), =4BBA6= (watchdog inside run-tests.sh),
-=P4XKT= (repeat passing tests) — plus =8Q92K= (17 of 90 verify artifacts cannot
-replay). The operator's own words for why: *"мені здається ми погрязли в рутині"*.
-
-=== THE RUNTIME IS 2cf6ea7 AND IT CARRIES BOTH FINISHED CHAINS
-Reinstalled 2026-08-09. Inode =544827231= → =547698415= on both the file and the
-running process; PID 7958. Rollback dir
-=~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260809= holds =ed0ebbc=.
-Recipe and EIGHT traps in session memory =orgasmic-runtime-reinstall=; two were
-learned on this run. Probe pre-tested against the OLD binary and discriminating
-(=repair_session_file=, =claim_store_unreadable=, =RepairAuthKey=,
-=recovery_unobserved= all 0 → 1..2; control =worktree-prune= unchanged at 4).
-TCC intact, 652 task ids read from the Documents-hosted project, zero permission
-errors. *Functional proof on the installed binary, not a debug build:*
-=orgasmic recovery= serves =failed_recoverable_runs= with 4 records and
-=inventory.failed_recoverable = 4=.
-
-=== BOTH CHAINS CLOSED — AND WHAT WAS CARRIED OUT OF THEM
-Twelve nodes moved to =done= on 2026-08-09: six =TASK-RMA18= (worktree
-reclamation, seven rounds) and six =TASK-2QK4P= (recovery authority, six rounds).
-*Nothing was closed over an open item* — both residuals were filed FIRST, which
-is the only reason the move was pure bookkeeping:
-
-- *=TASK-GRCWC= (P1)* — neither =walk_worktree= fail-open (=:3833= MAX_DEPTH,
-  =:3836=/=:3855= unreadable dir) has a fixture, and the =remove_contents=
-  symmetry that makes them safe has been *derived from source three times and
-  executed zero times*. =worktree-prune= is DESTRUCTIVE and IS INSTALLED. The
-  cheap fixture is =chmod 000=.
-- *=TASK-TRAEM= (P2)* — the round-six review's two open findings, both about
-  =scripts/derive-observation-surface.py=, which ships in no binary: =strip_noise=
-  closes block comments at the first =*/= though Rust NESTS them, so valid
-  functions vanish while all five self-checks pass; and the =cfg(test)= exclusion
-  is module-only, proven by the seen-set diff being eight removals PLUS TWO
-  ADDITIONS rather than a net six.
-
-*The round-six reviewer answered the shipping question YES* — "I would reinstall
-the operator runtime from this tree: the F3 operator path and recovery behavior
-are sound" — which is why the reinstall happened despite a REJECT verdict.
-
-=== TWO MITIGATIONS THAT WORK. REUSE BOTH ON EVERY REVIEW.
-1. *The brief FORBIDS reading =verify/*/injection.patch= bodies* and hands the
-   reviewer the manager's own audit instead. TASK-52NJS trip FOUR killed a review
-   after ~27 minutes of work, right after three =git diff= over those files, and
-   it filed nothing. Every review since has survived.
-2. *File each finding as a =reviewer.finding= tx the MOMENT it exists*, not
-   batched to the end. This is what made the difference between losing everything
-   and losing nothing.
-
-=== THE MANAGER RE-MEASURES THE DAEMON SUITE ON A CALM HOST, EVERY ROUND
-Rounds four, five and six ALL reported non-green honestly on a loaded host and
-the manager closed the criterion on a rested one (=tx-…-5487= 0.1554,
-=tx-…-5515= 0.0044, =tx-…-5536= 0.1070). *Load reads "elevated" while the rate
-calls the host calm — trust the RATE* (the TASK-4BBA6 divergence). Round six's
-author supplied two proper controls, which is the standard to hold: its own new
-test under =#[ignore]= produced the same failures, and the unmodified baseline in
-a sibling worktree was GREEN twice while interleaved. That family is now
-=TASK-GPY3H=.
-
-=== A MANAGER MISTAKE WORTH NOT REPEATING
-=TASK-TH906= was filed and then CANCELLED as an exact duplicate of =TASK-C7NVH=.
-The manager wrote a full task body without searching the backlog first. *At 112
-open items nobody holds the backlog in their head — search before filing.*
+NOTHING IN FLIGHT (2026-08-23 12:10): runtime 0.0.22-dev.20260823 installed and launchd-managed; the reinstall watcher has exited. vscode-orsl's manager dispatches on its own schedule — its runs are not this board's. Standing operator suspension on dispatch (tx-20260809-orgasmic-5543) still governs: ASK before dispatching.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
@@ -684,3 +764,25 @@ it spawns real billed provider turns. Never set =ORGASMIC_ALLOW_BILLED_TESTS=.
   claim that did not survive an independent read. The sharpest: round five said
   its regression exercised =boot_reattach_ownership= when that function had
   exactly ONE caller in the tree and both mentions in the test file were comments.
+
+=== CORRECTIONS 2026-08-18 (liveness reconciliation) — read after the block above
+- *THE RUNTIME IS TMUX-ONLY AND NOW 0.0.21.* =010a32b= removed the rmux driver; every rmux
+  mention above is history. acp-stdio is gone too. =2cf6ea7= / =ed0ebbc= version talk is spent.
+- *TASK-D6N77 IS DONE* — =manager dispatch-wait --started-tx= exists. The "autopilot has no
+  floor" risk is reduced to "use the command, not hand-rolled polling".
+- *TASK-4BBA6 IS DONE* — the syspolicyd watchdog lives inside =run-tests.sh= now. The
+  "never run cargo without a watchdog" rule is enforced by the tool; the reboot-on-unguarded-run
+  entries above are the historical evidence for why.
+- *TASK-K9WMM AND TASK-GPY3H ARE DONE* — their standing risk entries are closed; VT9FG carries
+  the remaining supervisor-probe test gaps.
+- STILL TRUE AND STILL SHARP: ORGASMIC_HOME kills live dispatches (48SFW); content filter on
+  bulk-reading injection patches (52NJS); [pid-gone] lies for tmux; merge-precedes-review and
+  the SJA9W close-command gap; promoted-record commits are unsigned; writer can stop persisting
+  while looking healthy (BX5SR.2/.3 own the open code work); do not stash .orgasmic for verify;
+  never run the 099T6 billed test; CI not live (main 918+ ahead of origin — now far more).
+
+08-22: =orgasmic task create --property DEPENDS_ON=…= wrote an EMPTY =:DEPENDS_ON:= on all 11
+chain tasks; the edges were repaired with =task update --property= (=bf8efe3=). Root cause
+was the caller's zsh word-splitting, not orgasmic — but if you see empty =:DEPENDS_ON:= lines
+anywhere, check the create path before trusting the graph. Also: =origin/main= is protected
+and =gh= is unauthenticated, so NOTHING from 08-18 onward is on the remote main.

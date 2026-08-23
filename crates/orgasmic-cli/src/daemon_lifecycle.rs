@@ -88,6 +88,19 @@ const AUTOSTART_ABSOLUTE_BOOT_BACKSTOP: Duration = Duration::from_secs(15 * 60);
 pub struct DaemonStatus {
     pub boot_id: String,
     pub pid: u32,
+    #[serde(default)]
+    pub open_fds: Option<usize>,
+    #[serde(default)]
+    pub fd_limit: Option<u64>,
+    #[serde(default)]
+    pub writer: Option<WriterFdStatus>,
+}
+
+/// The slice of the daemon's writer status that explains fd pressure.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WriterFdStatus {
+    #[serde(default)]
+    pub open_session_handles: usize,
 }
 
 #[derive(Debug, Clone)]

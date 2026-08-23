@@ -73,6 +73,24 @@ pub fn dispatch_chat_provider(
     }
 }
 
+/// The `(driver, harness)` a legacy dispatch address actually launches under
+/// once the canonical chat runtime claims it; `None` when the address runs as
+/// requested. The CLI's `--dry-run` prints this so the plan matches the tx
+/// (vscode-orsl letter item 5: `--mode tmux --harness codex` silently ran as
+/// `stdio`/`codex-chat`).
+pub fn canonical_chat_address(
+    mode: &str,
+    harness: &str,
+    harness_args: &[String],
+) -> Option<(&'static str, &'static str)> {
+    match dispatch_chat_provider(mode, harness, harness_args)? {
+        "codex" => Some(("stdio", "codex-chat")),
+        "claude" => Some(("stdio", "claude-sdk")),
+        "opencode" => Some(("stdio", "opencode")),
+        _ => None,
+    }
+}
+
 /// Resolve governance with the documented precedence for a dispatch address.
 pub fn resolve_address_governance(
     kind: WorkerKind,

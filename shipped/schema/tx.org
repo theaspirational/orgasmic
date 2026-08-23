@@ -13,6 +13,16 @@
 - :ACTOR:        git config user.email of the operator
 - :MACHINE:      hostname
 
+** Key shape on every tx property (TASK-ZKZBF.1, documented TASK-ZKZBF.2)
+Every property key — required, per-type, and =--extra= — is =UPPERCASE_SNAKE=
+and must match =[A-Z][A-Z0-9_]*=: open vocabulary, closed case. Tx readers
+(=extra()= and friends) match keys byte for byte, so a lowercase or
+hyphenated key (=:kind:=, =:blocks_ship:=) would be recorded and never read.
+Every ledger writer, including =orgasmic tx record --extra=, refuses one at
+parse time. Historical agent-authored lowercase extras in older ledgers are
+dead weight nothing reads; do not copy the habit — record new extras
+uppercase.
+
 ** Tx types (v0.0.1 vocabulary)
 
 *** Project lifecycle

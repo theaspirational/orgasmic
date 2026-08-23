@@ -90,6 +90,8 @@ Measured production evidence: 197 orgasmic session files occupy 2,404,385,576 by
 Execute the child tasks independently in priority order. P0 restores and proves the control plane. P1 separates current lifecycle inventory from historical evidence and bounds retained event volume. Service and registry hardening follow without blocking P0. Manual retro materialization is a separate explicit feature built on the bounded evidence architecture; it is not required for `/api/runs` to work and must not become an automatic startup/completion hook.
 
 Done only when the production-shaped wire regression completes inside its deadline, exact-run close/finalize do not enumerate history, run enumeration cost is independent of historical transcript bytes, default storage cannot recreate rendered-TUI growth, stale/missing records stop producing recurring warnings, and an explicit multi-run retro can analyze selected Claude sessions through derived bounded evidence.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 12). Day four of one manager session: `run list` live 3, 273 ambiguous / 129 interrupted / 10 failed_recoverable, 1.7 GB of session files, 1.69 GB origin index, 1153 ms catalog scan on every command; nothing prunes. Expected: `orgasmic run gc` (and an automatic pass at daemon start) resolving ambiguous against the pid table, compressing/deleting sessions older than N days for closed dispatches, rebuilding the index; catalog scan cached and invalidated on write. Retention must keep what a reviewer still references (TASK-SJD10 evidence dir).
 
 * BACKLOG TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch    :retro:claude:evidence:
 :PROPERTIES:
@@ -240,7 +242,6 @@ daemon or an rmux server is live, not by running it alone.
 * BACKLOG TASK-099T6 driver_modes equivalence test spawns real claude twice on one session id and now collides    :drivers:test:claude:bug:
 :PROPERTIES:
 :ID: TASK-099T6
-:priority: P1
 :PRIORITY: P1
 :END:
 
@@ -298,7 +299,6 @@ Acceptance:
 * BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
 :PROPERTIES:
 :ID: TASK-A55J7
-:priority: P1
 :PRIORITY: P1
 :END:
 
@@ -3763,6 +3763,8 @@ The harm is not that =xhigh= is worse than =high= — it is higher. The harm is
 that *the dispatch record asserts a parameter that was never sent*, so any later
 comparison of review quality against effort reads a fabricated column. Fail
 loudly on an unsupported flag, or map it, but do not record it as sent.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 5). `--model` is unvalidated passthrough too: a wrong id does not fail loudly; the manager confirmed the model by grepping the session jsonl for `"model":"…"`. The driver/harness substitution half of item 5 is TASK-XC9N4.
 
 * BACKLOG TASK-P4XKT a test that passes is never repeated, so an intermittent defect merges green and a one-run-per-commit bisect looks conclusive    :testing:ci:
 :PROPERTIES:
@@ -3973,6 +3975,8 @@ and the same refusal on both dispatches.
 5. A stall-kill whose pane shows the harness at an idle input prompt is reported
    as a distinct terminal state (worker stopped) from an unresponsive subtree,
    and the reason names which.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 4). `stall_timeout_exceeded: no work evidence for 600s (work threshold 5.0%)` reaped a worker that had launched a long pytest suite and was polling it — CPU in the worker process ~1% because the work was in a child. Reaped unreported; uncommitted edits survived only because the worktree did. Expected: liveness from stream events / worktree file mtimes / live child processes, a warning at 60% of the budget the worker can answer (heartbeat file or stream event), and a kill that finalizes whatever report file exists instead of leaving [unreported]. See also TASK-ZMYEN (ORGASMIC_REPORT_PATH).
 
 * BACKLOG TASK-52NJS a provider content filter blocks cross-family review of parser, deletion and permission code — the class where independent review is worth most    :dispatch:review:
 :PROPERTIES:
@@ -4255,6 +4259,8 @@ considers normal.
 =--cleanup-failed=, the other suggestion in the same message, is documented as
 "Record the orphan close tx for dispatches whose worker died" — also wrong for
 this state, and it is a WRITE.
+** Letter evidence
+vscode-orsl manager letter 2026-08-22 (item 6). The real loop is implementer→reviewer→(fix→reviewer)→merge→close; `dispatch-close --status done` on an implementer demands a merge-sha that must be a merge commit, so a successful round handed to review is recorded as `--status aborted --worker-commit <sha>`. A fast-forward merge cannot close a dispatch at all. A dispatch that fails to spawn leaves the task in_progress (manual `task update --state todo`). `task update --state done` prints `tx_id: ""`. Expected statuses: reported, handed_to_review, merged, superseded, aborted, failed; --merge-sha accepting any commit containing the worker commit; failed spawn rolls the task back; every mutating command prints a one-line human result. Filed alongside TASK-XQCNA..TASK-38Z7K (tag vscode-orsl-letter).
 
 * BACKLOG TASK-TRAEM derive-observation-surface.py can green its own self-check after silently dropping valid Rust, and its cfg(test) exclusion is module-only
 :PROPERTIES:
@@ -4553,93 +4559,39 @@ Standing preference: minimize framework overhead; owner wants short plain-langua
 ** Decisions so far
 - tx and state-file dependency inventory (TASK-AP971.4) — [[file:../dispatch-records/tx-20260814-orgasmic-6093/tx-dependency-inventory.md][inventory]]: ~254 touchpoints; recovery_claim.rs has zero (premise corrected — recovery tx logic is in api.rs/manager.rs); top risks: writer one-ledger invariant vs atomic multi-journal appends, dispatch-open fold needs an index or a tx/-resident dispatch ledger BEFORE the split (now TASK-AP971.11), non-recursive collect_tx_dir silently empties the activity feed; favourable: the activity projection is file-order independent.
 - Journal entry schema (TASK-AP971.1) — tx-grammar reuse with real multi-line prose bodies; facts append-only, comment edits IN PLACE (OCC + :EDITED_AT:, git is history, tombstones for deletes); global tx-style entry ids; reserved names node.org/journal.org/attachments/<entry-id>//dispatches/<started-tx>/; unknown files ignored + lint; structured-daemon-writes-only enforcement; no rotation v1; prose-only (no :BODY: dual-write). Full 12-point spec in the ticket's Resolution.
+- Dispatch-open discovery (TASK-AP971.11) — dispatch lifecycle stays in monthly tx/ (no dedicated file, no cache); ONE shared fold in orgasmic-core for CLI and daemon (they diverge today); a test pins the dispatch type set to project tx; dispatch.linked is derived, never written; no compaction v1; the writer-coherent daemon projection is AP971.7's.
+- tx split semantics (TASK-AP971.5) — journal iff the event is about exactly one dir-backed node, else project tx/ (full table in the ticket); singletons (handoff/goal/project) stay files + tx/; creation = journal entry #1, deletion = tx/ tombstone; the dispatch close stays ONE tx append + N node.org rewrites with no journal flip (derived), deleting inventory risk #1 and retiring torn-close repair to legacy-only; one shared id sequence whose cold scan covers journals; recovery claims untouched.
+- Node type descriptor (TASK-AP971.2) — one org file per type in shipped/schema/node-types/<collection>.org (drawer + prose); declares COLLECTION, ID_PREFIX, LABEL(S), REQUIRED_PROPERTIES, STATES+transitions, REGENERATE_PROMPT, optional reserved files; shipped-only in v1; task/decision/glossary/artifact at cut-over, gotchas/conventions stay prose files for now.
+- ID scheme (TASK-AP971.3) — prefixes stay verbatim, new types declare theirs in the descriptor; dir name = id, dotted subtasks flat; mint keeps the 5-char stem and mkdir is the collision check.
+- Derived read views (TASK-AP971.8) — .orgasmic/views/{board,glossary,decisions}.org in today's file shapes, written by the daemon after each affected refresh (plus orgasmic views build), gitignored; context-packs/router/skills/OrgView repoint by path.
+- Incremental refresh (TASK-AP971.7) — per-node reload from classified watcher paths; writer applies its own write to the snapshot before the HTTP response returns (required-refresh wait gone); daemon dispatch-wait folds the coherent snapshot, CLI keeps the disk fold; full rescan only on boot/add/reindex/unclassifiable.
+- Regeneration (TASK-AP971.10) — regenerate recompiles node content + open comments through the descriptor's :REGENERATE_PROMPT: spec (prompt-studio, no per-type Rust); task regenerate rewrites the task and never re-dispatches; the artifact consume rule is universal; runner is the artifactor path as node.regenerate:<id>; no spec → no regenerate.
+- Migration scope (TASK-AP971.9) — done/cancelled migrate too (one read path); activity reads old tx/ + journals forever; #+orgasmic_version: 2 is a label only — no v1 compatibility layer (single user); migrator = orgasmic project migrate, one-shot, idempotent, --dry-run, deletes old state files. Prototype pending.
+- Kernel extraction boundary (TASK-AP971.6) — orgasmic-core::node_kernel prototyped on branch ap971-prototype: pure over file contents (writer owns bytes) except mkdir-as-collision-check; node/journal parse+render, in-place comment edit, tombstone, consume-on-regenerate; artifacts.rs→kernel mapping table in the ticket.
+- Migration (TASK-AP971.9) — migrator prototyped on real data: 873 nodes, 0 anomalies, byte-for-byte round trip, 0.24s.
 ** Not yet specified
-- UI surfaces for per-node comments and regenerate buttons (waits on kernel + descriptor decisions)
-- CLI verb reshaping (task/decision/glossary verbs over node dirs) — waits on kernel boundary
-- Conventions / prompt-studio updates that reference tasks/<state>.org paths
-- project-scaffold + hub shipping changes for the new layout
-- Home-ledger / multi-project implications of the tx split
-- Folding wayfinder itself into orgasmic as a native agent (owner intent, separate effort)
+Nothing — every item below was resolved on 2026-08-22 and carried into the implementation chain:
+- UI surfaces for per-node comments and regenerate → TASK-KA934
+- CLI verb reshaping over node dirs → TASK-AN992
+- Conventions / prompt-studio / scaffold / hub updates → TASK-AN992 (shipped content) and TASK-JWHXH (context-packs repoint)
+- Home-ledger / multi-project implications of the tx split → none: all 6,243 tx entries carry :PROJECT: and the home ledger is unused here (AP971.5)
+- Folding wayfinder into orgasmic natively → separate effort, out of scope (unchanged)
 ** Out of scope
 - Implementing the refactor itself — this map ends at the implementation-ready task chain
-
-* BACKLOG TASK-AP971.2 Node type descriptor format    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.2
-:END:
-
-** Question
-What does a shipped node-type descriptor declare (required properties, allowed states, regenerate prompt template, UI labeling), where does it live in shipped/, and how does the daemon treat a collection directory with no descriptor?
-
-* BACKLOG TASK-AP971.3 ID scheme and type-aware minting    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.3
-:END:
-
-** Question
-One mint, many prefixes: keep existing styles (TASK-XXXXX, dec_XXXXX, term_...) or normalize? How are dir names derived from ids, and what does the mint need to become type-aware?
-
-* BACKLOG TASK-AP971.5 tx split semantics    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.5
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.4 TASK-AP971.11
-:END:
-
-** Question
-Which event types stay in the project-level monthly tx/ ledger vs move to per-node journals? What happens to recovery-claim machinery and the activity feed that lean on tx today?
-
-* BACKLOG TASK-AP971.6 Kernel extraction boundary    :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.6
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.2
-:END:
-
-** Question
-Which artifact-store code becomes the shared node kernel, and what is its API (read node, append journal, comment, consume-on-regenerate hooks)? Prototype: sketch the module boundary by refactoring artifacts in place on a throwaway branch.
-
-* BACKLOG TASK-AP971.7 Incremental refresh design    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.7
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.5
-:END:
-
-** Question
-Per-node watcher granularity, apply-own-write projection (no full rescan on comment), and the derived cross-project activity feed. Kills the current full-reparse-per-mutation behaviour (index.rs load_project).
-
-* BACKLOG TASK-AP971.8 Derived read views    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.8
-:END:
-
-** Question
-Humans lose the one-file glossary/backlog view when nodes become dirs. What compiled read views exist (glossary, board), when are they generated, where do they live, and are they gitignored?
-
-* BACKLOG TASK-AP971.9 Migration plan    :wf_prototype:
-:PROPERTIES:
-:ID: TASK-AP971.9
-:DEPENDS_ON: TASK-AP971.1 TASK-AP971.3 TASK-AP971.5
-:END:
-
-** Question
-Scope a CHEAP cut-over migration, not a full backfill (owner decision 2026-08-14): migrate only the live main things — task headings/bodies into per-task dirs — and from cutover day simply write new things to the new schema. Do NOT move dispatch-records/ content; do NOT backfill historical tx entries into journals; tx/ history stays as a read-only archive.
-Remaining decisions: (a) do done.org/cancelled.org tasks migrate too, or freeze as archive files — and if frozen, does the indexer still parse them read-only so DEPENDS_ON/IMPLEMENTS/graph lints keep resolving old task ids (else the dangling-edge lint goes red or blind)? (b) does the activity projection read both sources (old tx + new journals) forever, or only post-cutover journals? (c) what marks the cutover (version stamp in project.org?). Prototype the migrator for whatever subset survives this scoping, on real .orgasmic data.
-
-* BACKLOG TASK-AP971.10 Regeneration generalization    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.10
-:DEPENDS_ON: TASK-AP971.2
-:END:
-
-** Question
-Per-type regenerate prompts and the universal consume-on-regenerate rule. What does regenerate even mean for a task or a decision (vs a glossary term or artifact)?
-
-* BACKLOG TASK-AP971.11 Dispatch-open discovery: dedicated ledger or index    :wf_grilling:
-:PROPERTIES:
-:ID: TASK-AP971.11
-:END:
-
-** Question
-'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.
+** Implementation chain
+Filed 2026-08-22, dependency-ordered (DEPENDS_ON edges on the tasks; deepest path 5). Tags e01mc node_kernel, IMPLEMENTS dec_E01MC. Prototype code on branch ap971-prototype (41a1faf).
+1. TASK-GCXB7 shared dispatch fold in core + type-set guard (.11) — no deps, can go first
+2. TASK-TP593 node kernel in core + writer ops (.1 .6)
+3. TASK-7A0H4 node type descriptors + descriptor-driven mint (.2 .3)
+4. TASK-SRBGS migrator + indexer over node dirs + old readers deleted (.9) ← 2 3
+5. TASK-EPG6H tx split per the .5 table; close unchanged; torn-close legacy-only (.5) ← 4
+6. TASK-8AV8B incremental refresh + writer apply-own-write + activity projection (.7) ← 5
+7. TASK-JWHXH derived read views + repoints (.8) ← 4
+8. TASK-ARRV8 artifacts onto the kernel (.6) ← 2 3
+9. TASK-8DMQS regenerate generalization (.10) ← 8
+10. TASK-AN992 CLI verbs over node dirs + shipped content for the layout ← 4
+11. TASK-KA934 UI comments/regenerate, OrgView over views ← 6 9
+The map's destination is reached: this chain is implementation-ready. The map stays backlog as the index (wayfinder convention).
 
 * BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport :drivers:research:
 :PROPERTIES:
@@ -4664,3 +4616,375 @@ This is deliberately a research-and-decide task, not an implementation commitmen
 
 Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
 
+* BACKLOG TASK-BX5SR.3 Supervise the daemon writer task and surface writer liveness in status/doctor    :daemon:writer:
+:PROPERTIES:
+:ID: TASK-BX5SR.3
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:END:
+
+** Description
+Carries TASK-BX5SR acceptance items 2 and 3, which merge =9412352= did not deliver and no filed follow-up owned (BX5SR.2 owns only the cross-API idempotency identity collision).
+
+Measured during the live 2026-08-02 outage (daemon boot =f8f67c0c=): one failed transaction (=cached mutation lacks its recorded identity=) killed the writer task, and from that moment EVERY write in the daemon failed with =writer task is gone= while reads stayed healthy — =orgasmic status= reported =parse_errors: 0= and looked fine the whole time. Recovery required a daemon restart, which also killed the live TASK-FZB6T.2 worker with 2,452 insertions uncommitted (preserved as =d982af1=).
+
+1. *A dead writer must be loud.* =orgasmic status= and =doctor= must report writer liveness, so the failure is visible without reading daemon logs. Detection hint from the outage: =grep "writer task is gone" ~/.orgasmic/logs/daemon.out.log= (log rotates by size — TASK-ZBYH3 — grep rolled generations too).
+2. *The writer must be supervised.* If the writer task exits, restart it in place, or fail loudly rather than serving reads as if healthy. Note =orgasmic restart= degraded on the same fault (=daemon pre-stop drain returned 500: failed to drain writer before restart=), so the recovery path shares this defect.
+
+** Acceptance
+- =orgasmic status= and =doctor= report writer liveness; a dead writer is visible without log access.
+- The writer task is supervised: on exit it is restarted in place, or the daemon fails loudly instead of serving healthy-looking reads.
+- A regression kills the writer (or injects its exit) and proves both the liveness report and the recovery/supervision behavior.
+- Independent review pass.
+
+* BACKLOG TASK-AJP4A.2 Own the two LOW notes from the final lazy-index approval (renderer guard newtype/debug-assert; multi-project delayed-branch test)    :daemon:cli:testing:
+:PROPERTIES:
+:ID: TASK-AJP4A.2
+:PRIORITY: P3
+:WRITE_SCOPE: crates/orgasmic-cli/src/daemon_service.rs,crates/orgasmic-daemon/src/api.rs
+:END:
+
+** Description
+Carries the two LOW, non-blocking notes from the final approving review of TASK-AJP4A.1.1.1.1.1 (=tx-20260811-orgasmic-5833=, VERDICT approve, report at =.orgasmic/dispatch-records/tx-20260811-orgasmic-5833/last.txt=):
+
+1. *systemd renderer lost its own control-char guard* (=daemon_service.rs:950= dropped the =.filter(..is_control)= from the renderer; the check now lives once at the capture boundary =daemon_service.rs:386=). Fix direction: enforce the invariant rather than leave it conventional — newtype on =ServiceSpec.project_scan_timeout= whose only constructor is =captured_project_scan_timeout=, or re-add a cheap =debug_assert!= inside each renderer.
+2. *race test asserts the degenerate case* (=api.rs:30203-30213= asserts the bare empty array for a single delayed project; no multi-project assertion exists for the delayed branch). Add a multi-project delayed-branch test.
+
+** Acceptance
+- Renderer invariant enforced structurally (newtype or debug_assert) with a test that fails loudly on bypass.
+- A multi-project test covers the delayed branch of unscoped /tx aggregation.
+
+* BACKLOG TASK-GCXB7 Shared dispatch fold in orgasmic-core with a type-set guard    :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-GCXB7
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:DEPENDS_ON: 
+:END:
+
+** Description
+AP971.11: one dispatch fold in orgasmic-core, called by both manager.rs scan_dispatches (8 call sites) and api.rs dispatch_generation_ledgers (they diverge today: the daemon ignores *.done/aborted). Add one test pinning the dispatch type set (manager.dispatch_started, run.created, implementer/reviewer/architector.reported, implementer/reviewer/architector.done, manager.dispatch_aborted, manager.dispatch_orphaned) to tx_destination → project tx, and list the set in shipped/schema/tx.org.
+** Acceptance
+- [ ] CLI and daemon call the same core fold; the daemon's open/closed answer matches the CLI's on this repo's tx/
+- [ ] the type-set guard test exists and fails if any listed type routes anywhere but project tx/
+- [ ] no behaviour change for dispatch-status / dispatch-wait / worktree-prune
+
+* BACKLOG TASK-TP593 Node kernel in orgasmic-core plus the writer ops that go with it    :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-TP593
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:DEPENDS_ON: 
+:END:
+
+** Description
+AP971.1/.6: land crates/orgasmic-core/src/node_kernel.rs from the ap971-prototype branch (41a1faf): node_dir, create_node_dir (mkdir = collision check), parse_node, parse_journal/append_entry, edit_comment_body, tombstone_comment, consume_open_comments. Add the daemon writer ops over it: append journal entry, OCC-guarded in-place comment edit stamping :EDITED_AT:, tombstone; journal.org joins the ledger-rewrite denylist; the writer refuses column-0 '* ' in journal prose; size lint past ~500KB. shipped/schema/journal.org v1 documents the grammar (AP971.1 items 1–12).
+** Acceptance
+- [ ] kernel unit tests + the real_data parse test pass
+- [ ] writer ops exist with OCC and denylist enforcement, covered by tests
+- [ ] schema doc shipped
+
+* BACKLOG TASK-7A0H4 Node type descriptors: shipped org files, loader, descriptor-driven mint    :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-7A0H4
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:DEPENDS_ON: 
+:END:
+
+** Description
+AP971.2/.3: shipped/schema/node-types/{task,decision,glossary,artifact}.org — one heading per type with :COLLECTION:, :ID_PREFIX:, :LABEL:/:LABEL_PLURAL:, :REQUIRED_PROPERTIES:, :STATES: + transitions (task only), :REGENERATE_PROMPT:, optional reserved files. Daemon loader; a collection dir with no descriptor gets generic indexing/comments/journals and a low-severity lint. mint_node_id(descriptor) keeps the 5-char Crockford stem; prefixes stay TASK-/dec_/term_/ART-; dir name = id verbatim, dotted subtasks flat. Shipped-only in v1.
+** Acceptance
+- [ ] four descriptors ship and load; unknown collection path tested
+- [ ] mint is descriptor-driven and create_node_dir retries on AlreadyExists
+- [ ] task states/transitions come from the descriptor (state-machine.org folded in or pointed at)
+
+* BACKLOG TASK-SRBGS Migrator orgasmic project migrate; indexer reads node dirs; old state-file readers deleted    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
+:ID: TASK-SRBGS
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:END:
+
+** Description
+AP971.9: port scripts/ap971-migrate-proto.py (branch ap971-prototype) to orgasmic project migrate — one-shot, idempotent, refuses on a dirty git tree, --dry-run, writes <collection>/<ID>/{node.org,journal.org} for tasks (all six state files incl. done/cancelled), decisions, glossary; deletes the old files; bumps #+orgasmic_version to 2 on project.org (label only — no v1 compat layer, no v1 read path). The indexer reads collection dirs; iter_task_file_paths and every by-id full scan (index.rs, api.rs inbound-reference check, manager.rs read_task_lifecycle, identity_lint entry points, run-tests.sh globs) are rewritten or deleted. Singletons (handoff.org, goal.org, project.org) stay files. dispatch-records/ and tx/ untouched.
+** Acceptance
+- [ ] migrate runs on this repo: 873 nodes, 0 anomalies, byte-for-byte heading round trip
+- [ ] parse_errors 0 and dangling-edge lint green after migration (old ids resolve)
+- [ ] no reader of tasks/<state>.org, decisions.org, glossary.org remains in crates/ scripts/ verify/
+
+* BACKLOG TASK-EPG6H tx split: route node-scoped events to journals per the AP971.5 table    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-SRBGS
+:ID: TASK-EPG6H
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:END:
+
+** Description
+AP971.5: writer routing — journal iff the event is about exactly one dir-backed node, else project tx/ (comment, worker.comment, non-dispatch task.state_transitioned, task.property_updated, task.edited, graph.*.edited, graph.decision.reparent, reviewer.finding, review.verdict → journal; the .11 dispatch set + commit_pending, all manager.*, goal events, graph.handoff.edited, project.*, release.*, daemon.*, benchmark.*, question.*, legacy untyped, node deletions → tx/). Creation = journal entry #1 created; deletion = tx/ tombstone + dir removal. The dispatch close stays ONE tx append + N node.org rewrites with no journal flip (derived); torn-close repair becomes legacy-only. Journal ids share the project sequence; scan_project_tx_max_seq covers journals.
+** Acceptance
+- [ ] routing table pinned by a test over every known type
+- [ ] dispatch close still atomic via transaction_multi with no multi-ledger append
+- [ ] id sequence cold-start scan covers journals (test)
+
+* BACKLOG TASK-8AV8B Incremental refresh: per-node reload and writer apply-own-write    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-EPG6H
+:ID: TASK-8AV8B
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:END:
+
+** Description
+AP971.7: watcher path → (project, collection, node id) → reload only that node dir; a tx/ file change re-collects that file; views/ and tmp/ ignored. After a successful structured write the writer applies the one node dir it wrote to the snapshot and publishes before the HTTP response returns; the required-refresh wait is removed; the watcher's echo is a no-op on content equality. Activity feed = projection over tx/ + journals (both sources, forever). dispatch-wait folds the coherent snapshot (CLI keeps the disk fold). Full rescan only on boot, project add, orgasmic reindex, unclassifiable events.
+** Acceptance
+- [ ] a comment POST returns without a project-wide reparse (measured)
+- [ ] activity feed shows journal comments and tx run events interleaved
+- [ ] dispatch-wait no longer calls project_tx_entries on the poll path
+
+* BACKLOG TASK-JWHXH Derived read views: views/{board,glossary,decisions}.org    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-SRBGS
+:ID: TASK-JWHXH
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:END:
+
+** Description
+AP971.8: daemon writes .orgasmic/views/board.org (tasks by state), glossary.org, decisions.org after each affected refresh (debounced) in today's file shapes; orgasmic views build for cold clones; .orgasmic/.gitignore gains views/. Repoint the four prompt-studio context-packs, shipped/entry/router.org, the two skill refs and the UI OrgView to views/.
+** Acceptance
+- [ ] views regenerate on node change; byte-stable when nothing changed
+- [ ] no shipped or UI path still names glossary.org/decisions.org/tasks/<state>.org at the old location
+
+* BACKLOG TASK-ARRV8 Artifacts onto the node kernel    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON:  TASK-TP593 TASK-7A0H4
+:ID: TASK-ARRV8
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:END:
+
+** Description
+AP971.6 mapping table: artifacts.rs and its six routes move onto node_kernel — reviews.org becomes journal.org (CID→TX_ID, ANCHOR/RESOLUTION_TARGET/REPLY_TO→extras, CONSUMED kernel-owned, RESOLVED stays artifact's axis); artifact.org becomes node.org; artifact descriptor ships. Keeps artifact-only: BLOCK_TYPES, validate_mdx, launch address, versions_dir, artifact.mdx. Migrate existing ART-* dirs in place.
+** Acceptance
+- [ ] all artifact API tests pass on the kernel
+- [ ] existing artifacts under .orgasmic/artifacts/ migrated and readable
+
+* BACKLOG TASK-8DMQS Regenerate generalization: node.regenerate:<id> over descriptors    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-ARRV8
+:ID: TASK-8DMQS
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:END:
+
+** Description
+AP971.10: one regenerate path — recompile node content + open comments + extra prompt through the descriptor's :REGENERATE_PROMPT: prompt-studio spec (the hardcoded assemble_regen_context becomes the artifact spec), run task id node.regenerate:<id> on the artifactor supervisor path, one live regenerate per node; close-out consumes open comments and writes a regenerated journal entry with CONSUMED_CIDS; version bumps; old content in git. Task regenerate rewrites the task, never re-dispatches. No spec → no regenerate.
+** Acceptance
+- [ ] regenerate works for artifact (unchanged behaviour), task, decision, glossary
+- [ ] the consume rule is tested once, type-agnostically
+
+* BACKLOG TASK-AN992 CLI verbs over node dirs and shipped content for the new layout    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON: TASK-SRBGS
+:ID: TASK-AN992
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:END:
+
+** Description
+task/decision/glossary verbs and orgasmic node body operate on node dirs; comment edit/delete verbs over the journal; conventions, prompt-studio, project-scaffold and hub content updated for the new layout (scaffold ships empty collection dirs; gotchas.org and conventions/ stay prose files). Evidence for new dispatches lands in tasks/<ID>/dispatches/<started-tx>/ (brief, compiled prompt, report, stdout) instead of dispatch-records/.
+** Acceptance
+- [ ] every verb in orgasmic --help that read a state file works on dirs
+- [ ] a fresh orgasmic project init scaffolds the v2 layout
+
+* BACKLOG TASK-KA934 UI: per-node comments and regenerate; OrgView over views    :e01mc:node_kernel:
+:PROPERTIES:
+:DEPENDS_ON:  TASK-8AV8B TASK-8DMQS
+:ID: TASK-KA934
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P2
+:END:
+
+** Description
+Per-node comment threads (reply, edit, delete) and a regenerate button wherever the descriptor declares a prompt; OrgView reads views/; task dialog activity rail reads the node journal. Labels come from descriptors.
+** Acceptance
+- [ ] comment on a task from the UI, edit it, delete it, regenerate the task
+- [ ] no UI code path reads tasks/<state>.org / decisions.org / glossary.org
+
+* BACKLOG TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XQCNA
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 1.
+Four failures looked identical on the surface (`[pid-gone] [run-gone] [unreported]`, empty `-last.txt`) while the truth sat in the session jsonl or daemon log: fd exhaustion (`failed to acquire worker run` 500 hid `Too many open files`), codex quota exhausted, hermes transport crash after the review was written, stall kill while waiting on tests. The manager re-dispatched blind twice and reads an empty report as an approval.
+** Expected
+- Every terminal state has a classified `exit` reason: reported, provider_quota (with retry-after), provider_auth, transport_error, stall_killed, spawn_failed(<os error>), worktree_setup_failed, operator_aborted.
+- `dispatch-status` prints the reason and the evidence path (session jsonl) under the flags line.
+- API 500s carry the inner error verbatim: `{"error":"failed to acquire worker run","cause":"spawn: Too many open files (os error 24)"}` and name the next command (`orgasmic daemon status`).
+** Acceptance
+- A fixture per reason class; dispatch-status output shows `exit:` + `evidence:` lines; the 500 body includes `cause`.
+
+* BACKLOG TASK-0Y363 Daemon leaked one session-log fd per dispatch and died at macOS default 256; fix shipped in 8bd8287, health-starvation leftover    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-0Y363
+:PRIORITY: P0
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 2. Measured on the live daemon: 253 open fds / 256 soft limit, 223 session .jsonl handles held, 3 live runs. Root cause: writer.rs `session_handles` only evicted on LeaseSessions/shutdown.
+** Shipped (commit 8bd8287)
+- writer drops the handle on the `release` lifecycle append; `WriterStatus.open_session_handles` gauge + regression test.
+- daemon raises RLIMIT_NOFILE at start (65536/10240/4096 fallback), logged at boot.
+- `/status` carries `open_fds`/`fd_limit`; `orgasmic daemon status` prints `fds: N/limit (writer session handles: H)`.
+** Leftover (d)
+The exhausted daemon could not accept the health probe socket, so the supervisor logged `incumbent is not healthy … Refusing to start a competing daemon` and the sick daemon stayed up. Either answer health before the spawn path can starve it, or treat a held lock whose owner cannot answer health as dead.
+
+* BACKLOG TASK-ZMYEN Hermes stdio: unknown event type must log-and-skip, protocol_end_without_finalize reassembles text_chunks, ORGASMIC_REPORT_PATH is the report    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-ZMYEN
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 3. Two hermes-stdio reviewers finished the analysis, then died with `driver transport unavailable: hermes event missing type`; the text was in the jsonl as text_chunk events, the verdict was not. Manager reassembled by hand and re-dispatched for the verdict.
+Code: crates/orgasmic-daemon/src/drivers/hermes.rs — `hermes event missing type` and `unknown hermes event type` are fatal today.
+** Expected
+- (a) unknown/missing event type → warn + skip, never fatal.
+- (b) protocol_end_without_finalize → reassemble text_chunk stream into `-last.txt` with a `PARTIAL` header.
+- (c) export `ORGASMIC_REPORT_PATH` into the worker env; whatever is at that path when the run ends IS the report (beats the transport-carried final message).
+** Acceptance
+- Fixture: hermes stream with an unknown event mid-run still yields the report; fixture: stream cut before finalize yields a PARTIAL -last.txt; env var visible in a dispatched worker.
+** Progress
+(a) shipped in 5033cce: HermesAdapter::parse_event warns and skips unknown/untyped events (test hermes_unknown_and_untyped_events_are_skipped_not_fatal). Open: (b) partial -last.txt reassembly on protocol_end_without_finalize, (c) ORGASMIC_REPORT_PATH.
+
+* BACKLOG TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XC9N4
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 5. `--mode tmux --harness codex` accepted, dry-run said `mode: tmux`, run came back DRIVER=stdio WORKER=implementer-codex-chat-stdio. `--mode stdio --harness opencode` is refused (unsupported pair) yet the working `--mode tmux --harness custom --harness-arg opencode …` is substituted to driver=stdio harness=opencode. `--mode ws --harness hermes` is an accepted simulated stub (runs sh, reports clean). `--model` is unvalidated passthrough.
+Code: api.rs canonicalize_dispatch_worker (~4998).
+** Expected
+- Resolve the driver before accepting; print the resolved driver/harness/model; refuse or warn on stderr when it differs from the request.
+- `--dry-run` prints the resolution (what will launch), including the substitution.
+- `--harness opencode` accepted with the mode it actually runs under.
+- Simulated drivers out of the normal catalog, or gated behind `--allow-simulated`.
+- Empty model catalog says: catalog unavailable, --model passed through unvalidated.
+** Acceptance
+- dry-run output equals the tx-recorded driver/harness/model for every catalog pair; simulated dispatch without the flag is refused.
+** Progress
+Partial in 5033cce: --dry-run prints `resolves: driver=… harness=…` from the shared addressing::canonical_chat_address when the canonical chat runtime re-addresses the request. Open: refuse/warn at accept time, --harness opencode under its real mode, simulated drivers gated, empty-catalog message.
+
+* BACKLOG TASK-TWCP9 DECISION: keep the live ledger out of the worked tree — sibling dir / ledger branch / own worktree; workers never carry .orgasmic churn    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-TWCP9
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 7. The daemon writes `.orgasmic/tx/*.org` and `.orgasmic/tasks/*.org` into the main checkout every few minutes. Costs: `git checkout <branch>` refused until unauthored churn is committed; every worker branch carries ledger churn that must be stripped at merge; a reviewer cannot tell its writes from the daemon's.
+** Expected
+- Live ledger not in the tracked tree being worked on (sibling directory, dedicated branch, or its own worktree); `orgasmic ledger commit` as an explicit atomic action.
+- Worker worktrees do not contain the ledger (sparse checkout or .git/info/exclude).
+** Note
+This is a decision task (grill first). Overlaps the dec_E01MC node-kernel redesign (TASK-AP971 chain) — the per-node dir layout should be decided with ledger placement in mind.
+
+* BACKLOG TASK-SJD10 Per-run evidence directory outside the worktree (ORGASMIC_EVIDENCE_DIR), retained past close, referenced from dispatch-status and handed to --for reviewers    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-SJD10
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 8. Briefs ask for durable logs; `.orgasmic/tmp` is gitignored so workers write inside the worktree; the manager prunes the worktree after close; the reviewer on TASK-GVQM0 found none of five mutation logs. Only the report is copied out.
+** Expected
+- `~/.orgasmic/runs/<run-id>/evidence/` exported as `ORGASMIC_EVIDENCE_DIR`, retained past close, shown in dispatch-status; a reviewer dispatched `--for <run>` gets the implementer's path in its env.
+Related: TASK-CQM2X (run inventory / retention).
+
+* BACKLOG TASK-RSPG0 Worktree provisioning ignores submodules: hydrate scoped submodules with --reference, avoid per-worker LFS fetch, route or refuse submodule-scoped tasks    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-RSPG0
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 10. Fresh worktrees have un-hydrated submodules → 62 spurious test failures; five parallel workers serialised behind one git-lfs filter-process on an unneeded LFS docs submodule (one died in setup); a submodule inside a worktree is read-only/uninitialised so a worker commit there dies with the worktree — forced the operator to split the server into its own project (dec_00M3W).
+** Expected
+- `project init` records the submodule graph; dispatch hydrates only the submodules a task's write_scope touches, once per worktree, via `git submodule update --reference <main checkout>`; never LFS over the network per worker.
+- A task whose write_scope is inside a submodule is routed to that submodule's project or refused with the reason.
+
+* BACKLOG TASK-40ZMJ Provider/quota health invisible until a worker dies: manager drivers --health probe + dispatch pre-flight refusing provider_quota/provider_auth    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-40ZMJ
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 11. Codex locked out five days; glm-5.2/5.3 share one z.ai quota so a 429 on one kills the other; `claude` harness reports "no catalog available" which reads as cannot-run but means cannot-enumerate.
+** Expected
+- `orgasmic manager drivers --health`: per configured provider auth ok / quota ok / retry-after.
+- dispatch pre-flight refuses with `provider_quota: codex locked until …` instead of spawning a worker that dies in two seconds.
+- Empty catalog message: catalog unavailable; --model passed through unvalidated.
+Related: item 1 (reason classification) supplies the provider_quota class.
+
+* BACKLOG TASK-EXN3N Read-only reviewer is a request, not a guarantee: pin cwd to the worktree and report main_checkout_dirty in dispatch-status    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-EXN3N
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 13. A reviewer mutated the main checkout (ran an in-place script after cd'ing there to read implementer logs). Found only by `git status` on main; every reviewer brief now carries a STAY OUT paragraph.
+** Expected
+- Reviewer run pinned to its worktree (cwd fixed; main checkout not writable from the worker process — sandbox profile), or at minimum a post-run `git status` diff on main reported in dispatch-status as `main_checkout_dirty: <files>`.
+Related: orphaned-acp-reverts-tx memory (same class: workers touching main).
+
+* BACKLOG TASK-CS2TM CLI rough edges from the letter: task/tasks split, task create --body 500 on *** / nested **, node prop set --kind lacks config (silently writes project.org), --brief relative path fails late, no --json on dispatch-status    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-CS2TM
+:PRIORITY: P2
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 14. Each is small; they compound because an agent cannot remember across sessions.
+- `orgasmic task list` does not exist (it is `tasks list`).
+- `task create --body` returns 500 "bad substitution" on `***` sub-headings or nested `**`.
+- `node prop set --kind` has no `config` kind; `--kind project` silently writes into project.org.
+- `--brief` must be absolute; relative fails late.
+- two write surfaces for one thing: `task update` vs `node body set --section`.
+- `dispatch-status` is line text, no `--json`.
+** Expected
+One noun→verb family with `list` under each; `--json` on every read; bodies accepted as the org the files hold; `--kind` inferred from the node id; relative paths resolved against cwd.
+
+* BACKLOG TASK-7NPAB Task-level exclusivity for dispatch: --exclusive / resources tag so the daemon queues a quiet-host task behind live runs    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-7NPAB
+:PRIORITY: P3
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 15. Two measurement tasks each carried a refuse-while-sibling-live rule; dispatched together, the second always lost. Nothing lets a task say it needs a quiet host.
+** Expected
+`--exclusive` on dispatch (or a `resources:` property on the task) so the daemon queues it behind live runs instead of the worker discovering the conflict and aborting.
+
+* BACKLOG TASK-R7AGF Move release certification off the laptop: run the local/release-certified suite in GitHub CI    :release:infra:
+:PROPERTIES:
+:ID: TASK-R7AGF
+:PRIORITY: P2
+:END:
+
+** Description
+The Mac has now died three times (2026-07-29, 2026-08-02, 2026-08-23) from the syspolicyd scan-storm chain, and the 2026-08-23 incident happened under the =local/release-certified= suite (detached, so Warp's Developer Tools exemption did not cover the fresh cargo test binaries; see memory mac-syspolicyd-tccd-windowserver-reboot). The near-term mitigation is procedural: never detach the suite. The durable fix is to stop minting and executing hundreds of fresh Mach-Os on the operator's laptop for every integration.
+** Proposal
+A GitHub workflow runs the same suite on macOS runners and posts the =local/release-certified= status on the exact commit; =scripts/integrate-main.sh= waits for it instead of running =certify-runtime-fast.sh= locally (or offers --local as fallback). This reverses part of dec_M251B (local authority), so grill first: the decision's reason for local certification (exact-tree, no-bypass) must survive — a CI status on the exact sha satisfies the same branch-protection contract.
+** Acceptance
+- integrate-main lands a PR with certification produced by CI; laptop runs zero test binaries.
+- The no-bypass property holds: status only from the workflow, on the exact head sha.

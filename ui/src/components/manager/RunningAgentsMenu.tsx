@@ -49,7 +49,12 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
   // Terminals are peer runs on the taskbar but they are not agents: this menu
   // (and its count badge) reports what orgasmic is supervising, so only worker
   // and agent-manager runs make the list.
-  const running = agentRuns(runs.data?.live ?? []);
+  // Scoped to the active project, like the taskbar: every row's action targets
+  // this project's dock, so a foreign run either opens a tab the dock cannot
+  // render or (for a native chat manager) raises this project's empty Chat.
+  const running = agentRuns(runs.data?.live ?? []).filter(
+    (run) => !projectId || !run.project_id || run.project_id === projectId,
+  );
   // Recent defaults to the current project: terminal/no-op runs from this boot
   // plus any ambiguous ones. Global toggle/search is deferred.
   const recent: RecoveredRun[] = [
