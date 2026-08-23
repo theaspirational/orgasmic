@@ -558,6 +558,15 @@ ZERO live runs (vscode-orsl had 2 live) and then does bootout → install.sh →
 to =scratchpad/rt/reinstall.log=; it exits without acting if =install.json= already says
 0.0.22-dev.20260823, and gives up after 6h.
 
+2026-08-23 (later): RUNTIME SWAP LANDED at 11:37 in an idle gap (watcher); binary inode 618696074,
+install.json 0.0.22-dev.20260823, launchd-managed (pid 2567 at close of session). New trap learned
+and recorded in the reinstall memory: the 08-20 install had been AD-HOC signed, so TCC held a
+cdhash csreq for ~/.orgasmic/bin/orgasmic; the identity-signed build mismatched → under launchd every
+Documents open() blocked on a consent prompt (scan timed out 5s, tasks list 0 rows), CLIs declared it
+unhealthy and spawned detached daemons (fds N/1048576 = CLI-spawned, N/65536 = launchd-spawned).
+Operator clicked Allow at 12:07; TCC csreq is now identity-based, so future identity-signed builds
+keep the grant. Verified: tasks list 723 rows, fds 18/65536, launchctl print shows the pid.
+
 ** Next likely actions
 *DISPATCH-DEPENDENT ACTIONS REMAIN GATED ON THE OPERATOR'S MODE DECISION (see In flight).*
 
@@ -596,29 +605,7 @@ complete); RunDock mobile fixes (ui/, local main).
    before anything; fold it into the dec_E01MC per-node-dir layout thinking.
 
 ** In flight
-NO DISPATCH IS LIVE (verified 2026-08-22: =orgasmic manager dispatch-status= empty; =git
-worktree list= shows main plus the throwaway =ap971-prototype= worktree in the session
-scratchpad — safe to =git worktree prune= if it is gone). The board has no work in flight.
-
-=== DO NOT DISPATCH — OPERATOR SUSPENSION 2026-08-09 STILL GOVERNS (tx-20260809-orgasmic-5543)
-Standing authorization to dispatch without per-dispatch approval remains SUSPENDED; ASK before
-dispatching. The owner asks for model/effort at session start (never a project default) and
-wants driver/harness/model/effort echoed after each dispatch.
-
-Session-harness answer when dispatching resumes (NOT standing, from 08-08/09): implementers
-tmux / claude / claude-opus-5 / high; reviewers tmux / codex / gpt-5.6-sol. *Never pass
-=--effort= to codex* (TASK-C7NVH). The runtime is TMUX-ONLY (=010a32b=), 0.0.22-dev installed.
-
-THE WATCHER RULE HAS A COMMAND: *=manager dispatch-wait --started-tx <tx>=* blocks until a
-dispatch reports or dies. USE IT. NEVER key on =[pid-gone]=.
-
-DURABLE PRACTICES (unchanged): brief forbids reading =verify/*/injection.patch= bodies; file
-=reviewer.finding= tx the moment findings exist; re-measure the daemon suite on a calm host,
-trust the syspolicyd RATE; SEARCH THE BACKLOG BEFORE FILING (125 open items now).
-
-2026-08-23: the runtime-reinstall watcher described in Done so far may still be waiting on a
-zero-live window (vscode-orsl's manager dispatches continuously). It is the only thing in flight
-from this session; no orgasmic dispatch was made.
+NOTHING IN FLIGHT (2026-08-23 12:10): runtime 0.0.22-dev.20260823 installed and launchd-managed; the reinstall watcher has exited. vscode-orsl's manager dispatches on its own schedule — its runs are not this board's. Standing operator suspension on dispatch (tx-20260809-orgasmic-5543) still governs: ASK before dispatching.
 
 ** Divergence / Risks
 === CORRECTED 2026-08-09 — four entries in this section had gone FALSE
