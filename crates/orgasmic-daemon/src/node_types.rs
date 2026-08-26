@@ -78,6 +78,13 @@ impl NodeTypeRegistry {
         self.descriptors.get(collection)
     }
 
+    pub fn descriptor_for_id(&self, id: &str) -> Option<&NodeTypeDescriptor> {
+        self.descriptors
+            .values()
+            .filter(|descriptor| id.starts_with(&descriptor.id_prefix))
+            .max_by_key(|descriptor| descriptor.id_prefix.len())
+    }
+
     pub fn len(&self) -> usize {
         self.descriptors.len()
     }
@@ -134,6 +141,9 @@ mod tests {
         assert!(tasks.states.contains(&"in_review".to_string()));
         assert!(tasks.allows_transition("in_review", "done"));
         assert!(!tasks.allows_transition("done", "in_progress"));
+        for id in ["TASK-ABCDE", "dec_ABCDE", "term_ABCDE", "ART-ABCDE"] {
+            assert!(registry.descriptor_for_id(id).is_some(), "{id}");
+        }
 
         let generic = registry.resolve("problems");
         assert!(generic.descriptor.is_none());

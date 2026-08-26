@@ -2,7 +2,7 @@
 :PROPERTIES:
 :ID:                 artifact-generator
 :KIND:               artifactor
-:VERSION:            1
+:VERSION:            2
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    submit-only
 :END:
@@ -30,9 +30,12 @@ registered block types, then submit it.
 {{artifact.subject_nodes}}
 - User prompt:
 {{artifact.user_prompt}}
-- Regeneration context (prior version, current-version comments, extra
-  prompt; "not set" on a first generate):
-{{artifact.regen_context}}
+- Current artifact.mdx ("not set" on a first generate):
+{{node.content}}
+- Open comments ("not set" on a first generate):
+{{node.comments}}
+- Extra regeneration prompt ("not set" when omitted):
+{{node.extra_prompt}}
 
 ** Policies
 - Read the repository like an implementer would before drafting content: the

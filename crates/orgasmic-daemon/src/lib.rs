@@ -1158,7 +1158,7 @@ impl Daemon {
             dispatch_response_delay: opts.dispatch_response_delay,
             release_terminal_tx_delay: opts.release_terminal_tx_delay,
             release_admission_delay: opts.release_admission_delay,
-            artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            node_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             run_catalog: run_catalog.clone(),
