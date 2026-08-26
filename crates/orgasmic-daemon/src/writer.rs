@@ -14,7 +14,7 @@
 //! Closes AC #4 (stable request IDs for retriable mutations).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -2301,8 +2301,13 @@ fn process_tx_batch(
 }
 
 struct CachedTxWriter {
-    writer: TxWriter,
+    writer: LedgerWriter,
     identity: FileIdentity,
+}
+
+enum LedgerWriter {
+    Tx(TxWriter),
+    Journal(File),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2340,9 +2345,60 @@ impl FileIdentity {
 
 impl CachedTxWriter {
     fn open(path: &Path) -> Result<Self> {
-        let writer = TxWriter::open(path).with_context(|| format!("open {}", path.display()))?;
+        let writer = if path.file_name().and_then(|name| name.to_str()) == Some("journal.org") {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("create {}", parent.display()))?;
+            }
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .read(true)
+                .open(path)
+                .with_context(|| format!("open {}", path.display()))?;
+            if file.metadata()?.len() == 0 {
+                let node_id = path
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| anyhow!("journal path has no node id: {}", path.display()))?;
+                file.write_all(orgasmic_core::node_kernel::journal_header(node_id).as_bytes())?;
+            }
+            LedgerWriter::Journal(file)
+        } else {
+            LedgerWriter::Tx(
+                TxWriter::open(path).with_context(|| format!("open {}", path.display()))?,
+            )
+        };
         let identity = FileIdentity::from_path(path)?;
         Ok(Self { writer, identity })
+    }
+
+    fn append(&mut self, entry: &TxEntry) -> Result<()> {
+        match &mut self.writer {
+            LedgerWriter::Tx(writer) => writer.append(entry).map_err(Into::into),
+            LedgerWriter::Journal(file) => {
+                let entry = journal_entry(entry);
+                entry.validate()?;
+                reject_journal_prose(&entry.body)?;
+                file.write_all(orgasmic_core::node_kernel::journal_entry_block(&entry).as_bytes())?;
+                Ok(())
+            }
+        }
+    }
+
+    fn append_many(&mut self, entries: &[TxEntry]) -> Result<()> {
+        for entry in entries {
+            self.append(entry)?;
+        }
+        Ok(())
+    }
+
+    fn sync_data(&self) -> Result<()> {
+        match &self.writer {
+            LedgerWriter::Tx(writer) => writer.sync_data().map_err(Into::into),
+            LedgerWriter::Journal(file) => file.sync_data().map_err(Into::into),
+        }
     }
 
     fn path_still_names_writer(&self, path: &Path) -> bool {
@@ -2350,6 +2406,55 @@ impl CachedTxWriter {
             .map(|current| current == self.identity)
             .unwrap_or(false)
     }
+}
+
+fn journal_entry(entry: &TxEntry) -> orgasmic_core::node_kernel::JournalEntry {
+    let mut extras = Vec::new();
+    for (key, value) in [
+        ("PROJECT", entry.project.as_deref()),
+        ("TASK", entry.task.as_deref()),
+        ("TARGET", entry.target.as_deref()),
+        ("REASON", entry.reason.as_deref()),
+    ] {
+        if let Some(value) = value {
+            extras.push((key.to_string(), value.to_string()));
+        }
+    }
+    let body = entry
+        .extra
+        .iter()
+        .find(|(key, _)| key == "BODY")
+        .map(|(_, value)| unescape_property_value(value))
+        .unwrap_or_default();
+    extras.extend(entry.extra.iter().filter(|(key, _)| key != "BODY").cloned());
+    orgasmic_core::node_kernel::JournalEntry {
+        entry_id: entry.tx_id.clone(),
+        time: entry.time.clone(),
+        ty: entry.ty.clone(),
+        actor: entry.actor.clone(),
+        machine: entry.machine.clone(),
+        extras,
+        body,
+    }
+}
+
+fn unescape_property_value(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        match (ch, chars.clone().next()) {
+            ('\\', Some('n')) => {
+                chars.next();
+                out.push('\n');
+            }
+            ('\\', Some('\\')) => {
+                chars.next();
+                out.push('\\');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 impl ProjectTxSeqCache {
@@ -2385,13 +2490,31 @@ fn tx_handles_detached_from_paths(
 fn prepare_tx_entry(seq_cache: &mut ProjectTxSeqCache, req: &TxAppend) -> Result<TxEntry> {
     let mut entry = req.entry.clone();
     if let TxIdPolicy::ProjectSequence { project_id, date } = &req.tx_id_policy {
-        let tx_dir = req
-            .tx_path
-            .parent()
-            .ok_or_else(|| anyhow!("tx path has no parent: {}", req.tx_path.display()))?;
-        entry.tx_id = next_project_tx_id(seq_cache, project_id, tx_dir, date)?;
+        entry.tx_id =
+            next_project_tx_id(seq_cache, project_id, &project_tx_dir(&req.tx_path)?, date)?;
     }
     Ok(entry)
+}
+
+fn project_tx_dir(ledger_path: &Path) -> Result<PathBuf> {
+    if ledger_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some("tx")
+    {
+        return Ok(ledger_path.parent().expect("checked parent").to_path_buf());
+    }
+    ledger_path
+        .ancestors()
+        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+        .map(|dotorg| dotorg.join("tx"))
+        .ok_or_else(|| {
+            anyhow!(
+                "project journal is not under .orgasmic: {}",
+                ledger_path.display()
+            )
+        })
 }
 
 fn write_tx_append(
@@ -2411,7 +2534,6 @@ fn write_tx_append(
         }
     };
     writer
-        .writer
         .append(entry)
         .with_context(|| format!("append to {}", tx_path.display()))?;
     Ok(TxAppendResult {
@@ -2426,7 +2548,6 @@ fn sync_tx_writer(handles: &HashMap<PathBuf, CachedTxWriter>, path: &Path) -> Re
         .get(path)
         .ok_or_else(|| anyhow!("no cached tx writer for {}", path.display()))?;
     writer
-        .writer
         .sync_data()
         .with_context(|| format!("fsync {}", path.display()))?;
     test_hooks::after_sync();
@@ -2465,7 +2586,6 @@ fn append_txs_inner(
         }
     };
     writer
-        .writer
         .append_many(&entries)
         .with_context(|| format!("append to {}", first.tx_path.display()))?;
     *seq_cache = staged_seq_cache;
@@ -2550,6 +2670,53 @@ fn scan_project_tx_max_seq(project_id: &str, tx_dir: &Path) -> Result<u32> {
             for entry in entries {
                 if let Some(seq) = project_tx_sequence(&entry.tx_id, &slug) {
                     max_seen = max_seen.max(seq);
+                }
+            }
+        }
+    }
+    if let Some(dotorg) = tx_dir
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    {
+        for collection in std::fs::read_dir(dotorg)
+            .with_context(|| format!("read {}", dotorg.display()))?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir() && entry.file_name() != "tx")
+        {
+            let nodes = match std::fs::read_dir(collection.path()) {
+                Ok(nodes) => nodes,
+                Err(error) => {
+                    warn!(path = %collection.path().display(), %error, "skip unreadable node collection during sequence scan");
+                    continue;
+                }
+            };
+            for node in nodes.filter_map(|entry| entry.ok()) {
+                let path = node.path().join("journal.org");
+                if !path.is_file() {
+                    continue;
+                }
+                let source = match std::fs::read_to_string(&path) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        warn!(path = %path.display(), %error, "skip unreadable journal during sequence scan");
+                        continue;
+                    }
+                };
+                let entries = match orgasmic_core::node_kernel::parse_journal(
+                    &source,
+                    &path.to_string_lossy(),
+                ) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        warn!(path = %path.display(), %error, "skip corrupt journal during sequence scan");
+                        continue;
+                    }
+                };
+                entries_scanned += entries.len();
+                for entry in entries {
+                    if let Some(seq) = project_tx_sequence(&entry.entry_id, &slug) {
+                        max_seen = max_seen.max(seq);
+                    }
                 }
             }
         }
@@ -3657,19 +3824,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_sequence_ids_are_assigned_inside_writer() {
+    async fn ap971_project_sequence_cold_start_scans_tx_and_node_journals() {
         let tmp = tempfile::tempdir().unwrap();
-        let tx_path = tmp.path().join("tx").join("2026-06.org");
+        let dotorg = tmp.path().join(".orgasmic");
+        let tx_path = dotorg.join("tx").join("2026-06.org");
         std::fs::create_dir_all(tx_path.parent().unwrap()).unwrap();
         std::fs::write(
             tx_path.parent().unwrap().join("2026-05.org"),
             "#+title: orgasmic project tx 2026-05\n#+orgasmic_version: 1\n\n* TX 2026-05-21 22:10 manager.action orgasmic\n:PROPERTIES:\n:TX_ID:        tx-20260521-orgasmic-0036\n:TIME:         [2026-05-21 Thu 22:10:00]\n:TYPE:         manager.action\n:ACTOR:        dev@example.com\n:MACHINE:      host.local\n:PROJECT:      orgasmic\n:END:\n",
         )
         .unwrap();
+        let journal_path = dotorg.join("tasks/TASK-X/journal.org");
+        std::fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+        let journal = orgasmic_core::node_kernel::append_entry(
+            "",
+            "TASK-X",
+            &orgasmic_core::node_kernel::JournalEntry {
+                entry_id: "tx-20260522-orgasmic-0041".into(),
+                time: "[2026-05-22 Fri 10:00:00]".into(),
+                ty: "comment".into(),
+                actor: "dev@example.com".into(),
+                machine: "host.local".into(),
+                extras: vec![],
+                body: "journal wins the cold-start max".into(),
+            },
+        );
+        std::fs::write(journal_path, journal).unwrap();
         let bus = EventBus::new();
         let handle = spawn(bus);
+        let target_journal = dotorg.join("tasks/TASK-Y/journal.org");
         let req = TxAppend {
-            tx_path: tx_path.clone(),
+            tx_path: target_journal.clone(),
             entry: sample_entry("placeholder"),
             project_id: Some("orgasmic".into()),
             tx_id_policy: TxIdPolicy::ProjectSequence {
@@ -3682,9 +3867,10 @@ mod tests {
             .append_tx(req, Some("req-project-seq".into()))
             .await
             .unwrap();
-        assert_eq!(res.tx_id, "tx-20260601-orgasmic-0037");
-        let source = std::fs::read_to_string(&tx_path).unwrap();
-        assert!(source.contains(":TX_ID:        tx-20260601-orgasmic-0037"));
+        assert_eq!(res.tx_id, "tx-20260601-orgasmic-0042");
+        let source = std::fs::read_to_string(target_journal).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&source, "journal.org").unwrap();
+        assert_eq!(entries[0].entry_id, "tx-20260601-orgasmic-0042");
         assert!(!source.contains("placeholder"));
     }
 
