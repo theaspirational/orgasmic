@@ -30,7 +30,7 @@ else — trust it. Read any other file only when a trigger below names it.
 5. Produce the briefing.
 
 The bootstrap is read-only and writes nothing. No tx-log reading, no
-decisions.org reread, no full task-file scan — those are trigger-gated below.
+decision-node reread, no full task-node scan — those are trigger-gated below.
 
 ## Triggers for deeper reads
 
@@ -54,8 +54,7 @@ Open these only when the condition actually holds:
   etc.) is NOT a close — it means the worker finished but the manager has not
   integrated yet, so the dispatch is awaiting `dispatch-close`, not orphaned.
 - **Next action targets a specific task**: read that task's heading in
-  the correct state file (`tasks/backlog.org`, `tasks/in_progress.org`, …) by
-  searching its ID. Never read every state file wholesale.
+  `tasks/<ID>/node.org`. Never scan every task node wholesale.
 - **Next action dispatches a worker**: read the `manager-dispatch` convention
   and `.orgasmic/gotchas.org` first.
 - **Next action edits source in-session**: read

@@ -55,7 +55,7 @@ pub use org::{
 pub use paths::{
     collection_node_file_paths, dispatch_record_dir, dispatch_record_report_rel, dotorg_tasks_dir,
     goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
-    project_dispatch_dir, project_dispatch_records_dir, project_sessions_dir, project_tmp_dir,
+    project_dispatch_dir, project_sessions_dir, project_tmp_dir,
     promote_validated_dispatch_attempt, prune_dispatch_stem_after_worktree,
     prune_validated_dispatch_attempt, task_file_path, task_file_rel, task_node_file_path,
     validate_dispatch_cleanup_targets, validate_dispatch_promote_targets,

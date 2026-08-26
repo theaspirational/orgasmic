@@ -1,5 +1,5 @@
 #+title: orgasmic entry
-#+orgasmic_version: 1
+#+orgasmic_version: 2
 
 * Entry
 

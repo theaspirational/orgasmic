@@ -2429,12 +2429,11 @@ fn durable_report_path_for_finalize(
         .into_iter()
         .find(|entry| entry.id == project_id)
         .map(|entry| entry.path)?;
-    let started_tx = scan_dispatches(&project_root)
+    let record = scan_dispatches(&project_root)
         .ok()?
         .into_iter()
-        .find(|record| record.run_ids.iter().any(|id| id == run_id))
-        .map(|record| record.tx_id)?;
-    orgasmic_core::dispatch_record_report_rel(&started_tx).ok()
+        .find(|record| record.run_ids.iter().any(|id| id == run_id))?;
+    orgasmic_core::dispatch_record_report_rel(record.tasks.first()?, &record.tx_id).ok()
 }
 
 /// Make a manager-supplied `--property REPORT_PATH=` project-relative, or
@@ -7142,7 +7141,14 @@ fn remove_worktree_required_with_hook(
     // Failed-dispatch rollback passes `started_tx: None` and still deletes.
     let (report_path, report_error, error) = match started_tx {
         Some(started_tx) => {
-            match promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, path) {
+            let task_id = task.split_whitespace().next().unwrap_or(task);
+            match promote_and_persist_dispatch_record(
+                &artifacts,
+                project_root,
+                task_id,
+                started_tx,
+                path,
+            ) {
                 Ok(outcome) => (outcome.report_path, outcome.error, None),
                 Err(err) => (
                     None,
@@ -7394,6 +7400,7 @@ fn cleanup_dispatch(
             open.worktree.as_deref(),
             last,
             stdout,
+            open.tasks.first().map(String::as_str).unwrap_or("task"),
             &open.tx_id,
         ) {
             Ok(outcome) => {
@@ -7459,6 +7466,7 @@ fn promote_dispatch_artifacts_in_place(
     worktree: Option<&Path>,
     last_path: &Path,
     stdout_path: &Path,
+    task_id: &str,
     started_tx: &str,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
     let _cleanup_lock =
@@ -7479,7 +7487,7 @@ fn promote_dispatch_artifacts_in_place(
             Some(stdout_path),
         )?,
     };
-    promote_and_persist_dispatch_record(&artifacts, project_root, started_tx, last_path)
+    promote_and_persist_dispatch_record(&artifacts, project_root, task_id, started_tx, last_path)
 }
 
 /// Promote validated artifacts, then put the promoted directory into git
@@ -7489,13 +7497,18 @@ fn promote_dispatch_artifacts_in_place(
 fn promote_and_persist_dispatch_record(
     artifacts: &orgasmic_core::DispatchAttemptArtifacts,
     project_root: &Path,
+    task_id: &str,
     started_tx: &str,
     label_path: &Path,
 ) -> Result<orgasmic_core::PromoteOutcome, String> {
-    let mut outcome =
-        orgasmic_core::promote_validated_dispatch_attempt(artifacts, project_root, started_tx)?;
+    let mut outcome = orgasmic_core::promote_validated_dispatch_attempt(
+        artifacts,
+        project_root,
+        task_id,
+        started_tx,
+    )?;
     if outcome.report_path.is_some() {
-        if let Err(err) = commit_promoted_dispatch_record(project_root, started_tx) {
+        if let Err(err) = commit_promoted_dispatch_record(project_root, task_id, started_tx) {
             let commit_err = format!(
                 "commit promoted dispatch record for {}: {err}",
                 label_path.display()
@@ -7509,7 +7522,7 @@ fn promote_and_persist_dispatch_record(
     Ok(outcome)
 }
 
-/// Put `.orgasmic/dispatch-records/<started_tx>/` into git history as a
+/// Put `.orgasmic/tasks/<ID>/dispatches/<started_tx>/` into git history as a
 /// dedicated, path-scoped commit.
 ///
 /// TASK-QGWK7.1 shipped this as `git add` alone. That met "in the index" but
@@ -7526,10 +7539,14 @@ fn promote_and_persist_dispatch_record(
 /// manager's own change still belongs to the manager; this commits only
 /// orgasmic's own bookkeeping, under a path no worker change can occupy.
 // orgasmic:TASK-QGWK7.1,TASK-QGWK7.1.1
-fn commit_promoted_dispatch_record(project_root: &Path, started_tx: &str) -> Result<(), String> {
+fn commit_promoted_dispatch_record(
+    project_root: &Path,
+    task_id: &str,
+    started_tx: &str,
+) -> Result<(), String> {
     use std::ffi::OsStr;
 
-    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, started_tx)?;
+    let dest_dir = orgasmic_core::dispatch_record_dir(project_root, task_id, started_tx)?;
     let git_dir = PathBuf::from(git_capture(
         project_root,
         ["rev-parse", "--absolute-git-dir"],
@@ -7707,7 +7724,11 @@ fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchR
     if !cleanup_status_reports_failure(&status) {
         return;
     }
-    let Ok(dest_dir) = orgasmic_core::dispatch_record_dir(project_root, &closed.tx_id) else {
+    let Some(task_id) = closed.tasks.first() else {
+        return;
+    };
+    let Ok(dest_dir) = orgasmic_core::dispatch_record_dir(project_root, task_id, &closed.tx_id)
+    else {
         return;
     };
     if !dest_dir.is_dir() {
@@ -7727,7 +7748,7 @@ fn repersist_dispatch_record_best_effort(project_root: &Path, closed: &DispatchR
             return;
         }
     };
-    match commit_promoted_dispatch_record(project_root, &closed.tx_id) {
+    match commit_promoted_dispatch_record(project_root, task_id, &closed.tx_id) {
         // orgasmic:TASK-QGWK7.1.1.1.1 — B-3: `Ok(())` is not proof that
         // anything was committed. If `promote last.txt` fails AFTER
         // `create_dir_all` succeeds (`paths.rs`), `dest_dir` exists but is
@@ -11680,7 +11701,7 @@ mod tests {
             .expect("close must name a promoted REPORT_PATH");
         assert_eq!(
             report_path,
-            ".orgasmic/dispatch-records/tx-start-task-clean/last.txt"
+            ".orgasmic/tasks/TASK-CLEAN/dispatches/tx-start-task-clean/report.md"
         );
         assert!(
             fixture.root.join(report_path).exists(),
@@ -11770,7 +11791,7 @@ mod tests {
         assert!(output.status.success());
         let listed = String::from_utf8_lossy(&output.stdout);
         assert!(
-            listed.contains("last.txt"),
+            listed.contains("report.md"),
             "promoted record must be in the git index after close so durability does not depend on which git add form a manager uses; git ls-files --stage:\n{listed}"
         );
     }
@@ -11888,7 +11909,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-lockout/last.txt")
+                .join(".orgasmic/tasks/TASK-LOCKOUT/dispatches/tx-start-task-lockout/report.md")
                 .exists(),
             "the report itself is never the casualty of a failed persist"
         );
@@ -11910,7 +11931,8 @@ mod tests {
     }
 
     fn staged_record_paths(root: &Path, started_tx: &str) -> String {
-        let dest_dir = root.join(".orgasmic/dispatch-records").join(started_tx);
+        let dest_dir = root.join(".orgasmic/tasks");
+        let _ = started_tx;
         String::from_utf8_lossy(
             &Command::new("git")
                 .args(["ls-files", "--stage", "--"])
@@ -11965,7 +11987,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-seq/last.txt")
+                .join(".orgasmic/tasks/TASK-SEQ/dispatches/tx-start-task-seq/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12045,7 +12067,7 @@ mod tests {
         );
         let promoted = fixture
             .root
-            .join(".orgasmic/dispatch-records/tx-start-task-revert/last.txt");
+            .join(".orgasmic/tasks/TASK-REVERT/dispatches/tx-start-task-revert/report.md");
         assert!(
             promoted.exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
@@ -12122,7 +12144,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-revert-n/last.txt")
+                .join(".orgasmic/tasks/TASK-REVERT-N/dispatches/tx-start-task-revert-n/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12319,7 +12341,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-abandoned/last.txt")
+                .join(".orgasmic/tasks/TASK-ABANDONED/dispatches/tx-start-task-abandoned/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12334,13 +12356,13 @@ mod tests {
         // Straight through the guarded function, since the promoted files are
         // already on disk and that is all it needs.
         git_ok(&fixture.root, &["revert", "--quit"]);
-        commit_promoted_dispatch_record(&fixture.root, "tx-start-task-abandoned")
+        commit_promoted_dispatch_record(&fixture.root, "TASK-ABANDONED", "tx-start-task-abandoned")
             .expect("`git revert --quit` must leave the record persistable");
         let in_history = Command::new("git")
             .args([
                 "cat-file",
                 "-e",
-                "HEAD:.orgasmic/dispatch-records/tx-start-task-abandoned/last.txt",
+                "HEAD:.orgasmic/tasks/TASK-ABANDONED/dispatches/tx-start-task-abandoned/report.md",
             ])
             .current_dir(&fixture.root)
             .output()
@@ -12413,7 +12435,9 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-handcommit/last.txt")
+                .join(
+                    ".orgasmic/tasks/TASK-HANDCOMMIT/dispatches/tx-start-task-handcommit/report.md"
+                )
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12454,7 +12478,7 @@ mod tests {
         assert!(
             fixture
                 .root
-                .join(".orgasmic/dispatch-records/tx-start-task-detached/last.txt")
+                .join(".orgasmic/tasks/TASK-DETACHED/dispatches/tx-start-task-detached/report.md")
                 .exists(),
             "the promoted report is never the casualty: it stays on disk for the re-run"
         );
@@ -12496,7 +12520,7 @@ mod tests {
             .args([
                 "cat-file",
                 "-e",
-                "HEAD:.orgasmic/dispatch-records/tx-start-task-ignored/last.txt",
+                "HEAD:.orgasmic/tasks/TASK-IGNORED/dispatches/tx-start-task-ignored/report.md",
             ])
             .current_dir(&fixture.root)
             .output()
@@ -12516,13 +12540,13 @@ mod tests {
         let mut inside = vec![(
             "REPORT_PATH".to_string(),
             project_root
-                .join(".orgasmic/dispatch-records/tx-1/last.txt")
+                .join(".orgasmic/tasks/TASK-X/dispatches/tx-1/report.md")
                 .display()
                 .to_string(),
         )];
         normalize_report_path_property(&project_root, &mut inside).unwrap();
         assert_eq!(
-            inside[0].1, ".orgasmic/dispatch-records/tx-1/last.txt",
+            inside[0].1, ".orgasmic/tasks/TASK-X/dispatches/tx-1/report.md",
             "an absolute path under the project must be relativized, not committed as-is"
         );
 
@@ -12591,6 +12615,7 @@ mod tests {
                 worktree.as_deref(),
                 &last,
                 &stdout,
+                "TASK-LOCK",
                 &tx_id,
             );
             done_tx.send(result).unwrap();

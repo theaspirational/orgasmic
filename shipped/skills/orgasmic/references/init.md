@@ -5,7 +5,8 @@ running CLI and daemon — run `/orgasmic install` first if `orgasmic status`
 fails. Scaffolding uses `orgasmic project init`. After scaffold, ask the
 operator whether to start bootstrap now or leave it for `/orgasmic resume`.
 Bootstrap and handoff edits run through the daemon (`orgasmic node body
-set|append`, `orgasmic decision create`, `orgasmic task update`,
+set|append`, `orgasmic decision create`, `orgasmic glossary create`,
+`orgasmic task create`,
 `orgasmic tx record` — see `orgasmic --help`).
 
 ## Guard rails
@@ -44,9 +45,10 @@ set|append`, `orgasmic decision create`, `orgasmic task update`,
    `tmp/local_instructions.org`, and ensures the root `AGENTS.md` pointer to
    `.orgasmic/entry.org`.
 
-3. **Summarize.** List files written and resolved `PROJECT_NAME` / `PROJECT_ID` /
-   `DEFAULT_BRANCH`. Point at `.orgasmic/entry.org` and the bootstrap task
-   `TASK-C9V29` in `.orgasmic/tasks/backlog.org`.
+3. **Summarize.** List files and empty collection directories written and the
+   resolved `PROJECT_NAME` / `PROJECT_ID` / `DEFAULT_BRANCH`. Point at
+   `.orgasmic/entry.org`; do not invent starter nodes for the empty `tasks/`,
+   `decisions/`, `glossary/`, or `artifacts/` collections.
 
 4. **Ask whether to bootstrap.** Ask exactly one question: "Start bootstrap now,
    or leave it for `/orgasmic resume`?" Do not infer consent from silence.
@@ -55,20 +57,19 @@ set|append`, `orgasmic decision create`, `orgasmic task update`,
 
 Update `.orgasmic/tasks/handoff.org` through the daemon, then stop. Record that
 the scaffold landed and bootstrap was intentionally deferred; keep the first
-`** Next likely actions` entry pointed at `TASK-C9V29.1` so `/orgasmic resume`
-has a clear default action.
+`** Next likely actions` entry pointed at auditing the repository so
+`/orgasmic resume` has a clear default action.
 
 Example handoff content:
 
 ```text
 ** Done so far
 - Scaffold created. The operator chose to defer bootstrap after `/orgasmic init`;
-  project-specific facts still need to be inferred through TASK-C9V29.
+  project-specific facts still need to be inferred.
 
 ** Next likely actions
-- Start TASK-C9V29.1 when `/orgasmic resume` is invoked: audit the repository,
-  grill the operator, and replace the placeholders in `project.org` with
-  confirmed project facts.
+- When `/orgasmic resume` is invoked, audit the repository, ask the operator
+  about missing facts, and replace the placeholders in `project.org`.
 
 ** In flight
 - None.
@@ -91,21 +92,16 @@ pickup command is:
 
 ## If the operator starts now
 
-The scaffold's `tasks/backlog.org` ships the bootstrap task tree —
-`TASK-C9V29` with subtasks `TASK-C9V29.1`–`TASK-C9V29.3` (infer-project,
-infer-decisions, migrate-instructions) — that turns the empty templates into
-real, repo-specific records through the daemon. Start `TASK-C9V29.1` only after
-the operator chooses this path:
+The scaffold ships empty node collections. Populate only records supported by
+repository evidence and operator answers:
 
 - **Audit** the repo for concrete evidence: READMEs, build manifests,
   directory layout, entry points, test/lint/build commands.
 - **Grill** the operator in small batches — mission, operating constraints,
   primary users and surfaces. Keep known facts, assumptions, and open
   questions separate.
-- **Write** confirmed answers via `orgasmic node body set` on
-  `.orgasmic/project.org`, then continue in order through `TASK-C9V29.2`
-  (decisions) and `TASK-C9V29.3` (migrate instructions), each per its
-  Description/Acceptance in `backlog.org`.
-- **Record** activity via `orgasmic tx record` after each subtask.
+- **Write** confirmed project answers via `orgasmic node body set`; create
+  supported decision, glossary, and task nodes through their CLI verbs.
+- **Record** activity via `orgasmic tx record`.
 
 This grilling is interactive and naturally pauses for the user.

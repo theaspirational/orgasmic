@@ -111,26 +111,27 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
     project_tmp_dir(project_root).join("dispatch")
 }
 
-/// Durable, git-tracked home for a closed dispatch's worker report
-/// (TASK-QGWK7). Lives under `.orgasmic/` but outside gitignored `tmp/`, so a
-/// fresh clone can still read it. Keyed by the dispatch generation
-/// (`started_tx`), not the task — a chain of six dispatches across three tasks
-/// keeps six distinct records.
-pub fn project_dispatch_records_dir(project_root: &Path) -> PathBuf {
-    project_root.join(DOTORG).join("dispatch-records")
-}
-
 /// Directory for one dispatch generation's promoted record.
-pub fn dispatch_record_dir(project_root: &Path, started_tx: &str) -> Result<PathBuf, String> {
-    Ok(project_dispatch_records_dir(project_root).join(sanitize_started_tx(started_tx)?))
+pub fn dispatch_record_dir(
+    project_root: &Path,
+    task_id: &str,
+    started_tx: &str,
+) -> Result<PathBuf, String> {
+    let task_id = sanitize_started_tx(task_id)?;
+    Ok(task_node_file_path(project_root, task_id)
+        .with_file_name("dispatches")
+        .join(sanitize_started_tx(started_tx)?))
 }
 
 /// Repo-relative path recorded as `:REPORT_PATH:` on the close (and optionally
-/// `*.reported`) tx. Always names `last.txt` — the worker summary — not the
+/// `*.reported`) tx. Always names `report.md` — the worker summary — not the
 /// harness `stdout.log` that sits beside it.
-pub fn dispatch_record_report_rel(started_tx: &str) -> Result<String, String> {
+pub fn dispatch_record_report_rel(task_id: &str, started_tx: &str) -> Result<String, String> {
+    let task_id = sanitize_started_tx(task_id)?;
     let started_tx = sanitize_started_tx(started_tx)?;
-    Ok(format!("{DOTORG}/dispatch-records/{started_tx}/last.txt"))
+    Ok(format!(
+        "{DOTORG}/tasks/{task_id}/dispatches/{started_tx}/report.md"
+    ))
 }
 
 fn sanitize_started_tx(started_tx: &str) -> Result<&str, String> {
@@ -302,7 +303,7 @@ pub fn prune_validated_dispatch_attempt(
 }
 
 /// Move the validated attempt's `last.txt` and (bounded) `stdout.log` out of
-/// gitignored `tmp/` into `.orgasmic/dispatch-records/<started_tx>/`, then
+/// gitignored `tmp/` into `.orgasmic/tasks/TASK-X/dispatches/<started_tx>/`, then
 /// unlink the tmp copies when every intended copy succeeded.
 ///
 /// `last.txt` is always promoted in full. `stdout.log` keeps falsifiability
@@ -317,15 +318,16 @@ pub fn prune_validated_dispatch_attempt(
 pub fn promote_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
     project_root: &Path,
+    task_id: &str,
     started_tx: &str,
 ) -> Result<PromoteOutcome, String> {
-    let report_rel = dispatch_record_report_rel(started_tx)?;
-    let dest_dir = dispatch_record_dir(project_root, started_tx)?;
+    let report_rel = dispatch_record_report_rel(task_id, started_tx)?;
+    let dest_dir = dispatch_record_dir(project_root, task_id, started_tx)?;
     std::fs::create_dir_all(&dest_dir).map_err(|err| err.to_string())?;
 
     #[cfg(unix)]
     {
-        let last_dest = dest_dir.join("last.txt");
+        let last_dest = dest_dir.join("report.md");
         if let Err(err) = copy_validated_artifact_to(&last_dest, &artifacts.last_file) {
             return Ok(PromoteOutcome {
                 report_path: None,
@@ -897,11 +899,12 @@ mod tests {
                 .unwrap();
         let started_tx = "tx-20260806-orgasmic-4916";
         let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, started_tx).unwrap();
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", started_tx)
+                .unwrap();
 
         assert_eq!(
             outcome.report_path.as_deref(),
-            Some(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916/last.txt")
+            Some(".orgasmic/tasks/TASK-X/dispatches/tx-20260806-orgasmic-4916/report.md")
         );
         assert_eq!(outcome.error, None);
         let report_path = outcome.report_path.unwrap();
@@ -914,7 +917,8 @@ mod tests {
             std::fs::read_to_string(&promoted).unwrap(),
             "worker report survives close"
         );
-        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-20260806-orgasmic-4916");
+        let record_dir =
+            project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-20260806-orgasmic-4916");
         assert_eq!(
             std::fs::read_to_string(record_dir.join("stdout.log")).unwrap(),
             "harness stdout"
@@ -943,12 +947,16 @@ mod tests {
         let artifacts =
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
-        let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-empty-stdout")
-                .unwrap();
+        let outcome = promote_validated_dispatch_attempt(
+            &artifacts,
+            &project_root,
+            "TASK-X",
+            "tx-empty-stdout",
+        )
+        .unwrap();
         assert_eq!(outcome.error, None);
-        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-empty-stdout");
-        assert!(record_dir.join("last.txt").exists());
+        let record_dir = project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-empty-stdout");
+        assert!(record_dir.join("report.md").exists());
         assert!(
             !record_dir.join("stdout.log").exists(),
             "0-byte stdout.log must not be promoted"
@@ -977,11 +985,15 @@ mod tests {
         let artifacts =
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
-        let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-tail-stdout")
-                .unwrap();
+        let outcome = promote_validated_dispatch_attempt(
+            &artifacts,
+            &project_root,
+            "TASK-X",
+            "tx-tail-stdout",
+        )
+        .unwrap();
         assert_eq!(outcome.error, None);
-        let record_dir = project_root.join(".orgasmic/dispatch-records/tx-tail-stdout");
+        let record_dir = project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-tail-stdout");
         let promoted = std::fs::read(record_dir.join("stdout.log")).unwrap();
         let text = String::from_utf8_lossy(&promoted);
         // TASK-QGWK7.1.1 M-3: truncation is stated IN the excerpt, not only
@@ -1027,7 +1039,7 @@ mod tests {
         std::fs::write(&last, "kept report").unwrap();
         std::fs::write(&stdout, "harness").unwrap();
 
-        let dest_dir = project_root.join(".orgasmic/dispatch-records/tx-half");
+        let dest_dir = project_root.join(".orgasmic/tasks/TASK-X/dispatches/tx-half");
         std::fs::create_dir_all(&dest_dir).unwrap();
         // Block the stdout rename so last.txt lands and stdout fails.
         std::fs::create_dir(dest_dir.join("stdout.log")).unwrap();
@@ -1036,17 +1048,18 @@ mod tests {
             validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
                 .unwrap();
         let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-half").unwrap();
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", "tx-half")
+                .unwrap();
         assert_eq!(
             outcome.report_path.as_deref(),
-            Some(".orgasmic/dispatch-records/tx-half/last.txt")
+            Some(".orgasmic/tasks/TASK-X/dispatches/tx-half/report.md")
         );
         assert!(
             outcome.error.as_deref().unwrap_or("").contains("stdout"),
             "stdout failure must be reported: {:?}",
             outcome.error
         );
-        assert!(dest_dir.join("last.txt").exists());
+        assert!(dest_dir.join("report.md").exists());
         assert!(last.exists(), "tmp must remain when promote is partial");
         assert!(stdout.exists(), "tmp must remain when promote is partial");
         let residue: Vec<_> = std::fs::read_dir(&dest_dir)
@@ -1076,11 +1089,12 @@ mod tests {
         let artifacts =
             validate_dispatch_promote_targets(&project_root, Some(&last), Some(&stdout)).unwrap();
         let outcome =
-            promote_validated_dispatch_attempt(&artifacts, &project_root, "tx-no-wt").unwrap();
+            promote_validated_dispatch_attempt(&artifacts, &project_root, "TASK-X", "tx-no-wt")
+                .unwrap();
         assert_eq!(outcome.error, None);
         assert_eq!(
             outcome.report_path.as_deref(),
-            Some(".orgasmic/dispatch-records/tx-no-wt/last.txt")
+            Some(".orgasmic/tasks/TASK-X/dispatches/tx-no-wt/report.md")
         );
     }
 

@@ -42,12 +42,12 @@ You are dispatch-only and killable at any time.
   heading carries done-so-far, next likely actions, in-flight state,
   divergence/risks, and `:LIVENESS:` for clean-context pickup.
 - *Coordination/design graph:* `.orgasmic/project.org`, `.orgasmic/config.org`,
-  `.orgasmic/tasks/backlog.org` (and sibling state files), `.orgasmic/decisions.org`,
-  `.orgasmic/glossary.org`.
+  `.orgasmic/tasks/<ID>/node.org`, `.orgasmic/decisions/<ID>/node.org`,
+  `.orgasmic/glossary/<ID>/node.org`.
 - *Product baseline:* `.orgasmic/project.org` is the project baseline for this
   product, read directly from the repo.
 - *Durable rationale:* decisions ARE the ADRs, recorded directly in
-  `.orgasmic/decisions.org` (one `* dec_NNN <title> :topic:` record per
+  `.orgasmic/decisions/<ID>/node.org` (one `* dec_NNN <title> :topic:` record per
   decision). There is no separate ADR surface.
 - *Code:* the codebase. If code and `.orgasmic/` disagree once code is written,
   the code is authoritative until the graph/tasks are updated; don't drift

@@ -1,5 +1,5 @@
 #+title: {{PROJECT_NAME}} active goal
-#+orgasmic_version: 1
+#+orgasmic_version: 2
 #+scope: project
 
 * GOAL Bootstrap project state :goal:
@@ -12,12 +12,10 @@
 :END:
 
 ** Statement
-Bootstrap this repository's `.orgasmic/` state by completing TASK-C9V29 and its
-subtasks: infer the project baseline, decisions, and glossary terms from real
-code plus operator answers, then migrate tacit instruction files.
+Bootstrap this repository's `.orgasmic/` state from real code and operator
+answers before filing project work.
 
 ** Reached When
-- [ ] TASK-C9V29.1, TASK-C9V29.2, and TASK-C9V29.3 are DONE.
-- [ ] `project.org`, `decisions.org`, and `glossary.org` contain repo-specific
-      records instead of placeholders.
+- [ ] `project.org` contains repo-specific facts instead of placeholders.
+- [ ] Durable decisions and glossary terms are filed through the CLI when found.
 - [ ] At least one bootstrap activity record exists under `tx/`.
