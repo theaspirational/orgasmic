@@ -366,6 +366,10 @@ validate_runtime_payload() {
         runtime-manifest.json \
         docs/README.md \
         shipped/schema/tx.org \
+        shipped/schema/node-types/task.org \
+        shipped/schema/node-types/decision.org \
+        shipped/schema/node-types/glossary.org \
+        shipped/schema/node-types/artifact.org \
         shipped/prompt-studio/slots.org \
         shipped/skills/orgasmic/SKILL.md
     do

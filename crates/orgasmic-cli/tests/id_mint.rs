@@ -1,6 +1,6 @@
 //! Daemon-free `orgasmic id mint` and minted-format smoke checks.
 
-use orgasmic_core::{is_minted_stem, mint_node_id, NodeIdClass, CROCKFORD};
+use orgasmic_core::{is_minted_stem, mint_node_id_for_class, NodeIdClass, CROCKFORD};
 
 // orgasmic:task_K5NDR
 #[path = "common/env_isolation.rs"]
@@ -61,7 +61,7 @@ fn id_mint_all_classes_use_crockford_alphabet() {
 #[test]
 fn core_mint_never_emits_legacy_numeric_task_id() {
     for _ in 0..1000 {
-        let id = mint_node_id(NodeIdClass::Task);
+        let id = mint_node_id_for_class(NodeIdClass::Task);
         let stem = id.strip_prefix("TASK-").unwrap();
         assert!(
             !stem.chars().all(|c| c.is_ascii_digit()),

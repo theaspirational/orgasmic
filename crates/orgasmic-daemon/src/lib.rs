@@ -23,6 +23,7 @@ pub mod governance;
 pub mod index;
 pub mod logging;
 pub mod manager_registration;
+pub mod node_types;
 pub mod prompt_compiler;
 pub mod recovery_claim;
 pub mod run_catalog;
@@ -1037,6 +1038,12 @@ impl Daemon {
 
         boot_progress.set_phase("loading project catalog")?;
         boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
+        let descriptor_dir = home.source().join("shipped/schema/node-types");
+        let node_types = if descriptor_dir.is_dir() {
+            node_types::NodeTypeRegistry::load(&descriptor_dir)?
+        } else {
+            node_types::NodeTypeRegistry::embedded()?
+        };
         let index = Index::new(home.clone());
         // TASK-AJP4A: boot publishes registration plus home-owned safety state.
         // No ProjectIndex is built before the listener binds.
@@ -1124,6 +1131,7 @@ impl Daemon {
         let (shutdown_signal_tx, shutdown_signal_rx) = tokio::sync::watch::channel(false);
         let api_state = ApiState {
             home: home.clone(),
+            node_types: Arc::new(node_types),
             index: index.clone(),
             writer: writer.clone(),
             supervisor,

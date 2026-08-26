@@ -13,6 +13,7 @@ pub mod id_repair;
 pub mod identity_lint;
 pub mod members;
 pub mod node_kind;
+pub mod node_type;
 pub mod org;
 pub mod paths;
 pub mod projects;
@@ -30,9 +31,9 @@ pub use id::{
     is_dec_id, is_legacy_sequential_create_id, is_minted_stem, is_valid_greenfield_arch_id,
     is_valid_greenfield_artifact_id, is_valid_greenfield_dec_id, is_valid_greenfield_identity,
     is_valid_greenfield_task_id, is_valid_greenfield_term_id, is_valid_task_path_id,
-    looks_like_legacy_numeric_task, mint_node_id, node_id_class_by_prefix, parse_parent_value,
-    validate_parent_exists, validate_parent_pointer, validate_parent_tree, NodeIdClass, ParentTree,
-    ParentTreeError, ParentTreeNode, CROCKFORD,
+    looks_like_legacy_numeric_task, mint_node_id as mint_node_id_for_class,
+    node_id_class_by_prefix, parse_parent_value, validate_parent_exists, validate_parent_pointer,
+    validate_parent_tree, NodeIdClass, ParentTree, ParentTreeError, ParentTreeNode, CROCKFORD,
 };
 pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, IdRepairError};
 pub use identity_lint::{
@@ -45,6 +46,7 @@ pub use members::{
     MemberEntry,
 };
 pub use node_kind::NodeKind;
+pub use node_type::{create_node_dir, mint_node_id, NodeTypeDescriptor};
 pub use org::{
     body_heading_lines, wrap_raw_body, Heading, HeadingLine, HeadingLineEdit, OrgError, OrgFile,
     OrgRewriter, PropertyDrawer, PropertyEntry,

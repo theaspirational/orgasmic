@@ -1,0 +1,16 @@
+#+title: orgasmic decision node type
+#+version: 1
+
+* NODE-TYPE decision
+:PROPERTIES:
+:COLLECTION: decisions
+:ID_PREFIX: dec_
+:LABEL: Decision
+:LABEL_PLURAL: Decisions
+:REQUIRED_PROPERTIES: ID
+:STATES:
+:TRANSITIONS:
+:REGENERATE_PROMPT: decision-regenerate
+:END:
+
+Decisions are state-free ADR nodes.

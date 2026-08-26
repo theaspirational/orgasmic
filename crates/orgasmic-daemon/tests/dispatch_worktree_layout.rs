@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use orgasmic_core::{mint_node_id, Home, NodeIdClass};
+use orgasmic_core::{mint_node_id_for_class, Home, NodeIdClass};
 use orgasmic_daemon::{Daemon, DaemonOptions};
 
 fn test_options() -> DaemonOptions {
@@ -128,7 +128,7 @@ async fn nested_dispatch_worktree_org_is_not_indexed_or_parsed() {
     let worktree = add_dispatch_worktree(&project_root, "task-nested", "task-nested-impl");
     assert!(worktree.join(".orgasmic/tasks/backlog.org").is_file());
 
-    let decoy_id = mint_node_id(NodeIdClass::Task);
+    let decoy_id = mint_node_id_for_class(NodeIdClass::Task);
     write(
         &worktree.join(".orgasmic/tasks/backlog.org"),
         format!(

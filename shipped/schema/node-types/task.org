@@ -1,0 +1,18 @@
+#+title: orgasmic task node type
+#+version: 1
+
+* NODE-TYPE task
+:PROPERTIES:
+:COLLECTION: tasks
+:ID_PREFIX: TASK-
+:LABEL: Task
+:LABEL_PLURAL: Tasks
+:REQUIRED_PROPERTIES: ID
+:STATES: backlog todo in_progress in_review done cancelled
+:TRANSITIONS: backlog>todo,in_progress,cancelled todo>in_progress,cancelled in_progress>in_review,todo,cancelled in_review>in_progress,done,cancelled done>- cancelled>-
+:REGENERATE_PROMPT: task-regenerate
+:RESERVED_FILES: dispatches
+:END:
+
+Task headings use the lifecycle state as their Org TODO keyword. Dotted subtask
+ids remain flat sibling directories under =tasks/=.

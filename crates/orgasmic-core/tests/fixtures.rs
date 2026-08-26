@@ -276,6 +276,10 @@ fn parses_shipped_schema_files() {
     parse_or_panic("shipped/schema/tx.org");
     parse_or_panic("shipped/prompt-studio/slots.org");
     parse_or_panic("shipped/schema/state-machine.org");
+    parse_or_panic("shipped/schema/node-types/task.org");
+    parse_or_panic("shipped/schema/node-types/decision.org");
+    parse_or_panic("shipped/schema/node-types/glossary.org");
+    parse_or_panic("shipped/schema/node-types/artifact.org");
     parse_or_panic("shipped/entry/router.org");
     parse_or_panic("shipped/workflows/default.org");
 }

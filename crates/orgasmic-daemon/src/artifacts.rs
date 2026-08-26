@@ -769,8 +769,8 @@ pub fn new_cid() -> String {
 /// Delegates to `orgasmic_core::mint_node_id` so the minter and
 /// [`orgasmic_core::is_valid_greenfield_artifact_id`] validator share one
 /// grammar definition (`NodeIdClass::Artifact`).
-pub fn new_artifact_id() -> String {
-    orgasmic_core::mint_node_id(orgasmic_core::NodeIdClass::Artifact)
+pub fn new_artifact_id(descriptor: &orgasmic_core::NodeTypeDescriptor) -> String {
+    orgasmic_core::mint_node_id(descriptor)
 }
 
 /// Validate an incoming `art_id` path segment against the minted-artifact
@@ -861,6 +861,14 @@ pub fn consume_all_open_comments(current: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn artifact_descriptor() -> orgasmic_core::NodeTypeDescriptor {
+        orgasmic_core::NodeTypeDescriptor::parse(
+            include_str!("../../../shipped/schema/node-types/artifact.org"),
+            "artifact.org",
+        )
+        .unwrap()
+    }
 
     #[test]
     fn block_registry_has_22_entries() {
@@ -1171,7 +1179,7 @@ mod tests {
     #[test]
     fn new_artifact_id_is_art_prefixed_five_char_crockford_stem() {
         for _ in 0..50 {
-            let id = new_artifact_id();
+            let id = new_artifact_id(&artifact_descriptor());
             let stem = id.strip_prefix("ART-").expect("ART- prefix");
             assert_eq!(stem.len(), 5, "{id}");
             assert!(
@@ -1189,7 +1197,7 @@ mod tests {
 
     #[test]
     fn validate_art_id_accepts_minted_and_rejects_traversal() {
-        assert!(validate_art_id(&new_artifact_id()).is_ok());
+        assert!(validate_art_id(&new_artifact_id(&artifact_descriptor())).is_ok());
         assert!(validate_art_id("ART-8KX2M").is_ok());
         for bad in [
             "../../etc/passwd",
@@ -1208,7 +1216,7 @@ mod tests {
     #[test]
     fn validate_art_id_readable_accepts_legacy_and_rejects_traversal() {
         // Minted ids and the strict grammar are of course still fine.
-        assert!(validate_art_id_readable(&new_artifact_id()).is_ok());
+        assert!(validate_art_id_readable(&new_artifact_id(&artifact_descriptor())).is_ok());
         assert!(validate_art_id_readable("ART-8KX2M").is_ok());
         // Legacy / hand-authored semantic ids the strict grammar rejects but
         // that are perfectly safe path segments — now openable.
