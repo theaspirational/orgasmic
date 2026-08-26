@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
-use orgasmic_core::Home;
+use orgasmic_core::tx::TxWriter;
+use orgasmic_core::{Home, TxEntry};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::modes::tmux::{own_tmux_server_for_tests, real_tmux_on_path};
 use orgasmic_drivers::test_tooling::{
@@ -923,6 +924,41 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(status_stdout.contains("TASK=TASK-DISPATCH"));
     assert!(status_stdout.contains("[exists]"));
 
+    let other_claims = project_root.join(".orgasmic/machines/machine-other/claims.org");
+    std::fs::create_dir_all(other_claims.parent().unwrap()).unwrap();
+    let mut other_claim = TxEntry::new(
+        "claim-other",
+        orgasmic_core::claims::CLAIMED,
+        "[2099-01-01 Thu 00:00:00]",
+        "test",
+        "machine-other",
+    );
+    other_claim.task = Some("TASK-DISPATCH".into());
+    let mut claim_writer = TxWriter::open(&other_claims).unwrap();
+    claim_writer.append(&other_claim).unwrap();
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("DOUBLE_CLAIM=TASK-DISPATCH:[")
+            && status_stdout.contains("machine-other"),
+        "dispatch-status must surface both claimants: {status_stdout}"
+    );
+    let mut other_release = TxEntry::new(
+        "claim-other-release",
+        orgasmic_core::claims::RELEASED,
+        "[2100-01-01 Fri 00:00:00]",
+        "test",
+        "machine-other",
+    );
+    other_release.task = Some("TASK-DISPATCH".into());
+    claim_writer.append(&other_release).unwrap();
+    drop(claim_writer);
+
     let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     let close_stdout = run_orgasmic(
         &home,
@@ -969,6 +1005,13 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(
         status_stdout.trim().is_empty(),
         "closed dispatch should not appear in status: {status_stdout}"
+    );
+    assert!(
+        orgasmic_core::read_claims(&project_root)
+            .unwrap()
+            .get("TASK-DISPATCH")
+            .is_none(),
+        "dispatch close must release the machine claim"
     );
 
     let review_brief = codex_dir.join("task-review-brief.md");

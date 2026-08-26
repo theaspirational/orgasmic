@@ -524,6 +524,7 @@ pub struct WriterHandle {
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
     metrics: Arc<WriterMetrics>,
     index: Option<crate::index::Index>,
+    machine_id: Option<String>,
     /// Appends currently queued behind a session lease
     /// (orgasmic:TASK-FZB6T.3 finding 1). Read only by the regression that
     /// schedules an append at the pre-rename instant; the writer publishes it
@@ -868,6 +869,16 @@ impl WriterHandle {
         Ok(())
     }
 
+    fn guard_node_paths<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Result<()> {
+        let Some(machine_id) = self.machine_id.as_deref() else {
+            return Ok(());
+        };
+        for path in paths {
+            guard_node_write(path, machine_id)?;
+        }
+        Ok(())
+    }
+
     /// Take the last projection failure, if any. Clears the error but leaves
     /// `projection_dirty` set — the view is still stale until a repair runs.
     pub(crate) fn take_apply_failure(&self) -> Option<String> {
@@ -892,6 +903,7 @@ impl WriterHandle {
         request_id: Option<String>,
     ) -> Result<TxAppendResult> {
         let written_path = req.tx_path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let request_id = request_id
             .or_else(|| req.request_id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -948,6 +960,12 @@ impl WriterHandle {
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(std::iter::once(tx.tx_path.as_path())),
+        )?;
         let written_paths = rewrites
             .iter()
             .map(|rewrite| rewrite.path.clone())
@@ -999,6 +1017,12 @@ impl WriterHandle {
         rewrites: Vec<FileRewrite>,
         txs: Vec<TxAppend>,
     ) -> Result<Vec<TxAppendResult>> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(txs.iter().map(|tx| tx.tx_path.as_path())),
+        )?;
         let written_paths = rewrites
             .iter()
             .map(|rewrite| rewrite.path.clone())
@@ -1049,6 +1073,7 @@ impl WriterHandle {
         tx: TxAppend,
         mutation: MutationIdentity,
     ) -> Result<String> {
+        self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
         let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
@@ -1091,6 +1116,7 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        self.guard_node_paths([file.path.as_path(), tx.tx_path.as_path()])?;
         let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
@@ -1128,6 +1154,12 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        self.guard_node_paths(
+            rewrites
+                .iter()
+                .map(|rewrite| rewrite.path.as_path())
+                .chain(std::iter::once(tx.tx_path.as_path())),
+        )?;
         let written_paths = rewrites
             .iter()
             .map(|rewrite| rewrite.path.clone())
@@ -1339,6 +1371,7 @@ impl WriterHandle {
     /// against the same path serialize through the writer channel.
     pub async fn mutate_file(&self, req: FileMutate) -> Result<()> {
         let written_path = req.path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::Mutate { req, reply })
@@ -1419,6 +1452,7 @@ impl WriterHandle {
 
     pub async fn rewrite_file(&self, req: FileRewrite, request_id: Option<String>) -> Result<()> {
         let written_path = req.path.clone();
+        self.guard_node_paths([written_path.as_path()])?;
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let cached = {
             let cache = self.idempotency.lock().await;
@@ -1611,6 +1645,15 @@ pub fn spawn_with_catalog_and_index(
     catalog: Option<crate::run_catalog::RunCatalog>,
     index: Option<crate::index::Index>,
 ) -> WriterHandle {
+    spawn_with_catalog_index_and_machine(events, catalog, index, None)
+}
+
+pub(crate) fn spawn_with_catalog_index_and_machine(
+    events: EventBus,
+    catalog: Option<crate::run_catalog::RunCatalog>,
+    index: Option<crate::index::Index>,
+    machine_id: Option<String>,
+) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
     let in_flight = Arc::new(std::sync::Mutex::new(None));
@@ -1631,6 +1674,7 @@ pub fn spawn_with_catalog_and_index(
         in_flight,
         metrics,
         index,
+        machine_id,
         deferred_appends,
         apply_failure: Arc::new(std::sync::Mutex::new(None)),
         projection_dirty: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1639,6 +1683,44 @@ pub fn spawn_with_catalog_and_index(
         #[cfg(test)]
         session_append_failure: Arc::new(std::sync::Mutex::new(None)),
     }
+}
+
+fn guard_node_write(path: &Path, machine_id: &str) -> Result<()> {
+    let Some(dotorg) = path
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some(".orgasmic"))
+    else {
+        return Ok(());
+    };
+    let relative = path.strip_prefix(dotorg).expect("ancestor is a prefix");
+    let mut parts = relative.components().filter_map(|part| match part {
+        std::path::Component::Normal(value) => value.to_str(),
+        _ => None,
+    });
+    let Some(collection) = parts.next() else {
+        return Ok(());
+    };
+    if matches!(collection, "machines" | "tx" | "tmp" | "views") {
+        return Ok(());
+    }
+    let Some(node_id) = parts.next() else {
+        return Ok(());
+    };
+    let Some(project_root) = dotorg.parent() else {
+        return Ok(());
+    };
+    let claims = orgasmic_core::read_claims(project_root)?;
+    if let Some(claim) = claims
+        .get(node_id)
+        .filter(|claim| claim.holder != machine_id)
+    {
+        bail!(
+            "node {node_id} is claimed by machine {}; machine {machine_id} cannot write {}",
+            claim.holder,
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// What a command is, for the shutdown-loss report (TASK-Q07Y5).
@@ -4415,5 +4497,46 @@ mod tests {
             "crash must leave heading in source (zero-or-two invariant: not duplicated)"
         );
         assert!(!tx_path.exists(), "tx append must not run on rollback");
+    }
+
+    #[tokio::test]
+    async fn node_write_claimed_by_another_machine_is_refused_with_holder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let node = tmp.path().join(".orgasmic/tasks/TASK-CLAIM/node.org");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(&node, "old").unwrap();
+        let claims = tmp.path().join(".orgasmic/machines/machine-b/claims.org");
+        std::fs::create_dir_all(claims.parent().unwrap()).unwrap();
+        let mut event = TxEntry::new(
+            "claim-b",
+            orgasmic_core::claims::CLAIMED,
+            "[2026-08-26 Wed 10:00:00]",
+            "test",
+            "machine-b",
+        );
+        event.task = Some("TASK-CLAIM".into());
+        let mut claims_writer = TxWriter::open(claims).unwrap();
+        claims_writer.append(&event).unwrap();
+        drop(claims_writer);
+
+        let writer = spawn_with_catalog_index_and_machine(
+            EventBus::new(),
+            None,
+            None,
+            Some("machine-a".into()),
+        );
+        let error = writer
+            .rewrite_file(
+                FileRewrite {
+                    path: node.clone(),
+                    new_contents: b"new".to_vec(),
+                },
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("claimed by machine machine-b"));
+        assert_eq!(std::fs::read_to_string(node).unwrap(), "old");
+        writer.shutdown().await;
     }
 }

@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{collection_node_file_paths, LifecycleStage, OrgFile};
+use crate::{collection_node_file_paths, read_claims, LifecycleStage, OrgFile, OrgRewriter};
 
 const VIEWS: [(&str, &str, &str); 3] = [
     (
@@ -26,12 +26,13 @@ const VIEWS: [(&str, &str, &str); 3] = [
 /// Rebuild the throwaway aggregate views from node directories.
 /// Returns the number of files whose bytes changed.
 pub fn build_views(project_root: &Path) -> Result<usize> {
+    let claims = read_claims(project_root)?;
     let rendered = VIEWS
         .iter()
         .map(|(collection, file, header)| {
             Ok((
                 project_root.join(".orgasmic/views").join(file),
-                render_collection(project_root, collection, header)?,
+                render_collection(project_root, collection, header, &claims)?,
             ))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -43,7 +44,12 @@ pub fn build_views(project_root: &Path) -> Result<usize> {
     })
 }
 
-fn render_collection(project_root: &Path, collection: &str, header: &str) -> Result<String> {
+fn render_collection(
+    project_root: &Path,
+    collection: &str,
+    header: &str,
+    claims: &std::collections::BTreeMap<String, crate::TaskClaim>,
+) -> Result<String> {
     let mut nodes = Vec::new();
     for path in collection_node_file_paths(project_root, collection)
         .with_context(|| format!("list .orgasmic/{collection}"))?
@@ -64,7 +70,31 @@ fn render_collection(project_root: &Path, collection: &str, header: &str) -> Res
         } else {
             None
         };
-        nodes.push((stage, file.slice(heading.span.clone()).to_string()));
+        let mut node = file.slice(heading.span.clone()).to_string();
+        if collection == "tasks" {
+            if let Some(id) = heading.property("ID") {
+                if let Some(claim) = claims.get(id) {
+                    let mut rewriter = OrgRewriter::new(&file, path.to_string_lossy());
+                    rewriter.upsert_property(id, "CLAIM_HOLDER", &claim.holder)?;
+                    if let Some(scope) = claim.write_scope.as_deref() {
+                        rewriter.upsert_property(id, "CLAIM_WRITE_SCOPE", scope)?;
+                    }
+                    if claim.contenders.len() > 1 {
+                        rewriter.upsert_property(
+                            id,
+                            "DOUBLE_CLAIM",
+                            &claim.contenders.join(" "),
+                        )?;
+                    }
+                    let rendered = rewriter.finish();
+                    let rendered_file = OrgFile::parse(rendered, path.to_string_lossy())?;
+                    node = rendered_file
+                        .slice(rendered_file.headings[0].span.clone())
+                        .to_string();
+                }
+            }
+        }
+        nodes.push((stage, node));
     }
     nodes.sort_by_key(|(stage, _)| *stage);
 
@@ -97,4 +127,62 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
         return Err(error).with_context(|| format!("replace {}", path.display()));
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{claims::CLAIMED, TxEntry, TxWriter};
+
+    fn seed(root: &Path, machine_order: &[&str]) {
+        let node = root.join(".orgasmic/tasks/TASK-CLAIM/node.org");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(
+            node,
+            "#+title: orgasmic task TASK-CLAIM\n#+orgasmic_version: 2\n\n* BACKLOG Claimed task\n:PROPERTIES:\n:ID: TASK-CLAIM\n:END:\n",
+        )
+        .unwrap();
+        for machine in machine_order {
+            let path = root
+                .join(".orgasmic/machines")
+                .join(machine)
+                .join("claims.org");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut event = TxEntry::new(
+                format!("claim-{machine}"),
+                CLAIMED,
+                if *machine == "machine-a" {
+                    "[2026-08-26 Wed 10:00:01]"
+                } else {
+                    "[2026-08-26 Wed 10:00:02]"
+                },
+                "test",
+                *machine,
+            );
+            event.task = Some("TASK-CLAIM".into());
+            event.extra.push(("WRITE_SCOPE".into(), "crates/**".into()));
+            TxWriter::open(path).unwrap().append(&event).unwrap();
+        }
+    }
+
+    #[test]
+    fn multi_machine_views_are_ingest_order_independent_and_show_double_claims() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        seed(first.path(), &["machine-a", "machine-b"]);
+        seed(second.path(), &["machine-b", "machine-a"]);
+
+        build_views(first.path()).unwrap();
+        build_views(second.path()).unwrap();
+        let first_board = std::fs::read(first.path().join(".orgasmic/views/board.org")).unwrap();
+        let second_board = std::fs::read(second.path().join(".orgasmic/views/board.org")).unwrap();
+        assert_eq!(first_board, second_board);
+        let rendered = String::from_utf8(first_board).unwrap();
+        assert!(rendered.contains(":CLAIM_HOLDER: machine-a"));
+        let parsed = OrgFile::parse(rendered, "board.org").unwrap();
+        assert_eq!(
+            parsed.headings[0].property("DOUBLE_CLAIM"),
+            Some("machine-a machine-b")
+        );
+    }
 }
