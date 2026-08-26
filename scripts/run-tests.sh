@@ -311,7 +311,7 @@ parse_registry() {
 # check needs no daemon and works in a worktree and in CI.
 check_owner_lifecycle() {
     local tasks="$REPO/.orgasmic/tasks"
-    local problems=0 owner state
+    local problems=0 owner state token
     if [ ! -d "$tasks" ]; then
         printf 'registry: %s not found — owner lifecycle NOT checked\n' "$tasks"
         return 0
@@ -319,8 +319,12 @@ check_owner_lifecycle() {
     while IFS=$'\t' read -r _test owner _sig _ev _filed; do
         [ -n "$owner" ] || continue
         state=""
-        for stage in DONE CANCELLED; do
-            if grep -Eq "^\*+[ \t]+${stage}[ \t]+" "$tasks/$owner/node.org" 2>/dev/null; then
+        for stage in done cancelled; do
+            case "$stage" in
+                done) token="DONE" ;;
+                cancelled) token="CANCELLED" ;;
+            esac
+            if grep -Eq "^\*+[ \t]+${token}[ \t]+" "$tasks/$owner/node.org" 2>/dev/null; then
                 state="$stage"
                 break
             fi
