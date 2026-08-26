@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
-    iter_task_file_paths, lint_decision_heading_id_token, lint_project_identities,
+    collection_node_file_paths, lint_decision_heading_id_token, lint_project_identities,
     lint_task_heading_id_token, validate_parent_tree, DecisionNode, GlossaryTerm, Heading, Home,
     LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError, ParentTreeNode,
     SandboxAllowlist, TaskHeading,
@@ -2551,8 +2551,7 @@ impl Index {
         };
         let mut project = project;
         // Identity lint (duplicate ids, malformed mints, dangling .orgasmic
-        // references) lives inside ordinary project loading: it reads only
-        // task files, decisions.org, and glossary.org.
+        // references) lives inside ordinary project loading.
         lint_project_identity_state(&board_entry.path, snap);
         // goal.org carries no tasks, so it is not in the task-file iteration;
         // read it just for the thin-goal lint (stale liveness vestiges).
@@ -2563,10 +2562,18 @@ impl Index {
                 Err(err) => push_parse_error(snap, goal_path, err),
             }
         }
-        for path in iter_task_file_paths(&board_entry.path) {
-            if !path.exists() {
-                continue;
+        let task_paths = match collection_node_file_paths(&board_entry.path, "tasks") {
+            Ok(paths) => paths,
+            Err(err) => {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/tasks"),
+                    err.to_string(),
+                );
+                Vec::new()
             }
+        };
+        for path in task_paths {
             match read_org(&path) {
                 Ok(file) => {
                     lint_phantom_task_headings(&file, &path, snap);
@@ -2633,10 +2640,17 @@ impl Index {
         project: &mut ProjectIndex,
         snap: &mut IndexSnapshot,
     ) {
-        let orgasmic_dir = board_entry.path.join(".orgasmic");
-        let decisions_path = orgasmic_dir.join("decisions.org");
         let mut all_superseded: HashSet<String> = HashSet::new();
-        if decisions_path.exists() {
+        let decision_paths = collection_node_file_paths(&board_entry.path, "decisions")
+            .unwrap_or_else(|err| {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/decisions"),
+                    err.to_string(),
+                );
+                Vec::new()
+            });
+        for decisions_path in decision_paths {
             match read_org(&decisions_path) {
                 Ok(file) => {
                     lint_decision_heading_id_tokens(&file, &decisions_path, snap);
@@ -2655,8 +2669,16 @@ impl Index {
         apply_superseded_flags(&mut project.graph, &all_superseded);
         build_decision_tree_index(&mut project.graph, &board_entry.path, snap);
 
-        let glossary = orgasmic_dir.join("glossary.org");
-        if glossary.exists() {
+        let glossary_paths = collection_node_file_paths(&board_entry.path, "glossary")
+            .unwrap_or_else(|err| {
+                push_parse_error(
+                    snap,
+                    board_entry.path.join(".orgasmic/glossary"),
+                    err.to_string(),
+                );
+                Vec::new()
+            });
+        for glossary in glossary_paths {
             match read_org(&glossary) {
                 Ok(file) => load_glossary(&file, &glossary, &mut project.graph),
                 Err(err) => push_parse_error(snap, glossary, err),
@@ -2880,7 +2902,7 @@ fn decision_tree_parse_error(
                 .find(|decision| decision.id == id)
                 .map(|decision| decision.source_file.clone())
         })
-        .unwrap_or_else(|| project_root.join(".orgasmic/decisions.org"));
+        .unwrap_or_else(|| project_root.join(".orgasmic/decisions"));
     (path, format!("decision tree :PARENT: error: {err}"))
 }
 
@@ -3696,10 +3718,10 @@ mod tests {
             &project,
             "#+title: x\n#+orgasmic_version: 1\n\n* PROJECT proj-x\n:PROPERTIES:\n:ID:               proj-x\n:END:\n",
         );
-        let sprint = project_root.join(".orgasmic/tasks/backlog.org");
+        let sprint = project_root.join(".orgasmic/tasks/TASK-001/node.org");
         write(
             &sprint,
-            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
+            "#+title: orgasmic task TASK-001\n#+orgasmic_version: 2\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
         );
     }
 
@@ -4871,6 +4893,21 @@ mod tests {
                 text: "Body fields load.".to_string(),
             }]
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "manual probe against a migrated checkout"]
+    async fn migrated_repo_has_no_parse_errors() {
+        let root = PathBuf::from(
+            std::env::var_os("ORGASMIC_INDEX_ROOT").expect("set ORGASMIC_INDEX_ROOT"),
+        );
+        let (_tmp, home) = make_home();
+        seed_board(&home, &root, "migration-probe");
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        assert!(snap.parse_errors.is_empty(), "{:#?}", snap.parse_errors);
+        assert_eq!(snap.project("migration-probe").unwrap().tasks.len(), 724);
     }
 
     #[tokio::test]

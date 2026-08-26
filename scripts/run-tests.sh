@@ -307,7 +307,7 @@ parse_registry() {
 }
 
 # An entry whose owning task is closed is a graveyard headstone: it keeps a
-# fixed test permanently excused. The lifecycle files are committed, so this
+# fixed test permanently excused. The task nodes are committed, so this
 # check needs no daemon and works in a worktree and in CI.
 check_owner_lifecycle() {
     local tasks="$REPO/.orgasmic/tasks"
@@ -319,8 +319,8 @@ check_owner_lifecycle() {
     while IFS=$'\t' read -r _test owner _sig _ev _filed; do
         [ -n "$owner" ] || continue
         state=""
-        for stage in done cancelled; do
-            if grep -Eq "^[ \t]*:ID:[ \t]+${owner}[ \t]*$" "$tasks/$stage.org" 2>/dev/null; then
+        for stage in DONE CANCELLED; do
+            if grep -Eq "^\*+[ \t]+${stage}[ \t]+" "$tasks/$owner/node.org" 2>/dev/null; then
                 state="$stage"
                 break
             fi

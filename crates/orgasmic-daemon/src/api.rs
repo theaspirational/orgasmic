@@ -29,7 +29,7 @@ use include_dir::{include_dir, Dir};
 use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
-    goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
+    collection_node_file_paths, goal_file_path, goal_file_rel, handoff_file_path,
     lifecycle_stage_file_name, parse_tx_file, project_sessions_dir, read_session_file,
     resolve_loader, scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading,
     HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
@@ -14494,16 +14494,6 @@ impl NodeLayer {
         }
     }
 
-    fn file_name(self) -> Option<&'static str> {
-        match self {
-            Self::Decision => Some("decisions.org"),
-            Self::Glossary => Some("glossary.org"),
-            Self::Project => Some("project.org"),
-            Self::Task => None,
-            Self::Goal | Self::Handoff => None,
-        }
-    }
-
     fn artifact_name(self) -> &'static str {
         match self {
             Self::Decision => "decisions file",
@@ -15478,15 +15468,21 @@ async fn org_node_path(
             let source_file = display_node_source_path(&project.root, &path);
             Ok((project.project_id.clone(), path, source_file))
         }
-        _ => {
-            let file_name = layer
-                .file_name()
-                .expect("non-task node layers have fixed .org files");
-            Ok((
-                project.project_id.clone(),
-                project.root.join(".orgasmic").join(file_name),
-                format!(".orgasmic/{file_name}"),
-            ))
+        NodeLayer::Decision | NodeLayer::Glossary => {
+            let collection = if layer == NodeLayer::Decision {
+                "decisions"
+            } else {
+                "glossary"
+            };
+            let path = orgasmic_core::node_kernel::node_dir(&project.root, collection, id)
+                .join(orgasmic_core::node_kernel::NODE_FILE);
+            let source_file = display_node_source_path(&project.root, &path);
+            Ok((project.project_id.clone(), path, source_file))
+        }
+        NodeLayer::Project => {
+            let path = project.root.join(".orgasmic/project.org");
+            let source_file = display_node_source_path(&project.root, &path);
+            Ok((project.project_id.clone(), path, source_file))
         }
     }
 }
@@ -15876,12 +15872,16 @@ async fn inbound_reference_owners(
     let dotorg = project.root.join(".orgasmic");
     let mut paths = vec![
         dotorg.join("project.org"),
-        dotorg.join("decisions.org"),
-        dotorg.join("glossary.org"),
         goal_file_path(&project.root),
         handoff_file_path(&project.root),
     ];
-    paths.extend(iter_task_file_paths(&project.root));
+    for collection in ["tasks", "decisions", "glossary"] {
+        paths.extend(
+            collection_node_file_paths(&project.root, collection).map_err(|error| {
+                ApiError::internal(format!("read {collection} collection: {error}"))
+            })?,
+        );
+    }
     let mut owners = BTreeSet::new();
     for path in paths.into_iter().filter(|path| path.exists()) {
         let source = read_artifact(&path, "org file")?;

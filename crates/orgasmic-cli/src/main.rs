@@ -25,6 +25,7 @@ mod manager;
 mod member;
 mod node;
 mod path_env;
+mod project_migrate;
 mod sequencer_markers;
 #[cfg(test)]
 mod test_support;
@@ -472,6 +473,12 @@ enum ProjectCmd {
         /// Print only project ids, one per line, nothing else.
         #[arg(long)]
         ids: bool,
+    },
+    /// Convert aggregate task, decision, and glossary files to node directories.
+    Migrate {
+        /// Report the migration without changing files.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -1454,6 +1461,7 @@ fn main() -> Result<()> {
             } => cmd_project_init(&home, path, name, default_branch, force, no_register),
             ProjectCmd::Add { path } => cmd_project_add(&home, path),
             ProjectCmd::List { ids } => cmd_project_list(&home, ids),
+            ProjectCmd::Migrate { dry_run } => project_migrate::run(dry_run),
         },
         Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve {

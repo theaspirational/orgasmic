@@ -4,8 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::collection_node_file_paths;
 use crate::id::is_valid_greenfield_identity;
-use crate::iter_task_file_paths;
 use crate::org::{Heading, OrgFile};
 use crate::schema::{DecisionNode, GlossaryTerm};
 
@@ -214,31 +214,23 @@ fn collect_dangling_reference_tokens(
 
 /// Collect every node identity position under `.orgasmic/`.
 pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurrence> {
-    let orgasmic = project_root.join(".orgasmic");
     let mut out = Vec::new();
-    for path in iter_task_file_paths(project_root) {
-        if !path.exists() {
-            continue;
-        }
+    for path in collection_node_file_paths(project_root, "tasks").unwrap_or_default() {
         let Some(file) = read_org(&path) else {
             continue;
         };
         collect_task_identities(&path, &file, &mut out);
     }
-    for path in [
-        orgasmic.join("decisions.org"),
-        orgasmic.join("glossary.org"),
-    ] {
-        if !path.exists() {
-            continue;
-        }
-        let Some(file) = read_org(&path) else {
-            continue;
-        };
-        if path.ends_with("decisions.org") {
-            collect_decision_identities(&path, &file, &mut out);
-        } else {
-            collect_glossary_identities(&path, &file, &mut out);
+    for collection in ["decisions", "glossary"] {
+        for path in collection_node_file_paths(project_root, collection).unwrap_or_default() {
+            let Some(file) = read_org(&path) else {
+                continue;
+            };
+            if collection == "decisions" {
+                collect_decision_identities(&path, &file, &mut out);
+            } else {
+                collect_glossary_identities(&path, &file, &mut out);
+            }
         }
     }
     out
@@ -248,20 +240,12 @@ pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurren
 pub fn collect_reference_occurrences(
     project_root: &Path,
 ) -> Vec<(String, PathBuf, Option<usize>, String)> {
-    let orgasmic = project_root.join(".orgasmic");
     let mut out = Vec::new();
-    for path in iter_task_file_paths(project_root) {
-        if !path.exists() {
-            continue;
-        }
-        if let Some(file) = read_org(&path) {
-            collect_dangling_reference_tokens(&path, &file, &mut out);
-        }
-    }
-    for rel in ["decisions.org", "glossary.org"] {
-        let path = orgasmic.join(rel);
-        if let Some(file) = read_org(&path) {
-            collect_dangling_reference_tokens(&path, &file, &mut out);
+    for collection in ["tasks", "decisions", "glossary"] {
+        for path in collection_node_file_paths(project_root, collection).unwrap_or_default() {
+            if let Some(file) = read_org(&path) {
+                collect_dangling_reference_tokens(&path, &file, &mut out);
+            }
         }
     }
     out
@@ -366,20 +350,18 @@ pub fn lint_project_identities(project_root: &Path) -> Vec<IdentityLintFinding> 
 
 /// Paths (relative to project root) that hold org identities or references.
 pub fn org_state_rel_paths(project_root: &Path) -> Vec<PathBuf> {
-    let mut paths = iter_task_file_paths(project_root)
-        .filter(|path| path.exists())
+    let mut paths = ["tasks", "decisions", "glossary"]
+        .into_iter()
+        .flat_map(|collection| {
+            collection_node_file_paths(project_root, collection).unwrap_or_default()
+        })
         .map(|path| {
             path.strip_prefix(project_root)
                 .unwrap_or(&path)
                 .to_path_buf()
         })
         .collect::<Vec<_>>();
-    for rel in [".orgasmic/decisions.org", ".orgasmic/glossary.org"] {
-        let path = project_root.join(rel);
-        if path.exists() {
-            paths.push(PathBuf::from(rel));
-        }
-    }
+    paths.sort();
     paths
 }
 
@@ -629,7 +611,9 @@ mod tests {
     #[test]
     #[ignore = "manual probe against live checkout; run with --ignored --nocapture"]
     fn real_post_migration_repo_lint_probe() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let root = std::env::var_os("ORGASMIC_LINT_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
         let findings = lint_project_identities(&root);
         let malformed: Vec<_> = findings
             .iter()
@@ -652,6 +636,7 @@ mod tests {
             .iter()
             .filter(|f| matches!(f.kind, IdentityLintKind::DanglingReference))
             .collect();
+        assert!(dangles.is_empty(), "dangling references: {dangles:?}");
         eprintln!("duplicate findings: {}", dupes.len());
         eprintln!("dangling reference findings: {}", dangles.len());
         for f in dupes.iter().take(5) {

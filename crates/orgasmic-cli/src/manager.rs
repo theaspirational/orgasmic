@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
-    dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
-    projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
+    goal_file_path, parse_tx_file, project_dispatch_dir, projects, read_session_file,
+    task_node_file_path, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
     SessionEventKind, TaskHeading, TxEntry,
 };
 // orgasmic:task_ZKZBF.2 — the ONE key-shape rule (this used to be a verbatim
@@ -8246,33 +8246,27 @@ fn validate_task_dispatchable(
 }
 
 fn read_task_lifecycle(project_root: &Path, task_id: &str) -> Result<TaskLifecycleInfo> {
-    for path in iter_task_file_paths(project_root) {
-        if !path.exists() {
-            continue;
-        }
-        let source =
-            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        let file = OrgFile::parse(source.clone(), path.to_string_lossy())?;
-        for heading in &file.headings {
-            if heading.property("ID") != Some(task_id) {
-                continue;
-            }
-            let fix_subtask = heading
-                .property("FIX_SUBTASK")
-                .map(trueish_property_value)
-                .unwrap_or(false);
-            let task = TaskHeading::from_heading(&file, heading, path.to_string_lossy().as_ref())?;
-            return Ok(TaskLifecycleInfo {
-                id: task.id.to_string(),
-                stage: task.lifecycle_stage,
-                fix_subtask,
-            });
-        }
+    let path = task_node_file_path(project_root, task_id);
+    let source = std::fs::read_to_string(&path)
+        .with_context(|| format!("task {task_id} not found at {}", path.display()))?;
+    let file = OrgFile::parse(source, path.to_string_lossy())?;
+    let heading = file
+        .headings
+        .first()
+        .context("task node.org has no heading")?;
+    if heading.property("ID") != Some(task_id) {
+        bail!("{} does not contain task {task_id}", path.display());
     }
-    bail!(
-        "task {task_id} not found in any task file under {}",
-        dotorg_tasks_dir(project_root).display()
-    );
+    let fix_subtask = heading
+        .property("FIX_SUBTASK")
+        .map(trueish_property_value)
+        .unwrap_or(false);
+    let task = TaskHeading::from_heading(&file, heading, path.to_string_lossy().as_ref())?;
+    Ok(TaskLifecycleInfo {
+        id: task.id.to_string(),
+        stage: task.lifecycle_stage,
+        fix_subtask,
+    })
 }
 
 fn trueish_property_value(value: &str) -> bool {
