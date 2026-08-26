@@ -76,11 +76,12 @@ done plainly enough that the user can reverse it.
 
 ** Project map
 - `project.org`: baseline, mission, operating constraints.
-- `tasks/`: `backlog.org`, `todo.org`, `in_progress.org`, `in_review.org`, `done.org`, `cancelled.org`, `goal.org`, `handoff.org`.
+- `tasks/`: one directory per task, plus `goal.org` and `handoff.org`.
+- `views/board.org`: derived task board grouped by state.
 - `tasks/goal.org`: manager focus only.
 - `tasks/handoff.org`: manager continuity only.
-- `decisions.org`: durable rationale.
-- `glossary.org`: domain language.
+- `views/decisions.org`: derived durable-rationale view.
+- `views/glossary.org`: derived domain-language view.
 - `gotchas.org`: repeated traps; read before source edits.
 - `conventions/`: repo-local working agreements.
 - `tx/`: agent activity log.
@@ -124,8 +125,8 @@ have outlived several releases, and its age is not evidence that it is live.
   worklogs may be committed or published. Use stable handles instead of personal
   email, prefer repo-relative paths, and keep machine-specific notes in
   gitignored `tmp/local_instructions.org`.
-- Record durable rationale in `decisions.org`; do not create stray decision
-  docs.
+- Record durable rationale through `orgasmic decision`; do not create stray
+  decision docs or edit derived views.
 - While the project is greenfield, treat decisions and glossary as a living
   model: create genuinely new rationale through the CLI, and revise existing
   nodes through `orgasmic node body set|append` or `orgasmic node prop set`.

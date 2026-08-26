@@ -470,7 +470,7 @@ mod tests {
     fn fake_shipped(home: &Home) {
         let dst = home.source().join("shipped").join(SCAFFOLD_SHIPPED_DIR);
         std::fs::create_dir_all(&dst).unwrap();
-        std::fs::write(dst.join(".gitignore"), "tmp/\n").unwrap();
+        std::fs::write(dst.join(".gitignore"), "tmp/\nviews/\n").unwrap();
         std::fs::write(
             dst.join("entry.org"),
             "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
@@ -566,6 +566,7 @@ mod tests {
         assert!(proj.join(".orgasmic/tmp/local_instructions.org").exists());
         let gitignore = std::fs::read_to_string(proj.join(".orgasmic/.gitignore")).unwrap();
         assert!(gitignore.lines().any(|line| line == "tmp/"));
+        assert!(gitignore.lines().any(|line| line == "views/"));
         let project_src = std::fs::read_to_string(proj.join(".orgasmic/project.org")).unwrap();
         assert!(project_src.contains("* PROJECT repo"));
         assert!(project_src.contains(":ID:                  repo"));

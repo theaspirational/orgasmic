@@ -52,7 +52,7 @@ function taskDoc({
         ? []
         : [{ title: 'Description', body: descriptionSection }],
     source: {
-      file: '.orgasmic/tasks/backlog.org',
+      file: '.orgasmic/tasks/TASK-TEST/node.org',
       base_version: 'version-1',
     },
   };

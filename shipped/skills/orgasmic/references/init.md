@@ -46,7 +46,7 @@ set|append`, `orgasmic decision create`, `orgasmic task update`,
 
 3. **Summarize.** List files written and resolved `PROJECT_NAME` / `PROJECT_ID` /
    `DEFAULT_BRANCH`. Point at `.orgasmic/entry.org` and the bootstrap task
-   `TASK-C9V29` in `.orgasmic/tasks/backlog.org`.
+   `TASK-C9V29` in `.orgasmic/views/board.org`.
 
 4. **Ask whether to bootstrap.** Ask exactly one question: "Start bootstrap now,
    or leave it for `/orgasmic resume`?" Do not infer consent from silence.
@@ -91,7 +91,7 @@ pickup command is:
 
 ## If the operator starts now
 
-The scaffold's `tasks/backlog.org` ships the bootstrap task tree —
+The scaffold's `views/board.org` shows the bootstrap task tree —
 `TASK-C9V29` with subtasks `TASK-C9V29.1`–`TASK-C9V29.3` (infer-project,
 infer-decisions, migrate-instructions) — that turns the empty templates into
 real, repo-specific records through the daemon. Start `TASK-C9V29.1` only after
@@ -105,7 +105,7 @@ the operator chooses this path:
 - **Write** confirmed answers via `orgasmic node body set` on
   `.orgasmic/project.org`, then continue in order through `TASK-C9V29.2`
   (decisions) and `TASK-C9V29.3` (migrate instructions), each per its
-  Description/Acceptance in `backlog.org`.
+  Description/Acceptance in `views/board.org`.
 - **Record** activity via `orgasmic tx record` after each subtask.
 
 This grilling is interactive and naturally pauses for the user.
