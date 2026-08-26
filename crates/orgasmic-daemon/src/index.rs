@@ -30,7 +30,7 @@ use tokio::process::Command;
 use tokio::sync::{oneshot, Mutex, RwLock, Semaphore};
 use tracing::warn;
 
-use crate::artifacts::{load_project_artifacts, ArtifactSummary};
+use crate::artifacts::{load_artifact, load_project_artifacts, ArtifactSummary};
 
 /// One project's materialized state.
 #[derive(Debug, Clone, Serialize)]
@@ -314,6 +314,10 @@ pub struct IndexSnapshot {
     pub rebuilt_at: Option<DateTime<Utc>>,
     #[serde(skip)]
     artifact_projects: HashSet<String>,
+    #[serde(skip)]
+    file_contents: HashMap<PathBuf, String>,
+    #[serde(skip)]
+    decision_supersedes: HashMap<PathBuf, HashSet<String>>,
 }
 
 impl IndexSnapshot {
@@ -745,6 +749,7 @@ enum BuiltRefresh {
     HomeTx {
         tx: Vec<TxRecord>,
         parse_errors: Vec<ParseError>,
+        file_contents: HashMap<PathBuf, String>,
     },
 }
 
@@ -775,6 +780,8 @@ struct BuiltProjectRefresh {
     project: Option<ProjectIndex>,
     tx: Vec<TxRecord>,
     parse_errors: Vec<ParseError>,
+    file_contents: HashMap<PathBuf, String>,
+    decision_supersedes: HashMap<PathBuf, HashSet<String>>,
 }
 
 struct CapturedRefresh {
@@ -816,6 +823,259 @@ impl Index {
 
     pub async fn snapshot(&self) -> IndexSnapshot {
         self.inner.read().await.clone()
+    }
+
+    /// Apply one filesystem write to the live projection. Classified node and
+    /// tx paths never enter the project refresh coordinator; only paths whose
+    /// ownership cannot be determined fall back to an authoritative rescan.
+    pub async fn apply_written_path(&self, path: &Path) -> Result<bool, String> {
+        if path.starts_with(self.home.tx()) {
+            return self.reload_tx_file(None, path).await;
+        }
+        let board_entry = {
+            let snap = self.inner.read().await;
+            snap.board
+                .iter()
+                .filter(|entry| path.starts_with(&entry.path))
+                .max_by_key(|entry| entry.path.components().count())
+                .cloned()
+        };
+        let Some(entry) = board_entry else {
+            return Ok(false);
+        };
+        let Ok(relative) = path.strip_prefix(&entry.path) else {
+            return Ok(false);
+        };
+        let parts = relative
+            .components()
+            .filter_map(|part| match part {
+                std::path::Component::Normal(value) => value.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if parts.first() != Some(&".orgasmic") {
+            return Ok(false);
+        }
+        if matches!(parts.get(1).copied(), Some("tmp" | "views")) {
+            return Ok(false);
+        }
+        if parts.get(1) == Some(&"tx") {
+            if parts.len() == 3 && path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+                return self.reload_tx_file(Some(&entry.id), path).await;
+            }
+            self.refresh_project(&entry.id).await?;
+            return Ok(true);
+        }
+        if let (Some(collection), Some(node_id)) = (parts.get(1), parts.get(2)) {
+            if !node_id.ends_with(".org") {
+                return self.reload_node_dir(&entry, collection, node_id).await;
+            }
+        }
+        self.refresh_project(&entry.id).await?;
+        Ok(true)
+    }
+
+    async fn reload_tx_file(&self, project_id: Option<&str>, path: &Path) -> Result<bool, String> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => Some(contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("read {}: {error}", path.display())),
+        };
+        let mut snap = self.inner.write().await;
+        if contents.as_ref() == snap.file_contents.get(path) {
+            return Ok(false);
+        }
+        snap.tx.retain(|record| record.source_path != path);
+        snap.parse_errors.retain(|error| error.path != path);
+        match contents {
+            Some(contents) => {
+                snap.file_contents
+                    .insert(path.to_path_buf(), contents.clone());
+                match parse_tx_file(&contents, &path.to_string_lossy()) {
+                    Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                        project_id: project_id.map(str::to_string),
+                        source_path: path.to_path_buf(),
+                        entry,
+                    })),
+                    Err(error) => snap.parse_errors.push(ParseError {
+                        path: path.to_path_buf(),
+                        kind: ParseErrorKind::HistoricalTx,
+                        line: tx_parse_error_line(&error, &contents),
+                        message: error.to_string(),
+                        at: Utc::now(),
+                    }),
+                }
+            }
+            None => {
+                snap.file_contents.remove(path);
+            }
+        }
+        rebuild_all_activity_indexes(&mut snap);
+        Ok(true)
+    }
+
+    async fn reload_node_dir(
+        &self,
+        board_entry: &BoardEntry,
+        collection: &str,
+        node_id: &str,
+    ) -> Result<bool, String> {
+        let node_dir = board_entry
+            .path
+            .join(".orgasmic")
+            .join(collection)
+            .join(node_id);
+        let node_path = node_dir.join(orgasmic_core::node_kernel::NODE_FILE);
+        let journal_path = node_dir.join(orgasmic_core::node_kernel::JOURNAL_FILE);
+        let read_optional = |path: &Path| match std::fs::read_to_string(path) {
+            Ok(contents) => Ok(Some(contents)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("read {}: {error}", path.display())),
+        };
+        let node_contents = read_optional(&node_path)?;
+        let journal_contents = read_optional(&journal_path)?;
+        let artifact = (collection == "artifacts").then(|| load_artifact(&node_dir));
+
+        let mut snap = self.inner.write().await;
+        if node_contents.as_ref() == snap.file_contents.get(&node_path)
+            && journal_contents.as_ref() == snap.file_contents.get(&journal_path)
+        {
+            return Ok(false);
+        }
+        let Some(mut project) = snap.projects.remove(&board_entry.id) else {
+            drop(snap);
+            self.refresh_project(&board_entry.id).await?;
+            return Ok(true);
+        };
+        snap.parse_errors
+            .retain(|error| !error.path.starts_with(&node_dir));
+        for (path, contents) in [
+            (&node_path, node_contents.as_ref()),
+            (&journal_path, journal_contents.as_ref()),
+        ] {
+            if let Some(contents) = contents {
+                snap.file_contents
+                    .insert(path.to_path_buf(), contents.clone());
+            } else {
+                snap.file_contents.remove(path);
+            }
+        }
+
+        snap.tx.retain(|record| record.source_path != journal_path);
+        if let Some(contents) = journal_contents {
+            match orgasmic_core::node_kernel::parse_journal(
+                &contents,
+                &journal_path.to_string_lossy(),
+            ) {
+                Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                    project_id: Some(board_entry.id.clone()),
+                    source_path: journal_path.clone(),
+                    entry: journal_tx_entry(entry, &board_entry.id, Some(node_id)),
+                })),
+                Err(error) => snap.parse_errors.push(ParseError {
+                    path: journal_path.clone(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message: error.to_string(),
+                    line: None,
+                    at: Utc::now(),
+                }),
+            }
+        }
+
+        if collection == "tasks" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_tasks_from_node(&mut project, &node_dir);
+                        lint_phantom_task_headings(&file, &node_path, &mut snap);
+                        lint_task_heading_id_tokens(&file, &node_path, &mut snap);
+                        for heading in &file.headings {
+                            match parse_task(&file, heading, &node_path) {
+                                Ok(Some(task)) => {
+                                    project
+                                        .task_bodies
+                                        .insert(task.id.clone(), parse_task_body(&file, heading));
+                                    project.tasks.push(task);
+                                }
+                                Ok(None) => {}
+                                Err(error) => push_parse_error(
+                                    &mut snap,
+                                    node_path.clone(),
+                                    error.to_string(),
+                                ),
+                            }
+                        }
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_tasks_from_node(&mut project, &node_dir);
+            }
+        } else if collection == "decisions" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_graph_node_source(&mut project.graph, &node_dir);
+                        snap.decision_supersedes.remove(&node_path);
+                        lint_decision_heading_id_tokens(&file, &node_path, &mut snap);
+                        let superseded =
+                            load_decisions(&file, &node_path, &mut project.graph, &mut snap);
+                        snap.decision_supersedes
+                            .insert(node_path.clone(), superseded);
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_graph_node_source(&mut project.graph, &node_dir);
+                snap.decision_supersedes.remove(&node_path);
+            }
+        } else if collection == "glossary" {
+            if let Some(contents) = node_contents.as_ref() {
+                match OrgFile::parse(contents.clone(), node_path.to_string_lossy()) {
+                    Ok(file) => {
+                        remove_graph_node_source(&mut project.graph, &node_dir);
+                        load_glossary(&file, &node_path, &mut project.graph);
+                    }
+                    Err(error) => push_parse_error(&mut snap, node_path.clone(), error.to_string()),
+                }
+            } else {
+                remove_graph_node_source(&mut project.graph, &node_dir);
+            }
+        }
+
+        project
+            .graph
+            .nodes
+            .retain(|node| !matches!(node.layer.as_str(), "task" | "artifact"));
+        project.graph.edges.clear();
+        load_task_graph(&mut project);
+        let superseded = snap
+            .decision_supersedes
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<HashSet<_>>();
+        apply_superseded_flags(&mut project.graph, &superseded);
+        build_decision_tree_index(&mut project.graph, &board_entry.path, &mut snap);
+        project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, &mut snap);
+        project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
+        lint_dangling_graph_edges(&project, &mut snap);
+        if collection == "artifacts" && snap.artifact_projects.contains(&board_entry.id) {
+            project.artifacts.retain(|item| item.id != node_id);
+            if let Some(Some(artifact)) = artifact {
+                project.artifacts.push(artifact);
+            }
+        }
+        project.last_loaded_at = Some(Utc::now());
+        snap.projects.insert(board_entry.id.clone(), project);
+        let load = snap
+            .project_loads
+            .entry(board_entry.id.clone())
+            .or_default();
+        load.state = ProjectLoadState::Ready;
+        load.generation = load.generation.saturating_add(1);
+        load.last_loaded_at = Some(Utc::now());
+        Ok(true)
     }
 
     pub async fn catalog(&self) -> Vec<ProjectCatalogEntry> {
@@ -1960,11 +2220,15 @@ impl Index {
                     .into_iter()
                     .filter(|error| is_under(&error.path, &board_entry.path))
                     .collect();
+                let file_contents = next.file_contents;
+                let decision_supersedes = next.decision_supersedes;
                 Ok(BuiltRefresh::Project(Box::new(BuiltProjectRefresh {
                     board_entry,
                     project,
                     tx,
                     parse_errors,
+                    file_contents,
+                    decision_supersedes,
                 })))
             }
             RefreshSeed::Artifacts { board_entry } => {
@@ -1997,6 +2261,7 @@ impl Index {
                         .into_iter()
                         .filter(|error| is_under(&error.path, &scan_index.home.tx()))
                         .collect(),
+                    file_contents: next.file_contents,
                 })
             }
         };
@@ -2061,6 +2326,8 @@ impl Index {
                     project,
                     tx,
                     parse_errors,
+                    file_contents,
+                    decision_supersedes,
                 } = *project_refresh;
                 let Some(current_entry) =
                     snap.board.iter().find(|entry| entry.id == board_entry.id)
@@ -2076,6 +2343,12 @@ impl Index {
                 snap.parse_errors
                     .retain(|error| !is_under(&error.path, &board_entry.path));
                 snap.parse_errors.extend(parse_errors);
+                snap.file_contents
+                    .retain(|path, _| !is_under(path, &board_entry.path));
+                snap.file_contents.extend(file_contents);
+                snap.decision_supersedes
+                    .retain(|path, _| !is_under(path, &board_entry.path));
+                snap.decision_supersedes.extend(decision_supersedes);
                 snap.tx
                     .retain(|record| record.project_id.as_deref() != Some(board_entry.id.as_str()));
                 snap.tx.extend(tx);
@@ -2141,9 +2414,16 @@ impl Index {
                 project.artifacts = artifacts;
                 snap.artifact_projects.insert(board_entry.id);
             }
-            BuiltRefresh::HomeTx { tx, parse_errors } => {
+            BuiltRefresh::HomeTx {
+                tx,
+                parse_errors,
+                file_contents,
+            } => {
                 snap.tx.retain(|record| record.project_id.is_some());
                 snap.tx.extend(tx);
+                snap.file_contents
+                    .retain(|path, _| !is_under(path, &self.home.tx()));
+                snap.file_contents.extend(file_contents);
                 snap.parse_errors
                     .retain(|error| !is_under(&error.path, &self.home.tx()));
                 snap.parse_errors.extend(parse_errors);
@@ -2544,7 +2824,7 @@ impl Index {
         // read it just for the thin-goal lint (stale liveness vestiges).
         let goal_path = orgasmic_core::goal_file_path(&board_entry.path);
         if goal_path.exists() {
-            match read_org(&goal_path) {
+            match read_org_tracked(&goal_path, snap) {
                 Ok(file) => lint_goal_liveness(&file, &goal_path, snap),
                 Err(err) => push_parse_error(snap, goal_path, err),
             }
@@ -2561,7 +2841,7 @@ impl Index {
             }
         };
         for path in task_paths {
-            match read_org(&path) {
+            match read_org_tracked(&path, snap) {
                 Ok(file) => {
                     lint_phantom_task_headings(&file, &path, snap);
                     lint_task_heading_id_tokens(&file, &path, snap);
@@ -2599,6 +2879,7 @@ impl Index {
         if project_tx_dir.is_dir() {
             collect_tx_dir(&project_tx_dir, Some(board_entry.id.as_str()), snap);
         }
+        collect_project_journals(&board_entry.path, &board_entry.id, snap);
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
         let prior = snap.projects.insert(board_entry.id.clone(), project);
@@ -2645,15 +2926,14 @@ impl Index {
                 Vec::new()
             });
         for decisions_path in decision_paths {
-            match read_org(&decisions_path) {
+            match read_org_tracked(&decisions_path, snap) {
                 Ok(file) => {
                     lint_decision_heading_id_tokens(&file, &decisions_path, snap);
-                    all_superseded.extend(load_decisions(
-                        &file,
-                        &decisions_path,
-                        &mut project.graph,
-                        snap,
-                    ));
+                    let superseded =
+                        load_decisions(&file, &decisions_path, &mut project.graph, snap);
+                    all_superseded.extend(superseded.iter().cloned());
+                    snap.decision_supersedes
+                        .insert(decisions_path.clone(), superseded);
                 }
                 Err(err) => push_parse_error(snap, decisions_path, err),
             }
@@ -2673,7 +2953,7 @@ impl Index {
                 Vec::new()
             });
         for glossary in glossary_paths {
-            match read_org(&glossary) {
+            match read_org_tracked(&glossary, snap) {
                 Ok(file) => load_glossary(&file, &glossary, &mut project.graph),
                 Err(err) => push_parse_error(snap, glossary, err),
             }
@@ -2927,6 +3207,33 @@ fn load_glossary(file: &OrgFile, source: &Path, graph: &mut GraphIndex) {
     }
 }
 
+fn remove_tasks_from_node(project: &mut ProjectIndex, node_dir: &Path) {
+    let removed = project
+        .tasks
+        .iter()
+        .filter(|task| task.source_file.starts_with(node_dir))
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
+    project
+        .tasks
+        .retain(|task| !task.source_file.starts_with(node_dir));
+    for id in removed {
+        project.task_bodies.remove(&id);
+    }
+}
+
+fn remove_graph_node_source(graph: &mut GraphIndex, node_dir: &Path) {
+    graph
+        .decisions
+        .retain(|decision| !decision.source_file.starts_with(node_dir));
+    graph
+        .glossary
+        .retain(|term| !term.source_file.starts_with(node_dir));
+    graph
+        .nodes
+        .retain(|node| !node.source_file.starts_with(node_dir));
+}
+
 fn load_task_graph(project: &mut ProjectIndex) {
     // Artifact id -> (summary, first-producing task's source file). The map
     // dedups artifacts produced by more than one task; the node is pushed once
@@ -3061,30 +3368,33 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
             continue;
         }
         match std::fs::read_to_string(&path) {
-            Ok(contents) => match parse_tx_file(&contents, &path.to_string_lossy()) {
-                Ok(entries) => {
-                    for entry in entries {
-                        snap.tx.push(TxRecord {
-                            project_id: project_id.map(str::to_string),
-                            source_path: path.clone(),
-                            entry,
-                        });
+            Ok(contents) => {
+                snap.file_contents.insert(path.clone(), contents.clone());
+                match parse_tx_file(&contents, &path.to_string_lossy()) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            snap.tx.push(TxRecord {
+                                project_id: project_id.map(str::to_string),
+                                source_path: path.clone(),
+                                entry,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        let message = err.to_string();
+                        if !parse_error_already_recorded(snap, &path, &message) {
+                            warn!(path = %path.display(), error = %message, "tx parse failed");
+                            snap.parse_errors.push(ParseError {
+                                path: path.clone(),
+                                kind: ParseErrorKind::HistoricalTx,
+                                line: tx_parse_error_line(&err, &contents),
+                                message,
+                                at: Utc::now(),
+                            });
+                        }
                     }
                 }
-                Err(err) => {
-                    let message = err.to_string();
-                    if !parse_error_already_recorded(snap, &path, &message) {
-                        warn!(path = %path.display(), error = %message, "tx parse failed");
-                        snap.parse_errors.push(ParseError {
-                            path: path.clone(),
-                            kind: ParseErrorKind::HistoricalTx,
-                            line: tx_parse_error_line(&err, &contents),
-                            message,
-                            at: Utc::now(),
-                        });
-                    }
-                }
-            },
+            }
             Err(err) => {
                 let message = err.to_string();
                 if !parse_error_already_recorded(snap, &path, &message) {
@@ -3100,6 +3410,110 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
             }
         }
     }
+}
+
+fn collect_project_journals(project_root: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let dotorg = project_root.join(".orgasmic");
+    let Ok(collections) = std::fs::read_dir(dotorg) else {
+        return;
+    };
+    for collection in collections.flatten() {
+        let collection_path = collection.path();
+        if !collection_path.is_dir()
+            || matches!(
+                collection.file_name().to_str(),
+                Some("tx" | "tmp" | "views")
+            )
+        {
+            continue;
+        }
+        let Ok(nodes) = std::fs::read_dir(collection_path) else {
+            continue;
+        };
+        for node in nodes.flatten() {
+            let journal = node.path().join(orgasmic_core::node_kernel::JOURNAL_FILE);
+            if journal.is_file() {
+                collect_journal_file(&journal, project_id, snap);
+            }
+        }
+    }
+}
+
+fn collect_journal_file(path: &Path, project_id: &str, snap: &mut IndexSnapshot) {
+    let node_id = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            snap.file_contents
+                .insert(path.to_path_buf(), contents.clone());
+            match orgasmic_core::node_kernel::parse_journal(&contents, &path.to_string_lossy()) {
+                Ok(entries) => snap.tx.extend(entries.into_iter().map(|entry| TxRecord {
+                    project_id: Some(project_id.to_string()),
+                    source_path: path.to_path_buf(),
+                    entry: journal_tx_entry(entry, project_id, node_id),
+                })),
+                Err(error) => snap.parse_errors.push(ParseError {
+                    path: path.to_path_buf(),
+                    kind: ParseErrorKind::HistoricalTx,
+                    message: error.to_string(),
+                    line: None,
+                    at: Utc::now(),
+                }),
+            }
+        }
+        Err(error) => snap.parse_errors.push(ParseError {
+            path: path.to_path_buf(),
+            kind: ParseErrorKind::HistoricalTx,
+            message: error.to_string(),
+            line: None,
+            at: Utc::now(),
+        }),
+    }
+}
+
+fn journal_tx_entry(
+    entry: orgasmic_core::node_kernel::JournalEntry,
+    project_id: &str,
+    node_id: Option<&str>,
+) -> TxEntry {
+    let find = |key: &str| {
+        entry
+            .extras
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.clone())
+    };
+    let mut tx = TxEntry::new(
+        entry.entry_id,
+        entry.ty,
+        entry.time,
+        entry.actor,
+        entry.machine,
+    );
+    tx.project = find("PROJECT").or_else(|| Some(project_id.to_string()));
+    tx.task = find("TASK").or_else(|| {
+        node_id
+            .filter(|id| id.starts_with("TASK-"))
+            .map(str::to_string)
+    });
+    tx.target = find("TARGET");
+    tx.reason = find("REASON");
+    tx.extra = entry
+        .extras
+        .into_iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "PROJECT" | "TASK" | "TARGET" | "REASON"))
+        .collect();
+    if !entry.body.is_empty() {
+        tx.extra
+            .push(("BODY".into(), escape_property_value(&entry.body)));
+    }
+    tx
+}
+
+fn escape_property_value(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\n', "\\n")
 }
 
 fn lint_project_identity_state(project_root: &Path, snap: &mut IndexSnapshot) {
@@ -3259,8 +3673,9 @@ fn first_heading_line(contents: &str) -> Option<usize> {
         .find_map(|(index, line)| line.starts_with("* ").then_some(index + 1))
 }
 
-fn read_org(path: &Path) -> Result<OrgFile, String> {
+fn read_org_tracked(path: &Path, snap: &mut IndexSnapshot) -> Result<OrgFile, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    snap.file_contents.insert(path.to_path_buf(), raw.clone());
     OrgFile::parse(raw, path.to_string_lossy()).map_err(|e| e.to_string())
 }
 

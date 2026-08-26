@@ -523,6 +523,7 @@ pub struct WriterHandle {
     /// gives up can name what it gave up on.
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
     metrics: Arc<WriterMetrics>,
+    index: Option<crate::index::Index>,
     /// Appends currently queued behind a session lease
     /// (orgasmic:TASK-FZB6T.3 finding 1). Read only by the regression that
     /// schedules an append at the pre-rename instant; the writer publishes it
@@ -818,6 +819,23 @@ fn cached_transaction_from_map(
 }
 
 impl WriterHandle {
+    pub(crate) fn applies_own_writes(&self) -> bool {
+        self.index.is_some()
+    }
+
+    async fn publish_paths(&self, paths: impl IntoIterator<Item = PathBuf>) -> Result<()> {
+        let Some(index) = self.index.as_ref() else {
+            return Ok(());
+        };
+        for path in paths {
+            index
+                .apply_written_path(&path)
+                .await
+                .map_err(|error| anyhow!("write committed but index apply failed: {error}"))?;
+        }
+        Ok(())
+    }
+
     /// Append a tx entry through the daemon writer. Re-using `request_id`
     /// is safe — the second call returns the same result.
     pub async fn append_tx(
@@ -825,14 +843,20 @@ impl WriterHandle {
         req: TxAppend,
         request_id: Option<String>,
     ) -> Result<TxAppendResult> {
+        let written_path = req.tx_path.clone();
         let request_id = request_id
             .or_else(|| req.request_id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(CachedResponse::Tx { result, .. }) = cache.get(&request_id) {
-                return Ok(result.clone());
+            match cache.get(&request_id) {
+                Some(CachedResponse::Tx { result, .. }) => Some(result.clone()),
+                _ => None,
             }
+        };
+        if let Some(result) = cached {
+            self.publish_paths([written_path]).await?;
+            return Ok(result);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -840,8 +864,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        let mut cache = self.idempotency.lock().await;
-        cache.insert(
+        self.idempotency.lock().await.insert(
             request_id,
             CachedResponse::Tx {
                 result: res.clone(),
@@ -849,6 +872,7 @@ impl WriterHandle {
                 mutation_id: None,
             },
         );
+        self.publish_paths([written_path]).await?;
         Ok(res)
     }
 
@@ -876,6 +900,11 @@ impl WriterHandle {
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(std::iter::once(tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         #[cfg(test)]
         if let Some(gate) = self.transaction_gate.lock().await.take() {
             gate.entered.notify_one();
@@ -886,11 +915,13 @@ impl WriterHandle {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mutation = transaction_identity(&tx, &rewrites);
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(result) = cached_transaction_from_map(&cache, &request_id, &mutation)? {
-                return Ok(result.tx_id.clone());
-            }
+            cached_transaction_from_map(&cache, &request_id, &mutation)?
+        };
+        if let Some(result) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -907,6 +938,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -919,6 +951,11 @@ impl WriterHandle {
         rewrites: Vec<FileRewrite>,
         txs: Vec<TxAppend>,
     ) -> Result<Vec<TxAppendResult>> {
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(txs.iter().map(|tx| tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         let first = txs
             .first()
             .ok_or_else(|| anyhow!("multi transaction requires at least one tx"))?;
@@ -928,13 +965,13 @@ impl WriterHandle {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mutation = multi_transaction_identity(&txs, &rewrites);
         let cache_key = multi_cache_key(&request_id);
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some((results, MultiDurability::Durable)) =
-                cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
-            {
-                return Ok(results);
-            }
+            cached_multi_from_map(&cache, &cache_key, &request_id, &mutation)?
+        };
+        if let Some((results, MultiDurability::Durable)) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(results);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -949,7 +986,9 @@ impl WriterHandle {
             })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
-        rx.await.map_err(|_| anyhow!("writer reply dropped"))?
+        let results = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
+        Ok(results)
     }
 
     /// Apply a single-file read-modify-write and append its tx as one writer
@@ -962,15 +1001,18 @@ impl WriterHandle {
         tx: TxAppend,
         mutation: MutationIdentity,
     ) -> Result<String> {
+        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if let Some(result) = cached_transaction_from_map(&cache, &request_id, &mutation)? {
-                return Ok(result.tx_id);
-            }
+            cached_transaction_from_map(&cache, &request_id, &mutation)?
+        };
+        if let Some(result) = cached {
+            self.publish_paths(written_paths).await?;
+            return Ok(result.tx_id);
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -987,6 +1029,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         Ok(res.tx_id)
     }
 
@@ -1000,11 +1043,13 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        let written_paths = [file.path.clone(), tx.tx_path.clone()];
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
+            self.publish_paths(written_paths).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1022,6 +1067,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let _ = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1034,11 +1080,17 @@ impl WriterHandle {
         mutation: MutationIdentity,
         mutation_id: String,
     ) -> Result<CachedMutation> {
+        let written_paths = rewrites
+            .iter()
+            .map(|rewrite| rewrite.path.clone())
+            .chain(std::iter::once(tx.tx_path.clone()))
+            .collect::<Vec<_>>();
         let request_id = tx
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
+            self.publish_paths(written_paths).await?;
             return Ok(cached);
         }
         let (reply, rx) = oneshot::channel();
@@ -1056,6 +1108,7 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let _ = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths(written_paths).await?;
         self.cached_mutation(&request_id, &mutation)
             .await?
             .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
@@ -1237,12 +1290,14 @@ impl WriterHandle {
     /// task while the path is flocked; concurrent `mutate_file` calls
     /// against the same path serialize through the writer channel.
     pub async fn mutate_file(&self, req: FileMutate) -> Result<()> {
+        let written_path = req.path.clone();
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(WriterCommand::Mutate { req, reply })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
-        rx.await.map_err(|_| anyhow!("writer reply dropped"))?
+        rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.publish_paths([written_path]).await
     }
 
     /// Append one structured entry without exposing journal.org to whole-file
@@ -1315,12 +1370,15 @@ impl WriterHandle {
     }
 
     pub async fn rewrite_file(&self, req: FileRewrite, request_id: Option<String>) -> Result<()> {
+        let written_path = req.path.clone();
         let request_id = request_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        {
+        let cached = {
             let cache = self.idempotency.lock().await;
-            if matches!(cache.get(&request_id), Some(CachedResponse::Rewrite)) {
-                return Ok(());
-            }
+            matches!(cache.get(&request_id), Some(CachedResponse::Rewrite))
+        };
+        if cached {
+            self.publish_paths([written_path]).await?;
+            return Ok(());
         }
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -1328,8 +1386,11 @@ impl WriterHandle {
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        let mut cache = self.idempotency.lock().await;
-        cache.insert(request_id, CachedResponse::Rewrite);
+        self.idempotency
+            .lock()
+            .await
+            .insert(request_id, CachedResponse::Rewrite);
+        self.publish_paths([written_path]).await?;
         Ok(())
     }
 
@@ -1474,7 +1535,7 @@ fn checked_journal_bytes(path: &Path, next: String) -> Result<Vec<u8>> {
 
 /// Boot the writer task and return a clone-able handle.
 pub fn spawn(events: EventBus) -> WriterHandle {
-    spawn_with_catalog(events, None)
+    spawn_with_catalog_and_index(events, None, None)
 }
 
 /// [`spawn`] with a run catalog attached to the session-append boundary.
@@ -1493,6 +1554,14 @@ pub fn spawn(events: EventBus) -> WriterHandle {
 pub fn spawn_with_catalog(
     events: EventBus,
     catalog: Option<crate::run_catalog::RunCatalog>,
+) -> WriterHandle {
+    spawn_with_catalog_and_index(events, catalog, None)
+}
+
+pub fn spawn_with_catalog_and_index(
+    events: EventBus,
+    catalog: Option<crate::run_catalog::RunCatalog>,
+    index: Option<crate::index::Index>,
 ) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
@@ -1513,6 +1582,7 @@ pub fn spawn_with_catalog(
         idempotency,
         in_flight,
         metrics,
+        index,
         deferred_appends,
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),

@@ -3800,11 +3800,9 @@ async fn post_manager_dispatch_wait(
     Json(req): Json<ManagerDispatchWaitRequest>,
 ) -> Result<Json<ManagerDispatchWaitResponse>, ApiError> {
     let (_, snap) = ensure_loaded_snapshot(&state, Some(&req.project_id)).await?;
-    let project = snap
-        .projects
-        .get(&req.project_id)
-        .cloned()
-        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
+    if !snap.projects.contains_key(&req.project_id) {
+        return Err(ApiError::not_found(format!("project {}", req.project_id)));
+    }
     // The release admission marker spans removal from `Supervisor::snapshot`
     // through terminal-tx append. Read its epoch on both sides of the durable
     // ledger/live scan and retry whenever a finalize/release/report transition
@@ -3819,7 +3817,15 @@ async fn post_manager_dispatch_wait(
     ) = loop {
         let release_before = state.release_tasks.snapshot();
         let recovery_before = state.recovery_generation_transitions.snapshot();
-        let entries = project_tx_entries(&project.root)?;
+        let entries = state
+            .index
+            .snapshot()
+            .await
+            .tx
+            .into_iter()
+            .filter(|record| record.project_id.as_deref() == Some(req.project_id.as_str()))
+            .map(|record| record.entry)
+            .collect::<Vec<_>>();
         let live = state.supervisor.snapshot().await;
         let release_after = state.release_tasks.snapshot();
         let recovery_after = state.recovery_generation_transitions.snapshot();
@@ -8341,6 +8347,9 @@ async fn refresh_after_tx(
     destination_project_id: Option<String>,
     tx_id: &str,
 ) -> Result<(), ApiError> {
+    if state.writer.applies_own_writes() {
+        return Ok(());
+    }
     if project_tx {
         if let Some(project_id) = destination_project_id {
             state
@@ -8368,6 +8377,9 @@ async fn refresh_after_project_mutation(
     project_tx: bool,
     tx_id: &str,
 ) -> Result<(), ApiError> {
+    if state.writer.applies_own_writes() {
+        return Ok(());
+    }
     if project_tx {
         return state
             .index
@@ -21427,7 +21439,6 @@ pub(crate) mod tests {
 
     async fn direct_test_state(home: Home, eager: bool) -> ApiState {
         let events = EventBus::new();
-        let writer = crate::spawn_writer(events.clone());
         let boot = Arc::new(BootIdentity::new());
         let index = Index::new(home.clone());
         if eager {
@@ -21435,6 +21446,8 @@ pub(crate) mod tests {
         } else {
             index.bootstrap_catalog().await;
         }
+        let writer =
+            crate::writer::spawn_with_catalog_and_index(events.clone(), None, Some(index.clone()));
         let supervisor = Supervisor::new(
             writer.clone(),
             boot.clone(),
