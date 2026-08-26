@@ -1,0 +1,11 @@
+#+title: orgasmic glossary term term_5V9F8
+#+orgasmic_version: 2
+
+* term_5V9F8 Run Dock
+:PROPERTIES:
+:AVOID: manager popover; bottom drawer; manager bar
+:CANONICAL: Run Dock
+:DEFINITION: The app-shell surface along the bottom of the UI that hosts every live session. It is always present as a Taskbar and expands into a session panel above it.
+:ID: term_5V9F8
+:END:
+

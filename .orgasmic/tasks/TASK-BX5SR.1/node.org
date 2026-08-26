@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-BX5SR.1
+#+orgasmic_version: 2
+
+* DONE TASK-BX5SR.1 Add a daemon-level retained-descriptor writer-sync regression and remove the transaction-loop panic :daemon:writer:
+:PROPERTIES:
+:ID: TASK-BX5SR.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+** Description
+Claude’s independent review of 6fdae3f found that the retained-descriptor sync correction is sound but its daemon-level routing is unguarded: current regressions either call TxWriter directly or fail before sync. Add a deterministic seam between append and sync that renames/unlinks/replaces the ledger pathname, then prove the daemon append still acknowledges through the retained writer descriptor. The test must fail if writer.rs reintroduces an OpenOptions reopen on the acknowledgement path.
+
+Also replace the latent `unreachable!("all writer transactions carry an identity")` inside the serialized writer task with a request-local error, so an unforeseen malformed internal command cannot kill all writes.
+
+Keep the retained-descriptor invariant under rename/atomic replacement. Do not add a post-sync stat/open or attempt to solve the separate external-unlink loss tradeoff.
+
+** Acceptance
+- A daemon-level append completes when the tx pathname is removed or renamed specifically between append and sync; the regression fails if the pre-fix pathname reopen is restored.
+- Fsync-before-ack, one-sync-per-batch, failure injection, and rewrite rollback remain proven.
+- No reachable writer transaction branch panics on absent mutation identity; it returns an error and the next command succeeds.
+- Focused writer/durability tests, fmt, clippy, and an independent review pass.
+

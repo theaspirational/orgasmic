@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-A6FGF
+#+orgasmic_version: 2
+
+* DONE TASK-A6FGF TASK-QPKCD fix round 2: Failed rescue identity, trust and idempotency
+:PROPERTIES:
+:ID: TASK-A6FGF
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve confirmation findings after b171fca. Make literal Ready-only early exit Failed; never same-run reattach a Failed origin; reconstruct Claude native resume from validated structured identity instead of persisted argv; add durable per-origin/request-id recovery claims with collision-proof sessions and immutable origin; remove committed operational summary.
+

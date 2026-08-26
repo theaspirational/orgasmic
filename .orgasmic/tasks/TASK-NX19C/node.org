@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-NX19C
+#+orgasmic_version: 2
+
+* DONE TASK-NX19C Contradictions and ADR promote/demote routes :graph:arch_C87Z9:
+:PROPERTIES:
+:ID:               TASK-NX19C
+:PRIORITY:         P2
+:WORKER:   implementer-codex
+:IMPLEMENTS:       arch_C87Z9 arch_MPAQT
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/main.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/main.rs
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org docs/adr/*.org crates/orgasmic-daemon/src/** crates/orgasmic-core/src/** archive/2026-05-22_arch-conformance/audit.md
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-M1MZ4 TASK-BX0K0
+:END:
+
+** Description
+arch_C87Z9 interface names =contradictions= and =ADR promote/demote= routes that don't exist. Implement minimal versions: =GET /contradictions= surfaces decisions or architecture nodes whose semantic hashes or status fields disagree across project/global graphs; =POST /adr/:id/promote= and =POST /adr/:id/demote= flip =:STATUS:= between =accepted= and =deprecated= and record a tx entry. CLI mirrors via =orgasmic adr promote|demote=, =orgasmic graph contradictions=.
+
+** Acceptance Criteria
+- [ ] =GET /contradictions= returns a list of contradiction findings with type / nodes / detail; covers (at minimum) pending-decision conflicts and stale-architecture mismatches.
+- [ ] =POST /adr/:id/promote= and =POST /adr/:id/demote= mutate =:STATUS:= via the serialized writer, record a tx, and emit a graph event.
+- [ ] CLI subcommands shipped; new integration test covers each route.
+- [ ] cargo test/clippy/fmt/diff clean; MSRV 1.78.
+
+** Worklog
+

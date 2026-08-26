@@ -1,0 +1,22 @@
+#+title: orgasmic task TASK-35TK4
+#+orgasmic_version: 2
+
+* DONE TASK-35TK4 Daemon boot hardening: timeout/async the project scan, single-instance lock before boot work :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-35TK4
+:PRIORITY: high
+:READ_SCOPE: .orgasmic/project.org .orgasmic/gotchas.org Cargo.toml crates/orgasmic-core crates/orgasmic-daemon crates/orgasmic-cli
+:WRITE_SCOPE: Cargo.toml Cargo.lock crates/orgasmic-daemon crates/orgasmic-cli
+:TEST_CMD:    cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:END:
+
+Evidence (2026-07-23, operator Mac): launchd-spawned daemons hung forever in pre-bind boot because index.rebuild() runs before bind (lib.rs "AC #1") and git_remote_origin_url (index.rs:1350) spawns `git config --get remote.origin.url` with .output() and no timeout — the child wedged in getcwd/open on a ~/Documents project (launchd-context TCC Files-access stall). Meanwhile launchd respawned instances that each spent minutes in boot work and only then died on EADDRINUSE (the lib.rs:194 retry budget covers only a releasing predecessor), and CLI autostart spawned additional racers; daemon.err.log filled with bind failures across two days. Fix set: (1) wrap the git spawn in tokio::time::timeout (2-5s), kill the child on expiry, degrade repo_url to None; better, resolve repo_url lazily/async after bind and cache it — boot must never depend on spawning git. (2) On macOS, when a scan under ~/Documents, ~/Desktop or ~/Downloads times out, log an actionable hint naming the path and likely missing Files-and-Folders (TCC) access. (3) Take an exclusive flock on $ORGASMIC_HOME/daemon.lock BEFORE any boot work; if held, probe the incumbent over HTTP: healthy incumbent means exit 0 "already running" (keeps launchd quiet), unhealthy/stale means report, never race. Lock-first also moves port/instance conflict detection from after-minutes-of-rebuild to milliseconds. Regressions: hung-git fixture (a fake git that blocks), double-start under launchd KeepAlive, CLI autostart against a booting incumbent.
+** Acceptance Criteria
+- Acquire an exclusive $ORGASMIC_HOME/daemon.lock before index rebuild, project scanning, git probes, or bind work. A healthy incumbent makes a second start exit cleanly as already running; an unhealthy/stale incumbent produces a bounded actionable error and no racing daemon.
+- Boot cannot block indefinitely on git remote discovery: the child has a 2-5 second bound, is killed and reaped on expiry, and repo_url degrades to None. Prefer post-bind lazy/async discovery when it stays inside task scope.
+- A timed-out scan under macOS Documents, Desktop, or Downloads logs an actionable Files-and-Folders/TCC hint naming the affected path.
+- Deterministic regressions cover a blocking fake git, double-start/KeepAlive behavior, and CLI autostart while an incumbent is still booting.
+- cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings pass.
+** Notes
+Independent Claude Opus 4.8/high review of b18808c..bd3d7bd returned SHIP. Focused daemon and CLI boot tests passed. The reviewer transport could not finalize because the daemon run-list endpoint hung, so the verdict was rescued from the completed Claude scratchpad and the dispatch was closed manually with tx evidence. Its one new medium lock-probe overlap finding was subsequently implemented by Codex gpt-5.6-terra/high under TASK-870YX in 4c0a151, merged as e4b6b7b, and independently reverified with focused daemon/CLI regressions.
+

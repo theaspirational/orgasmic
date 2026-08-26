@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_PC7M0
+#+orgasmic_version: 2
+
+* dec_PC7M0 How should orgasmic version and own rmux on macOS?
+:PROPERTIES:
+:ID: dec_PC7M0
+:PARENT: dec_J4FYS
+:SOURCE: TASK-FG7FD
+:END:
+
+** Context
+rmux 0.9 changes the RPC protocol, so its CLI, hidden daemon, and Rust SDK cannot be upgraded independently. A long-lived rmux daemon inherited from the orgasmic daemon LaunchAgent can also survive after that parent job coalition is terminated; in that state Security.framework calls from Cursor fail with errSecParam (-50), and a crashing pane can disappear before its exit status reaches the supervisor.
+** Decision
+Require the exact rmux 0.9.0 release across the external CLI and rmux-sdk. On macOS, launch the hidden rmux daemon as the direct process of its own user LaunchAgent with exit-empty disabled, before starting the orgasmic daemon. Before Cursor starts, run a bounded disposable Keychain probe through that rmux daemon and fail with an actionable kill-server and daemon-restart diagnostic when the launch context is stale. Spawn worker processes with retained exit state and convert stream end into one terminal event: code 0 completes, while signals, non-zero codes including 139, or missing retained state fail the run immediately.
+** Consequences
+An upgrade may intentionally retire older rmux sessions because cross-version clients are unsupported. Normal orgasmic daemon restarts no longer orphan rmux in a terminated launch coalition, Cursor fails before doing work when Keychain access is unusable, and supervisors never continue polling after terminal pane loss.
+

@@ -1,0 +1,63 @@
+#+title: orgasmic task TASK-YHA6V
+#+orgasmic_version: 2
+
+* DONE TASK-YHA6V codex ACP run_complete summaries are bare status markers; last.txt drops the worker report :drivers:codex:dispatch:
+:PROPERTIES:
+:ID: TASK-YHA6V
+:PRIORITY: P2
+:READ_SCOPE: crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/modes/ crates/orgasmic-daemon/src/api.rs
+:TEST_CMD: cargo test -p orgasmic-drivers -p orgasmic-daemon
+:WORKER: implementer-cursor
+:WRITE_SCOPE: crates/orgasmic-drivers/src/ crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/
+:END:
+
+** Description
+
+Every codex acp-stdio dispatch leaves last.txt as the bare marker "codex
+turn completed" while the worker's full markdown report sits unread in the
+session JSONL (e.g. dispatch-TASK-SMFHY-implementer-20260612T171049.jsonl:
+304 assistant text_chunks containing the complete Changed/Gates report;
+last.txt = 21 bytes).
+
+Verified root cause, two layers:
+1. ADAPTER: =emit_turn_completion= (orgasmic-drivers/src/adapters/
+   codex.rs:646-665) maps =turn/completed= to
+   =RunComplete { summary: Some("codex turn <status>") }= — a status
+   marker fabricated from the status field, never the turn's output.
+   ="thread closed"= (codex.rs:596-602) has the same defect.
+2. DAEMON: =dispatch_last_summary_from_session= (orgasmic-daemon/src/
+   api.rs:4032-4101) prefers ANY non-empty run_complete summary over the
+   assembled assistant text — the placeholder always shadows the real
+   report.
+
+Contrast: subprocess-stream-json distills accumulated assistant text at
+exit (=SubprocessExitSummary::distill=), which is why cursor dispatches
+produce real last.txt summaries; rmux distills the terminal tail.
+
+Preferred fix shape (minimal): the codex adapter emits =summary: None=
+for generic status markers (completed / thread closed) so the daemon's
+existing =or(assistant_summary)= fallback assembles the report; carry a
+real summary only when the protocol provides actual content. Keep
+RunFail's error path as is. Add an adapter unit test (turn/completed with
+no content → None) and a daemon-side test that a session with assistant
+chunks + marker-only run_complete yields the assistant report in
+last.txt.
+** Acceptance Criteria
+- [ ] A codex acp dispatch whose session carries assistant text yields a
+  last.txt containing the worker's final report, not a status marker.
+- [ ] turn/completed and thread/closed with no real content emit
+  =RunComplete { summary: None }=; statuses with genuine protocol content
+  may carry it. RunFail error mapping unchanged.
+- [ ] Adapter unit test: turn/completed (no content) maps to summary None.
+- [ ] Daemon test: session with assistant chunks + marker-only
+  run_complete writes the assembled assistant report to last.txt.
+- [ ] Gates: cargo test -p orgasmic-drivers -p orgasmic-daemon;
+  cargo fmt --check.
+** Evidence
+Fixed manager-direct [2026-06-13] (operator-directed: dev-process fix while the ZD72S+BRXGG dispatch ran). Both root-cause layers addressed exactly as scoped:
+1. ADAPTER: emit_turn_completion non-failed arm and thread/closed now emit RunComplete { summary: None } — no fabricated markers; RunFail mapping untouched (codex.rs).
+2. DAEMON: dispatch_last_summary_from_session demotes legacy pre-fix markers (is_generic_completion_marker: "codex turn <status>" single-token, "thread closed") to last-resort fallback so old sessions also resolve to the assembled assistant report (api.rs).
+Tests: adapters::codex turn_completed_without_content_emits_summary_none, thread_closed_emits_summary_none, turn_failed_still_maps_to_run_fail; api::tests dispatch_last_summary_prefers_assistant_report_over_generic_completion_marker, dispatch_last_summary_uses_marker_when_nothing_else_exists, generic_completion_marker_detection_is_narrow — all green.
+Gates: cargo test -p orgasmic-drivers -p orgasmic-daemon — failure set identical to the pre-change baseline (hermes roundtrip + post_projects + PID trio + nested_worktree, all owned by in-flight TASK-ZD72S; live_rmux render test is a load-flake, passes isolated). fmt clean; drivers clippy --all-targets -D warnings clean; daemon clippy dead-code debt verified IDENTICAL on clean main (ZD72S territory).
+LIVE NOTE: production daemon still runs the old binary; the fix reaches real last.txt files at the next rebuild+restart (scheduled with the ZD72S integration — that run's own report still needs the session-jsonl workaround, the last time).
+

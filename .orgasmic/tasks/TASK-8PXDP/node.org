@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-8PXDP
+#+orgasmic_version: 2
+
+* DONE TASK-8PXDP TASK-P4MGK fix round: finalize idempotency + scope Failed to dispatched-worker runs
+:PROPERTIES:
+:ID: TASK-8PXDP
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-P4MGK
+:END:
+
+Resolve 2 codex HIGH findings on TASK-P4MGK (review: .orgasmic/tmp/dispatch/task-p4mgk-review/task-p4mgk-review-last.txt). HIGH1: finalize/release not idempotent — CLI masks any 404 as success so protocol-end-during-finalize yields a run both done AND orphaned; concurrent double-finalize double-emits. HIGH2: transport-keyed Failed reclassifies ALL non-TUI protocol-end runs, breaking /grill /plan ACP artifactor ACP manager (they legitimately never finalize). Fix scopes finalize to dispatched-worker runs via a per-run capability flag; narrows dec_WDR5K item 6. Branch task-p4mgk-impl atop 4fb51fd.
+

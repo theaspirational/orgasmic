@@ -1,0 +1,42 @@
+#+title: orgasmic task TASK-PT2DC
+#+orgasmic_version: 2
+
+* DONE TASK-PT2DC Reconsider task lifecycle vs worker-dependent run sub-states :schema:state-machine:run-substate:design:griller:
+:PROPERTIES:
+:ID:               TASK-PT2DC
+:PRIORITY:         P2
+:WORKER:           griller
+:WRITE_SCOPE:      .orgasmic/decisions.org .orgasmic/glossary.org
+:READ_SCOPE:       shipped/schema/state-machine.org shipped/project-scaffold/config.org shipped/workers crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-core/src/session.rs crates/orgasmic-core/src/projects.rs
+:END:
+
+** Description
+Grill the relationship between the human-facing task lifecycle (=BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, DONE, BLOCKED, CANCELLED=) and the per-worker-kind run sub-state vocabularies in =shipped/schema/state-machine.org= (=RUN-SUBSTATE implementer/reviewer/planner/analyzer/babysitter/manager=). The current model has accumulated concrete incoherences worth resolving before they harden into the MVP. Griller-only: do NOT edit the schema or write code — produce Facts / Assumptions / Questions-with-recommended-answers / Accepted Decisions (record in =.orgasmic/decisions.org=) / Glossary updates. A downstream IMPLEMENT task will apply whatever is decided.
+
+Concrete branches to grill (verify each against the code before asking):
+1. *Missing griller vocabulary.* =config.org= maps =STAGE_WORKER_EXPLORE: griller=, yet there is NO =RUN-SUBSTATE griller= block. What sub-states does an EXPLORE/griller run report?
+2. *Stale manager verb.* =RUN-SUBSTATE manager= still lists =agent.ticking= (verbs: idle, ticking, acting, paused) but =/manager/tick= was removed in dec_WTM5Y/TASK-KMWZ6 (replaced by =/manager/launch=). What should the manager vocabulary be now (e.g. launching/idle/acting/paused)?
+3. *Manager runs as implementer.* =/manager/launch= acquires the manager with =RunKind::Implementer=, so a manager run emits IMPLEMENTER sub-states, never the =manager= vocabulary. Reconcile: does the manager need its own =RunKind=, or should the =manager= sub-state block be deleted?
+4. *Stage/vocabulary asymmetry.* =analyzer=, =babysitter=, =manager= have sub-state vocabularies but no =STAGE_WORKER_*= mapping; =griller= has a stage but no vocabulary. Is the keying axis worker-KIND, lifecycle-STAGE, or both — and is that intentional?
+5. *Overlap / shared base.* Every vocabulary starts =ready, claimed= and ends =blocked, cancelled=. Should there be a shared base sub-state set with per-kind deltas (mirroring =base_worker= EXTENDS for prompts) instead of fully-duplicated lists?
+6. *Actor namespacing.* The =agent.= / =human.= / =ci.= prefix split — is it applied consistently, and what decides which actor owns a given verb (e.g. =human.review= vs =agent.reviewing=)?
+
+** Acceptance Criteria
+- [X] Each of the six branches is either resolved (recommended answer accepted) or explicitly deferred with a reason.
+- [X] Meaningful accepted decisions recorded as =* dec_NNN <title> :<topic>:= records in =.orgasmic/decisions.org= (Context/Decision/Consequences; no =:STATUS:=).
+- [X] Any new/renamed terms (e.g. a settled name for the manager's post-tick verb) captured in =.orgasmic/glossary.org=.
+- [X] Output names the follow-up IMPLEMENT scope (which =RUN-SUBSTATE= blocks + code in =supervisor.rs=/=session.rs= a later task must change) without drafting it.
+
+** Evidence
+Grilled live with the operator [2026-06-10 Wed] (manager-implementer mode, dec_ZKRQW). Code verification surfaced a deeper fact than the six branches: the entire RUN-SUBSTATE system is dead schema — =RunRecord.sub_state= is never assigned anywhere (=supervisor.rs= init sites 712/923/1200; =TransitionState= only formats a display headline at 2101), and =RunSubState::new= (=session.rs:81=) validates namespace shape only, never the vocabularies. =RunKind= has just two variants (Implementer, Babysitter — =trait.rs:37=); its real job is babysitter tool-gating, so five of six vocabularies were unreachable regardless.
+
+Branch outcomes (all six resolved, none deferred):
+1. Missing griller vocabulary — dissolved: vocabularies become base+delta keyed on performer; griller needs no own block (it already borrowed analyzer verbs via =:APPLICABLE_STATES:=). dec_P7EY8.
+2. Stale manager verb — manager block deleted; manager's active verb is =manager.working= under the shared base. dec_P7EY8.
+3. Manager runs as implementer — accepted as correct: no =RunKind::Manager=; RunKind stays the tool-policy axis; manager identity stays the =manager.*= namespace (TASK-KC92G UI already keys on it). dec_P7EY8.
+4. Stage/vocabulary asymmetry — axis declared: vocabularies key on worker KIND (performer); lifecycle is task-side. Operator went further: lifecycle itself shrinks to Backlog/Todo/In Progress/In Review/Done/Cancelled (EXPLORE/PLAN/IMPLEMENT collapse into In Progress; SHIP dropped, Done = merged+reviewer-passed; BLOCKED becomes badge = sub-state + =:BLOCKED_BY:=). =STAGE_WORKER_*= replaced by an ordered worker pipeline. dec_WV1ZH + dec_DEH2T.
+5. Overlap/shared base — shared minimal base {working, done, blocked, cancelled} + verdict deltas (reviewer/human: approved, requested_changes); no ready/claimed ("ready" rejected by operator; Todo column covers readiness, acquisition covers claiming). dec_P7EY8.
+6. Actor namespacing — performer-owns-verb rule; namespace generalizes from agent/human/ci to <worker-kind>/human/ci; =human.escalating= → performer-owned; =ci.= kept reserved. dec_P7EY8.
+
+Recorded: dec_WV1ZH/068/069 in =.orgasmic/decisions.org=; glossary terms =run-substate= + =worker-pipeline=. Follow-up IMPLEMENT scope (named, not drafted): =shipped/schema/state-machine.org= v3 rewrite (new keywords + transitions, base+delta sub-state section, delete all six per-kind blocks); =shipped/skills/orgasmic/scaffold/config.org= =STAGE_WORKER_*= → pipeline; heading-keyword migration across =.orgasmic/tasks/sprint.org= + parsers (=orgasmic-core= schema.rs/projects.rs/org.rs, daemon index.rs/watcher.rs/api.rs, cli manager.rs) + kanban UI; =session.rs= performer-namespace validation; =supervisor.rs= wire =TransitionState= → =rec.sub_state= (first real consumer); =shipped/workers/*.org= =:APPLICABLE_STATES:= alignment.
+

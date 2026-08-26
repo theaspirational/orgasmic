@@ -1,0 +1,135 @@
+#+title: orgasmic task TASK-YBCYQ
+#+orgasmic_version: 2
+
+* BACKLOG TASK-YBCYQ the compiled worker prompt names the main repo as 'the Project' and never names the worktree, so a worker commits to main    :dispatch:daemon:
+:PROPERTIES:
+:ID: TASK-YBCYQ
+:PRIORITY: P1
+:END:
+
+** READ THIS FIRST — the dispatch mechanism invites the mistake
+On 2026-08-08 the TASK-2QK4P.1.1 implementer did its work in
+=/Users/aspirational/Documents/code/tools/orgasmic= and committed *eight
+commits to =main=* instead of to =task-2qk4p.1.1-impl= in its dispatch worktree.
+It was caught only by =dispatch finalize --commit= refusing — eight commits late
+— after which the worker cherry-picked onto its branch and correctly declined to
+rewrite a shared branch a live daemon was appending to.
+
+*THIS WAS NOT WORKER CARELESSNESS. THE COMPILED PROMPT TOLD IT TO GO THERE.*
+Read out of the actual dispatch record
+(=.orgasmic/tmp/sessions/dispatch-TASK-2QK4P.1.1-implementer-20260808T125726.jsonl=):
+
+: cwd          : /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1
+: project_root : /Users/aspirational/Documents/code/tools/orgasmic
+: PROMPT SAYS  : - Project: orgasmic at /Users/aspirational/Documents/code/tools/orgasmic.
+
+The =# Inputs= section of every compiled worker prompt names *the main repository*
+as "the Project". *It never names the worktree at all.* A scan of the whole
+prompt bundle for the word "worktree" returns only the manager's own brief text
+and one unrelated sentence — nothing that says "your working directory is X and
+your commits belong on branch Y".
+
+So a worker that follows its prompt spec literally, and resolves "the project" to
+the path its prompt gives it, lands in the main repository. The =cwd= is right;
+the *text the model actually reads* is wrong.
+
+** Why the existing safety net is not enough
+=dispatch finalize --commit= detected it. That is real and it worked. But it
+fires at the END of the dispatch, after every commit has landed on a shared
+branch that a live daemon and a concurrent dispatch are both writing to. By then:
+- =main= carries unreviewed code (it did for hours here);
+- a concurrently dispatched worktree may have BRANCHED from the contaminated
+  =main= (TASK-RMA18.1.1.1 did — its merge-base is =dc6a863=, one of the stray
+  commits);
+- the only clean remedies are cherry-pick-and-leave (what happened) or a history
+  rewrite of a branch under live append, which is destructive and racy.
+
+*Detection at the end is not a substitute for refusal at the moment.*
+
+** Recommended fix, in the order they should land
+*** 1. Name the worktree in the compiled prompt (the actual root cause)
+The =# Inputs= block should state the worker's working directory and its branch,
+and should either omit the project root or label it explicitly as reference-only.
+Something with no ambiguity left in it:
+
+: - Working directory: /Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1
+: - Your branch: task-2qk4p.1.1-impl — ALL commits belong here.
+: - Project root (reference only, DO NOT COMMIT THERE): /Users/aspirational/Documents/code/tools/orgasmic
+
+This is a prompt-assembly change in one place and it removes the invitation.
+*It is necessary and it is not sufficient* — see item 2.
+
+*** 2. Refuse the commit structurally, via the shared hooks directory
+*VERIFIED: a linked worktree shares the main repository's hooks.*
+=git rev-parse --git-common-dir= from
+=~/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1= returns
+=/Users/aspirational/Documents/code/tools/orgasmic/.git=, and hooks live in the
+COMMON dir. So *one hook, installed once, fires for every dispatch worktree and
+for the main repository alike.* Verified: no hooks are installed today and
+=core.hooksPath= is unset, so the slot is free.
+
+*VERIFIED: workers already carry an environment marker.* The drivers export
+=ORGASMIC_RUN_ID= into the spawned pane (=modes/tmux.rs:913=,
+=modes/rmux.rs:2373=), and =rmux.rs:5116= documents that a process can know it
+"is supervised" by reading =ORGASMIC_RUN_ID= from its own environment. *The
+codebase already uses this exact signal for exactly this kind of
+self-identification.*
+
+*BUT =ORGASMIC_RUN_ID= ALONE IS THE WRONG PREDICATE.* =api.rs:3006= describes an
+"App-launched manager run id exported as =ORGASMIC_RUN_ID=", so an app-launched
+MANAGER carries it too — and the manager's legitimate job includes committing to
+=main= from the project root. A hook keyed on that variable alone would block the
+one actor that is supposed to be there.
+
+*The right predicate needs a dispatch-specific variable.* Export the worker's
+worktree path into the pane, e.g.:
+
+: ORGASMIC_DISPATCH_WORKTREE=/Users/aspirational/.orgasmic/worktrees/orgasmic/task-2qk4p.1.1
+
+then the =pre-commit= hook is exact, needs no daemon round-trip, and excludes
+managers by construction:
+
+#+begin_src sh
+# refuse a dispatched worker committing outside its own worktree
+if [ -n "$ORGASMIC_DISPATCH_WORKTREE" ]; then
+  top=$(git rev-parse --show-toplevel)
+  if [ "$top" != "$ORGASMIC_DISPATCH_WORKTREE" ]; then
+    echo "refusing: this dispatch's commits belong in $ORGASMIC_DISPATCH_WORKTREE, not $top" >&2
+    exit 1
+  fi
+fi
+#+end_src
+
+The variable doubles as documentation — it tells the worker where it should be,
+in the one place it cannot fail to see.
+
+*** 3. Ship the hook with the repo, not in .git/hooks
+=.git/hooks= is not versioned, so a hook installed by hand protects one machine
+and no clone. Point =core.hooksPath= at a tracked directory (=.githooks/=) and
+have the hook install itself, so the protection travels with the repository and a
+fresh contributor checkout is covered.
+
+** Acceptance
+1. A dispatched worker's =git commit= from anywhere other than its own worktree
+   is REFUSED, with a message naming the correct path.
+2. A manager committing to =main= from the project root is NOT refused. Pin both
+   directions with a test — the false-refusal direction is the one that would get
+   the hook disabled in anger.
+3. The compiled prompt names the working directory and the branch, and labels the
+   project root reference-only.
+4. =core.hooksPath= points at a tracked directory so the hook ships with the repo.
+5. =dispatch finalize= keeps its existing end-of-run check; this adds a floor, it
+   does not replace the net.
+
+** Known limits, stated so nobody mistakes this for a wall
+- =git commit --no-verify= bypasses any hook. That is acceptable: a worker that
+  types =--no-verify= has made a different and far louder mistake than the honest
+  one this closes.
+- The hook cannot help a worker that runs =git= with a doctored environment.
+- Only =pre-commit= is proposed. Consider =pre-push= too if pushing ever becomes
+  part of a dispatch.
+
+Related: [[TASK-8VBXR]] and the =gotchas.org= entry on manager commands run from a
+dispatch worktree reporting stale state — the same class of confusion between
+"the project" and "this worker's copy of it", in the opposite direction.
+

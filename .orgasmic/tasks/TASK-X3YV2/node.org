@@ -1,0 +1,73 @@
+#+title: orgasmic task TASK-X3YV2
+#+orgasmic_version: 2
+
+* DONE TASK-X3YV2 Backfill existing sprint/backlog/archive tasks with new schema fields :model:dogfood:ui-redesign:
+:PROPERTIES:
+:ID:               TASK-X3YV2
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_EVJYP arch_NAFA1
+:PRODUCES:         .orgasmic/sprint.org .orgasmic/backlog.org .orgasmic/archive.org .orgasmic/tx/2026-05.org
+:WRITE_SCOPE:      .orgasmic/sprint.org .orgasmic/backlog.org .orgasmic/archive.org .orgasmic/tx/2026-05.org
+:READ_SCOPE:       .orgasmic/sprint.org .orgasmic/decisions.org .orgasmic/architecture.org docs/adr/*.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-YFAER
+:MERGE_SHA:        0d73e48
+:CODEX_COMMIT:     15a586c
+:END:
+
+** Description
+Backfill the existing 45+ tasks in =.orgasmic/sprint.org= (and any in =.orgasmic/backlog.org=, =.orgasmic/archive.org=) with the new schema fields introduced by TASK-YFAER so that orgasmic becomes its own *first demo*. The goal: someone opening the new UI against orgasmic's data should see a populated dashboard with realistic task hierarchies, ownership history, completion comments, and an activity timeline — not a sea of empty fields.
+
+This task is *synthesis*, not invention: every backfilled field has its source in the existing task body (Description / Acceptance Criteria / Evidence / Worklog) and existing tx entries. We're projecting the rich history we already have into the new typed schema.
+
+** Scope: per-task backfill operations
+For each existing task, apply the following operations (where applicable):
+
+1. *Lifecycle stage migration*. Map current TODO keyword to the new keyword:
+   - =DONE TASK-NNN= → =DONE TASK-NNN=
+   - =READY TASK-NNN= (no active run, no DEPENDS_ON gating) → =BACKLOG=
+   - =READY TASK-NNN= (committed to current sprint) → =BACKLOG= or =IMPLEMENT= per kind/intent
+   - All other current keywords (analyzing/implementing/testing/...) → fold into =IMPLEMENT= for tasks not yet =DONE=
+2. *Owner property*. Add =:OWNER: human= since no current task has an active agent run. This is the default state for any task without an active run per dec_CX17K.
+3. *Synthesized agent-completion comment*. For each =DONE= task, write one =comment= tx entry to =.orgasmic/tx/2026-05.org= with:
+   - =:TYPE: comment=
+   - =:ACTOR: agent.<kind>= (using the task's :KIND: property)
+   - =:TASK: TASK-NNN=
+   - =:RUN_ID:= synthesized from the run record in the task's Evidence section if available, else =synthesized=
+   - =:ARTIFACTS:= list of refs extracted from the Evidence section (merge SHAs, produced files, decision IDs, arch IDs)
+   - =:BODY:= one-paragraph summary distilled from the Evidence section's first 1-3 lines
+   - =:TIME:= synthesized from the task's =:LAST_UPDATED:= property
+3. *Subtask back-edge inference*. Where a task is clearly a follow-up to another (TASK-NX19C was Round 2 of TASK-M1MZ4's rollup gap-closure; TASK-ZPNQA/TASK-T6KNE/TASK-XBT65 were Round 3; etc.), set =:PARENT_TASK:= to point to the parent. The current sprint has implicit hierarchy:
+   - TASK-M1MZ4 (architecture rollup) → parent of the gap-closure tasks (TASK-BX0K0 through TASK-XBT65)
+   - TASK-XB874 (conformance audit) → parent of any tasks the audit named
+   - Other discretionary parent-child relationships per the implementer's review of Evidence sections
+   - Use path-style IDs only for NEWLY created subtasks per dec_JW11K; existing tasks keep their flat IDs and gain =:PARENT_TASK:= properties.
+4. *Activity log seed*. Comments + the existing =manager.action= tx + run lifecycle events form the per-task activity feed automatically via the new index. No extra seed needed beyond #3.
+
+** Acceptance Criteria
+- [X] Every =DONE= task heading uses the new uppercase lifecycle keyword (=DONE=). (Verified by TASK-YFAER migration; codex confirmed during sweep.)
+- [X] Every non-=DONE= task heading uses one of: =BACKLOG=, =EXPLORE=, =PLAN=, =IMPLEMENT=, =REVIEW=, =SHIP=, =BLOCKED=, =CANCELLED=.
+- [-] Owner property intentionally skipped — TASK-YFAER's index derives owner from active-run presence, not heading properties. (Original AC superseded.)
+- [X] At least one =comment= tx exists per =DONE= task: 39 synthesized comments at =tx-20260523-org-0069..0107= in =.orgasmic/tx/2026-05.org=.
+- [X] Implicit task hierarchies captured via =:PARENT_TASK:= (19 back-edges; TASK-BX0K0..TASK-XBT65 → TASK-M1MZ4 plus additional discretionary edges codex found).
+- [-] =GET /tasks/:id/activity= live-verification deferred — daemon needs rebuild+restart on the TASK-MGFZ7 binary first (manager prerequisite, not codex's responsibility).
+- [-] Live UI verification deferred — UI sessions 3-5 ahead.
+- [X] All workspace tests green (183 unchanged; no code touched); clippy clean; fmt clean; =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 11:43] Codex (gpt-5.5, xhigh, parallel run with TASK-MGFZ7, ~12 min wall total, 174k tokens) committed as =15a586c=; merged no-ff as =0d73e48=.
+- Appended 39 synthesized =comment= tx entries (=tx-20260523-org-0069..0107=), one per =DONE= sprint task. Each carries =:ACTOR: agent.<kind>= derived from task =:KIND:=, =:ARTIFACTS:= extracted from the task's Evidence section (merge SHAs, decision/arch IDs, ADR refs), =:SYNTHESIZED: t= flag, and a one-paragraph =:BODY:= distilled from the Evidence section's first 1-3 lines. =:TIME:= synthesized from each task's =:LAST_UPDATED:=.
+- Added 19 =:PARENT_TASK:= back-edges in =.orgasmic/sprint.org=: TASK-BX0K0..TASK-XBT65 → TASK-M1MZ4 (the gap-closure rounds explicit in those tasks' Evidence) + additional discretionary edges codex found by scanning Evidence sections.
+- Appended one trailing =manager.action= tx (=tx-20260523-org-0108=) documenting the backfill batch (codex authored this itself; slight scope overshoot but harmless self-narration).
+- =.orgasmic/backlog.org= and =.orgasmic/archive.org= needed no migration (no task headings; only the file headers).
+- No source-code change; tests 183 (unchanged from baseline). Clippy clean, fmt clean, diff check clean.
+- Verification: =cargo test --workspace= 183 green, =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean.
+
+** Notes
+This task is the "make orgasmic be its own demo" task. It is *not* re-running history — it is *projecting* the existing rich history into the new typed schema. The truth-of-record (commits, merge SHAs, evidence text) is unchanged; we're adding shape so the new UI has something realistic to render.
+
+Risk: synthesized agent.completed comments are post-hoc narration of work that happened weeks ago. Mark them clearly with =:SYNTHESIZED: t= in the tx properties so future readers can distinguish back-fill from live activity. The UI may render synthesized comments with a subtle "(backfilled)" badge.
+
+This is best done sequentially after TASK-YFAER lands (schema must exist before backfill can validate). Single implementer round.
+

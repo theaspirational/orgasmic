@@ -1,0 +1,216 @@
+#+title: orgasmic task TASK-2QK4P.1.1.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-2QK4P.1.1.1.1 the enumeration was bounded by a path definition the author chose; derive the boundary instead of asserting it
+:PROPERTIES:
+:ID: TASK-2QK4P.1.1.1.1
+:IMPLEMENTS: TASK-2QK4P.1.1.1
+:PRIORITY: P0
+:FIX_SUBTASK: TASK-2QK4P.1.1.1.1.1
+:END:
+
+** READ THIS FIRST — STATUS
+FIX ROUND for TASK-2QK4P.1.1.1, opened by a =REJECT= with =BLOCK SHIP=
+(=tx-20260808-orgasmic-5503=, codex/gpt-5.6-sol cross-family). Round four is
+MERGED as =9a6a68b=; *main knowingly carries F3 and must not be packaged into a
+runtime until this round closes it.* The installed runtime =ed0ebbc= predates the
+branch and is unaffected.
+
+*ROUND FIVE ON ONE DEFECT.*
+
+: round 1  an EMPTY catalog index            read as proof of non-contradiction
+: round 2  a ONE-ELEMENT catalog index       read as proof of uniqueness
+: round 3  a FAILED per-file scan            read as an empty-but-complete file
+: round 4  a FAILED AUTHORITY VERIFICATION   read as "not authentic" / "invalid"
+: round 5  a FAILED DIRECTORY READ           read as a complete directory
+:          a FAILED FILE OPEN                read as a corrupt file
+
+*THE PATTERN THE MANAGER WANTS BROKEN IS NOT THE BUG. IT IS THE SHAPE OF THE
+FIX.* Round three fixed the two types its findings named and left the class.
+Round four was told to answer that with a completeness argument instead — and it
+delivered a 16-row enumeration that is *internally correct and externally
+incomplete*, because its first line was a path definition the author wrote by
+hand:
+
+: post_run_recover → recovery_status_inner → apply_recovery_claim_to_run →
+: resolve_authoritative_recovery_claim → {ProjectOriginAuthority,
+: index_recovery_origins_in_session, load_recovery_claim,
+: verify_committed_claim_against_session, reconstruct_or_quarantine}
+
+Every predicate INSIDE that boundary was classified. =ClaimDirectory::open=,
+=ClaimDirectory::read_regular= and =ClaimDirectory::names= sit just outside it and
+were never looked at. *A hand-drawn boundary is exactly as trustworthy as the
+=bool= this chain has spent five rounds distrusting: it answers "nothing else is
+on the path" when what it means is "I did not look further."*
+
+*So acceptance 1 is not "enumerate again, harder". It is: DERIVE the boundary
+mechanically and show the derivation.*
+
+** Findings to close
+*** F1 (HIGH, BLOCK SHIP) — claim access failures become corrupt evidence, quarantine, and permission to mint
+=crates/orgasmic-daemon/src/recovery_claim.rs:586-599=, =:633-640=, =:1110-1140=,
+=:2066-2069=; =crates/orgasmic-daemon/src/api.rs:9427-9444=
+
+=ClaimDirectory::open= maps every component-open error other than =NotFound= to
+=RecoveryClaimError::CorruptClaim=; =read_regular= does the same for every
+claim-file open error other than =NotFound=. Those buckets hold =EACCES=, =EIO=
+and descriptor exhaustion — *observation failures* — alongside =ELOOP=/=ENOTDIR=,
+which are observed path facts.
+
+=load_recovery_claim= propagates it and =resolve_authoritative_recovery_claim=
+reads it as invalid evidence: =quarantine_invalid_claim=, then reconstruct or
+=Missing=. *For a PENDING claim there is no committed =RecoveryOrigin= to
+reconstruct*, so a failed inventory read can remove the pending claim, the later
+POST sees a complete origin enumeration plus no claim, and reaches
+=plan_pending_recovery_claim=. An observation failure destroys authority and
+mints a competitor.
+
+*** F2 (HIGH, BLOCK SHIP) — a failed =readdir= is returned as a complete name set
+=crates/orgasmic-daemon/src/recovery_claim.rs:684-710=, =:1217-1260=;
+=crates/orgasmic-daemon/src/api.rs:10725-10747=
+
+=ClaimDirectory::names= calls =libc::readdir= in a loop, breaks on NULL and
+returns =Ok(names)=. *=readdir= returns NULL both at end-of-directory and on
+error; the only way to tell is to clear =errno= before the call and read it
+after.* This code does neither, and it discards =closedir='s return as well.
+A third collapse hides in the same loop: =if let Ok(name) = name.to_str()=
+*silently drops* an entry whose name is not UTF-8, making the set smaller — the
+unsafe direction, for the same reason it was unsafe in round three.
+
+=pending_recovery_claim_owns_session= trusts that vector as complete. If a
+transient directory read error hides the pending claim owning a boot candidate,
+it answers =ClaimEvidence::Invalid=, and boot enters generic reattach —
+=Supervisor::reattach= appends =Reattach= into the immutable prefix the pending
+recovery owns. *An irreversible write, and none of the five behavioural-pin
+injections reaches it.*
+
+*** F3 (HIGH, BLOCK SHIP, operability) — a permanent project-wide refusal with no file identity and no repair path
+=crates/orgasmic-core/src/session.rs:1264-1268=, =:1478-1526=;
+=crates/orgasmic-daemon/src/recovery_claim.rs:1882-1939=, =:1385-1406=;
+=crates/orgasmic-daemon/src/api.rs:7425-7468=, =:11891-11896=;
+=ui/src/lib/types.ts:291-299=
+
+*The tear boundary itself is CORRECT and stays.* The problem is its blast radius
+and its silence. =line_is_lifecycle_relevant= treats every line not positively
+identified as =driver_event= as relevant, including ={}= and other complete junk.
+So one such line in one session file makes the ENTIRE project's authoritative
+enumeration =Unobserved= — permanently, because the file cannot self-repair.
+
+And nothing says WHICH file. =enumerate_recovery_origin_links= stops on the first
+member failure but =UnobservedSession= is a *fieldless enum* — manager-verified,
+all six variants are bare tags — so the path is discarded at the first hop. The
+inventory fields carry only a reason; the 503 returns =origin_run_id= plus
+=SessionUnreadable=; the UI type does not carry either new field at all.
+
+*This is the brief's pre-authorised blocker realised: a permanent refusal the
+operator can neither diagnose nor clear.* Every recovery in the project answers
+503 forever until a human edits an immutable session file nobody told them how to
+find.
+
+*** F4 (MEDIUM) — remaining raw claim IO is 500 or a decided negative
+=crates/orgasmic-daemon/src/recovery_claim.rs:558-568=, =:602=, =:641-647=;
+=crates/orgasmic-daemon/src/api.rs:11877-11888=, =:11907-11929=
+
+State-root canonicalize/open/metadata failures and claim metadata/read failures
+stay =RecoveryClaimError::Io=. =recovery_claim_load_error= maps only the explicit
+=Unobserved= variant to a retryable 503 and sends raw =Io= to 500. Worse,
+=committed_claim_is_authoritative= routes *every* resolver =Err=, =Io= included,
+through =_ => CommittedClaimAuthority::NotAuthoritative= — literally the rejected
+shape, "could not decide" spelled as a decided negative, even though the
+surrounding branches currently fail closed.
+
+*** F5 (MEDIUM, test) — the round's most destructive fix has no regression with teeth
+=crates/orgasmic-daemon/src/recovery_claim.rs:419-425=, =:5381-5486=
+
+Every =authority_key= test injects through =authority_key_fault(home)?= at
+=:419-421=, which returns *before* control reaches =try_exists()= at =:422-425= —
+including the five-case behavioural pin. So replacing =try_exists= with the old
+=exists()= plus =load_or_generate= leaves the whole suite green, and the
+host-token remint defect comes straight back. The structural pin checks return
+types, not this branch.
+
+** Acceptance
+1. *DERIVE THE BOUNDARY; DO NOT ASSERT IT.* Produce the authority-relevant
+   observation surface by following the call graph from the API entry points
+   (=POST /runs/:id/recover=, =GET /runs=, boot reattach routing) down to every
+   syscall-touching leaf, and state the derivation method so a reader can rerun
+   it. It must include =Result<Option<_>>= returns, directory iterators, raw
+   =libc= loops, and error-to-API / error-to-helper conversions — *not only
+   functions spelled =-> bool= or =-> Option=.* Round four's table is a subset;
+   show what the derived surface adds to it and why each addition was previously
+   invisible. *If the derivation cannot be made mechanical, say so explicitly and
+   say what it would take* — an honest "this is still hand-drawn, here is the
+   residual" beats a fifth confident boundary.
+2. *An explicit errno/error policy, written once, next to the type.* =NotFound= is
+   absence. Symlink / non-directory / non-regular evidence is a decided fact.
+   Access, IO and resource-exhaustion failures are unobserved. Today that policy
+   is spread across call sites and each site re-decides it; that is how F1 and F4
+   diverged from round four's own rule. The reviewer's open question 2 asks for
+   exactly this.
+3. F1: carry claim-directory and claim-file observation failures as =Unobserved=,
+   never =CorruptClaim=; propagate through inventory and POST as a retryable 503
+   with no quarantine. Regression: an injected pending-claim open/read failure
+   proving *no =Valid=, no quarantine, no new replacement, the claim file
+   byte-identical* — then normal reconciliation after repair.
+4. F2: make =names= distinguish an errno-bearing NULL from EOF, propagate
+   =closedir= failure, and decide deliberately what a non-UTF-8 entry name means
+   (it is not "absent"). Regression on the *production boot routing path* with an
+   injected nth-entry =readdir= failure, proving no reattach and no session
+   write, then normal routing after repair.
+5. F3: carry a *sanitized project-relative session identifier* and a remediation
+   class through enumeration, inventory, logs and the 503, and render it in the
+   operator surface (=ui/src/lib/types.ts= included). *Then answer the design
+   question rather than only plumbing it:* should a permanently malformed session
+   be isolated as a per-file authority fault, or does project-wide refusal stay
+   the safety rule with a named file and a documented repair? Either way, ship a
+   repair path. Regress the operator-visible diagnostic AND successful recovery
+   after the documented repair.
+6. F4: give all read-side claim IO an explicit observation reason, *match every
+   resolver result explicitly — no wildcard arm on that enum* — and return a
+   retryable 503. Reserve =NotAuthoritative= for observed contradictory evidence.
+   Regress both the direct load boundary and the helper boundary.
+7. F5: inject the existence/stat observer *separately from key reads*, or use a
+   fixture that makes stat fail while the token survives. Assert
+   =load_or_generate= was NOT reached, the token bytes are unchanged, the decision
+   is =Unobserved=/503, and retry succeeds after repair. *Prove the test REDS when
+   =try_exists= is replaced by =exists=* — that proof is the acceptance, not the
+   test's existence.
+8. =scripts/run-tests.sh -p orgasmic-daemon= GREEN with the VERDICT block quoted.
+   Note the manager measured this GREEN on a calm host for round four
+   (=tx-20260808-orgasmic-5487=, rate 0.1554); if you get INCONCLUSIVE, say so
+   rather than claiming green — round four did that correctly and it was right.
+
+** Rulings, so nobody re-litigates them
+- *Round four's fixed work STAYS.* The reviewer was explicit: endpoint scan
+  sharing (F2 of round four), validation ordering (F3), the F4 tear boundary
+  itself, the named F1 failure propagation, and the 10/10 recovery-fault gate
+  should all remain unchanged. This round is additive.
+- *=recovery_origin_authority='s 400-instead-of-503 is a FOLLOW-UP, not this
+  round.* The reviewer checked and found no automatic retry distinction between
+  400 and 503 in either the CLI (=crates/orgasmic-cli/src/main.rs:3257-3283=) or
+  the UI POST wrapper (=ui/src/lib/api.ts:350-359=), so nothing today acts on the
+  difference.
+- *=tmux_session_exists= stays out of scope*, re-confirmed: it fails closed
+  without quarantine, mint or write, and is re-evaluated on the next POST.
+- *The non-unix collapse stays out of scope*; unix is the shipped target.
+
+** What the review did NOT run
+=recovery_claim::= 31 passed and four named =api=/=session= tests 1 passed each,
+all watchdogged, peak 43.7%. It accepted as prior manager evidence: the six
+=orgasmic verify= artifacts, the calm-host daemon-suite GREEN, the 10/10
+recovery-fault repetition, clippy/fmt/core.
+
+*Not run:* the full daemon wrapper, the recovery-fault repetition, clippy, fmt,
+the workspace suite, MSRV 1.87, non-unix, real-board latency, and every
+=orgasmic verify= replay. *It built NO running fault injection for F1 or F2* —
+both are derived from the exact production error and control-flow paths. Build
+them first.
+
+*It did not read any =verify/*/injection.patch= body, by instruction.* A previous
+attempt at this review was killed by a provider content filter after ~27 minutes
+immediately after diffing those files (TASK-52NJS, trip four). The manager's
+audit of the three re-authored artifacts stands as evidence: all apply clean,
+same target files, no =new file mode=, =cmd= unchanged, 12 of 12 non-count
+=contains:= signatures byte-identical, only two count lines moved and both
+upward.
+

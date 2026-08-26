@@ -1,0 +1,25 @@
+#+title: orgasmic decision dec_S02E2
+#+orgasmic_version: 2
+
+* dec_S02E2 How do grilling answers and regeneration followups reach the agent: fresh run per round or a live session?
+:PROPERTIES:
+:ID: dec_S02E2
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The 2ZQSB pipeline cold-spawns an artifactor run per generate/regenerate: each round pays worker spawn + full context assembly + the agent re-reading the repo. Fine for occasional review regenerations; too slow for the interactive grilling loop (QuestionForm answers -> next question round) that should feel like a conversation. Three candidate paths: cold respawn per round; warm resume (persist the harness session_id, respawn with --resume); persistent hot session receiving followups.
+
+** Decision
+Hot session is the default. Artifact generation runs launch as long-lived interactive rmux runs (a TUI harness in a pane). Followups — grilling answers, review comments, extra prompts — are pasted into the live session through WorkerDriver::send_input wired to the rmux paste-buffer/send-keys verbs, reached via the existing POST /runs/:id/input + supervisor.send_input (composer_send) path.
+
+Why rmux and not the stream-json/acp path:
+- an rmux session is inherently persistent between turns — the turn-end=run-end problem of the stream-json adapters (claude result -> RunComplete) never arises;
+- the operator can attach to the pane in the TUI and watch or join the grilling live;
+- the stall babysitter already supervises rmux runs — each followup paste re-appends the end-of-turn-marker instruction so per-round stall detection keeps working;
+- orgasmic artifact submit remains the durable end-of-round signal — no new turn-detection machinery, every round stays versioned and tx-stamped.
+
+Cold spawn remains the fallback whenever no live run holds the artifact.generate:{id} lease (first generate, session died, daemon restart) — the lease doubles as session ownership, so routing is a single branch in regenerate. Warm resume is rejected as the default but stays on the table as a later optimization for reviving dead sessions.
+
+Honest latency note: a hot session removes spawn + context-rebuild overhead, not the model turn itself — rounds are responsive (one streamed turn), not instant.
+

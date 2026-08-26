@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-JQ8AV
+#+orgasmic_version: 2
+
+* DONE TASK-JQ8AV The evidence clock cannot see a provider-bound turn: long server-side thinking reads as the VZMZE wedge (three false-positive kills)
+:PROPERTIES:
+:ID: TASK-JQ8AV
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 06:23-06:27, first hours of TASK-JK66P's clock in production: THREE healthy workers (FZB6T, RB1ZN, SZJ2B, dispatched together) were stall-released with 'no work evidence for 600s; 1 process(es) at 0.0-0.3% cpu' — and the RB1ZN retry's pane, captured live, showed the truth: 'Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'. A claude-opus-5 high-effort turn thinks server-side for many minutes: ~0% local cpu (network wait), zero pane repaints (the TUI spinner does not repaint without token arrival), no protocol events on the rmux transport. Under JK66P's two signals (pane bytes, subtree cpu) that is BYTE-IDENTICAL to VZMZE's wedge. The single-dispatch WKJX4 worked earlier only because its turns' evidence landed inside each 600s window.
+
+JK66P's design anticipated adjacent shapes (its Unknown-fails-closed rule is right); what is missing is a third evidence channel that can see 'waiting on the provider'. Candidates, to be MEASURED not assumed: (a) established TCP connection to the provider with recent traffic on the harness pid's sockets; (b) the harness's own native session/log file mtime advancing (claude writes turn state under ~/.claude — check what a thinking turn touches); (c) the TUI spinner does repaint on some cadence in some modes — measure exactly when pane bytes flow during thinking; (d) provider-turn-in-flight marker from the driver where a protocol exists (acp has heartbeats — VZMZE forbids counting them as WORK, but 'turn open' is a different, bounded claim: a turn that stays open past max-turn-duration is its own timeout class).
+
+MITIGATION until fixed (in use now): dispatch with --governance-json '{"stall_timeout_secs":3600}' — the per-run governance override; max_run_duration still bounds the run. Recorded in gotchas.org.
+
+=== Acceptance
+- A worker in a measured multi-minute server-side think survives the stall window with the production default budget, proven by test (compressed budgets, a stub that is network-waiting rather than sleeping — the distinction IS the task).
+- VZMZE's wedge (idle process, no provider connection/no native-file progress) still dies on schedule.
+- The reason string keeps naming which evidence was consulted (JK66P's ask 4).
+- Injection per TCTTD, self-tested.
+
+=== Evidence (manager, 2026-07-29)
+Merged 4fc57fe. Rescued after a host reboot: four commits were already on the
+branch; the implementer's report and a gotchas entry were uncommitted in the
+worktree and were preserved by hand before the tree was cleaned for the replay.
+The report stops mid-sentence at "results below" — the reboot cut it off while
+it was writing its per-crate gate results, so the manager re-ran every gate.
+
+Manager-replayed proof: =orgasmic verify TASK-JQ8AV= PASS — red at exit 101
+matching the pinned incident tombstone verbatim (a provider-bound
+network-waiting turn stall-released at 0.0% cpu), tree byte-identical after
+revert, green at exit 0. Replayed again on fully-merged main and PASSED.
+
+Gates on merged main: fmt clean; clippy -D warnings clean; daemon lib suite 617
+passed / 7 load flakes, all green in isolation.
+
+LIMIT FOUND AT INTEGRATION, recorded in gotchas.org and filed as TASK-4CSMY
+(P1): the pane consult is gated on =target.transport == "rmux"=, so this fix
+does not reach tmux. Compounding it, =pane_activity= is emitted by the rmux
+driver and by nothing else, so on tmux BOTH pane channels are blind and the
+600s kill stands unchanged. This became load-bearing the same day, because the
+operator directed tmux to become the shipped default pane mode.
+
+The worker's scratch report.md was committed into the branch and removed from
+main in 7e0ca50; it is dispatch scratch, not repo content.
+
+NOT independently reviewed: manager integration review + injection replay only.
+

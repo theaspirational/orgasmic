@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-KVRZ9
+#+orgasmic_version: 2
+
+* BACKLOG TASK-KVRZ9 worker-server survives a group TERM: measure whether production's reap grace can return early with descendants still up
+:PROPERTIES:
+:ID: TASK-KVRZ9
+:PRIORITY: P3
+:END:
+
+From TASK-BCYMM (2026-07-29): the pre-suite sighting showed the exec -a worker-server child OUTLIVING a group TERM that took its siblings — BCYMM's fixture reap is immune (unconditional KILL), but production's subprocess_stream_json::reap_process_group TERMs a group containing exactly this process shape (cursor-agent's node worker-server) and waits on the LEADER as its liveness proxy. Measure whether the 2s grace can return early while a worker-server descendant is still alive; if yes, the wait should cover the group (poll the pgid member count, or KILL unconditionally after grace like the test twin). Small, measurement-first.
+

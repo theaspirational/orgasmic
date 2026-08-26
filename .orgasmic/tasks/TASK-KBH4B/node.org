@@ -1,0 +1,58 @@
+#+title: orgasmic task TASK-KBH4B
+#+orgasmic_version: 2
+
+* DONE TASK-KBH4B cargo test/build of the daemon requires a working npm UI toolchain via build.rs: fresh worktrees and clean machines fail before any Rust code runs :daemon:build:dx:onboarding:
+:PROPERTIES:
+:ID:               TASK-KBH4B
+:PRIORITY:         P2
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-daemon/build.rs crates/orgasmic-daemon/Cargo.toml .orgasmic/gotchas.org
+:READ_SCOPE:       crates/orgasmic-daemon/build.rs ui/package.json
+:TEST_CMD:         cargo test -p orgasmic-daemon --test integration tx_record
+:END:
+
+** Description
+Hit three times in one day [2026-06-11], all fresh-worktree contexts:
+- TASK-E9K1B implementer (codex): had to run =npm --prefix ui ci= before
+  =cargo test= would compile — "daemon build initially used an
+  incompatible/global TypeScript".
+- TASK-E9K1B reviewer (codex): targeted =cargo test -p orgasmic-daemon=
+  gate died before reaching Rust tests — build.rs invoked
+  =npm --prefix ui run build=, which failed TS5101 in the bare worktree.
+- TASK-W43NY reviewer (claude): had to run vitest from the main checkout's
+  node_modules because the worktree had none.
+
+Every dispatched worker pays this tax, and it is a direct stranger-smoke
+blocker (goal Reached-When item 4): =cargo test= on a clean clone fails
+without a pre-warmed npm toolchain, with an error that says nothing about
+the actual cause.
+
+Decouple the Rust test path from the UI build. Implementer picks the
+mechanism with rationale; acceptable shapes include: build.rs skips the UI
+build unless building release/with a feature flag (embed-ui), an
+=ORGASMIC_SKIP_UI_BUILD= escape hatch honored by CI docs and worker briefs,
+or a committed placeholder dist for non-release builds. Whatever the pick:
+the failure mode for a genuinely needed-but-broken UI toolchain must name
+npm/node as the cause and the fix in one line. Record the rule in
+=.orgasmic/gotchas.org=.
+
+** Acceptance Criteria
+- [ ] =cargo test -p orgasmic-daemon= passes in a fresh worktree with NO
+  =ui/node_modules= present.
+- [ ] Release build still produces/embeds the real UI exactly as today.
+- [ ] Broken-toolchain failure message names the cause and the one-line fix.
+- [ ] gotchas.org documents the rule for workers and strangers.
+
+** Evidence
+- Implementer: claude rmux, run-20260611T124917, worker commit =405c464=,
+  merged =4f4a785=. UI build now runs only for release profile or
+  =ORGASMIC_EMBED_UI=1=; broken-toolchain failure names npm/node + the
+  one-line fix; gotchas.org entry added. WRITE_SCOPE held (build.rs +
+  gotchas.org only).
+- Manager verification on merged main: =ui/node_modules= moved aside →
+  =cargo test -p orgasmic-daemon --test integration tx_record= green
+  (the exact fresh-worktree failure mode, now dead); forced-embed
+  =ORGASMIC_EMBED_UI=1 cargo build= green (worker's untested residual,
+  closed); =cargo build --release= green and daemon restarted on it.
+- Reviewer pass DEFERRED (operator pause); task parked IN_REVIEW.
+

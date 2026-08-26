@@ -1,0 +1,41 @@
+#+title: orgasmic task TASK-84QVC
+#+orgasmic_version: 2
+
+* DONE TASK-84QVC Entity-link regex in UI prose rendering must accept minted IDs :ui:identity:polish:
+:PROPERTIES:
+:ID:               TASK-84QVC
+:PRIORITY:         P3
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      ui/src/lib/richText.tsx ui/src/lib/__tests__/
+:READ_SCOPE:       ui/src/lib/richText.tsx crates/orgasmic-core/src/id.rs
+:TEST_CMD:         npm --prefix ui run build
+:END:
+
+** Description
+TASK-GBT5W's UI audit found the one minted-grammar break in the UI:
+=KEY_OR_ENTITY_RE= (ui/src/lib/richText.tsx:109) linkifies only numeric
+stems — =TASK-\d+(\.\d+)*=, =dec_\d+=, =arch_\d+(\.\d+)*=. Minted IDs
+(dec_X72P5a: 5-char Crockford base32 stems with at least one letter, e.g.
+=TASK-ZD72S=, =TASK-YRK1V=) already exist in live state and render as
+plain text instead of clickable entity links.
+
+Extend the entity alternation to accept both grammars per stem:
+numeric (legacy) OR 5-char Crockford-with-letter (minted), keeping the
+subtask suffix =(\.\d+)*= for TASK/arch. Keep the pattern well-delimited
+(=\b= guards) so prose with bare uppercase words is not over-matched —
+the minted stem class is =[0-9A-HJKMNP-TV-Z]{5}= with at least one
+letter; require the class prefix as today.
+
+** Acceptance Criteria
+- [ ] =TASK-ZD72S=, =TASK-YRK1V.1=, =dec_8KX2M=, =arch_8KX2M= linkify in
+  prose; =TASK-CJWT3=, =dec_X72P5=, =arch_C87Z9.3= still linkify (legacy
+  regression).
+- [ ] Plain uppercase 5-letter words without a class prefix do NOT match.
+- [ ] =npm --prefix ui run build= green; unit test for the regex added if
+  a test surface exists for richText.
+- [ ] Verified in Chrome (claude-in-chrome) on a task body containing
+  both grammars.
+
+** Evidence
+codex gpt-5.5 medium, parallel batch-1, worker commit =71fa797=, merged, close tx-0477. Extended KEY_OR_ENTITY_RE (ui/src/lib/richText.tsx) so each stem alternation accepts numeric (legacy) OR a 5-char Crockford-with-≥1-letter minted stem via lookahead =(?=[0-9A-HJKMNP-TV-Z]{0,4}[A-HJKMNP-TV-Z])[0-9A-HJKMNP-TV-Z]{5}=; class prefix still required, (.\d+)* subtask suffix kept, \b guards keep bare uppercase words from matching. Unit test ui/src/lib/__tests__/richText.test.ts asserts minted (TASK-ZD72S, TASK-YRK1V.1, dec_8KX2M, arch_8KX2M) + legacy (TASK-CJWT3, dec_X72P5, arch_C87Z9.3) linkify and bare HELLO does not. Gates: npm run test (6 files, 66 tests) green, npm run build green. CHROME VERIFIED (claude-in-chrome, manager, dev server :5180 serving the merged tree): in the TASK-84QVC detail prose, minted id TASK-GBT5W renders as a teal entity link (and TASK-84QVC in the activity feed); code-span ids stay correctly unlinked. Minted-ID prose linkification confirmed live.
+

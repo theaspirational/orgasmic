@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-DMTDF.1
+#+orgasmic_version: 2
+
+* DONE TASK-DMTDF.1 fix-subtask: architector collision-rejection regression test :cli:dispatch:architector:fix:test:low:
+:PROPERTIES:
+:ID:               TASK-DMTDF.1
+:PRIORITY:         P3
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_PCSQE
+:PRODUCES:         crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/src/manager.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/src/manager.rs
+:READ_SCOPE:       crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/src/manager.rs
+:TEST_CMD:         cargo test -p orgasmic-cli
+:END:
+
+** Description
+Reviewer found that the architector worktree-collision rejection (=crates/orgasmic-cli/src/manager.rs:286-303=) is implemented correctly and smoke-test-verified, but committed tests do not exercise the rejection path end-to-end. The committed tests cover defaults distinctness via =assert_ne!=, not the =cmd_dispatch= bail.
+
+** Acceptance Criteria
+- [ ] At least one test in =crates/orgasmic-cli/tests/dispatch.rs= (preferred end-to-end CLI shape) or inline =#[test]= drives =cmd_dispatch= / dry-run with =--kind architector --worktree /tmp/orgasmic-worktrees/task-086= (the implementer default for TASK-ENXWA) and asserts the error =architector worktree must not reuse implementer default path: ...=.
+- [ ] Mirror test exists for =--kind reviewer --worktree <implementer default>= and =--kind architector --worktree <reviewer default>= — exhaust the cross-kind matrix.
+- [ ] Existing tests still pass.
+- [ ] =cargo test -p orgasmic-cli= green; =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; MSRV 1.78.
+
+** Notes
+- *Tiny surface*: one test file or one inline test block. ~30-50 LOC.
+- *Reviewer report*: =/tmp/orgasmic-codex/task-096-reviewer-report.md= (verbatim finding).
+- *Out of scope*: any change to the production rejection code (it's already correct); any change to dispatch CLI surface; daemon-side or driver changes.
+
+** Evidence
+- *Shipped collision semantics (verified by reading =crates/orgasmic-cli/src/manager.rs:286-303=, the =cmd_dispatch= path):* after =build_dispatch_plan=, =cmd_dispatch= loops over =[Implementer, Reviewer, Architector]= and bails when =other_kind != plan.kind && plan.worktree_path == default_worktree(first_task, other_kind)=. Error text uses the =DispatchKind= Display impl (=as_str()=): ="{} worktree must not reuse {} default path: {}"=. The check fires *before* the =--dry-run= early return, so a dry-run dispatch exercises the bail with no worktree creation, no daemon dispatch, and no worker spawn — the test driver needs no stub codex.
+- *Test added (=crates/orgasmic-cli/tests/dispatch.rs=, =dispatch_rejects_cross_kind_default_worktree_reuse=):* end-to-end CLI test (mirrors the existing =run_orgasmic_failure= + dry-run idiom) that drives =orgasmic manager dispatch ... --dry-run= for the full cross-kind matrix the loop guards: (1) =--kind architector --worktree /tmp/orgasmic-worktrees/task-dispatch= (implementer default) → bails ="architector worktree must not reuse implementer default path:"=; (2) =--kind architector --worktree /tmp/orgasmic-worktrees/task-dispatch-review= (reviewer default) → ="architector worktree must not reuse reviewer default path:"=; (3) =--kind reviewer --worktree /tmp/orgasmic-worktrees/task-review-issues= (implementer default) → ="reviewer worktree must not reuse implementer default path:"=. Uses BACKLOG =TASK-DISPATCH= (architector-dispatchable) and REVIEW =TASK-REVIEW-ISSUES= (reviewer-dispatchable) from =seed_project=. Asserts none of the colliding paths were created on disk. PATH preserves system git (=path_with_stub=) since =build_dispatch_plan= resolves =--from/HEAD= via git. Daemon shut down at end per the established teardown discipline.
+- *Non-vacuity proof:* temporarily replaced the guard condition with =if false && ...= (collision check disabled) and reran the test → it FAILED (=EXIT=101=: the architector dry-run *succeeded* and printed the dispatch plan, so =run_orgasmic_failure= panicked on the unexpected success). Restored the production condition =other_kind != plan.kind=; production code is unchanged in the commit. Log: =/tmp/t096_1-vacuity.log=.
+- *Gates on this tree:* =cargo test -p orgasmic-cli= ✓ (11 passed in dispatch.rs incl. the new test, 49 total across the crate's test binaries; =/tmp/t096_1-cli.log=); =cargo clippy --workspace --all-targets -- -D warnings= ✓ (=/tmp/t096_1-clippy.log=); =cargo fmt --check= ✓; =git diff --check= ✓.
+- *Production code untouched:* only =crates/orgasmic-cli/tests/dispatch.rs= gains the new test (+~100 LOC); the rejection code in =manager.rs= is unmodified.
+

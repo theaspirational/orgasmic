@@ -1,0 +1,33 @@
+#+title: orgasmic task TASK-KMWZ6
+#+orgasmic_version: 2
+
+* DONE TASK-KMWZ6 Replace /manager/tick with slim /manager/launch; collapse manager doctrine onto the /orgasmic skill :manager:daemon:cli:shipped:run-dock:dec_WTM5Y:
+:PROPERTIES:
+:ID:               TASK-KMWZ6
+:PRIORITY:         P1
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/main.rs crates/orgasmic-daemon/tests/integration.rs shipped/prompt-studio/prompt-specs/manager.org shipped/prompt-studio/prompt-specs/manager_orchestrator.org shipped/prompt-studio/prompt-parts/orchestration_policy.org shipped/prompt-studio/conventions/manager-dispatch.org
+:READ_SCOPE:       .orgasmic/decisions.org crates/orgasmic-daemon/src/prompt_compiler.rs crates/orgasmic-core/src/projects.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       dec_WTM5Y dec_DK7AZ
+:END:
+
+** Description
+Remove the daemon-compiled manager tick path and replace it with a slim spawn-only launch endpoint, per dec_WTM5Y. The manager now bootstraps itself via the system-wide =/orgasmic resume= skill, so the daemon compiles no manager prompt.
+
+1. Delete =POST /manager/tick=, =post_manager_tick=, =compile_manager_orchestrator_prompt=, and =ManagerTickRequest/ManagerTickResponse= in =crates/orgasmic-daemon/src/api.rs=.
+2. Add =POST /manager/launch=. Request ={ project_id, mode, harness }=; resolve the project root from the projects registry (NOT =home.source()=) for the run cwd; =supervisor.acquire= an idle manager run (=worker_id "manager"=, no prompt compile, no auto-send); return ={ run_id }=. Record a =manager.launch= tx in place of =manager.tick=; update the recent-actions tx filter (api.rs ~1588) =manager.tick= → =manager.launch=.
+3. Port the manager-exclusive nuggets from =orchestration_policy.org= (typed-pipeline stage authority; "no hidden shared context — pass prior-stage summaries / changed files / gates / findings in the next brief"; disjoint parallel write scopes) into =manager.org= Policies and/or the =manager-dispatch= convention. Then DELETE =manager_orchestrator.org= and =orchestration_policy.org=, and drop =manager.org='s Notes line referencing =manager_orchestrator=. Do NOT touch =dynamic_workflow_policy=, =verification_policy=, =security_policy= (shared by worker specs).
+4. Remove the CLI =orgasmic manager tick= subcommand (=ManagerCmd::Tick=) and handler.
+5. Update/remove tests referencing =manager.tick= / =manager_orchestrator=.
+
+** Acceptance Criteria
+- [ ] No =/manager/tick= route, handler, request/response types, or =compile_manager_orchestrator_prompt= remain.
+- [ ] =POST /manager/launch { project_id, mode, harness }= acquires an idle manager run on the given driver at the project root and returns ={ run_id }=; a =manager.launch= tx is recorded and shown in recent actions.
+- [ ] =manager_orchestrator.org= + =orchestration_policy.org= deleted; their nuggets present in =manager.org= / =manager-dispatch=; the other three parts untouched and all worker specs still compile.
+- [ ] CLI =manager tick= is gone.
+- [X] Gates green: =cargo test --workspace=, =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check=.
+
+** Evidence
+Landed to main in merge =c363f3c= (impl =aa72bb7=). Verified live on the running daemon (boot df75b65d): =POST /manager/tick= → 404 (route gone); =POST /manager/launch {project_id,mode,harness}= → 200 ={run_id}=, run acquired idle (=worker_id=manager=, =kind=implementer=, =task_id=manager.launch:orgasmic=) at the project root, =manager.launch= tx recorded (tx-...-0050/0052). =manager_orchestrator.org= + =orchestration_policy.org= deleted (290 deletions); nuggets ported into =manager.org= / =manager-dispatch=. Gates on merged main: =cargo test --workspace= 0 failed, =clippy -D warnings=, =fmt --check=, =git diff --check= all green.
+

@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-K3Y04
+#+orgasmic_version: 2
+
+* CANCELLED TASK-K3Y04 Make Settings reachable for a projectless visitor (ConnectGate "Advanced →") :ui:auth:onboarding:routing:
+:PROPERTIES:
+:ID:               TASK-K3Y04
+:PRIORITY:         P3
+:WORKER:           manager-direct
+:WRITE_SCOPE:      ui/src/app/router.tsx ui/src/components/AppShell.tsx
+:READ_SCOPE:       ui/src/components/SettingsView.tsx ui/src/lib/backend.ts
+:TEST_CMD:         npm --prefix ui run build
+:DEPENDS_ON:       TASK-EBVHJ
+:END:
+
+** Description
+Follow-up to TASK-EBVHJ. The =ConnectGate= "Advanced →" button calls =goView('settings')=, but =pathForView= (=AppShell.tsx= ~136) falls back to =/board= whenever =projectId= is null, and Settings is only project-scoped (=/projects/$projectId/settings=). So for the exact target user — a fresh tunnel visitor with no project selected — "Advanced →" lands on =/board= instead of Settings, where they can't adjust baseUrl/profiles before connecting.
+
+Pick the smallest coherent fix:
+1. Add a global, project-independent Settings route (e.g. =/settings=) the gate can always reach (the connection/profile section needs no project); OR
+2. If a global route is too invasive pre-MVP, hide/disable "Advanced →" in =ConnectGate= when there is no active project (so the button never dead-ends), and surface profile/baseUrl editing inline in the gate instead.
+
+** Acceptance Criteria
+- [ ] From a projectless origin, the visitor can reach connection/profile settings (baseUrl + token) without first selecting a project — OR the dead-end affordance is removed and equivalent control lives in the gate.
+- [X] No regression to TASK-EBVHJ's blocking token flow; =npm --prefix ui run build= + =tsc --noEmit= green.
+
+** Evidence
+Chose option 1 (global route — cleaner than hiding the affordance, and =SettingsView= already handles =projectId: null= by disabling the project-config section). Implemented directly by the manager (trivial ~16-line scope), landed on main in =cbe7c6e=: new root-level =globalSettingsRoute= (path =settings=) → =<SettingsView projectId={null}/>= in =ui/src/app/router.tsx= (added to =routeTree=); =pathForView= in =AppShell.tsx= now returns =/settings= for =goView('settings')= when =projectId= is null (else the existing =/projects/$projectId/settings=). So "Advanced →" and the header settings button both reach Settings projectless. Gates: =tsc --noEmit= + =npm run build= green. Browser click-through unverified this session (no browser-automation tool).
+
+*Reverted (cancelled).* On operator review (screenshot), the =ConnectGate= "Advanced →" button was removed entirely (=9d688fe=): it was added scope beyond the original ask AND subtly broken — =ConnectGate= is a blocking Radix modal, so navigating to settings left the overlay on top, blocking the page it opened; and a tunnel visitor's =baseUrl= defaults to same-origin, so only the token is needed. With the button gone, this task's premise (make its target reachable) no longer applies, so the global =/settings= route + =pathForView= branch were reverted in the same commit. The modal is now just token input + Connect. Net effect of TASK-K3Y04 on the tree: nil.
+

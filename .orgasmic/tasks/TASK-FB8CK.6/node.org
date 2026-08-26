@@ -1,0 +1,66 @@
+#+title: orgasmic task TASK-FB8CK.6
+#+orgasmic_version: 2
+
+* DONE TASK-FB8CK.6 Daemon watcher observability + production reproduction + actual fix :daemon:watcher:reliability:observability:
+:PROPERTIES:
+:ID:               TASK-FB8CK.6
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_C87Z9
+:PRODUCES:         crates/orgasmic-daemon/src/watcher.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/Cargo.toml
+:READ_SCOPE:       /tmp/orgasmic-codex/task-045.4-review-report.md crates/orgasmic-cli/src/main.rs CLAUDE.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-FB8CK.4
+:END:
+
+** Description
+Reviewer-finding fix-subtask of TASK-FB8CK.4 (=:FIX_SUBTASK: t= set — **first explicit use of the property that the TASK-FB8CK.5 heuristic ships**). Auto-transition will flip IMPLEMENT → DONE on implementer-close per the new heuristic (no separate REVIEW state per one-round-of-fixes discipline).
+
+**Investigation protocol: observability FIRST, then reproduce, then diagnose against the trace, then fix.**
+
+*Observability (F-2 closed)*: add =tracing::debug!= at three points in =crates/orgasmic-daemon/src/watcher.rs=:
+1. Notify callback (=watcher.rs:80-84=, before forwarding to channel): =debug!(kind = ?event.kind, paths = ?event.paths, "raw fs watcher event")=.
+2. =record_event= (after kind filter, before path push): =trace!(path = %path.display(), "recorded fs path")=.
+3. =flush= (per-path after canonicalize + classification): =debug!(path = %path.display(), canon = %canon.display(), classified = ?classification, "fs path classified")= with classification ∈ {board, home_tx, project=<id>, dropped}.
+
+Wire daemon's tracing-subscriber to honor =RUST_LOG=. Look at =crates/orgasmic-cli/src/main.rs:570-575= for the CLI subscriber setup as reference. =DaemonConfig.log_level= currently loaded but unused — wire it.
+
+*Production-path investigation*: with observability in place, spawn fresh daemon binary on the real project. Run =touch=, =sed -i.bak=, Python =std::fs::write=-equivalent on =.orgasmic/sprint.org=. Capture trace. Diagnose:
+- Events arriving but dropped? Trace shows the canonical path mismatch.
+- No events at all? Check =watcher.watch()= return value; FSEvents-on-/Users firmlink quirk?
+- Channel back-pressure? Less likely; unbounded channel.
+
+*Fix based on trace*. Likely shapes:
+- Switch from =RecommendedWatcher= to =PollWatcher= as fallback when FSEvents fails on /Users (heavy but reliable).
+- Pre-canonicalize the snapshot =entry.path= (or compare both raw and canonical forms in classifier).
+- Address a specific firmlink-vs-canonicalize mismatch surfaced by trace.
+
+** Acceptance Criteria
+- [ ] *Observability*: =RUST_LOG=orgasmic_daemon::watcher=debug ~/.orgasmic/bin/orgasmic serve= shows raw notify events AND classification decisions. =DaemonConfig.log_level= respected at subscriber init.
+- [ ] *Production reproduction documented*: trace captures for =touch=, =sed=, =fs::write= on the real project. Trace either shows refresh fires OR identifies the exact drop point.
+- [ ] *Fix shipped + live-verified*: all three production patterns trigger =refresh_project= within (debounce + 500ms) on ==. Manager verifies live.
+- [ ] *Regression test* for the production write pattern.
+- [ ] cargo test + clippy + fmt + diff-check clean. MSRV 1.78. No new deps unless tracing feature-flags.
+- [ ] No regressions on existing reload paths (tx-file writes).
+
+** Notes
+**Fix-subtask of TASK-FB8CK.4** — =:FIX_SUBTASK: t= set. Once 045.6 lands + live-verified, TASK-FB8CK.4 parent hand-flipped REVIEW → DONE (cluster closure). Don't add speculative event-kind handlers — reviewer was clear current =record_event= already accepts all kinds; bug is upstream (no events) or downstream (classifier dropping).
+
+** Evidence
+- [2026-05-23 Sat 23:38] Shipped =77e4486= on =task-045.6-impl=; merged no-ff as =4c1eecf= on main. Codex ~18m55s wall, 242,142 tokens, session =019e567d-a91e-7112-86b8-55f0062ddb54=. 4 files +118/-18 (=watcher.rs= +44, daemon =lib.rs= +12, CLI =main.rs= +5, new =tests/integration.rs= +49). =implementer.done= =tx-20260523-org-0168= via dispatch-close. **AUTO-FLIP DOGFOOD #10 PASS** (=:FIX_SUBTASK: t= correctly shortcut to IMPLEMENT → DONE per the new heuristic; no reviewer-of-reviewer per one-round-of-fixes discipline). =:CLEANUP_STATUS: ok=.
+- **ROOT CAUSE FOUND (the hilarious finale)**: =Daemon::run= registered project watches then **dropped the =WatcherHandle=**, which closed =command_loop= and dropped the actual =RecommendedWatcher=. Synthetic unit tests masked this because their fixture retained =_handle=. Production had NO watcher at all from boot. TASK-FB8CK.4's path-canonicalize + extension-filter work was correct code but completely irrelevant — the watcher itself wasn't running in production.
+- *Fix*: new =RunningDaemon= struct in =crates/orgasmic-daemon/src/lib.rs= holds =WatcherHandle= for daemon's full lifetime. =Daemon::run= returns this handle instead of dropping it.
+- *Observability shipped*: =tracing::debug!= at 4 watcher choke points (raw event, record-path, watch-registration, flush-classification). =DaemonConfig.log_level= + =RUST_LOG= wired in =crates/orgasmic-cli/src/main.rs= serve entry.
+- *Daemon-level integration regression* in =crates/orgasmic-daemon/tests/integration.rs= (+49 LOC) exercises real daemon process + =std::fs::write= + asserts refresh fires within debounce window.
+- **LIVE VERIFICATION PASS** post-merge + rebuild + kill+spawn:
+  - =touch= on sprint.org → daemon log shows =Modify(Metadata(Any))= raw event + =classified=project=orgasmic=.
+  - =sed -i.bak= → editor temp-file dance (=.!<pid>!sprint.org=) + sprint.org =Modify(Name)= + sprint.org.bak Create/Remove — ALL classified =project=orgasmic=.
+  - Python =Path.write_text(Path.read_text())= → =Modify(Name)=+=Modify(Metadata)=+=Modify(Data(Content))= → classified.
+  - Manager hand-edit via sed to flip TASK-FB8CK.3 + TASK-FB8CK.4 REVIEW → DONE → daemon API reflected within 3 seconds **with NO restart** — first time this session.
+- Tests 201 → 205 (+4 including the new daemon-level integration test). clippy/fmt/diff-check clean. MSRV 1.78 preserved. No new deps (tracing-subscriber env-filter already available).
+- **TASK-FB8CK cluster FULLY CLOSED**: 045 + 045.1 + 045.2 + 045.3 + 045.4 + 045.5 + 045.6 all DONE. Manager dispatch CLI v1 + lifecycle auto-transition + watcher reliability shipped.
+
+** Reviewer pass
+**SKIPPED per =:FIX_SUBTASK: t= one-round-of-fixes discipline.** TASK-FB8CK.4 had its reviewer pass; 045.6 is the fix-subtask. Manager live-verified per the brief's acceptance gate.
+

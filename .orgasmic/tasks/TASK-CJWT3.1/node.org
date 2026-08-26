@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-CJWT3.1
+#+orgasmic_version: 2
+
+* DONE TASK-CJWT3.1 fix-subtask: honor literal peek-window open + finish worker-run browser verification :ui-manager:run-dock:ui:fix:
+:PROPERTIES:
+:ID:               TASK-CJWT3.1
+:PRIORITY:         P3
+:WRITE_SCOPE:      ui/src/components/manager/** ui/src/lib/** ui/src/hooks/**
+:TEST_CMD:         npm --prefix ui run build
+:END:
+
+** Description
+Carries TASK-CJWT3's honestly-unmet criterion plus the browser-verification
+remainder from the [2026-06-05] live smoke:
+
+1. *Literal peek open*: =openRun= coerces a requested peek to workbench for
+   worker runs (reviewer low #5). Selecting a running agent should open a
+   real peek-sized window with the live transcript; minimize turns it into a
+   dock tab. While in there, make minimize-to-tab unambiguous in the
+   workbench state too (the smoke found the minimize control inconclusive —
+   workbench persisted with no visible state change).
+2. *Worker-run browser verification*: the live smoke verified manager flows
+   (Running Agents groups, bell labels, reload persistence, mobile, tmux
+   pane) but NO live worker run existed, so task badges, recovered-worker
+   open, and worker peer tabs remain browser-unverified. Verify them with a
+   real worker dispatch (which also serves as the TASK-HCFBT.4 heartbeat live
+   proof if dispatched via codex-acp).
+
+** Evidence
+- [2026-06-11] Implementer run-20260611T104813 (implementer-claude-rmux,
+  claude-sonnet-4-6): item 1 complete, worker commit =29741c9=, merged
+  =ea770a5= (+96/−13: RunDock.tsx honors literal peek, new runDockUtils.ts,
+  unit tests at =ui/src/lib/__tests__/runDock.test.ts=). Gates green
+  manager-side post-merge: =npm run build= + =vitest run= both pass.
+- Worker-noted residual: minimize-from-peek expands dock height (correct for
+  the overlay→tab metaphor, needs live-smoke legibility check); Minimize2
+  icon shared by PeekWindowHeader and FullscreenControl but never
+  co-rendered.
+- Item 2 (browser verification with a live worker run) partially served
+  live: this batch's task badges rendered in the operator's Tasks view
+  (Implementer.working on TASK-RVEKT observed [2026-06-11 ~14:10]).
+  Peek/recovered-worker flows still need the browser pass — reviewer round +
+  manager browser smoke to cover.
+

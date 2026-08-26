@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-2GS7V
+#+orgasmic_version: 2
+
+* DONE TASK-2GS7V app_manager_release_via_cli_orgasmic_run_id is deterministically red on merged HEAD in real-tmux environments
+:PROPERTIES:
+:ID: TASK-2GS7V
+:PRIORITY: P2
+:END:
+
+From TASK-J1XCB (2026-07-29): crates/orgasmic-cli/tests/dispatch.rs:6038 ('run_id' unwrap) fails 3/3 workspace gates AND in isolation, confirmed pre-existing at HEAD~1 by revert-and-rebuild. Invisible to shim-environment runs (tmux-gated → NOT RUN under ORGASMIC_ALLOW_MISSING_TOOLS=tmux), so manager-environment gates with real tmux are the ones it blocks. Nobody owns it. Diagnose whether the test's premise rotted (a recent merge changed run-id minting/release surfaces — EP3H1/HAREX/6HJYT all touched adjacent ground this week) or the product broke; fix accordingly. Injection per TCTTD standard.
+

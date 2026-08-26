@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-GFKFW.4
+#+orgasmic_version: 2
+
+* DONE TASK-GFKFW.4 fix-subtask: shadcn Select for update channel + downgrade-aware comparator note :install:updater:ui:polish:fix:low:
+:PROPERTIES:
+:ID:               TASK-GFKFW.4
+:PRIORITY:         P5
+:WRITE_SCOPE:      ui/src/components/SettingsView.tsx src-tauri/src/lib.rs
+:TEST_CMD:         npm --prefix ui run build
+:END:
+
+** Description
+Polish: the update-channel selector is a raw =<select>= amid shadcn =Select=
+components (SettingsView.tsx:447-451) — swap it for shadcn =Select=. Also the
+updater =version_comparator= (=release.version != current=, lib.rs:125) treats
+channel-switch downgrades (nightly 0.99.x → stable 0.0.1) as updates; add a
+clarifying comment or guard if downgrade-on-channel-switch is undesired.
+
+** Evidence
+- Replaced the raw update-channel =<select>= in =SettingsView.tsx= with the existing shadcn =Select= primitives already used in the file, sourcing options from =UPDATE_CHANNELS= so the UI stays aligned with =UpdateChannel=.
+- Added a downgrade-aware comparator comment in =src-tauri/src/lib.rs=: channel selection is explicit, so switching from nightly back to stable should still surface the selected channel release even when its semver is lower than the installed nightly build. The comparator behavior remains =release.version != current=.
+- Gate passed: =npm --prefix ui run build=.
+

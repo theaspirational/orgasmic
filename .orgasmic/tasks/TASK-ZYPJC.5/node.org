@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-ZYPJC.5
+#+orgasmic_version: 2
+
+* DONE TASK-ZYPJC.5 Smoke-surfaced polish: complete F-1 useSearch migration + small a11y/UX :ui:routing:tanstack:a11y:
+:PROPERTIES:
+:ID:               TASK-ZYPJC.5
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A1FGY
+:PRODUCES:         ui/src/app/router.tsx ui/src/components/DecisionsView.tsx ui/src/components/ArchitectureView.tsx ui/src/components/GlossaryView.tsx ui/src/components/AdrView.tsx ui/src/components/node-views/NodeModal.tsx
+:WRITE_SCOPE:      ui/src/app/router.tsx ui/src/components/{DecisionsView,ArchitectureView,GlossaryView,AdrView}.tsx ui/src/components/node-views/{NodeModal,NodeListView}.tsx ui/src/components/AppShell.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-047.5-brief.md ui/src/lib/searchState.ts
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-ZYPJC TASK-ZYPJC.1 TASK-ZYPJC.4
+:MERGE_SHA:        011cf50
+:CODEX_COMMIT:     a0ea9b5
+:END:
+
+** Description
+Manager Chrome smoke against the merged TASK-ZYPJC.{1..4} build surfaced four findings. Bundle as one polish pass.
+
+- *F-A (high regression).* Row click on any list page navigates to the path-based child route (e.g. =/decisions/dec_GRDFB=) and updates the top-header crumb, but the modal never opens. Cause: =decisionsRoute.component= (and the parallel architecture/glossary/adr parents) renders =<DecisionsView nodeId={null}/>= without an =<Outlet/>=, so the child route never mounts. Modal only opens via =?drawer_stack=…= query (verified end-to-end). The path-based deep-link routes are orphan code left from Session 5; complete the F-1 useSearch migration by removing them and routing row clicks through =drawer_stack=.
+- *F-B (medium a11y).* Source-decision chip in =ArchitectureView.renderRow= (lines 198-212) and the equivalent chip in =AdrView.renderRow= are real =<button>= elements rendered inside =renderRow= — descendants of =NodeListView='s =<div role="button">= row body. Same nested-interactive violation F-12 fixed for the ADR DropdownMenu. Move to =renderActionZone=.
+- *F-C (low a11y).* =NodeModal='s =<DialogContent>= has =<DialogTitle className="sr-only">= but no =<DialogDescription>= and no opt-out — Radix logs a "Missing Description" warning every time the modal opens. Add an sr-only =<DialogDescription>= or pass =aria-describedby={undefined}=.
+- *F-D (low design).* =ArchitectureView.renderRow= shows =→N= arrow + =dec_NNN= chip on all viewports. F-7 intent ("below-sm non-load-bearing chips hide") should apply. Status pill (=decided=/=partial=/=target=) stays visible.
+
+** Acceptance Criteria
+- [ ] *F-A.* Path-based child routes (=decisionNodeRoute=, =architectureNodeRoute=, =glossaryNodeRoute=, =adrNodeRoute=) removed from =ui/src/app/router.tsx=. Each =View=.nodeId= prop removed. =openNode(id)= pushes to =?drawer_stack= via =routeSearch((prev) => appendDrawerStack(prev, id))=. Modal opens on every row click; =?drawer_stack=dec_GRDFB,loader-rule= still hydrates the modal on deep link. Esc continues to pop one frame at a time. AppShell top-header crumb reads =drawer_stack= (if it currently reads the path nodeId).
+- [ ] *F-B.* Source-decision chip on =ArchitectureView= + =AdrView= moves to =renderActionZone= (group with kebab in a flex container if both present). DOM check =[role=button] button= returns 0 nodes on Architecture + ADR list pages.
+- [ ] *F-C.* =NodeModal= mobile Sheet AND desktop Dialog branches both supply an =sr-only DialogDescription= / =SheetDescription= (or pass =aria-describedby={undefined}=). Console clean on modal open — no Radix warning.
+- [ ] *F-D.* =ArchitectureView= renderRow wraps =→N= badge + =dec_NNN= chip in =hidden sm:inline-flex= (or applies the class after they move to =renderActionZone=). Status pill stays visible. Verify visually at 414×896.
+- [ ] =cd ui && npm run build= clean (tsc --noEmit + vite build); main =index= chunk stays ≤ 360 kB; no new dependencies in =ui/package.json=.
+- [ ] =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 19:25] Shipped in single coupled commit =a0ea9b5= on =task-047.5-fixes=; merged no-ff as =011cf50= on main. Codex gpt-5.5 xhigh, 33m23s wall, 222,039 tokens, session 019e559c-630d-7d90-a957-74c7e14ba9c5.
+- 8 files changed, +84 / -226 net (heavy deletion from orphan path-route removal).
+- F-A: =ui/src/app/router.tsx= -67 lines — =decisionNodeRoute=, =architectureNodeRoute=, =glossaryNodeRoute=, =adrNodeRoute= removed; =nodeId= prop dropped from =DecisionsView=, =ArchitectureView=, =GlossaryView=, =AdrView= (each shed 14-36 lines); each =openNode(id)= now calls =routeSearch((prev) => appendDrawerStack(prev, id))= via =NodeModal='s shared search helpers; =NodeModal.onClose= simplified (no per-page redirect); =AppShell.tsx= +4/-? — header crumb derivation switched to =drawer_stack=.
+- F-B: =ArchitectureView= + =AdrView= renderRow source-decision chips moved to =renderActionZone= (action-zone =onPointerDown/onClick=stopPropagation= already guarded by =NodeListView=); =NodeListView.tsx= +2/-2 polish.
+- F-C: =ui/src/components/node-views/NodeModal.tsx= +1 line — sr-only =<DialogDescription>= added to the desktop =<Dialog>= branch (Sheet branch already had =SheetDescription=).
+- F-D: =ArchitectureView= row's =→N= arrow + =dec_NNN= chip wrapped in =hidden sm:inline-flex=.
+- Verification (codex pre-commit, on :5181 due to manager Vite :5180 collision): row-click drawer_stack opens modal on Decisions/Architecture/Glossary/ADR; =?drawer_stack=dec_GRDFB,loader-rule= deep link with breadcrumb; Esc one-frame pop; 0 Radix "Missing Description" warnings; 0 React Flow missing-node warnings; Architecture list-region =[role=button] button= count is 0.
+- Verification (manager post-merge): =cd ui && npm run build= clean (tsc --noEmit + vite v6.4.2, 2.65s). Main =index-oKugWnye.js= 358.42 kB (under 360 kB budget, -0.83 kB vs fa222c5); =vendor-codemirror= 390.51 kB unchanged; per-page chunks unchanged or smaller (AdrView 4.18 → 3.98, ArchitectureView 5.16 → 4.95, DecisionsView 5.29 → 5.14, GlossaryView 1.75 → 1.59, NodeModal 16.39 → 16.37); no new dependencies in =ui/package.json=.
+- Worktree =/tmp/orgasmic-worktrees/task-047.5= removed; local branch =task-047.5-fixes= deleted (origin retains as audit ref).
+
+** Notes
+Smoke methodology + per-finding evidence captured in this session; full report in goal.org Done so far. Reviewer pass dispatches per persona rule 2 after the implementer merges.
+

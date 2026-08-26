@@ -61,10 +61,34 @@ pub fn handoff_file_path(project_root: &Path) -> PathBuf {
     dotorg_tasks_dir(project_root).join(HANDOFF_FILE)
 }
 
-pub fn iter_task_file_paths(project_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
-    TASK_FILE_NAMES
-        .iter()
-        .map(move |name| task_file_path(project_root, name))
+/// Sorted `node.org` paths for one dir-backed collection.
+pub fn collection_node_file_paths(
+    project_root: &Path,
+    collection: &str,
+) -> std::io::Result<Vec<PathBuf>> {
+    let dir = project_root.join(DOTORG).join(collection);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry?.path().join(crate::node_kernel::NODE_FILE);
+        if path.is_file() {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+pub fn task_node_file_path(project_root: &Path, id: &str) -> PathBuf {
+    project_root
+        .join(DOTORG)
+        .join(TASKS_DIR)
+        .join(id)
+        .join(crate::node_kernel::NODE_FILE)
 }
 
 /// Project-local directory for transient workflow files (git-ignored via
@@ -787,9 +811,13 @@ mod tests {
             goal_file_path(root),
             PathBuf::from("/repo/.orgasmic/tasks/goal.org")
         );
-        let paths: Vec<_> = iter_task_file_paths(root).collect();
-        assert_eq!(paths.len(), 6);
-        assert!(paths[0].ends_with("backlog.org"));
+        assert!(collection_node_file_paths(root, "tasks")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            task_node_file_path(root, "TASK-ABC"),
+            PathBuf::from("/repo/.orgasmic/tasks/TASK-ABC/node.org")
+        );
         assert_eq!(DEFAULT_TASK_FILE, "backlog.org");
         assert_eq!(DEFAULT_TASK_FILE_REL, ".orgasmic/tasks/backlog.org");
     }

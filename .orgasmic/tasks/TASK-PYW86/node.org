@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-PYW86
+#+orgasmic_version: 2
+
+* DONE TASK-PYW86 Sanitize GET endpoint error envelopes (apply TASK-B2P1Z.1 F-3 pattern to read paths) :daemon:security:hardening:followup:smoke:
+:PROPERTIES:
+:ID:               TASK-PYW86
+:PRIORITY:         P3
+:WORKER:   implementer-claude
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/integration.rs
+:READ_SCOPE:       crates/orgasmic-core/src/projects.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-B2P1Z.1
+:END:
+
+** Description
+TASK-B2P1Z.1 F-3 hardened the =POST /projects= envelope so failures emit stable, generic, path-free strings ("failed to read project.org", "failed to update project board"). The hardening did not extend to GET endpoints. Live evidence surfaced during the [[2026-05-24]] TASK-B2P1Z chrome smoke: navigating to =/projects/smoke-2026-05-24/decisions= on a freshly-registered project with no =decisions.org= rendered:
+
+#+begin_example
+404 read /private/tmp/orgasmic-smoke-2026-05-24/.orgasmic/decisions.org: No such file or directory (os error 2)
+#+end_example
+
+Raw =io::Error= Display strings leak filesystem paths AND the underlying OS error number. Low severity (registered-project paths aren't truly secret — they were just submitted by the same caller), but inconsistent with the POST surface and adds developer-string-as-user-copy noise.
+
+Audit all daemon read handlers in =crates/orgasmic-daemon/src/api.rs= that surface =io::Error= Display via JSON error responses. Apply the TASK-B2P1Z.1 F-3 pattern: stable public message, detailed cause via =tracing::warn!= / =error!=. Endpoints to cover include (non-exhaustive — full grep is part of the task): =/projects/:id/decisions=, =/projects/:id/architecture=, =/projects/:id/glossary=, =/projects/:id/snapshots=, =/projects/:id/tasks=, =/projects/:id/tasks/:tid=, =/projects/:id/tasks/:tid/activity=, =/projects/:id/adr=, =/projects/:id/org=.
+
+** Acceptance Criteria
+- [ ] Grep =api.rs= for all handlers that build a JSON error from an =io::Error= and pass it through to the response body. Confirm the inventory in the PR description.
+- [ ] Each such handler returns a stable, generic, path-free message (e.g., "decisions file not found", "failed to read decisions"). 404 distinct from 500.
+- [ ] Detailed cause logged server-side via =tracing= at appropriate level (=warn!= for expected-not-found, =error!= for unexpected I/O).
+- [ ] Integration test per endpoint family: trigger a missing-file 404 + assert the response body contains NO filesystem path (regex on response JSON).
+- [ ] All tests pass; clippy/fmt/diff clean. No new deps. MSRV 1.78.
+
+** Notes
+Cluster-traceable to the 2026-05-24 TASK-B2P1Z chrome smoke. Source-of-truth: this entry's =:LAST_UPDATED:= timestamp.
+
+** Evidence
+- [2026-05-24 Sun 15:27] Implementer shipped =08133ac= on =task-051-impl=; merged no-ff as =f810e8f=. Codex gpt-5.5 xhigh, ~10m wall, dispatched via =orgasmic manager dispatch=. =implementer.done= =tx-20260524-org-0183= via =dispatch-close=. 2 files +307/-105 (api.rs read-handler sanitization + integration.rs path-leak tests). Tests 219 → 232 cluster (TASK-PYW86 share +8). clippy/fmt/diff clean. MSRV 1.78. **DOGFOOD #21+#22 PASS** (BACKLOG→IMPLEMENT on dispatch; IMPLEMENT→REVIEW on close).
+- Reviewer pass (codex gpt-5.5 xhigh, ~3m wall, =tx-20260524-org-0187=): verdict =has-issues, blocks-ship= with 7 findings (no critical/high). F-1/F-2/F-5/F-6 test-coverage gaps (path-free assertions miss =/var/folders/...= leaks; loader-backed families uncovered; /org/file double-counted as per-family; raw-text assertions ignore JSON envelope); F-3 medium bug (=content_load_error= classifies NotFound by string-matching =not found through loader rule= → race-deleted file gets 500 instead of 404); F-4 medium design (content loader logs drop structured =path= field); F-7 low artifact-aware labels (all raw-file misses say =org file= regardless of which file).
+- TASK-PYW86.1 fix-subtask filed + dispatched (=:FIX_SUBTASK: t=). Codex gpt-5.5 xhigh, ~12m wall, shipped =b1531c6= → merged as =b943513=. =implementer.done= =tx-20260524-org-0191=. 3 files +663/-149: =api.rs= +138/-36 (matching against typed =ContentLoadError= variants), =content.rs= +374/-104 (new typed error with =kind=, =path=, =source=), =integration.rs= +300/-49 (path-aware assertion, JSON envelope predicates, race-delete regression, per-family failing-path coverage). Tests 232 → 247 cluster (TASK-PYW86.1 share +6 over 232 in worktree → +15 net after both merges). **DOGFOOD #23+#24 PASS** (BACKLOG→IMPLEMENT on dispatch; IMPLEMENT→DONE auto via =:FIX_SUBTASK: t= one-round-of-fixes shortcut).
+- Manager hand-flipped TASK-PYW86 REVIEW → DONE for cluster closure in this commit. All 7 reviewer findings closed.
+
+** Reviewer pass
+**Done.** Reviewer ran on the merged =f810e8f= surface, surfaced 7 findings, all addressed by TASK-PYW86.1 fix-subtask in one round per =:FIX_SUBTASK: t= discipline. Manager verified in-scope diff + green gates.
+

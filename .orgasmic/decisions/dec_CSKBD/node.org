@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_CSKBD
+#+orgasmic_version: 2
+
+* dec_CSKBD What happens to in-flight runs when the self-hosted daemon restarts?    :run-recovery:
+:PROPERTIES:
+:ID:            dec_CSKBD
+:GLOSSARY_REFS: term_Z672G term_N400W term_A8GT3 term_X4JGJ term_KH8TX term_N5SJT
+:DECIDED_AT:    [2026-05-21 Thu 19:26]
+:SOURCE:        archive/21_05_26_init/spec.org::*Daemon restart and boot reconciliation
+:END:
+** Context
+Self-hosted orgasmic development can rebuild or restart the daemon while the manager and workers are coordinating changes to orgasmic itself. Daemon-owned auto-resume would require understanding each provider's hidden conversation state and could duplicate edits; failing all workers on restart is simple but brittle; snapshot-restore-by-default is destructive and confuses recovery with explicit rollback.
+** Decision
+Restart recovery is non-destructive boot reconciliation, not snapshot restore or hidden provider auto-resume. The new daemon rebuilds truth from disk, reattaches only provably live runtimes, marks non-reattachable ACP-style workers interrupted, and asks the manager to continue them from task state, transcript, and git diff.
+** Consequences
+Self-hosted updates can feel like a reconnect without destructive rollback. The daemon stays conservative; the manager owns continuation. ACP-style workers that die during restart continue through fresh runs seeded with durable task state, prior session JSONL, current diff, and acceptance criteria.
+

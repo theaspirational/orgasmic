@@ -1,0 +1,28 @@
+#+title: orgasmic task TASK-Q68WE
+#+orgasmic_version: 2
+
+* DONE TASK-Q68WE Project-config defaults for dispatch params; task headings carry only overrides :config:dispatch:schema:
+:PROPERTIES:
+:ID: TASK-Q68WE
+:PRIORITY: P3
+:TEST_CMD: cargo test -p orgasmic-core -p orgasmic-cli
+:WORKER: implementer-codex-acp
+:WRITE_SCOPE: crates/orgasmic-core/src/ crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/ crates/orgasmic-core/tests/
+:END:
+
+** Description
+Drafted as TASK-DISPATCH-DEFAULTS inside dec_HJENQ. Per dec_DEH2T,
+config.org carries the worker pipeline; extend ProjectConfig with
+defaults for TEST_CMD, WORKER (pipeline-entry default), and WRITE_SCOPE
+policy so the manager dispatch path reads config defaults and task
+headings carry only per-task overrides (blank/default-identical values
+omitted per dec_HJENQ).
+
+** Acceptance Criteria
+- [ ] Dispatch resolves worker/test-cmd/write-scope from config when the
+  heading omits them; per-task override still wins.
+- [ ] New-task creation paths stop emitting blank dispatch params.
+
+** Evidence
+implementer-codex-acp (gpt-5.5 medium) one round, worker commit =1052ce6=, merged into main, close tx-0425. ProjectConfig + config.org gained a WRITE_SCOPE default key (TEST_CMD already existed); the .orgasmic/** write-scope hardcode in fill_stage_slot_values is now config-driven. Dispatch worker resolution precedence: explicit request worker > task heading :WORKER: > config PIPELINE first-worker-matching-kind (WORKER default DERIVED from PIPELINE, no separate DEFAULT_WORKER key — worker's call, sound). hydrate_dispatch_task_slots falls back to config defaults for task.test_cmd + task.write_scope when the heading omits them; heading value wins. task create + subtask create filter blank/default-identical WORKER/TEST_CMD/WRITE_SCOPE (filter_default_dispatch_properties); scaffold config.org gained WRITE_SCOPE, scaffold TASK-001 no longer emits :WORKER:. Index exposes default_test_cmd/default_write_scope; TaskSummary gained test_cmd. Manager fix-up =ffe7495=: documented the new task.test_cmd slot in slots.org (hydrated + slot-registered by the worker, was undocumented). Gates: workspace 0 failures, clippy --all-targets -D warnings clean, fmt clean, prompt_compiler 6/6; daemon rebuilt+restarted pid 56017, parse-errors 0. Residual (worker-noted, accepted): existing headings already carrying default-identical params were NOT retro-migrated — resolution + new-creation only.
+

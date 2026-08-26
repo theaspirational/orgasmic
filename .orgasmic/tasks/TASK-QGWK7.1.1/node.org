@@ -1,0 +1,312 @@
+#+title: orgasmic task TASK-QGWK7.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-QGWK7.1.1 follow-up: a git add failure mis-reports the close and silently keeps the branch :dispatch:evidence:manager:
+:PROPERTIES:
+:ID: TASK-QGWK7.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/**,shipped/**,verify/**
+:FIX_SUBTASK: t
+:END:
+
+=== READ THIS FIRST — STATUS [updated 2026-08-07] ===
+*THIS TASK NOW CARRIES A REGRESSION, NOT ONLY FOLLOW-UPS. Read =M-0= FIRST — it
+was filed after the review and it is the reason this task is P1.* Staging the
+promoted record BREAKS =git merge= after a close, and the close-then-merge order
+is the one the review gate's own refusal message prescribes. Found by the
+TASK-STWVB.1.1 gate on its first honest workspace run; manager-confirmed failing
+in isolation.
+
+The rest of this task is the follow-up round for the TASK-QGWK7.1 review (merged
+=955c8d6=, verdict *approve-with-follow-ups*), which had NO block ship. That
+verdict stands on what the review examined: the parent chain's goal IS met — a
+promoted worker report lands in the git index BY CONSTRUCTION, not by habit, and
+the reviewer traced every close path to confirm there is no third promote caller
+that skips staging. M-0 is not a defect the review missed by being careless; it
+is a consequence no static read of the diff would surface, because it only
+appears when a merge follows a close.
+
+*One further MEDIUM (=M-1=) is a real behaviour bug the same change introduced*
+and is the reason this round existed before M-0 arrived. Everything else is LOW.
+
+The full review is preserved at
+=.orgasmic/dispatch-records/tx-20260806-orgasmic-5026/last.txt=. Its predecessor
+(the nine original findings) is at =...-4946/last.txt=.
+=== END STATUS ===
+
+** What is already settled — do not redo it
+Reviewer-verified, and where noted manager-verified too:
+- *Durability is by construction for =last.txt=.* Both promote paths
+  (=remove_worktree_required_with_hook= at =manager.rs:5209=,
+  =promote_dispatch_artifacts_in_place= at =:5527=) route through the single
+  =promote_and_stage_dispatch_record=. =post_dispatch_cleanup= (=:874=) is the
+  dispatch-CREATE rollback and never promoted. No third caller.
+- =.orgasmic/.gitignore= is exactly =tmp/=; =git check-ignore= exits 1 for both
+  =dispatch-records/<tx>/stdout.log= and =stdout.log.bytes=. Nothing about the
+  record path is ignored.
+- Staging is STRONGER than the prior state against the two things that actually
+  threatened the file: a staged path survives =git checkout -- .= and is skipped
+  by =git clean -fdx=.
+- The fd-anchored ordering invariant SURVIVED the new tail-copy code. All four
+  failure cases traced at =paths.rs:272-340=: a failed =last.txt= copy, a failed
+  stdout tail copy, a failed =stdout.log.bytes= write, and a crash between the
+  copies all leave tmp intact or duplicate rather than lose. =.promoting= names
+  do not collide.
+- F-2 arithmetic holds: 6,500 x 64KiB = 406MiB, matching the convention's
+  "<= ~400MB/yr worst case"; =last.txt= 24-30MB/yr. The convention states both
+  separately with numbers (=manager-dispatch.org:311-330=) and
+  =shipped_conventions.rs:398= pins both strings.
+- F-5's deferral REASONING HOLDS: =manager.rs:369= and =:3643= confirm
+  =worktree-prune= refuses every invocation by construction, =:3373= marks the
+  reclaim path unreachable and owned by TASK-RMA18. Promote-on-reclaim would be
+  unreachable code today. Accepted, not carried.
+
+** M-1 — MEDIUM — a =git add= failure mis-reports the close AND silently keeps the branch
+=crates/orgasmic-cli/src/manager.rs:5423=, branch chain at =:5460-5481=.
+MANAGER-VERIFIED IN SOURCE, not taken on report.
+
+=promote_and_stage_dispatch_record= folds a staging error — and now also a
+stdout-tail error, which returns =Ok= + error rather than =Err= — into
+=WorktreeRemovalOutcome.error=. =cleanup_dispatch= then sets
+=worktree_failed = true= for ANY such error *even when =outcome.removed= is
+true*. Two consequences:
+
+1. The close reports =CLEANUP_STATUS=worktree_failed= when the worktree WAS
+   removed and the report WAS promoted, staged and named.
+2. Every =branch_delete= arm requires =!worktree_failed=. Traced with
+   =worktree_failed=true=, =worktree_removed=true=, =remove_worktree=true=: arm 1
+   fails on =!remove_worktree=, arms 2 and 3 fail on =!worktree_failed=. *So NO
+   arm fires — the branch is silently retained, =branch_failed= stays =false=,
+   and no error names it.*
+
+Concrete trigger: a concurrent state chore holding =.git/index.lock= makes
+=git add= exit 128. This CONTRADICTS the design this round shipped under — the
+brief's invariant was "a staging failure never fails the close"; it does not fail
+it, it MIS-CLASSIFIES it, which is worse because the mis-classification is
+silent and costs a branch.
+
+*Fix (the reviewer's, and the manager concurs):* push promote/stage errors into
+=errors= WITHOUT setting =worktree_failed=, exactly as the =--no-worktree-remove=
+arm already does at =:5452=. Note the two arms currently DISAGREE about the same
+class of failure (=worktree_failed= vs =partial=) — pick one and make them agree.
+
+** M-2 — LOW — inner-file ignores are silent
+=manager.rs:5566=. MEASURED by the reviewer: =git add -- <dir>= on a fully
+ignored directory exits 1 with a visible "paths are ignored" message (which
+folds into =CLEANUP_ERROR= — good), but on a directory containing SOME ignored
+entries it exits 0 and stages only the rest. A project rule as common as =*.log=
+would silently drop =stdout.log= from the record while the close reports success.
+Not triggered in this repo (verified). *Fix:* confirm the expected entries with
+=git ls-files --stage= / =--error-unmatch= after adding, and report the delta.
+
+** M-3 — LOW — truncation is visible only out-of-band
+=paths.rs:388=. =stdout.log.bytes= is written for EVERY non-empty stdout, so its
+presence does not mean truncated — a reader must know the 64KB cap and compare.
+The tail itself starts mid-line with no banner. And a skipped 0-byte stdout
+writes no sidecar, so "empty" and "not promoted" are indistinguishable. Also
+folded in here: if the SECOND rename (the sidecar) fails, =stdout.log= is already
+at the dest with no byte count — truncated evidence with no marker.
+*Fix:* one banner line at the head of a truncated tail.
+
+** M-4 — LOW — the tail keeps the wrong end for an early death
+=paths.rs:130=. A harness that fails early and then emits 500KB of retry noise
+has its evidence at the HEAD, and a 64KB tail keeps the noise. The reviewer
+judged the tail the right DEFAULT and not worth a reject — but named the
+alternative: *32KB head + 32KB tail with an elision marker*, which has identical
+year-one arithmetic.
+
+** M-5 — LOW — =REPORT_PATH= is not project-relative on every path
+=manager.rs:4863=. Three of four emitters are clean (=:1913=
+=dispatch_record_report_rel=, =:1919= the new relativizing fallback which returns
+=None= rather than an absolute path, =:5595= cleanup's promoted rel path). The
+fourth lets a manager-supplied =--property REPORT_PATH=<abs>= win unvalidated,
+and =tests/dispatch.rs:988,1001= currently PIN an absolute =/tmp/...= landing in
+a committed tx. The original F-6 named the finalize fallback and that IS fixed;
+the acceptance sentence said "always".
+
+** M-6 — LOW — the fence is requested and silently absent with no WORKTREE
+=manager.rs:4294=. =close_needs_artifact_fence= (=:4285=) is
+=remove_worktree || (last_path.is_some() && stdout_path.is_some())=. A record
+with LAST_PATH + STDOUT_PATH but NO WORKTREE makes the predicate true while
+=reserve_close_guard= returns =Ok(None)= — so the fence is requested and is not
+there. Unlike the remove path, which reports =worktree_missing= and destroys
+nothing, the promote arm still UNLINKS.
+
+Worth recording what the reviewer confirmed alongside this, because it is the
+good news: the predicate and the destructive branch agree BY CONSTRUCTION (the
+promote arm fires on the same pair after =resolve_project_path=, an
+=Option::map= that cannot change Some-ness), and the cleanup lock is the FIRST
+statement of =promote_dispatch_artifacts_in_place= — before the =exists()=
+probe, before validation, therefore before the unlink — with
+=no_worktree_remove_promote_takes_cleanup_lock= proving it blocks under real
+cross-thread contention.
+
+** M-7 — LOW (docs) — a doc comment was orphaned
+=manager.rs:4280=. The new predicate was inserted BETWEEN
+=reserve_close_guard='s doc comment and its signature, so "=Ok(None)= means there
+is no worktree to reserve" now documents a =-> bool= function, and
+=reserve_close_guard= is undocumented.
+
+** M-8 — LOW (test) — two tests accompany rather than pin
+=manager.rs:9142=. Five of the nine acceptance tests genuinely PIN — they would
+fail on the parent tree and they enter production functions:
+=dispatch_close_stages_promoted_record_in_git_index= (plus the
+=verify/TASK-QGWK7.1= red run),
+=no_worktree_remove_promote_against_missing_worktree_is_ok= (asserts
+=CleanupStatus::Ok= through real =cleanup_dispatch=),
+=no_worktree_remove_promote_takes_cleanup_lock= (real cross-thread lock
+contention), and the two =paths::tests= promote tests.
+
+Two merely ACCOMPANY: =no_worktree_remove_with_artifacts_needs_close_guard= and
+=finalize_report_path_fallback_is_project_relative= both assert on the new
+helper IN ISOLATION and never enter =cmd_dispatch_close= / =cmd_dispatch_finalize=.
+They cannot fail on the parent tree because the functions did not exist there, so
+they pin the PREDICATE, not the WIRING. That matters because they are the only
+coverage the original F-3 and F-6 have.
+
+** Open questions from the review, worth deciding rather than inheriting
+1. Should a promote/stage error downgrade =CLEANUP_STATUS= at all, or only
+   populate =CLEANUP_ERROR=? The two arms disagree today. Picking one is the
+   cheap version of M-1.
+2. =--no-worktree-remove= is no longer an escape hatch for a daemon without the
+   close-guard route — BOTH forms now require it, and the message says "restart
+   the daemon". Intentional per the original F-3, but it means a close is
+   IMPOSSIBLE until the daemon is restarted. Worth stating in the convention.
+3. =orgasmic update= / =install.sh= use =git stash push --include-untracked= in
+   the source repo (=update.rs:979=, =install.sh:505=). For THIS project the
+   source repo and the orgasmic project are the same tree, so an update run
+   between a close and the manager's commit would UNSTAGE the record. Not
+   introduced here — it is the one realistic un-stage path and it deserves a
+   decision.
+
+** Acceptance
+- A promote or stage failure populates =CLEANUP_ERROR= without mis-classifying
+  the close, and never silently skips =--branch-delete=. The two cleanup arms
+  agree on the status they report for the same class of failure. Pinned by a test
+  that would fail today.
+- A partially-ignored record directory is detected and reported, not silently
+  thinned.
+- A truncated tail says so IN the file; an unpromoted empty stdout is
+  distinguishable from a promoted empty one.
+- =REPORT_PATH= is project-relative on every emitter, including the
+  manager-supplied =--property= route, and the tests that pin an absolute path
+  are updated.
+- The artifact fence is either present whenever the predicate says it is
+  required, or the predicate stops claiming it.
+- =reserve_close_guard= has its doc comment back.
+- The two accompanying tests enter the production call path, or are replaced by
+  tests that do.
+- A decision is recorded on open question 3 (the =git stash= un-stage path).
+** M-0 — HIGH — staging the promoted record breaks git merge after a close
+*Filed 2026-08-07, AFTER the review, found by the TASK-STWVB.1.1 gate on its
+first honest workspace run. This is a REGRESSION from =955c8d6=, not a review
+finding — and it is the most important item on this task.*
+
+=crates/orgasmic-cli/tests/dispatch.rs:274=, test
+=reviewer_dispatches_before_reported_implementer_close_and_unlocks_main_merge=.
+
+#+begin_example
+git ["merge", "--no-ff", "-m", "merge reviewed worker", "task-dispatch-test-impl"] failed
+stderr=error: Your local changes to the following files would be overwritten by merge:
+  .orgasmic/dispatch-records/tx-20260806-orgasmic-0006/last.txt
+Merge with strategy ort failed.
+#+end_example
+
+MANAGER-VERIFIED: it fails ALONE as well (5.49s, exit 101), so it is a genuine
+REAL and not load-sensitivity — the new classifier called it correctly.
+=955c8d6= touched =manager.rs= and =paths.rs= but NOT =tests/dispatch.rs=, and
+the last change to that test file was =0df25d0= (the TASK-QGWK7 parent). The
+test's flow is: reviewer =dispatch-close= (which now promotes AND STAGES its
+record) -> =git merge --no-ff= -> implementer =dispatch-close=. The staged
+=dispatch-records/= path is what the merge refuses to overwrite.
+
+*Why this matters beyond one test.* That test encodes the CLOSE-THEN-MERGE flow
+the review gate itself prescribes: its refusal message tells the manager to
+dispatch a reviewer and close it with =--verdict=, and only then does the
+default-branch merge unlock. A manager following that instruction literally
+closes first and merges second — and now the merge fails. This session's manager
+did not hit it only because it merged BEFORE closing, which the gate permits but
+does not prescribe.
+
+*It also sharpens the review's claim 1.* The reviewer asked what could UNSTAGE
+the record between =git add= and the commit. The answer that matters turned out
+to be the opposite direction: staging does not get undone, it BLOCKS a merge that
+wants to touch the same path.
+
+*Fix direction — decide, do not patch reflexively.* The options are not equal and
+the choice is part of this task:
+1. Stage only when the index is otherwise clean for that path, and report through
+   =CLEANUP_ERROR= when it is not. Preserves the guarantee in the common case.
+2. Commit the record instead of staging — rejected once already, because WHEN to
+   commit needs manager judgement; do not re-open without a reason.
+3. Keep staging and make the manager's documented flow merge-before-close.
+   Cheapest, but it moves the guarantee back into habit, which is exactly what
+   F-1 existed to remove.
+4. Stage with a mechanism that does not participate in merge conflict detection.
+   Investigate whether one exists before assuming it does.
+
+Whichever lands, *the failing test must go green with the durability property
+intact* — do not fix it by dropping the assertion or by un-staging in the test.
+=== MANAGER RULING 2026-08-07 on the salvaged attempt (=0273e9f=) ===
+The first (dead) worker invented a FIFTH option for M-0, not on the list above:
+build a temporary index from HEAD (=GIT_INDEX_FILE=), =git add= the record into
+THAT index, verify every expected entry landed (a genuine M-2 fix), then
+=write-tree= -> =commit-tree -p HEAD= -> =update-ref
+refs/orgasmic/dispatch-records/<started_tx>=. The working index is never
+touched, so it cannot block a merge.
+
+*RULING: REJECTED, and the reason is measured, not argued.* The record becomes
+reachable only from a custom ref that =git clone= does not fetch, and it is not
+in the working tree either.
+
+MANAGER-MEASURED with a scratch repo — created the ref exactly as the salvaged
+code does, then cloned:
+#+begin_example
+$ ls clone1/rec            -> No such file or directory
+$ git -C clone1 for-each-ref 'refs/**'
+refs/heads/main
+refs/remotes/origin/HEAD
+refs/remotes/origin/main
+#+end_example
+The default refspec is =+refs/heads/*:refs/remotes/origin/*=; =refs/orgasmic/*=
+is neither fetched nor pushed.
+
+So the approach *fails the parent's acceptance criterion 2* —
+=manager-dispatch.org:312-323= says "Commit the promoted directory with the rest
+of the change so a fresh clone can read it", and TASK-QGWK7.1's own acceptance
+says "A promoted record is IN THE GIT INDEX after a close". It buys
+merge-compatibility by giving up the durability property the whole QGWK7 chain
+exists for. Consistently, it also REWROTE the F-1 test
+(=dispatch_close_stages_promoted_record_in_git_index=) and the parent's verify
+artifact to match — which is the "bent proof" shape, even though it follows
+honestly from the design change.
+
+*DO NOT ADOPT IT. Salvage the M-2 verification loop from it* (=ls-files
+--error-unmatch= per expected entry) — that part is correct and independent of
+the rejected design.
+
+=== WHAT THE M-0 FIX MUST RECKON WITH ===
+A fact the review did not have, and it reframes the options: *the manager never
+hit M-0 all session because it COMMITS =.orgasmic= state immediately after every
+close, before the next merge.* The test hits it because it closes and then merges
+with the record still staged and uncommitted. So the failure is not "staging is
+incompatible with merging" — it is "staging is incompatible with merging BEFORE
+the state is committed".
+
+That leaves two honest candidates, and choosing between them IS the task:
+1. *The close COMMITS the record* (option 2, previously rejected on the grounds
+   that WHEN to commit needs manager judgement). Reconsider it: a dedicated
+   record commit is not the manager's change, and a committed file merges
+   normally. If it is rejected again, say why in terms of what breaks, not
+   precedent.
+2. *Staging stays and the documented flow becomes close -> commit state ->
+   merge*, with =manager-dispatch.org= saying so explicitly and the test
+   committing state between its close and its merge. This keeps criterion 2
+   intact and matches what the manager already does in practice — but it makes
+   the guarantee depend on a documented STEP rather than on construction, which
+   is what F-1 set out to remove. Weigh that honestly.
+
+Whichever lands, the acceptance is unchanged: *a promoted record must be readable
+by a fresh clone*, and =reviewer_dispatches_before_reported_implementer_close_
+and_unlocks_main_merge= must pass without the test dodging the case.
+

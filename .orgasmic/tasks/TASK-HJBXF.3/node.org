@@ -1,0 +1,33 @@
+#+title: orgasmic task TASK-HJBXF.3
+#+orgasmic_version: 2
+
+* DONE TASK-HJBXF.3 fix-subtask: real_tmux test cleanup leaves orphan tmux sessions :drivers:tmux:claude:fix:test-cleanup:low:
+:PROPERTIES:
+:ID:               TASK-HJBXF.3
+:PRIORITY:         P3
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/modes/tmux.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/tmux.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/modes/tmux.rs
+:TEST_CMD:         cargo test -p orgasmic-drivers --lib modes::tmux
+:END:
+
+** Description
+Real-tmux integration tests (=real_tmux_prompt_bundle_is_consumed=, =real_tmux_session_lifecycle=, etc.) leave orphan tmux sessions named =orgasmic-run-prompt-real-<uuid>= after the test completes. The test calls =s.control.release("done")= but evidently the release path doesn't fully kill the tmux session under test isolation, OR the test ends before async cleanup completes.
+
+Manager housekeeping during the TASK-HJBXF.2 dogfood found 3 such orphans accumulated from various test runs.
+
+Fix: either (a) ensure =DriverSession::Drop= or explicit cleanup tears down the tmux session synchronously, or (b) use =std::process::Command::new("tmux").args(["kill-session", "-t", session_name])= as a final guard in each test's cleanup block.
+
+** Acceptance Criteria
+- [x] Real-tmux tests don't leave orphan sessions after =cargo test -p orgasmic-drivers --lib modes::tmux= run.
+- [x] Mock-peer + non-tmux tests unaffected.
+- [x] All gates green.
+
+** Evidence
+- *Date*: [2026-06-05 Fri].
+- *Fix shape*: added a =SessionGuard(String)= Drop-guard struct to the tmux test module that calls the existing =kill_tmux_session_sync= on drop. Each real-tmux test that spawns a session now binds =let _guard = SessionGuard(tmux_session_name(&s.identity));= (or the explicit session name for =real_claude_input_ready_smoke=) immediately after spawn — so the session is killed unconditionally on success, assert-failure unwind, or panic. Tests covered: =real_tmux_session_lifecycle=, =real_claude_input_ready_smoke=, =real_tmux_eot_marker_emits_run_complete=, =real_tmux_early_exit_before_eot_is_failure=, =real_tmux_prompt_bundle_is_consumed= (the named orphan source), =real_tmux_attach_proves_existing_session=. =real_tmux_control_drop_without_release_kills_session= left unguarded by design (it asserts the driver's own Drop cleanup). =kill-session= is a no-op when the session already exited.
+- *Gates*: =cargo test -p orgasmic-drivers= EXIT=0 (all real_tmux tests RAN — tmux was on PATH — and passed); =cargo clippy --workspace --all-targets -- -D warnings= EXIT=0; =cargo fmt --check= EXIT=0; =git diff --check= EXIT=0.
+- *Orphan proof*: post-run =pgrep -fl "worker-server|sleep 3600"= → none; =tmux ls= shows no leftover =orgasmic-test=/=run-real=/=run-prompt-real=/=run-attach=/=run-mock-eot=/=run-early-exit=/=input-ready= sessions (only the pre-existing daemon session + an unrelated June-3 run session remain).
+

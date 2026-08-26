@@ -1,0 +1,52 @@
+#+title: orgasmic task TASK-HY0QT.1
+#+orgasmic_version: 2
+
+* DONE TASK-HY0QT.1 codex acp-stdio handshake reviewer-findings fix-subtask: exit synthesis + kill-on-channel-close + wire_messages test :drivers:acp:stdio:codex:bug:test:fix:
+:PROPERTIES:
+:ID:               TASK-HY0QT.1
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/modes/acp_stdio.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/tests/driver_modes.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-drivers/src/modes/jsonrpc.rs crates/orgasmic-drivers/src/adapters/codex.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-HY0QT
+:END:
+
+** Description
+Closes 3 of 5 TASK-HY0QT reviewer findings (F-1, F-2, F-3). F-4 + F-5 reviewer-deferred (can piggyback if cheap; otherwise ship deferred).
+
+The TASK-HY0QT implementation introduced =run_acp_stdio= as a parallel runtime to =SubprocessStreamJsonDriver=, but in doing so dropped two subprocess-lifecycle properties that TASK-J95T2 specifically went to the trouble of shipping for the cursor-agent / claude-stream-json path:
+
+- *F-1 missing exit synthesis*: =run_acp_stdio= ends the runtime loop and calls =child.wait()= but never invokes =finalize_subprocess_exit= (or an analog). If =codex app-server= dies before emitting =turn/completed= / =thread/closed= — crash, OOM, SIGKILL, network hiccup, whatever — the supervisor sees an open run with no terminal event. This is exactly the failure mode TASK-J95T2's =cursor::distill_subprocess_exit_summary= + synthetic =RunComplete= path was built to prevent on the cursor-agent side.
+- *F-2 no kill on channel drop*: When all =AcpStdioControl= senders drop (supervisor crash, early-detach, abrupt session shutdown), =commands.recv()= returns =None= and the runtime breaks WITHOUT calling =child.kill()=. The legacy =SubprocessStreamJsonDriver= treats channel-close as a release signal and kills the child before finalising. Without that, a dropped session can leave a detached =codex app-server= orphan.
+- *F-3 control-plane untested*: The new fixture =acp_stdio_codex_jsonrpc_handshake_mock_peer= exercises the read-side handshake (=initialize= → =thread/start= → =Ready= → notification stream → =RunComplete=) but never calls =session.control.release(...)= / =transition_state(...)= / =babysitter_action(...)= to assert that =HarnessControlOutcome.wire_messages= (e.g., codex =turn/interrupt=, =turn/steer=) get serialised to stdin as JSON-RPC envelopes. This was one of the three stacked failures the TASK-HY0QT brief identified pre-merge (failure mode B: wire-message control plane was silent); the write path is implemented via shared =handle_outcome= but has no regression test on the stdio side.
+
+Reviewer report at =/tmp/orgasmic-codex/task-077-review-report.md=.
+
+** Acceptance Criteria
+- [ ] *F-1 — port TASK-J95T2 exit synthesis into run_acp_stdio*: After the main =select!= loop in =run_acp_stdio= exits (stdout EOF, transport error, channel close), wire the equivalent of =SubprocessStreamJsonDriver::finalize_subprocess_exit= behaviour: if =adapter.terminal_emitted()= is false AND assistant text can be distilled (track distillation by recording =DriverEvent::TextChunk= emissions through the loop like =SubprocessExitSummary::record= does), call =adapter.emit_run_complete_once(&events, Some(summary)).await= when exit status is success; otherwise emit a fatal =DriverError= with the exit status. Use the existing =cursor::distill_subprocess_exit_summary= for the distillation (or wrap it in a transport-neutral helper if the symbol name is misleading — implementer's call).
+- [ ] *F-2 — kill child on channel drop*: When =commands.recv()= returns =None= in the main loop, set a =released= flag, call =child.kill().await=, then fall through to the same exit-synthesis path as F-1. Pattern matches =SubprocessStreamJsonDriver= lines 340-360.
+- [ ] *F-3 — mock-peer control-plane test*: Extend =acp_stdio_codex_jsonrpc_handshake_mock_peer= (or add a sibling test) where the mock peer scripts a response to a =turn/interrupt= (or any other JSON-RPC method codex's adapter emits via =wire_messages=) on stdin, the test calls =session.control.release("done").await=, and asserts the method appears on the peer's stdin before =RunComplete= is emitted. If the helper-process shell approach is too brittle for stdin-reading, prefer the in-process =tokio::io::DuplexStream= mock mentioned in the TASK-HY0QT brief.
+- [ ] (Optional, piggyback if cheap) *F-4 — assert ToolCall ordering + intervening notifications in the stdio fixture*: extend the mock peer to emit an =item/tool/call= or similar before =turn/completed=, OR send a notification between =thread/start= request and response, and assert the events arrive in the expected order through the supervisor. WS-side coverage already exists in =codex_turn_start_terminal_notification_does_not_emit_followup_error=.
+- [ ] (Optional, piggyback if cheap) *F-5 — eliminate double-call of stdio_session_init*: =compose_stdio_request= probes =stdio_session_init(...).is_ok()= to choose the JSON-RPC upgrade path; =uses_jsonrpc_stdio= calls the same method again. Refactor to a single call — e.g., have =compose_stdio_request= return =(HarnessRequest, Option<Value>)= or stash the init value on the compose adapter. Idempotent today for =CodexAdapter= but easy to diverge with a future adapter.
+- [ ] =cargo test --workspace + clippy + fmt + diff= all green. MSRV 1.78. Pay attention to the CLAUDE.md MSRV pitfalls (=fs2::FileExt::lock_exclusive=, no =Option::is_none_or=, etc).
+
+** Notes
+:FIX_SUBTASK: t — one-round fix-implementer, no reviewer pass after merge, auto IMPLEMENT → DONE on dispatch-close. Closes findings F-1, F-2, F-3. F-4 + F-5 optional piggyback (cheap to fold in; otherwise ship deferred and re-evaluate after live codex-stdio dogfooding).
+
+Worker: =implementer-cursor= (still chicken-and-egg until the TASK-HY0QT + TASK-HY0QT.1 fix-chain closes AND live codex-stdio is validated).
+
+** Evidence
+- Implementer: cursor-agent (implementer-cursor, composer-2.5-fast), ~35min wall (longer than typical fix-subtask 7-10min — F-1 distillation port + F-3 mock-peer extension + F-5 piggyback bundle was meatier than expected). Self-commit =51008d7= on =task-077.1-impl=. Merged no-ff as =6ecc820=.
+- Files: =modes/acp_stdio.rs= +131/-44 (F-1 finalize tail with =if released { kill } + finalize_subprocess_exit=, F-2 commands.recv()=None flips released=true, F-5 stashed =jsonrpc_session_init: Option<Value>= on =AcpStdioComposeAdapter=, new =handle_outcome_with_summary= helper that records events into exit_summary for distillation). =modes/subprocess_stream_json.rs= +3/-3 (=SubprocessExitSummary= + =record= + =finalize_subprocess_exit= promoted to =pub(crate)= for cross-module reuse). =tests/driver_modes.rs= +46 (extended =acp_stdio_codex_jsonrpc_handshake_mock_peer= to drive =session.control.release(...)= and assert the resulting =turn/interrupt= JSON-RPC envelope appears on peer stdin before RunComplete).
+- F-1: synthetic RunComplete now fires on subprocess exit when no terminal event was emitted AND assistant text can be distilled (success path), or fatal DriverError fires on non-zero exit. Same shape that TASK-J95T2 shipped for the cursor-agent stream-json path; now applied to acp-stdio.
+- F-2: dropped sessions (supervisor crash, early-detach) now kill the codex child before finalising. No more detached =codex app-server= orphans.
+- F-3: stdio control plane has a regression-fence assertion. =CodexAdapter::release= → =WireMessage::JsonRpc { method: "turn/interrupt", ... }= → serialised to stdin → asserted in fixture.
+- F-5 piggyback: =compose_stdio_request= now returns =(HarnessRequest, Option<Value>)=. =stdio_session_init= called exactly once per acquire instead of twice. Idempotent today; defensive against future adapters with side effects.
+- F-4 deferred (ToolCall ordering / intervening-notification handling in the stdio fixture).
+- Tests: 366 → 366 (F-3 extended the existing fixture rather than adding a sibling). cargo test/clippy/fmt/diff all green. MSRV 1.78.
+- Dispatch operational note: cursor-agent worker ran ~35min then self-committed cleanly. Manager initially suspected silent death (the worker-server pid had exited and the outer wrapper was idle; "tool edit ignored by orgasmic tool policy" events at 22:28 UTC looked concerning) but cursor-agent's commit lifecycle just takes ~16 min of silent work between the last stream-json event and the actual git commit. No manager-on-behalf recovery needed. Documented here so future managers don't panic on the same silence.
+- =:FIX_SUBTASK: t= auto-flipped IMPLEMENT → DONE on dispatch-close. =implementer.done= tx-20260525-org-0342. Daemon rebuilt + restarted PID 3792.
+

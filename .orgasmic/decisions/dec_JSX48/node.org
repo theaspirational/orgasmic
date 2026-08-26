@@ -1,0 +1,16 @@
+#+title: orgasmic decision dec_JSX48
+#+orgasmic_version: 2
+
+* dec_JSX48 What routing approach should the UI use for paths and transient state?    :ui-routing:
+:PROPERTIES:
+:ID:            dec_JSX48
+:DECIDED_AT:    [2026-05-23 Sat 15:28]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:END:
+** Context
+Query-string-only navigation does not scale to project-scoped paths, deep-linked modals, graph-traversal back-stacks, view-mode toggles, and manager popover state. Staying pure-query gives unclean shareable URLs; React Router 7 is a larger bundle without TanStack's type-safety differentiator.
+** Decision
+Adopt TanStack Router. Use paths for primary navigation and shared entity locations (e.g. =/projects/<id>/tasks/TASK-XC6RJ=, =/projects/<id>/decisions/dec_GRDFB=, =/projects/<id>/architecture/arch_A53QX=) and query parameters for transient state (=?view=kanban|list=, =?manager=peek|workbench|focus=, =?drawer_stack=TASK-XC6RJ,TASK-YFAER.1=). Browser back closes a modal, then the previous page, then the previous filter.
+** Consequences
+URLs become shareable and type-safe while browser back can close transient state before leaving the page. The route tree must encode project scope explicitly.
+

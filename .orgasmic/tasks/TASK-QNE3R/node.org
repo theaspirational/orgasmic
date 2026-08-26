@@ -1,0 +1,81 @@
+#+title: orgasmic task TASK-QNE3R
+#+orgasmic_version: 2
+
+* BACKLOG TASK-QNE3R the sequencer marker table is pinned by label, not by behaviour — 4 of 7 rows unexercised    :testing:dispatch:
+:PROPERTIES:
+:ID: TASK-QNE3R
+:PRIORITY: P2
+:WRITE_SCOPE: crates/**
+:END:
+
+=== READ THIS FIRST — STATUS ===
+Filed from the TASK-QGWK7.1.1.1.1.1.1 review (F-2), which was ACCEPT with no
+BLOCK SHIP. This is the follow-up the reviewer said would "actually pay" — the
+one structural guard that would close the CHAIN'S GENERATING CAUSE rather than
+another instance of it.
+
+*Nothing here is broken today.* The reviewer hand-checked all seven marker names
+and they are correct. This task is about what HOLDS them correct.
+=== END STATUS ===
+
+** What the current pin does and does not prove
+=crates/orgasmic-cli/tests/shipped_conventions.rs= gained
+=the_sequencer_list_matches_the_guards_array= (TASK-QGWK7.1.1.1.1.1.1 D-2), which
+parses the operation list out of =manager-dispatch.org= and compares it against
+=SEQUENCER_MARKERS= in order. It is genuinely bidirectional — the manager
+verified by dropping a code row and watching it fail, and the reviewer could not
+make it false-pass in five mutation attempts.
+
+*But it compares FIELD 3 only.* =SEQUENCER_MARKERS= rows are
+=(marker_file, refusal_name, name_in_prose)=. The pin destructures fields 1 and 2
+away. Reviewer demonstration with a byte-faithful standalone replica driven off
+the real =.org=, mutating only the array:
+
+| mutation | result |
+| baseline | PASS |
+| field 1 typo'd (=MERGE_HEAD= -> =MERGE_HAED=) | *PASS* — the guard stops firing while the prose still promises "merge" |
+| field 2 wrong (=merge= -> =rebase=) | *PASS* — the refusal would read "a git rebase is in progress" |
+
+Field 3 is a *test-only shadow*: it has no production consumer, so a future pin
+failure can be made green by editing field 3 to match the prose instead of fixing
+the drift.
+
+** What backstops fields 1 and 2 today, and where it stops
+Behavioural coverage, and it is partial. Rows with a test asserting the refusal
+FIRES and names the operation: =MERGE_HEAD= (=manager.rs:9862=), =REVERT_HEAD=
+(=:9924=+), =sequencer= (=:10086=, =:10210=, =:10296=).
+
+Rows with NONE: =rebase-merge=, =rebase-apply=, =CHERRY_PICK_HEAD= (asserted
+ABSENT at =:10031=/=:10130=/=:10317=, never as a refusal trigger), =BISECT_LOG=.
+
+So four of seven operations rest on a hand-check. The reviewer's census, which is
+correct today:
+: bisect -> .git/BISECT_LOG          merge          -> .git/MERGE_HEAD
+: cherry-pick -> .git/CHERRY_PICK_HEAD   rebase(merge) -> .git/rebase-merge
+: am -> .git/rebase-apply           rebase --apply -> .git/rebase-apply
+
+** Why this is the one worth building
+This chain ran SIX rounds. Rounds 4, 5 and 6 were each caused by a CLAIM, not by
+code — a property measured on some cases and then written down as a universal.
+The list-vs-list pin cannot catch that class and no pin can; it compares a list
+against a list.
+
+A table test CAN, for this file: it turns the shipped promise into BEHAVIOUR.
+Build each operation's real git state, call =sequencer_operation_in_progress=,
+assert it returns that row's field-2 name. That pins fields 1 and 2 for all seven
+rows, kills the field-3 shadow (a wrong label can no longer be edited green), and
+makes "the convention names the operations the guard refuses on" true end to end
+rather than lexically.
+
+** Acceptance
+- A table test over =SEQUENCER_MARKERS= builds each row's real git state and
+  asserts =sequencer_operation_in_progress= returns that row's refusal name.
+- A typo in any marker FILE name fails a test.
+- A wrong refusal NAME fails a test.
+- The existing bidirectional pin stays; this adds to it rather than replacing it.
+- =rebase-apply='s two producers (=git am= and =git rebase --apply=) are both
+  exercised, since one row serves both.
+- No change to =SEQUENCER_MARKERS='s contents — this task pins what is there, and
+  the reviewer verified all seven are correct today. If building a state proves a
+  row WRONG, stop and report rather than editing the array to match the test.
+

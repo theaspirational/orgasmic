@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-GRCWC.2
+#+orgasmic_version: 2
+
+* BACKLOG TASK-GRCWC.2 Give over-depth worktree-prune refusals a cause-specific remedy and avoid prune tense in inventory output    :cli:safety:
+:PROPERTIES:
+:ID: TASK-GRCWC.2
+:PRIORITY: P2
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:END:
+
+** Description
+Independent review of TASK-GRCWC.1 found a non-blocking operator-actionability gap: `UnsafeTraversal` uses one `why()` sentence for both unreadable and over-depth causes, so an over-depth refusal incorrectly recommends chmod. The same past-tense prune wording is also reused by `dispatch-status`, which never pruned.
+
+Carry a structured traversal cause rather than parsing the error string. Give unreadable descendants the repair-permissions/remove-by-hand remedy, and over-depth chains the flatten/remove-by-hand remedy. Keep the whole-worktree no-delete and no-force guarantee shared. Render action tense only on the actual `worktree-prune` skip path; inventory should state the status without claiming a prune occurred. Extend both cause fixtures with a shared contract helper so whole-worktree guarantee and cause-specific remedy are pinned.
+
+** Acceptance
+- Over-depth output never recommends chmod; it names an actionable flatten/remove remedy.
+- Unreadable output retains errno and its permissions remedy.
+- dispatch-status does not claim a prune was run or tell the operator to rerun it.
+- Both causes remain no-delete and tests prove the messages; no traversal/removal mechanics change.
+

@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_XV9AK
+#+orgasmic_version: 2
+
+* dec_XV9AK What surfaces (daemon, CLI, UI) should orgasmic expose, and how do they relate?    :surfaces:
+:PROPERTIES:
+:ID:            dec_XV9AK
+:GLOSSARY_REFS: term_N5SJT term_X4JGJ term_FM60Y
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Surfaces
+:END:
+** Context
+Humans, manager agents, workers, and the browser UI need one coherent access model. A CLI-only first cut delivers backend faster but weakens mobile and manager visibility; a UI-first daemon gives a good operator experience but leaves manager agents without a stable shell tool surface.
+** Decision
+Orgasmic ships as a local daemon, a complete CLI, and a HAR-derived React UI. The CLI is the full tool surface for humans and the manager; the daemon owns localhost-first REST, WebSocket streams, auth, and materialized reads; the UI includes board, project, task, run, manager, settings, and a generic Org editor.
+** Consequences
+The manager can operate from a shell, users get a browser workbench, and the daemon remains the single coordination process. API design must keep CLI, UI, and manager flows equivalent.
+

@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-XQCNA
+#+orgasmic_version: 2
+
+* BACKLOG TASK-XQCNA Terminal run states carry a classified reason and the evidence path in dispatch-status; API 500s carry the inner cause    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XQCNA
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 1.
+Four failures looked identical on the surface (`[pid-gone] [run-gone] [unreported]`, empty `-last.txt`) while the truth sat in the session jsonl or daemon log: fd exhaustion (`failed to acquire worker run` 500 hid `Too many open files`), codex quota exhausted, hermes transport crash after the review was written, stall kill while waiting on tests. The manager re-dispatched blind twice and reads an empty report as an approval.
+** Expected
+- Every terminal state has a classified `exit` reason: reported, provider_quota (with retry-after), provider_auth, transport_error, stall_killed, spawn_failed(<os error>), worktree_setup_failed, operator_aborted.
+- `dispatch-status` prints the reason and the evidence path (session jsonl) under the flags line.
+- API 500s carry the inner error verbatim: `{"error":"failed to acquire worker run","cause":"spawn: Too many open files (os error 24)"}` and name the next command (`orgasmic daemon status`).
+** Acceptance
+- A fixture per reason class; dispatch-status output shows `exit:` + `evidence:` lines; the 500 body includes `cause`.
+

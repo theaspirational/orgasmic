@@ -1,0 +1,14 @@
+#+title: orgasmic task TASK-1SVST
+#+orgasmic_version: 2
+
+* BACKLOG TASK-1SVST App crashes to the top-level error boundary: undefined is not an object (evaluating 't.sections.map')
+:PROPERTIES:
+:ID: TASK-1SVST
+:PRIORITY: P2
+:READ_SCOPE: ui/src/**
+:TEST_CMD: cd ui && npm test
+:WRITE_SCOPE: ui/src/**
+:END:
+
+Reported by the user 2026-07-29 from a running app build: the desktop window renders the top-level error boundary ("Something went wrong!" / "Hide Error") with the minified message `undefined is not an object (evaluating 't.sections.map')` and nothing behind the banner — so a top-level view dies during render, not an isolated panel. `t` is a bundler-renamed local; the real signal is `.sections.map` reached on undefined. Unguarded call sites of that shape today: ui/src/components/orgdoc/NodeDocEditor.tsx:41 (`toDraft`, `doc.sections.map`) and :63 (`effectiveFields`), and ui/src/components/PromptStudioView.tsx:423 (`layered.sections.map`); the same pass should look at `doc.properties.map` (NodeDocEditor.tsx:42) and `parseOrgSourceNodes(...).sections.find` (node-views/orgNodes.ts:89,111). Wanted: which payload actually produces the undefined and why (daemon response shape, render-before-load, or version skew between app and daemon), a fix at that source rather than a `?.` at the call site, a regression test for the payload shape that crashed, and enough context in the error boundary (view or component name) that the next minified crash is diagnosable without guessing. Reproduction is unknown — first ask the user which screen they were on.
+

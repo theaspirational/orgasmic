@@ -1,0 +1,14 @@
+#+title: orgasmic task TASK-N4TGD
+#+orgasmic_version: 2
+
+* DONE TASK-N4TGD Close the duplicate-write hole: per-project glossary uniqueness, node delete surface, default request-id :daemon:cli:hardening:
+:PROPERTIES:
+:ID: TASK-N4TGD
+:PRIORITY: medium
+:RELATES_TO: TASK-FZF2D
+:END:
+
+Evidence (2026-07-23): a lost HTTP response (see TASK-FZF2D) plus a client retry created two glossary terms with identical title/canonical ("Vertical Slice") in the orsl project; the write-time guards (marker substrings, dangling-reference checks) have no uniqueness rule, and no CLI delete surface exists for any node kind — repairing the corruption required exactly the hand-edit the conventions forbid, which is a tooling gap, not an operator failure. Fix set: (1) write-time uniqueness guard on glossary canonical/title per project at the existing guard choke point (reject with the surviving node id in the error; --force to override for deliberate homonyms). (2) `orgasmic node delete <id>` (or per-kind delete subcommands) through the daemon with OCC + a tx record, so corruption repair stays inside the CLI-only convention. (3) CLI derives a default --request-id from a content hash of the create payload when the caller omits one, making blind retries idempotent by default. Regressions: retry-after-lost-response creates exactly one node; delete records a tx and survives reindex; forced homonym still possible.
+** Evidence
+Claude Opus 4.8 returned BLOCK on the initial 813dd17 implementation. Fix subtask TASK-A7JFG closed every actionable finding in 1c07f17, merged as 07a5b5a: domain-separated default IDs, original task identity on retry, writer-owned mutation identity, fail-closed cache scope reuse, inbound-reference delete guard, and refusal of unsafe generic task deletion. Manager acceptance gates are green.
+

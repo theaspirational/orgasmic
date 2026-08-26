@@ -1,0 +1,23 @@
+#+title: orgasmic task TASK-XC9N4
+#+orgasmic_version: 2
+
+* BACKLOG TASK-XC9N4 Dispatch silently substitutes driver/harness (tmux+codex→stdio codex-chat, custom+opencode→stdio opencode); --dry-run prints the request, not the resolution; ws+hermes is a simulated stub in the normal catalog    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-XC9N4
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 5. `--mode tmux --harness codex` accepted, dry-run said `mode: tmux`, run came back DRIVER=stdio WORKER=implementer-codex-chat-stdio. `--mode stdio --harness opencode` is refused (unsupported pair) yet the working `--mode tmux --harness custom --harness-arg opencode …` is substituted to driver=stdio harness=opencode. `--mode ws --harness hermes` is an accepted simulated stub (runs sh, reports clean). `--model` is unvalidated passthrough.
+Code: api.rs canonicalize_dispatch_worker (~4998).
+** Expected
+- Resolve the driver before accepting; print the resolved driver/harness/model; refuse or warn on stderr when it differs from the request.
+- `--dry-run` prints the resolution (what will launch), including the substitution.
+- `--harness opencode` accepted with the mode it actually runs under.
+- Simulated drivers out of the normal catalog, or gated behind `--allow-simulated`.
+- Empty model catalog says: catalog unavailable, --model passed through unvalidated.
+** Acceptance
+- dry-run output equals the tx-recorded driver/harness/model for every catalog pair; simulated dispatch without the flag is refused.
+** Progress
+Partial in 5033cce: --dry-run prints `resolves: driver=… harness=…` from the shared addressing::canonical_chat_address when the canonical chat runtime re-addresses the request. Open: refuse/warn at accept time, --harness opencode under its real mode, simulated drivers gated, empty-catalog message.
+

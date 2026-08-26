@@ -1,0 +1,11 @@
+#+title: orgasmic task TASK-E3TBC
+#+orgasmic_version: 2
+
+* DONE TASK-E3TBC TASK-QPKCD fix round 5: quiescence and crash-authoritative recovery
+:PROPERTIES:
+:ID: TASK-E3TBC
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all six HIGH findings from TASK-GJ8PC review of c9d4850: healthy-run-safe channel quiescence; pre-Acquire crash reconciliation and stable plan; authoritative corrupt/deleted claim repair; no PATH fallback; actual Claude fork identity; fmt and warning gates.
+

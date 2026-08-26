@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-J25GR
+#+orgasmic_version: 2
+
+* DONE TASK-J25GR Implement optional and hub content install lifecycle :install:content:
+:PROPERTIES:
+:ID:               TASK-J25GR
+:PRIORITY:         P2
+:WORKER:           implementer-claude
+:IMPLEMENTS:       arch_WZFAX arch_QXS5W
+:PRODUCES:         crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/home.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/** crates/orgasmic-cli/Cargo.toml
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org archive/21_05_26_init/spec.org docs/adr/*.org crates/orgasmic-cli/src/** shipped/**
+:TEST_CMD:         cargo test -p orgasmic-cli
+:DEPENDS_ON:       TASK-V3DWJ
+:END:
+
+** Description
+TASK-V3DWJ implemented the shipped-vs-user override leg of dec_GRDFB's three-tier content model for skills, agent templates, prompt templates, conventions, project-scaffold, manager persona, and schema. The remaining two tiers — opt-in shipped subdirs ("optional") and install-by-URL ("hub") — are not yet wired and were deferred from TASK-V3DWJ acceptance criterion #5 on operator authorization. This task closes that gap.
+
+** Acceptance Criteria
+- [X] =orgasmic optional list / enable <name> / disable <name>= subcommands manage opt-in shipped subdirs (e.g. orgasmic/shipped/optional/<family>/<name>) with a per-home enablement registry under =$ORGASMIC_HOME/user/optional.org=.
+- [X] =orgasmic hub install <url> [--family X]= clones or fetches a hub content URL into =$ORGASMIC_HOME/user/<family>/<name>/= so the loader-rule resolves it before shipped defaults; supports git URLs at minimum.
+- [X] =orgasmic hub list / hub remove <name>= round out the lifecycle.
+- [X] All three families (skills, agent-templates, prompts) work identically through optional+hub flows; tests cover each family.
+- [X] TASK-V3DWJ acceptance criterion #5 ("Optional and hub content installs work consistently…") becomes checkable once this task closes; flip the box in TASK-V3DWJ Evidence at completion.
+- [X] orgasmic doctor reports broken optional/hub registrations.
+
+** Evidence
+- [2026-05-21 Thu 22:57] Added =crates/orgasmic-cli/src/content_lifecycle.rs= plus CLI surfaces =orgasmic optional list|enable|disable= and =orgasmic hub install|list|remove=.
+- [2026-05-21 Thu 22:57] Optional and hub lifecycle state is tracked in =$ORGASMIC_HOME/user/optional.org= and =$ORGASMIC_HOME/user/hub.org=, while enabled/installed content is materialized into the existing =user/<family>= loader layer for skills, agent templates, and prompts.
+- [2026-05-21 Thu 22:57] =orgasmic doctor= now reports broken optional and hub registrations.
+- [2026-05-21 Thu 22:57] Verification passed: =cargo test -p orgasmic-cli= (11 tests), =cargo clippy -p orgasmic-cli --all-targets -- -D warnings=, =cargo fmt --check=, and =git diff --check=.
+
+** Worklog
+- [2026-05-21 Thu 22:47] Dispatched CLI-only worker Helmholtz with write scope limited to =crates/orgasmic-cli/src/**= and =crates/orgasmic-cli/Cargo.toml=.
+- [2026-05-21 Thu 22:57] Integrated worker output; no core/daemon loader changes were needed because materialization uses the existing user-first loader layer.
+

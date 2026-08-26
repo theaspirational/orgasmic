@@ -1,0 +1,30 @@
+#+title: orgasmic task TASK-B5GFJ.3
+#+orgasmic_version: 2
+
+* DONE TASK-B5GFJ.3 fix-subtask: bounded missing-marker path (timeout + idle fallback) :drivers:tmux:claude:fix:robustness:medium:
+:PROPERTIES:
+:ID:               TASK-B5GFJ.3
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/modes/tmux.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/**
+:READ_SCOPE:       crates/orgasmic-drivers/src/**
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Reviewer F-3 (MEDIUM): Capture loop only exits on =terminal_emitted=, missing tmux session, or exact EOT-marker match. No deadline / idle-prompt heuristic / deterministic escalation when claude forgets the marker, hits a token/tool limit, or runs out of context. Live dogfood can stall forever with a live tmux session — babysitter escalation eventually helps, but driver has no bounded failure mode.
+
+Fix: add a turn-timeout config (default ~10 min from acquire) AND/OR a quiescence heuristic (pane content unchanged for N seconds + idle-prompt marker visible like claude's =>= prompt). On timeout/quiescence: emit failed terminal event ("tmux TUI turn exceeded {N}s without EOT marker") and release cleanly.
+
+** Acceptance Criteria
+- [ ] =TmuxTuiConfig= gets a =turn_timeout: Option<Duration>= field (default e.g. 600s).
+- [ ] Capture loop checks deadline each tick; on exceed → emit DriverError/RunFail + cleanup (TASK-B5GFJ.1's path).
+- [ ] Optional: quiescence detection (pane unchanged for ~60s + idle prompt visible) triggers same path with a different reason string.
+- [ ] Test: spawn a TUI that prints text then sleeps forever without EOT → driver fails the run after timeout, not stalls.
+- [ ] Cargo test green.
+
+** Evidence
+(populated at task close)
+

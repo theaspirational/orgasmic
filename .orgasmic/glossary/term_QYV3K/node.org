@@ -1,0 +1,11 @@
+#+title: orgasmic glossary term term_QYV3K
+#+orgasmic_version: 2
+
+* term_QYV3K Graph curator
+:PROPERTIES:
+:AVOID: graph editor, graph author
+:CANONICAL: graph curator
+:DEFINITION: The agent role (graph_curator prompt-spec) that writes the shared layout overlay - curation and arrangement. Its write scope is graph_layout.org only; it cannot create or revise graph nodes (topology is read-only to it).
+:ID: term_QYV3K
+:END:
+

@@ -1,0 +1,16 @@
+#+title: orgasmic task TASK-R7AGF
+#+orgasmic_version: 2
+
+* BACKLOG TASK-R7AGF Move release certification off the laptop: run the local/release-certified suite in GitHub CI    :release:infra:
+:PROPERTIES:
+:ID: TASK-R7AGF
+:PRIORITY: P2
+:END:
+
+** Description
+The Mac has now died three times (2026-07-29, 2026-08-02, 2026-08-23) from the syspolicyd scan-storm chain, and the 2026-08-23 incident happened under the =local/release-certified= suite (detached, so Warp's Developer Tools exemption did not cover the fresh cargo test binaries; see memory mac-syspolicyd-tccd-windowserver-reboot). The near-term mitigation is procedural: never detach the suite. The durable fix is to stop minting and executing hundreds of fresh Mach-Os on the operator's laptop for every integration.
+** Proposal
+A GitHub workflow runs the same suite on macOS runners and posts the =local/release-certified= status on the exact commit; =scripts/integrate-main.sh= waits for it instead of running =certify-runtime-fast.sh= locally (or offers --local as fallback). This reverses part of dec_M251B (local authority), so grill first: the decision's reason for local certification (exact-tree, no-bypass) must survive — a CI status on the exact sha satisfies the same branch-protection contract.
+** Acceptance
+- integrate-main lands a PR with certification produced by CI; laptop runs zero test binaries.
+- The no-bypass property holds: status only from the workflow, on the exact head sha.

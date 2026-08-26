@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-ZMYEN
+#+orgasmic_version: 2
+
+* BACKLOG TASK-ZMYEN Hermes stdio: unknown event type must log-and-skip, protocol_end_without_finalize reassembles text_chunks, ORGASMIC_REPORT_PATH is the report    :vscode-orsl-letter:
+:PROPERTIES:
+:ID: TASK-ZMYEN
+:PRIORITY: P1
+:END:
+
+** Description
+Source: vscode-orsl manager letter 2026-08-22 (operator-forwarded, 40 dispatches over 4 days, orgasmic 0.0.18). Item 3. Two hermes-stdio reviewers finished the analysis, then died with `driver transport unavailable: hermes event missing type`; the text was in the jsonl as text_chunk events, the verdict was not. Manager reassembled by hand and re-dispatched for the verdict.
+Code: crates/orgasmic-daemon/src/drivers/hermes.rs — `hermes event missing type` and `unknown hermes event type` are fatal today.
+** Expected
+- (a) unknown/missing event type → warn + skip, never fatal.
+- (b) protocol_end_without_finalize → reassemble text_chunk stream into `-last.txt` with a `PARTIAL` header.
+- (c) export `ORGASMIC_REPORT_PATH` into the worker env; whatever is at that path when the run ends IS the report (beats the transport-carried final message).
+** Acceptance
+- Fixture: hermes stream with an unknown event mid-run still yields the report; fixture: stream cut before finalize yields a PARTIAL -last.txt; env var visible in a dispatched worker.
+** Progress
+(a) shipped in 5033cce: HermesAdapter::parse_event warns and skips unknown/untyped events (test hermes_unknown_and_untyped_events_are_skipped_not_fatal). Open: (b) partial -last.txt reassembly on protocol_end_without_finalize, (c) ORGASMIC_REPORT_PATH.
+

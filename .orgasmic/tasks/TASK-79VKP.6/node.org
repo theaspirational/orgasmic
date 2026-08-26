@@ -1,0 +1,21 @@
+#+title: orgasmic task TASK-79VKP.6
+#+orgasmic_version: 2
+
+* CANCELLED TASK-79VKP.6 Bound dispatch build caches without cross-worktree false greens :framework:worktree:build:performance:
+:PROPERTIES:
+:DEPENDS_ON: TASK-3X5AQ TASK-GRCWC
+:ID: TASK-79VKP.6
+:PRIORITY: P1
+:END:
+
+** Description
+The TASK-K9WWM final test worker created a separate 1.7 GiB worktree cache and spent 50.71 seconds compiling before one exact assertion test; the warm manager target ran all three exact tests in 7 seconds. TASK-3X5AQ proves that sharing CARGO_TARGET_DIR across checkouts can silently execute another checkout binary, and TASK-GRCWC guards destructive pruning. The remaining build-cache duplication has no implementation owner.
+
+Measure and choose a sound cache strategy that keeps checkout-specific fingerprints and final binaries isolated. Candidate mechanisms must be proved rather than assumed: compiler-object caches such as sccache, immutable dependency seeding followed by private fingerprints, filesystem cloning or hardlinks with copy-on-write validation, bounded worktree slots for disk only, or explicit no-reuse with automatic quota pruning. Never share a mutable Cargo target directory across different checkout paths.
+
+** Acceptance
+- Baseline disk, cold build, warm build, and concurrent-build costs are recorded for manager plus at least two worktrees.
+- The selected design cannot make an edited worktree report Fresh or run a binary built from another checkout; reproduce the TASK-3X5AQ negative control.
+- Cache storage is bounded and attributable per project, and cleanup observes TASK-GRCWC safety.
+- A TASK-K9WWM-shaped one-file test correction materially reduces duplicate compile time and disk without weakening test identity.
+

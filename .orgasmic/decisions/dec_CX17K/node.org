@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_CX17K
+#+orgasmic_version: 2
+
+* dec_CX17K How is task ownership determined, and what may a user edit while an agent runs?    :task-model:
+:PROPERTIES:
+:ID:            dec_CX17K
+:DECIDED_AT:    [2026-05-23 Sat 14:55]
+:SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_P24WF
+:END:
+** Context
+The task drawer's property strip needs an Owner field, but agent assignment is deterministic per stage (dec_JW9TJ). Manual owner selection risks the user mutating fields while an agent is mid-run; decoupling owner from runner is flexible but the user wanted ownership to follow the active worker.
+** Decision
+Derive the owner from the active run: "human" when no run is active, "agent.<kind>" when a run is active (agent picked deterministically from the =STAGE_WORKER_<STAGE>= map in =.orgasmic/config.org= per dec_JW9TJ/dec_FD6M7, not user-selectable). An agent-owned drawer is read-only for properties, description, and acceptance criteria, with a lock banner "🔒 Owned by agent.<kind>"; comments stay writable always and are injected via ={{task.activity}}= at next pickup. A "Release agent" affordance in the ⋯ menu force-cancels the run and returns ownership to human after confirmation.
+** Consequences
+Users cannot accidentally mutate task fields while an agent is mid-run, but they can still communicate through comments. The daemon and UI must expose ownership and release semantics consistently.
+

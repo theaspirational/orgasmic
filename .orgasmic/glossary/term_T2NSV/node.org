@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_T2NSV
+#+orgasmic_version: 2
+
+* term_T2NSV Prompt injection
+:PROPERTIES:
+:ID:                 term_T2NSV
+:CANONICAL:          prompt injection
+:AVOID:              adversarial prompt, global persona, slot registry
+:RELATES_TO:         term_VQ3F1 term_A8GT3 term_VD1MY term_3YTBK
+:DEFINITION:         The task- and state-specific prompt portion selected for a worker run, with spawn-time injection starting new work and continuation injection resuming interrupted work with prior context.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+

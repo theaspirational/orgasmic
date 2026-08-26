@@ -1,0 +1,32 @@
+#+title: orgasmic task TASK-EBWZ9.5
+#+orgasmic_version: 2
+
+* DONE TASK-EBWZ9.5 Close dec_NZ9PS mobile matrix gaps :ui:responsive:mobile:
+:PROPERTIES:
+:ID:               TASK-EBWZ9.5
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_M8JQT
+:PRODUCES:         ui/src/components/GraphView.tsx ui/src/components/TasksPage.tsx
+:WRITE_SCOPE:      ui/src/components/GraphView.tsx ui/src/components/TasksPage.tsx ui/src/hooks/use-mobile.ts ui/src/components/TaskDialog.tsx ui/src/components/BoardView.tsx ui/src/components/ProjectView.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-046-review-report.md .orgasmic/decisions.org
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-EBWZ9
+:MERGE_SHA:        6d1070e
+:CODEX_COMMIT:     ad2c715
+:END:
+
+** Description
+Addresses reviewer finding F-8 (medium design) from the review report. Mobile through the cloudflared tunnel was a locked dec_NZ9PS requirement. UI Session 4 closed most of the matrix (sidebar Sheet, header overflow, bell bottom Sheet, manager heights + 44px touch handle) but four gaps remain.
+
+** Acceptance Criteria
+- [X] *F-8 fix — Graph detail Sheet full-screen below md.* =w-full sm:max-w-[420px]= → =w-full md:max-w-[420px]=. Detail panel is full-screen on every width below md (was constrained at 640-767px).
+- [X] *F-8 fix — Graph canvas mobile min-height.* =min-h-[620px]= now gated behind =md:= so short mobile screens don't force extra vertical scrolling.
+- [X] *F-8 fix — Tasks kanban auto-switch to list below md.* =TasksPage= uses =useIsMobile()= to force =layout = 'list'= when mobile; query param stays editable on desktop. One-line code comment documents the override.
+- [X] *F-8 fix — long-press row/card opens task drawer.* 500ms pointer-hold handler on list rows + kanban cards calls =onSelectTask(taskId)=; pointer-move/up cancels the timer; click handler unaffected; mobile-only via =useIsMobile()=.
+- [X] =cd ui && npm run build= passes.
+- [X] Implementer read-verified the dec_NZ9PS matrix; no regressions reported to the items Session 4 shipped (sidebar Sheet, header overflow, bell bottom Sheet, manager heights + 44px touch handle).
+
+** Evidence
+- [2026-05-23 Sat 15:34] Shipped in bundled fix-implementer commit =ad2c715= (merged =6d1070e=). Files: =GraphView.tsx= (Sheet width + canvas min-height), =TasksPage.tsx= +162 (kanban auto-switch + long-press). Reviewer F-8 (medium design — partial mobile matrix wiring) closed.
+

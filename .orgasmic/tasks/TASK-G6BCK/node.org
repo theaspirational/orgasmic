@@ -1,0 +1,10 @@
+#+title: orgasmic task TASK-G6BCK
+#+orgasmic_version: 2
+
+* DONE TASK-G6BCK Prove request-time log-drop isolation and clean up the closed-pipe regression :daemon:fix:
+:PROPERTIES:
+:ID: TASK-G6BCK
+:END:
+
+Claude Opus 4.8 review of TASK-FZF2D found one required proof gap: the daemon test increments the dropped-write counter with a pre-request probe and only checks >= after a status request that emits no log. Add a request-time logging route/probe so a successful request and strict counter increase are causally linked. Also replace the CLI test zero-length read with a real bounded drain or remove the misleading claim. Scope SIGPIPE to after ExecPinned if this can be done without weakening daemon startup hardening; Rust already ignores it by default, so do not expand scope.
+

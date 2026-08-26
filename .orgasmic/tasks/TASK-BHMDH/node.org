@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-BHMDH
+#+orgasmic_version: 2
+
+* DONE TASK-BHMDH Encode marker-grep substeps in griller exploring and implementer reconciling prompts :conventions:prompts:
+:PROPERTIES:
+:ID:               TASK-BHMDH
+:PRIORITY:         P2
+:WORKER:           implementer-claude
+:IMPLEMENTS:       arch_PCSQE arch_QXS5W
+:PRODUCES:         shipped/prompts/griller/exploring.org shipped/prompts/implementer/reconciling.org
+:WRITE_SCOPE:      shipped/prompts/griller/exploring.org shipped/prompts/implementer/reconciling.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org .orgasmic/glossary.org archive/21_05_26_init/spec.org archive/2026-05-21_convention-bundle-gap/findings.md shipped/prompts/**
+:TEST_CMD:         cargo build
+:DEPENDS_ON:       TASK-D6Y0Y TASK-ZA4EW
+:END:
+
+** Description
+Wire the dec_BP4NH advisory-code-marker rules into the two prompt states that operationally enforce them: griller =exploring= and implementer =reconciling=. TASK-D6Y0Y ships the base griller exploring prompt; this task extends it with the marker-grep substep, and authors the implementer reconciling prompt with the explicit-user-approval rule.
+
+Surfaced as P2 items #3 and #4 in =archive/2026-05-21_convention-bundle-gap/findings.md=. Depends on TASK-ZA4EW to make the convention bundle and =\{\{conventions.code_markers\}\}= slot referenceable, and on TASK-D6Y0Y to provide the griller exploring prompt that this task extends.
+
+** Acceptance Criteria
+- [X] =shipped/prompts/griller/exploring.org= includes a substep instructing griller agents to grep for marker IDs to detect whether existing code already commits to a choice, transcribed from spec.org:1075-1076.
+- [X] =shipped/prompts/implementer/reconciling.org= exists and encodes the dec_BP4NH user-note rule from spec.org:1319-1326: implementers may touch files surfaced only by advisory-marker grep, but must raise an explicit question to the user before doing so.
+- [X] Both prompts opt in to =\{\{conventions.code_markers\}\}= (or reference it explicitly), pending the slot-injection-scope decision flagged in findings.md as a placeholder griller question.
+- [X] Dry-run compile of both prompts succeeds with the conventions slot resolved.
+
+** Evidence
+- [2026-05-21 Thu 22:57] Updated =shipped/prompts/griller/exploring.org= with marker-grep exploration steps and continuation guidance, while keeping marker hits advisory rather than complete.
+- [2026-05-21 Thu 22:57] Added =shipped/prompts/implementer/reconciling.org= with ={{conventions.code_markers}}= and the explicit =** Question= approval gate for advisory-marker-only files outside the claimed task's =:PRODUCES:= set.
+- [2026-05-21 Thu 22:57] Implementer reconciling prompt uses =:STATE: fixing= because =reconciling= is a prompt id, not an implementer state in the current state machine.
+- [2026-05-21 Thu 22:57] Verification passed: =cargo test -p orgasmic-core --test fixtures=, prompt dry-runs for =griller analyzing= and =implementer reconciling=, and =git diff --check= for the prompt files.
+
+** Worklog
+- [2026-05-21 Thu 22:47] Dispatched prompt-only worker Cicero after TASK-D6Y0Y made prompt dry-run and =conventions.*= runtime resolution available.
+- [2026-05-21 Thu 22:57] Integrated worker output and verified the prompt corpus still parses.
+

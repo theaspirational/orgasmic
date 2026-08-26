@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-BTESP
+#+orgasmic_version: 2
+
+* DONE TASK-BTESP Workspace MSRV 1.78 broken by transitive idna_adapter edition2024 requirement :build:msrv:deps:
+:PROPERTIES:
+:ID: TASK-BTESP
+:PRIORITY: P3
+:TEST_CMD: rustup run 1.87.0 cargo check --workspace
+:WRITE_SCOPE: Cargo.toml Cargo.lock .orgasmic/gotchas.org
+:END:
+
+TASK-T3ENY's MSRV-1.78 gate probe found =rustup run 1.78.0 cargo check --workspace= now fails: transitive dep =idna_adapter v1.2.2= requires Cargo =edition2024= (Rust 1.85+), unsupported by 1.78. The stated workspace MSRV (Cargo.toml workspace.package + gotchas.org) is no longer achievable. Decide: (a) pin idna_adapter / its parent (url/idna) to a pre-edition2024 version in Cargo.lock, (b) raise the workspace MSRV to the real floor and update the gotchas.org MSRV entry, or (c) document 1.78 as aspirational. Whichever — make =cargo check= on the declared MSRV pass again, or correct the declared MSRV so it is truthful.
+** Evidence
+- [2026-06-13 Sat] Reproduced the stale declared-MSRV failure: =rustup run 1.78.0 cargo check --workspace= fails before build because Cargo 1.78 cannot parse edition-2024 crates. First blocker was =idna_adapter v1.2.2=; after a temporary pin proved this was broader, the next blocker was =clap_builder v4.6.0=.
+- [2026-06-13 Sat] Chose the task's allowed option (b): raise the workspace MSRV instead of pinning a growing set of 2026 transitive dependencies. =cargo metadata --locked= showed current dependency metadata reaching Rust 1.87.0 (WASI/wit-bindgen family), with active deps already at 1.85-1.86.
+- [2026-06-13 Sat] Updated =Cargo.toml= workspace =rust-version= to =1.87= and refreshed the MSRV gotcha to explain why 1.78 is no longer truthful. Restored temporary =idna_adapter= / =clap_lex= pins, so =Cargo.lock= has no intentional change.
+- [2026-06-13 Sat] Gates passed: =rustup run 1.87.0 cargo check --workspace=; =cargo check --workspace= on the default toolchain.
+

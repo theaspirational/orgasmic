@@ -1,0 +1,37 @@
+#+title: orgasmic task TASK-G512N
+#+orgasmic_version: 2
+
+* DONE TASK-G512N Enumerate cross-scope edge vocabulary in arch_MPAQT interface :architecture:
+:PROPERTIES:
+:ID:               TASK-G512N
+:PRIORITY:         P2
+:WORKER:   architector
+:IMPLEMENTS:       arch_MPAQT
+:PRODUCES:         .orgasmic/architecture.org
+:WRITE_SCOPE:      .orgasmic/architecture.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org archive/21_05_26_init/spec.org archive/2026-05-21_convention-bundle-gap/findings.md docs/adr/*.org
+:TEST_CMD:         cargo build
+:END:
+
+** Description
+arch_MPAQT ("Design graph engine") names cross-scope reference validity as a constraint and references the finalize gate, but its interface line does not enumerate the four cross-scope edge predicates from spec.org:866-887: =:REFERENCES:=, =:EXTENDS:=, =:OVERRIDES:=, =:HOSTED_IN:=. The audit at =archive/2026-05-21_convention-bundle-gap/findings.md= (Class C, item 5) identifies this as the one remaining architecture-layer gap after the convention-bundle pass.
+
+Architect runs a small revision: add the four cross-scope edge predicates to arch_MPAQT's =:INTERFACE:= line (or a dedicated bullet inside the existing interface block), bump =:REVISED_AT:=, recompute =:SEMANTIC_HASH:= over the pipe-separated canonical content per the algorithm at spec.org:996. No new arch node; no decisions.org body edits.
+
+** Acceptance Criteria
+- [X] arch_MPAQT's interface enumerates =:REFERENCES:=, =:EXTENDS:=, =:OVERRIDES:=, and =:HOSTED_IN:= as the cross-scope edge predicates connecting global and project graphs.
+- [X] =:REVISED_AT:= and =:SEMANTIC_HASH:= are refreshed; stale propagation reaches any downstream tasks (TASK-PS3TK in particular).
+- [X] No ADR file is regenerated unless a decision body changes; predicate naming is operational refinement of an already-decided concept (dec_N17XX / global-project graph linkage), not a new decision.
+
+** Evidence
+- [2026-05-21 Thu 20:45] Promoted from backlog by operator via manager swarm session (user authorized closing the last architecture-layer gap before v0.0.1 implementation chain).
+- [2026-05-21 Thu 21:04] arch_MPAQT :INTERFACE: now ends with =cross-scope edges REFERENCES EXTENDS OVERRIDES HOSTED_IN=; a dedicated bullet under =** Interfaces= defines each predicate (project→global citation, glossary extension preserving meaning, glossary replacement within project scope, global-arch ownership claim against a board project).
+- [2026-05-21 Thu 21:04] :SEMANTIC_HASH: sha256:a909eb… → sha256:bb1ee78db702771e4373374fbfa0c282f0d52b5f46ac288c6e0f41729b62d75c (pipe-separated name | interface | constraints per spec.org:996).
+- [2026-05-21 Thu 21:04] :REVISED_AT: [2026-05-21 Thu 21:04] added; :DECIDED_AT: unchanged. :DECIDES: unchanged (dec_X6Q0S dec_PWRG1 dec_BP4NH dec_M50VK dec_XQ3F8). No decisions.org body edits. No ADR regenerated.
+- [2026-05-21 Thu 21:04] git diff --check clean; cargo build green (1.35s incremental).
+
+** Worklog
+- [2026-05-21 Thu 21:04] Read arch_MPAQT (`.orgasmic/architecture.org:215-246`) and spec.org:854-887 to confirm predicate semantics.
+- [2026-05-21 Thu 21:04] Chose the dedicated-bullet form (manager's stated preference); kept the :INTERFACE: properties line in sync by appending the four predicate names so the canonical hash input reflects the change.
+- [2026-05-21 Thu 21:04] Stale-propagation observation: arch_MPAQT is referenced by arch_Z3Z3V (=:DEPENDS_ON:=) and by TASK-PS3TK (=:IMPLEMENTS: arch_MPAQT arch_PCSQE=). When a stale-propagation engine eventually runs, TASK-PS3TK should be flagged stale and its acceptance criteria reviewed for cross-scope finalize-gate coverage. Code is not yet computing :SEMANTIC_HASH:, so propagation is a manual review item right now.
+

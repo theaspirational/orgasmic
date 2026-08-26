@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-KFGDS
+#+orgasmic_version: 2
+
+* DONE TASK-KFGDS codex acp-stdio approval-request handling + babysitter spawn for acp-stdio runs :drivers:acp:stdio:codex:sandbox:babysitter:bug:dogfood:
+:PROPERTIES:
+:ID:               TASK-KFGDS
+:PRIORITY:         P2
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/modes/jsonrpc.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/sandbox.rs crates/orgasmic-daemon/src/supervisor.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/modes/jsonrpc.rs crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/src/modes/acp_ws.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/r#trait.rs crates/orgasmic-drivers/src/lib.rs crates/orgasmic-drivers/src/sandbox.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-core/src/sprint.rs shipped/workers/implementer-codex-stdio.org shipped/workers/reviewer-codex-stdio.org shipped/workers/implementer-codex-appserver.org crates/orgasmic-drivers/tests/driver_modes.rs
+:READ_SCOPE:       crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs shipped/workers/babysitter-stall-detector.org
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-HY0QT TASK-HY0QT.1
+:END:
+
+** Description
+Live-codex dogfood of TASK-HY0QT during the TASK-C7ZG5 dispatch surfaced two real gaps in the acp-stdio path that the mock-peer fixture didn't exercise:
+
+1. *Codex's =require_escalated= sandbox-approval protocol is unhandled.* When codex sends an =exec_approval_request= / =apply_patch_approval_request= JSON-RPC notification (e.g., for a =cargo test --workspace= that wants to bind localhost sockets), the orgasmic acp-stdio driver has zero code path to respond. Codex sits indefinitely waiting for a grant that never comes. Discovered live during TASK-C7ZG5 implementer dispatch =run-20260526T072438-...= which stalled at =seq=350-351= with no follow-up events for ~23 minutes. =grep approval|sandbox|escalat= across =acp_stdio.rs= / =acp_ws.rs= / =jsonrpc.rs= / =adapters/codex.rs= returns zero matches — the acp-ws path will hit the same issue when someone runs codex over it.
+
+2. *Babysitter-stall-detector is not spawned for acp-stdio runs.* The =implementer-codex-stdio= worker spec declares =:BABYSITTER_WORKER: babysitter-stall-detector= but no =<run_id>.babysitter.jsonl= file was ever created during the TASK-C7ZG5 codex dispatch — meaning the babysitter wasn't invoked. The supervisor wires babysitters into the subprocess-stream-json (cursor) path but apparently not the acp-stdio path.
+
+User design call (this session, 2026-05-26): driver-primary detection + auto-approval per an allowlist; babysitter as fallback for residual stall modes. Allowlist with task-level override (worker spec defines defaults; task heading can override).
+
+** Acceptance Criteria
+- [ ] *F-1 SandboxAllowlist struct.* New =crates/orgasmic-drivers/src/sandbox.rs= module exporting =SandboxAllowlist { allow_exec: bool, allow_patch: bool, allow_network: bool, allow_writes_outside_cwd: bool }= plus =Default= trait returning all-true (trust-all baseline matches the headless dispatch model). Plus a resolution helper =fn resolve(task: Option<&SandboxAllowlist>, worker: Option<&SandboxAllowlist>) -> SandboxAllowlist= that returns task > worker > default.
+- [ ] *F-2 worker-spec property.* =shipped/workers/implementer-codex-stdio.org=, =reviewer-codex-stdio.org=, and =implementer-codex-appserver.org= gain a =:SANDBOX_PERMISSIONS:= property serialised as a CSV-of-key=value pairs (=allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true= as the worker-level default). Worker loader in =crates/orgasmic-core/= parses it into =SandboxAllowlist=.
+- [ ] *F-3 task heading override.* Task heading parser in =crates/orgasmic-core/src/sprint.rs= (or wherever task properties are parsed) accepts an optional =:SANDBOX_PERMISSIONS:= property with the same CSV format. Tested with a unit test that loads a task heading with override + asserts =resolve()= picks task > worker.
+- [ ] *F-4 HarnessEventAdapter::try_handle_approval.* New trait method on =HarnessEventAdapter=: =async fn try_handle_approval(&mut self, method: &str, params: &Value, allowlist: &SandboxAllowlist) -> Option<ApprovalResponse>= where =ApprovalResponse = Approved | Denied=. Default impl returns None. =CodexAdapter= implements it to recognize codex's approval-request methods (=exec_approval_request=, =apply_patch_approval_request=; check codex JSON-RPC protocol docs / source for exact names — there may be others like file-write or network ones) and match against allowlist; non-codex adapters keep the None default.
+- [ ] *F-5 shared jsonrpc.rs dispatch.* The notification-handling loop in =crates/orgasmic-drivers/src/modes/jsonrpc.rs= calls =adapter.try_handle_approval(method, params, allowlist)= BEFORE =adapter.parse_event(value)=. On =Some(Approved)= the driver: (a) emits a session event documenting the approval (so the chat overlay shows the request + decision as a tool-result-style bubble), (b) sends the corresponding JSON-RPC response back via the existing =WireMessage::JsonRpc= write path that TASK-HY0QT already built. On =Some(Denied)= the driver: (a) emits a documenting event with the denial, (b) sends the corresponding "denied" JSON-RPC response, (c) lets codex decide whether to retry or give up gracefully. On =None= the driver routes through =parse_event= as today.
+- [ ] *F-6 mock-peer regression test for approval.* Extend =acp_stdio_codex_jsonrpc_handshake_mock_peer= (or add a sibling test) where the mock peer emits an =exec_approval_request= notification with a known call-id; the test asserts (a) the driver replies via stdin with an approval-response JSON-RPC envelope matching the call-id, (b) a session event documenting the approval is emitted, (c) the run continues normally (Ready → TextChunk → tool_call → RunComplete). Cover both Approved (default allowlist) and Denied (custom allowlist with one disabled bit).
+- [ ] *F-7 babysitter spawn for acp-stdio.* In =crates/orgasmic-daemon/src/supervisor.rs= (or wherever the subprocess-stream-json path wires the babysitter), replicate the spawn for acp-stdio runs so they also bring up the worker declared in =:BABYSITTER_WORKER:=. Verify via a regression test that a =<run_id>.babysitter.jsonl= file is created when an acp-stdio dispatch runs.
+- [ ] All gates green: =cargo test --workspace=, =cargo clippy --workspace --all-targets -- -D warnings=, =cargo fmt --check=, =git diff --check=. MSRV 1.78 (see CLAUDE.md pitfalls).
+
+** Notes
+- *NOT* =:FIX_SUBTASK: t= — full IMPLEMENT → REVIEW → DONE lifecycle with reviewer pass per persona rule 2.
+- *Worker for this dispatch*: =implementer-cursor= — chicken-and-egg again (codex would hit the same approval-handling gap). After TASK-KFGDS ships, future codex-stdio dispatches will be unblocked.
+- *Lives in shared jsonrpc.rs so acp-ws inherits the fix.* When someone wires the acp-ws path against real codex, they get approval handling for free.
+- *Out-of-scope*: don't restructure the babysitter worker itself. Don't add a UI surface for approve/deny — for now the driver auto-decides per allowlist. Don't touch the subprocess-stream-json (cursor) path.
+
+** Evidence
+(populated at cluster close)
+

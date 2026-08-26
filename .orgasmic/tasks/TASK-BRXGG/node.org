@@ -1,0 +1,49 @@
+#+title: orgasmic task TASK-BRXGG
+#+orgasmic_version: 2
+
+* DONE TASK-BRXGG cli dispatch tests are not parallel-safe from the dogfood checkout (dispatch-close release race) :cli:daemon:tests:flake:reliability:
+:PROPERTIES:
+:ID:               TASK-BRXGG
+:PRIORITY:         P2
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      crates/orgasmic-cli/tests/ crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:       crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/tests/cli_parity.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs .orgasmic/gotchas.org
+:TEST_CMD:         cargo test -p orgasmic-cli
+:DEPENDS_ON:       TASK-CJXKM
+:END:
+
+** Description
+Two flake observations against the same surface, root cause not yet pinned:
+
+1. [2026-06-11 handoff Divergence] =orgasmic-cli --test dispatch=
+   dispatch-close tests fail under full-suite parallel load with "daemon
+   request failed ... /runs/<id>/release — is the daemon reachable?" (4/13
+   failed in =cargo test -p orgasmic-cli=, 1/13 in the isolated suite, 0 when
+   run alone twice). Load-dependent race in the dispatch-close → run-release
+   path; same family as the ab7bb93 dispatch DX races.
+2. [2026-06-11 manager session] full =cargo test --workspace= from this
+   checkout with the production daemon live on 4848 failed
+   =manager_dispatch_status_close_done_with_stub_codex= (1/13); passed clean
+   in isolation (7.7s). This is the test TASK-CJXKM hardened (bind_port 65533
+   fail-fast), so either TASK-CJXKM's exit condition is still unmet or this is
+   observation 1 wearing the other test's name.
+
+Goal: root-cause and fix so the FULL workspace suite is parallel-safe from
+the dogfood checkout while a production daemon runs. The fix may live in test
+isolation (per-test daemon lifecycle, port allocation, env-var inheritance)
+or in the daemon's release path — follow the evidence, do not paper over with
+retries or =--test-threads 1=.
+
+** Acceptance Criteria
+- [ ] Root cause written up in Evidence (which process, which race, why
+  load-dependent).
+- [ ] =cargo test --workspace= passes 3 consecutive runs from this checkout
+  with a production daemon live on 4848.
+- [ ] =cargo test -p orgasmic-cli= passes 3 consecutive runs standalone.
+- [ ] No retry loops, sleeps-as-sync, or forced serial test execution
+  introduced as the primary fix.
+
+** Evidence
+Fixed in the combined TASK-ZD72S round (worker commit =085f09e=, merge =605835f=, close tx-0328). ROOT CAUSE: cmd_dispatch_close pruned worktree artifacts BEFORE releasing the still-live daemon run; under parallel-suite load the run's completion watcher wrote last.txt/stdout into the pruned stem (and the release endpoint raced the cleanup), producing 'daemon request failed ... /runs/<id>/release'. Load-dependent because the watcher only loses the race when the scheduler is saturated. FIX: release the live run first, then cleanup + lifecycle (crates/orgasmic-cli/src/manager.rs); supervisor live_direct_child_pids gained a ps-based fallback merged with pgrep results. No retries, sleeps, or serial execution introduced. GATES: cargo test -p orgasmic-cli green 3x standalone (worker) + green inside 3x full-workspace runs from this checkout with the production daemon live (manager, after the =4c86136= fix-up). The new release-before-prune path ran live during this round's own dispatch-close.
+REVIEWER PASS (claude-fable-5 high, run-20260613T010822, close tx-0335): VERDICT ship. Reviewer confirmed the release-before-prune ordering and the failure matrix (ambiguous double-fault leaves resources in place per the WTJ5V invariant), and found the residual MAJOR: unwrap_or_default on the liveness probe — fixed at =eddd472=, probe failure now fails the close before any cleanup.
+

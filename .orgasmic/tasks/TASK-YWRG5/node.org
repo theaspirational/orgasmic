@@ -1,0 +1,40 @@
+#+title: orgasmic task TASK-YWRG5
+#+orgasmic_version: 2
+
+* DONE TASK-YWRG5 Phase 2: teach daemon architecture parser child-node syntax (arch_NNN.M) :daemon:parser:architecture:phase-2:
+:PROPERTIES:
+:ID:               TASK-YWRG5
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_C87Z9 arch_MPAQT
+:PRODUCES:         crates/orgasmic-core/src/schema.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE:      crates/orgasmic-core/src/** crates/orgasmic-daemon/src/**
+:READ_SCOPE:       .orgasmic/architecture.org crates/orgasmic-core/src/** crates/orgasmic-daemon/src/**
+:TEST_CMD:         cargo test --workspace
+:MERGE_SHAS:       59f34d5
+:END:
+
+** Description
+The =orgasmic-core= architecture parser currently recognizes top-level =* arch_NNN ...= headings. Extend it to also accept second-level =** arch_NNN.M ...= children under each parent, with the typed-edge property set (=:SOURCE_PATHS:=, =:READS:=, =:WRITES:=, =:EXPOSES_REST:=, =:EXPOSES_WS:=, =:SUBSCRIBES_TO:=, =:SPAWNS:=, =:CALLS:=, =:DEPENDS_ON:=). Architecture nodes gain a parent/child relation derivable from the ID prefix.
+
+Grilling context: dec_X6Q0S refinement [2026-05-27]. CLAUDE.md pitfall reminder: the existing parser is opinionated about =TODO_KEYWORDS=; the architecture-prefix recognition is similarly opinionated. Read =crates/orgasmic-core/src/schema.rs= and =crates/orgasmic-core/src/org.rs= before adjusting.
+
+** Acceptance Criteria
+- [ ] Parser recognizes =** arch_NNN.M ...= children under each =* arch_NNN ...= parent and extracts: id, label, status, source paths, and all typed edges. Body paragraph is the verb description.
+- [ ] Typed-edge properties parse as space-separated values: each value is either another arch ID (=arch_C87Z9.3=) or an artifact pseudo-node ID (=file:tx=, =projection:materialized-index=, =socket:events=).
+- [ ] Materialized index exposes the child layer through =GET /architecture/nodes= (or extension of the existing endpoint) so the in-app route (TASK-MW5BX) can consume it.
+- [ ] Artifact pseudo-nodes parse as a separate node kind distinguishable from arch nodes; scheme prefix (=file:=, =projection:=, =socket:=) is the only allowed namespace.
+- [ ] Backward compat: existing =arch_NNN= top-level headings without children still parse and serve normally.
+- [ ] =cargo test --workspace= green; =cargo clippy --workspace --all-targets -- -D warnings= clean; MSRV 1.78.
+
+** Notes
+- *Independent of TASK-ENXWA*: this can ship speculatively against a tiny fixture; TASK-ENXWA lands the real architecture.org content using the new schema.
+- *Out of scope*: drift comparator (TASK-BJHKN), in-app UI consumption (TASK-MW5BX), architector persona (TASK-EZ0ST).
+
+** Evidence
+- *Implementer pass merged as =59f34d5= (codex =51cc7e0=, ~16 min wall, clean codex-stdio dispatch — no manager-rescue).* 6 files +590/-20 LOC: schema.rs +298 (new ArchitectureNode child fields + ArchEdge/ArchEdgeKind/ArchEdgeTarget/ArtifactNode/ArtifactScheme types; ArchitectureNode::from_org walks parent + direct ** arch_NNN.M children); fixtures.rs +111 (6 new parser tests); index.rs +127 (materialized index stores children + artifact pseudo-nodes + typed edges); api.rs +15 (new =GET /architecture/nodes= endpoint returning ={ nodes, edges }=, backward-compat =GET /architecture= still returns ArchitectureSummary including child rows); integration.rs +53 (daemon endpoint test); lib.rs +6 (re-exports). Typed-edge properties parse space-separated arch IDs OR =file:/projection:/socket:= artifact pseudo-nodes. Invalid scheme returns SchemaError "unknown architecture namespace".
+- *Daemon glitch note (recovered):* the initial dispatch hit a transient daemon connection error; the run+codex DID spawn correctly but the dispatch_started tx was never written. Result: dispatch-close errored with "no open manager.dispatch_started tx". Recovery: manually flipped TASK-YWRG5 BACKLOG → REVIEW in sprint.org before reviewer dispatch (sprint state did not auto-flip via dispatch handler given the missing tx). Reviewer dispatch then worked normally. **Not a code defect** — symptom of a momentary daemon glitch under load (cargo-build + dispatch contention). No lasting effect on the merge or the work shipped.
+- *Reviewer pass verdict =clean, ships-as-is=* via =/tmp/orgasmic-codex/task-087-reviewer-last.txt=: 0H/0M/0L findings. Scope confirmed in-bounds. No daemon-disturbing commands.
+- *Gates on merged main =59f34d5=:* cargo test --workspace ✓ (exit 0); cargo check --workspace ✓; cargo clippy --workspace --all-targets -- -D warnings ✓; cargo fmt --check ✓; git diff --check ✓.
+- *Unblocks*: TASK-ENXWA (first architector run authoring real arch graph content using the new schema), TASK-BJHKN (drift comparator CLI reads via the new parser + API), TASK-MW5BX (in-app UI consumes =GET /architecture/nodes=).
+

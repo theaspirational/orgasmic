@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_KCGEH
+#+orgasmic_version: 2
+
+* term_KCGEH Session file
+:PROPERTIES:
+:ID:                 term_KCGEH
+:CANONICAL:          session file
+:AVOID:              compressed transcript, opaque trace
+:RELATES_TO:         term_3YTBK term_KH8TX
+:DEFINITION:         An append-only JSONL transcript of one worker or manager run.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

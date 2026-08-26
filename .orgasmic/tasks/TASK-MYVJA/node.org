@@ -1,0 +1,12 @@
+#+title: orgasmic task TASK-MYVJA
+#+orgasmic_version: 2
+
+* DONE TASK-MYVJA TASK-SZEWA fix round 2: monotonic governance and deletion-ready address truth
+:PROPERTIES:
+:ID: TASK-MYVJA
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-SZEWA
+:END:
+
+Resolve confirmation findings after 84b6934: monotonic sandbox across all overlays; expose/enforce full governance and budgets; non-finalizing babysitter plus recovery without worker files; remove active static model/effort knowledge and preserve exact overrides; atomic whole artifact address; exact UI argv; truthful live switching; clear warnings.
+

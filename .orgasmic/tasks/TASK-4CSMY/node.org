@@ -1,0 +1,230 @@
+#+title: orgasmic task TASK-4CSMY
+#+orgasmic_version: 2
+
+* DONE TASK-4CSMY The pane open-turn evidence channel is rmux-only, so tmux dispatches stay exposed to the 600s stall-kill :dispatch:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-4CSMY
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs, crates/orgasmic-drivers/src/modes/tmux.rs, crates/orgasmic-drivers/src/modes/rmux.rs, verify/TASK-4CSMY/, verify/TASK-JQ8AV/
+:END:
+
+
+=== WIDENED at filing (manager, 2026-07-29): the primary channel is missing too
+
+Further measurement while scoping the tmux default switch. The gap is not only
+JQ8AV's rescue channel — the PRIMARY pane-liveness channel is absent on tmux:
+
+- =pane_activity= is emitted by =crates/orgasmic-drivers/src/modes/rmux.rs=
+  and by nothing else. A grep for the event across =crates/orgasmic-drivers/src/=
+  returns rmux hits only.
+- =modes/tmux.rs= (4668 lines) sends =DriverEvent::Ready=,
+  =TransitionState=, =ToolCall= and the fatal-error paths. There is no
+  continuous pane-output event of any kind.
+
+So on a tmux transport the stall clock sees driver events only when the worker
+happens to call a tool or change state. Between those, evidence falls back to
+the subtree CPU probe alone. A CPU-hot stretch (a long =cargo test= under the
+pane) is still classified Working, so the common long-tool case survives. The
+fatal case is the provider-bound think: low CPU, no tool calls, no pane event,
+and — because JQ8AV's consult is gated on =transport == "rmux"= — no rescue
+either. That is a 600s kill of a healthy worker with every channel blind.
+
+This is why TASK-RWCRN's history matters: rmux only became safe when it grew
+=pane_activity=. tmux has never had that, so it is where rmux was BEFORE the
+fix, not merely missing the JQ8AV refinement.
+
+ORDERING CONSEQUENCE. The operator has directed that tmux become the shipped
+default driver, on the sound reasoning that a first-time user may have only
+tmux. That makes this task a SHIP BLOCKER rather than a hardening nicety: with
+the default flipped and this unfixed, the users least equipped to diagnose it
+get healthy workers killed at ten minutes. Land this before the default flips;
+dogfood on tmux in the meantime with
+=--governance-json '{"stall_timeout_secs":3600}'= on every long-thinking
+dispatch.
+
+Work item 0, ahead of the others: give the tmux driver a coalesced
+=pane_activity= equivalent to rmux's, with rmux's live tests ported
+(=live_rmux_pane_publishes_pane_activity_while_it_writes= and the
+newline-free-redraw variant) onto a test-owned tmux server. Only then does the
+open-turn-statusline consult of items 1-3 become a refinement rather than the
+sole channel.
+PRODUCTION CONFIRMATION [2026-08-03], and this is what closes the loop the task
+was opened for.
+
+The runtime was rebuilt at =05e1813= and a TASK-8ED6V implementer dispatched on
+*tmux* — the first tmux dispatch on a daemon that actually contains this channel.
+Its session JSONL carries:
+
+: driver_event/pane_activity   {"bytes": 10867, "seq": 3, "type": "pane_activity"}
+
+Counted 2 events at +45s and 4 at +105s, increasing, with the run =[run-live]= and
+=DRIVER=tmux=. So the channel is not merely compiled in — IT REPORTS, on the
+transport it was written for, in production.
+
+WHY THIS MATTERS BEYOND THE TASK. Until this measurement, tmux dispatches on this
+host had no progress signal at all, and a provider-bound think was released at the
+stall budget regardless of how much work it was doing. That is what destroyed the
+TASK-FZB6T.1 worker report on 2026-08-02: it committed 4,004 good lines and was
+killed eight minutes later with its entire report unwritten.
+
+CONSEQUENCE FOR THE STANDING MITIGATION. The mandatory
+=--governance-json {"stall_timeout_secs":3600}= on long tmux dispatches existed
+only because the channel was blind. It now reports, so the override can be
+retired for tmux — but retire it DELIBERATELY: the measurement above proves the
+channel emits, and does not yet prove that a genuinely at-rest wedge still dies on
+schedule under the new classifier in production. A short confirmation run that
+lets a stall budget actually expire on a live tmux pane would close that half.
+Until someone does it, keeping the override costs nothing.
+
+** Description
+TASK-JQ8AV landed a third work-evidence channel: at the stall deadline, when
+subtree CPU is below the work threshold, the probe captures the pane and looks
+for the TUI's open-turn statusline. A provider-bound turn is then classified
+=Working= instead of being stall-killed.
+
+That channel is gated on =target.transport == "rmux"= (supervisor.rs, in
+=ProcessSubtreeCpuProbe=). On a =tmux= transport the consult never runs, so the
+classification falls back to CPU alone — which is exactly the state that killed
+FZB6T, RB1ZN and SZJ2B at 600.1s during long claude-opus-5 high-effort thinks.
+
+This matters now because the operator has directed that orgasmic ship =tmux= as
+the default driver (first users may have only tmux installed, so tmux is what
+must be hardened). Dispatching opus-5 high-effort work over tmux before this
+lands reproduces the original incident.
+
+=== Work
+1. Generalise the pane consult from rmux to any pane transport. =rmux= and
+   =tmux= share the =capture-pane -p -t <session>= surface, so the marker
+   classifier (=pane_open_turn_marker=) is reusable verbatim; what differs is
+   the binary, the session-name derivation, and the socket/endpoint flag.
+2. Keep the fail-closed ordering JK66P set and JQ8AV preserved: pane unreadable
+   must never rescue a run, only report =pane capture unavailable=. The channel
+   may flip Idle->Working and nothing else.
+3. Extend the acceptance test to the tmux transport. JQ8AV's
+   =a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies=
+   drives a REAL pane on a test-owned server; the tmux half needs the same
+   shape on a test-owned tmux server, not a stubbed capture.
+4. Do NOT widen the rescue to non-pane transports. acp-* transports already
+   stream turn events into the stall clock and need no pane channel.
+
+=== Acceptance
+- A network-waiting provider-bound turn on a =tmux= transport survives repeated
+  expired stall budgets, proven with a real tmux pane.
+- An at-rest, connectionless wedge on =tmux= still dies on schedule, with a
+  reason naming both empty channels.
+- The rmux behaviour JQ8AV shipped is unchanged (its verify artifact still
+  replays red-then-green).
+- A shipped injection proof under verify/, per the project bar.
+** Evidence
+Merged =7d9c60c= (impl =75255e5=, branch =task-4csmy-impl=, base =9017514=).
+Implementer =implementer-claude-tmux=: driver tmux, harness claude, model
+claude-opus-5, effort high. Dispatch =tx-20260802-orgasmic-4044=.
+
+MANAGER GATES on the merge, run independently of the worker's report:
+
+| gate | result |
+| =cargo fmt --all --check= | PASS |
+| =cargo clippy --workspace --all-targets -- -D warnings= | PASS |
+| =orgasmic verify TASK-4CSMY= | PASS — red matches pinned signature, then green, tree byte-identical |
+| =orgasmic verify TASK-JQ8AV= | PASS — the re-cut artifact still replays red-then-green |
+| =scripts/run-tests.sh= | RED, and NOT attributable to this change — see below |
+
+THE SUITE RED, MEASURED RATHER THAN ASSUMED. The project bar is a green suite,
+and this environment does not currently produce one. Three runs, because a
+single red proves nothing about its own cause:
+
+| # | site | tree | real failures |
+| 1 | repo root | =7d9c60c= (the merge) | 8 |
+| 2 | repo root | =9017514= (BASE, pre-merge) | 4 |
+| 3 | dispatch worktree | =75255e5= (tree-identical to the merge) | 2 |
+
+Run 2 is the control the flake convention requires: the SAME worktree at the
+BASE commit. It is red too, so "this change broke the suite" is refuted — four
+failures predate the diff entirely
+(=explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds=,
+=recovery_reattaches_rmux_session_when_handle_exists=,
+=direct_child_pid_finds_wrapper_child_process=,
+=process_subtree_cpu_probe_sees_a_real_cpu_burning_child=).
+
+Run 3 settles the remaining four, which failed ONLY on the merge in run 1
+(=recovery_inventory_waits_for_atomic_claim_commit=,
+=live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh=,
+=dead_pid_aborts_joins_hung_producer_then_receiver_releases=, and this task's
+own new =a_network_waiting_tmux_turn_outlives_the_stall_window_and_a_wedge_dies=).
+On a byte-identical tree at another site, NONE of the four reproduced — the new
+test passed. They also each passed in isolation in run 1. So they are
+site/load-dependent, not diff-caused.
+
+Every failure across all three runs also passed in isolation under
+=run-tests.sh='s own re-run.
+
+WHAT THE MATRIX SAYS ABOUT THE FLAKE SET ITSELF (routed to TASK-STWVB): the
+worker measured 0 real failures on tree =75255e5= in the dispatch worktree; run
+3 measured 2 on the SAME tree in the SAME worktree. So the axis is not only
+load and not only worktree — identical tree at an identical site varies BY RUN.
+Any future "N tests green" claim needs a run count, not just a worktree name.
+
+NOT CLAIMED: that the suite is green. It is not, here. What is claimed is that
+its red is independent of this change, on the evidence above.
+
+RESIDUALS the implementer named and I am carrying forward rather than closing
+over: =pipe-pane= backpressure needs a wedged daemon to reach; the tmux probe
+returns Unknown (fail-closed, today's behaviour) if a daemon's PATH resolves
+=tmux= to the rmux shim; and the production claim — a real dispatched tmux
+worker surviving a real 600s provider-bound think — is NOT proven, because it
+needs the runtime reinstalled at =7d9c60c= or later. Until that reinstall,
+=--governance-json '{"stall_timeout_secs":3600}'= stays mandatory on every long
+tmux dispatch.
+
+SCOPE: the implementer wrote outside the declared WRITE_SCOPE and flagged it
+rather than asking. Correct call — the heading's own WIDENED section made
+=modes/tmux.rs= "work item 0", and the scope field had simply never been updated
+when the task widened. WRITE_SCOPE corrected to match at integration.
+
+INDEPENDENT REVIEW [2026-08-02]: NEEDS FIXES — BLOCKS SHIP.
+=reviewer-codex-tmux= (driver tmux, harness codex, model gpt-5.6-sol, effort
+high), run =run-20260802T133215-ec3730d4717a4ca595ee0f9a9bd715a4=, dispatch
+=tx-20260802-orgasmic-4053=, closed =tx-20260802-orgasmic-4060=. Finding:
+=tx-20260802-orgasmic-4055=.
+
+THE BLOCKER is not in what this task built — it is what this task EXPOSED.
+=pane_open_turn_marker= (supervisor.rs ~4902, loose spinner branch ~4913-4919)
+accepts any visible line containing =Esc to interrupt=, anywhere in the capture.
+This task routed tmux through that classifier, so an at-rest tmux pane whose
+prompt, transcript or tool output contains those bytes is classified =Working=
+on every expired stall sweep and survives to the 14,400s max-run ceiling instead
+of dying at 600s. The new wedge arm cannot catch it: it drives a blank
+=sleep 300= pane, so a marker-bearing at-rest pane is untested by construction.
+
+It is also an ORDERING VIOLATION, recorded in TASK-JQ8AV.1 before this task ran:
+transport generalization was to follow the classifier fix, not precede it. That
+ordering inverted. TASK-JQ8AV.1 is therefore the unblocking work for this task
+too; its Acceptance has been updated to require the marker regressions on tmux
+as well as rmux, and it is dispatched (=tx-20260802-orgasmic-4064=).
+
+WHAT THE REVIEWER INDEPENDENTLY CONFIRMED as sound, and should be preserved
+through the fix round: =PaneMux= transport scoping; tmux pane-PID resolution;
+the raw-byte =pipe-pane= activity channel; fail-closed behaviour on capture
+errors; release/Drop cleanup. It ran the live smoke on a real pane
+(=live_tmux_pane_publishes_pane_activity_for_newline_free_redraws=, PASS, 30.3s)
+and watched =cat= pid 61791 live as a child of the test-owned tmux server and
+disappear on release.
+
+CRITICALLY, the re-cut proof was checked and NOT weakened:
+=orgasmic verify TASK-JQ8AV= PASS — "the re-cut patch still removes the same
+pane-content channel, reproduces the pinned incident red, restores a
+byte-identical tree, and passes green. I found no weakening of this artifact."
+That was the sharpest risk in the integration and it is closed.
+
+OPEN, not attributed: 112 inactive =orgasmic-pane-*= FIFO directories were
+already in the temp root in five clusters spanning 15:33-16:28, with no open
+handles and no surviving =cat= processes. The reviewer's own acquire/release
+smoke and explicit Drop-path test each added ZERO, so this is test-teardown
+residue rather than a per-run daemon leak — but it accumulates. Filed as
+TASK-8XPRR.
+
+STATE: stays IN_REVIEW. Per the active goal, a BLOCK SHIP is not closed until
+its fix round lands and passes a fresh review. Do not flip the tmux default
+driver until TASK-JQ8AV.1 lands, and keep
+=--governance-json '{"stall_timeout_secs":3600}'= on every long tmux dispatch.
+

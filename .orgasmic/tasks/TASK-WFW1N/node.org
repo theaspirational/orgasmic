@@ -1,0 +1,32 @@
+#+title: orgasmic task TASK-WFW1N
+#+orgasmic_version: 2
+
+* DONE TASK-WFW1N Worker-driven dispatch finalize verb (orgasmic dispatch finalize) :daemon:cli:dispatch:hardening:
+:PROPERTIES:
+:ID: TASK-WFW1N
+:MOTIVATED_BY: dec_3M7M0
+:PRIORITY: high
+:END:
+
+Implements dec_3M7M0. Replace inferred TUI-driver finalization (guess done + scrape scrollback + unconfirmed commit) with a worker-declared completion call over the existing worker->daemon write channel.
+
+** Scope
+1. CLI verb `orgasmic dispatch finalize` (worker-side counterpart to `manager dispatch-close`):
+   - flags: --run <run-id> (or --task), --status done|failed, --commit (stage+commit the worktree), --summary-file <path> (authoritative report text; also accept stdin), --worker-commit passthrough.
+   - Behavior via a daemon endpoint: record the terminal event; write last.txt from --summary-file (NOT scraped); if --commit, commit the worktree; emit implementer.done / reviewer.done (by run kind); release the lease. One daemon call, atomic finalize.
+2. Prompt-spec contract: add "your contract ends by calling `orgasmic dispatch finalize --run $RUN_ID --status done --commit --summary-file <report>`" to the implementer + reviewer worker personas (shipped/prompt-studio/prompt-specs or the worker templates), so it is universal, not per-brief. Thread $RUN_ID into the worker env/prompt so the worker knows its run id.
+3. Demote the scrape/stall path to FALLBACK: if a finalize event arrived for a run, the release path must NOT overwrite last.txt from scrollback; stall-detection only fires "no finalize within timeout -> mark orphan / rescue-needed", not "assume done + scrape".
+4. (Optional, belt-and-suspenders) a harness stop-hook that calls finalize if the worker did not.
+
+** Acceptance Criteria
+- [ ] `orgasmic dispatch finalize` writes last.txt verbatim from --summary-file (test: content matches input exactly, no scrollback contamination).
+- [ ] --commit produces the worktree commit as part of finalize; a finalize with uncommitted changes + --commit leaves a clean committed worktree (commit-stall impossible).
+- [ ] finalize emits the correct terminal tx (implementer.done/reviewer.done) and releases the lease; manager dispatch-status shows the run closed.
+- [ ] When finalize arrived, the driver release path does NOT scrape/overwrite the report (regression test).
+- [ ] When finalize did NOT arrive within the stall window, the run is flagged orphan (not silently marked done) — verified by a test simulating a worker that never finalizes.
+- [ ] Worker prompt specs carry the finalize contract; a dispatched worker calls it (verify on a live rmux smoke).
+- [ ] gates: daemon + cli green, clippy -D, fmt.
+
+** Notes
+Does not fix host-kill-before-finalize (dec_3M7M0 residual): that path yields no finalize event + uncommitted worktree = detectable + rescuable, which is the intended bound. ACP drivers already have protocol finalize; this brings TUI drivers (rmux/tmux) to parity. Reuses manager dispatch-close plumbing where possible (same terminal-tx + lease-release, different caller/authority).
+

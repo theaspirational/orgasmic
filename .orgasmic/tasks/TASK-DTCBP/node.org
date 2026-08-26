@@ -1,0 +1,48 @@
+#+title: orgasmic task TASK-DTCBP
+#+orgasmic_version: 2
+
+* BACKLOG TASK-DTCBP orgasmic verify: --all, the verify_artifact drawer property, and the dispatch-close gating decision    :cli:verification:mechanism:
+:PROPERTIES:
+:ID: TASK-DTCBP
+:PRIORITY: P2
+:END:
+
+Follow-ups from TASK-TCTTD (merged 539d2af), as listed by its implementer and
+confirmed by the manager's replay. The verb works and is proven; these are the
+integration steps that make it bind by default instead of on request.
+
+=== 1. `orgasmic verify --all`
+
+Replay every artifact under `verify/`, machine-readable summary, nonzero exit
+if any artifact fails. This is the invocation items 2 and 3 actually want.
+Expect ~2x a normal suite per artifact plus rebuild churn from patch cycling
+(measured on TASK-R74E8: each arm recompiles orgasmic-daemon, 10-35s).
+
+=== 2. `verify_artifact` drawer property (the task body's stated preference,
+deferred by the implementer for write scope — correctly)
+
+Add the schema field in orgasmic-core, let implementers set it, have
+`orgasmic verify` prefer it over the path convention, and validate at
+`dispatch-close` that a task claiming an artifact has one that loads.
+
+=== 3. DECIDE: gate `manager dispatch-close --status done` on a passing replay
+
+TASK-TCTTD's own non-goal said "once the verb has been used in anger". It now
+has been (three replays by the manager on merge day, including a false-green
+catch of a manager-authored no-op probe). Record the decision either way; if
+gating, an escape hatch (--no-verify with a recorded reason) is required for
+tasks whose defects cannot be patch-expressed.
+
+=== Acceptance
+
+- `verify --all` replays both shipped artifacts green and a deliberately broken
+  one red, with one summary line each.
+- The drawer property round-trips create -> get and `verify` resolves it.
+- The gating decision is recorded as a dec_ node or in the task, with reasons.
+
+=== Non-goals
+
+- No CI wiring here (TASK-S2KM0 owns the lane; it should call `verify --all`).
+
+NIGHTLY REPLAY [2026-07-29, deferred from TASK-S2KM0]: the per-PR CI lane deliberately excludes `orgasmic verify` replays (cost grows with history; some artifacts are load-dependent reproductions or 60s soaks that would flake on shared runners and teach people to ignore the lane). The right home is the nightly: replay every verify/TASK-*/ artifact on a schedule. That is this task's `verify --all` ask with a concrete consumer — wire it into nightly-soak.yml or a sibling scheduled workflow.
+

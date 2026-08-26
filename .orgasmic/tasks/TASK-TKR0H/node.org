@@ -1,0 +1,38 @@
+#+title: orgasmic task TASK-TKR0H
+#+orgasmic_version: 2
+
+* BACKLOG TASK-TKR0H Guard shipped prose that DENIES a real verb: negative claims about command names must fail when the verb resolves
+:PROPERTIES:
+:ID: TASK-TKR0H
+:PRIORITY: P2
+:END:
+
+From TASK-HXSW0 (2026-07-29). Its shipped-prose guard
+(crates/orgasmic-cli/tests/cli_parity.rs, 128 invocations across shipped/**)
+proves every QUOTED command resolves against the real clap surface. It cannot
+catch the inverse: prose asserting a real verb is ABSENT. That inverse is
+measured, not hypothetical — `shipped/prompt-studio/conventions/manager-dispatch.org`
+said "there is no listing command … that verb has never existed in any command
+group" and `prompt-specs/manager.org` listed `manager drivers` among "commands
+that sound obvious and do not exist" — for MONTHS after TASK-JQARS landed
+`orgasmic manager drivers`. The prose instructed managers to discover transport
+pairs by submitting a bogus pair and reading the rejection. Both were corrected
+by hand in HXSW0; nothing prevents recurrence.
+
+=== Ask
+
+A guard that detects negative claims about command names in shipped prose —
+"does not exist", "has never existed", "there is no … command/verb" within N
+tokens of an `orgasmic …` span — and FAILS when the named verb resolves against
+the real clap tree. Precision matters: the corpus legitimately says "X does not
+exist" about verbs that genuinely don't (that is the guard passing); tune the
+extraction so real negatives survive.
+
+=== Acceptance
+
+- An injection that re-adds a "verb X does not exist" sentence about a verb
+  that DOES resolve is caught by the test (this is the natural verify artifact).
+- The guard runs in the same test binary as the existing shipped-prose check
+  and shares its extraction, so the two directions cannot drift apart.
+- Zero false failures on the corpus at HEAD.
+

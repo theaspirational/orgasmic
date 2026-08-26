@@ -1,0 +1,56 @@
+#+title: orgasmic task TASK-W43NY
+#+orgasmic_version: 2
+
+* DONE TASK-W43NY Task badges restate the same fact three ways: collapse kind/owner/sub-state into one performer pill :ui:tasks:kanban:badges:polish:dec_QWEQ8:
+:PROPERTIES:
+:ID:               TASK-W43NY
+:PRIORITY:         P3
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      ui/src/components/** ui/src/lib/**
+:READ_SCOPE:       ui/src/components/tasks/ ui/src/lib/ .orgasmic/decisions.org
+:TEST_CMD:         npm --prefix ui run build
+:END:
+
+** Description
+Operator-reported [2026-06-11, live screenshots]: a task row with an active
+run renders three chips that restate one fact — =Implementer= (kind),
+=agent.implementer= (owner), =Implementer.working= (run sub-state). The task
+drawer adds the same trio next to the lifecycle pill. Three teal chips, one
+meaning: "an implementer is working on this."
+
+Collapse per the dec_QWEQ8 precedent (single combined pill with separator
+dot) and dec_P7EY8 (performer-namespaced sub-state vocabulary):
+
+- Live run: ONE performer pill — =Implementer · working= — replaces kind
+  chip + owner chip + sub-state chip. Owner appears only when it carries
+  information beyond the kind (e.g. a named worker like
+  =implementer-claude-rmux= or a human), rendered inside the same pill or
+  as a tooltip/secondary line, not a sibling chip.
+- No live run: the plain kind chip stays as today.
+- Drawer header: lifecycle pill + priority + the same single performer
+  pill; no duplicate kind chip beside it.
+- Parent-task chip (=TASK-CJWT3=-style) is a distinct fact — keep it.
+
+** Acceptance Criteria
+- [ ] Task list row with an active run shows exactly one performer pill
+  (kind + sub-state combined), plus lifecycle-independent chips only when
+  they carry distinct facts.
+- [ ] Task drawer header shows lifecycle, priority, and one performer pill —
+  no chip restating the kind.
+- [ ] No-live-run rendering unchanged (plain kind chip).
+- [ ] =npm --prefix ui run build= green; existing UI unit tests pass; add a
+  unit test for the pill-collapse rendering decision if testable at unit
+  level.
+
+** Evidence
+- Implementer: claude rmux, run-20260611T114028, worker commit =7cd9ebf=,
+  merged =6cc831c=. Pure helper =ui/src/lib/performerPill.ts= + 8-test
+  suite (owner-adds-info logic, null edges); TaskAgentBadges/TaskDialog/
+  TasksPage collapse to one pill behind hasLiveRun.
+- Gates: ui build green; vitest 37/37 at merge.
+- Reviewer: claude rmux (run-20260611T121230), verdict =APPROVE=. Confirmed
+  one-pill rendering, parent-task chip untouched, idle rendering unchanged,
+  resolvePerformer edges, token/contrast conformance. LOW non-blockers:
+  add null-kind test case; clarify dec_QWEQ8 casing ("Performer · verb" vs
+  UPPERCASE spec) — fold into a future polish pass if dec_QWEQ8 is tightened.
+

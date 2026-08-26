@@ -1,0 +1,59 @@
+#+title: orgasmic task TASK-KPMFK
+#+orgasmic_version: 2
+
+* DONE TASK-KPMFK A live stage loses its completion watcher across daemon restart, so no terminal tx is ever emitted :daemon:stage:boot:defect:
+:PROPERTIES:
+:ID: TASK-KPMFK
+:PRIORITY: P1
+:END:
+
+Found 2026-07-28 by the TASK-C0XMR reviewer (reviewer-codex-rmux,
+run-20260728T103249) as finding 2. Pre-existing and outside the C0XMR diff, so it
+did not block that round — but it falsifies the cross-restart guarantee that
+review asked C0XMR to prove, so it belongs to the same family.
+
+** The defect
+
+`crates/orgasmic-daemon/src/api.rs:3321-3330,8973-9020`.
+
+`post_stage` keeps `stage`, `target` and completion ownership **only** in the
+spawned in-process `StageCompletion`. Boot reattach reconstructs the run but
+respawns only `DispatchCompletion`, and only when both `last_path` and
+`stdout_path` exist.
+
+Stage runs carry `last_path: Some` and `stdout_path: None`
+(`api.rs:3239-3267`), so they land in the partial-artifact warning branch and **no
+stage watcher is recreated**.
+
+Consequence: if the daemon restarts while `grill`, `plan` or `architect` is live,
+a later worker finalize is persisted but no `<stage>.completed` or
+`<stage>.failed` tx is ever emitted. The C0XMR outcome rule is never called at
+all. The stage silently has no terminal record.
+
+No restart test exercises a stage watcher, which is why this survived.
+
+** Fix, per the reviewer
+
+Persist stage completion metadata — `stage`, project/task, and `target` — in
+recoverable lifecycle state, and have boot reconciliation respawn or directly
+reconcile `StageCompletion`.
+
+Note the partial-artifact branch is doing real work for dispatch runs; the fix is
+to stop treating `stdout_path: None` as "incomplete" for a run shape that legitimately
+never has one, not to weaken the branch for everybody.
+
+** Acceptance
+
+- A daemon-restart test for each shared stage path (`grill`, `plan`, `architect`).
+- The `architect` case must cover its report-only terminal tx specifically —
+  `architect` is a STAGE kind whose worker finalize emits `architector.reported`
+  rather than `architector.done` (recorded near `api.rs:22475`, TASK-6AYEJ.1), so
+  a watcher keyed on `.done` would pass the other two and still miss this one.
+- A stage live across a restart emits its terminal tx.
+
+** Non-goals
+
+- Do not fold this into the C0XMR fix round (TASK-QSSQH). That round owns the
+  failure-stickiness rule; this one owns watcher recovery. They touch the same
+  file and must not be dispatched concurrently.
+

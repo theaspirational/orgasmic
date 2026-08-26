@@ -1,0 +1,31 @@
+#+title: orgasmic task TASK-P0Q5C
+#+orgasmic_version: 2
+
+* BACKLOG TASK-P0Q5C No CLI title surface for decision/architecture/glossary/project/handoff nodes despite daemon set_title support
+:PROPERTIES:
+:ID: TASK-P0Q5C
+:PRIORITY: P2
+:END:
+
+From TASK-XPYRR's ask-3 sweep (checked against code, not assumed): the daemon's
+`set_title` op works for decision, architecture, glossary, project, and handoff
+nodes — the UI writes titles for all of them — but no CLI surface exists for
+any kind except task (`task update --title`, TASK-XPYRR). Same shape as the
+task gap: an operator or manager agent can observe a wrong title and cannot
+correct it without the UI.
+
+=== Ask
+
+Add `node title set <ID> --title ... --project ... --kind ...` routing to the
+existing `set_title` op through TASK-XPYRR's `edit_heading_line` guard (round
+trip or refuse naming the reason; never touches tags/keyword). One surface for
+all title-capable kinds rather than per-kind flags.
+
+=== Acceptance
+
+- Retitle round-trips for each supported kind in tests; goal kind is refused
+  with a message pointing at TASK-V460X (separate task, no daemon path).
+- Refusal semantics identical to task update --title (same guard, same
+  messages).
+- Verify artifact per TCTTD standard, `git apply`-clean.
+

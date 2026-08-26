@@ -1,0 +1,26 @@
+#+title: orgasmic task TASK-VXB0T.2
+#+orgasmic_version: 2
+
+* DONE TASK-VXB0T.2 Lifecycle v3 UI: kanban columns, blocked badge, performer sub-state display :ui:kanban:run-substate:
+:PROPERTIES:
+:ID:               TASK-VXB0T.2
+:PRIORITY:         P2
+:WRITE_SCOPE:      ui/src
+:READ_SCOPE:       .orgasmic/decisions.org shipped/schema/state-machine.org crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:         npm --prefix ui run build
+:DEPENDS_ON:       TASK-VXB0T.1
+:END:
+
+** Description
+UI half of TASK-VXB0T: kanban columns become Backlog / Todo / In Progress / In Review / Done (+Cancelled filter); BLOCKED rendered as a badge from :BLOCKED_BY: + <performer>.blocked sub-state, not a column; run surfaces show <performer>.<verb> sub-states from RunSummary. EXTENDED by TASK-VXB0T.1 reviewer F-1 (MEDIUM): =SettingsView.tsx= still hard-codes the v2 lifecycle (EXPLORE/PLAN/IMPLEMENT/REVIEW/SHIP) and reads/writes =STAGE_WORKER_*= — saving project settings re-adds obsolete properties the backend ignores. Migrate the panel to an ordered =:PIPELINE:= editor (single property, no STAGE_WORKER_* keys on save) or remove it; see =.orgasmic/tmp/dispatch/task-132.1-review-report.md= Fix Directions.
+
+** Acceptance Criteria
+- [ ] Columns + badge + sub-state display per dec_WV1ZH/068; tsc --noEmit + npm build green.
+- [ ] SettingsView: =STAGE_WORKER_*= editor replaced by ordered =:PIPELINE:= editing; saving preserves no =STAGE_WORKER_*= keys (F-1).
+
+** Evidence
+- *Implementer*: =implementer-codex-acp=, run-20260610T163005, ~10 min wall. Commit =0a80f2e= merged no-ff as =08ede1f= (12 files +235/-93). Gates: npm ci, npm build, typecheck all green (worker + manager-side). Hygiene: worker committed its summary as repo-root =last.txt= (wrote the full 12-line summary there instead of the dispatch last path) — removed in =3c28b59=; summary content was good, including the PIPELINE payload proof.
+- *Worker surprise (confirmed live, spawned TASK-VXB0T.3)*: daemon task summaries carried no =blocked_by=, so the new badge was dormant. TASK-VXB0T.3 filed + landed same session.
+- *Reviewer pass* (=reviewer-codex-acp=, run-20260610T164233): verdict =ship=, ZERO findings. Verified pipeline editor against =ProjectConfig::from_org= split_whitespace parsing; v2-leftover sweep clean; design-system conformant. Residual gaps noted (non-blocking): no UI unit test for SettingsView splicing or kanban bucketing; no live browser smoke this pass.
+- *Process notes*: dispatch-close with =VERDICT=ship= routed IN_REVIEW→IN_PROGRESS — the CLI only recognizes =VERDICT=clean= for the DONE path (=manager.rs reviewer_done_stage=); heading corrected manually. Vocabulary mismatch between reviewer-report verdicts (ship/has-issues) and the CLI contract (clean) is a small wart for a future polish task.
+

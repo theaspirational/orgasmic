@@ -1,0 +1,36 @@
+#+title: orgasmic task TASK-RF3J1.3
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1.3 dispatch-CLI on-rail fix-subtask: F-5 pin override/eligibility behavior with test :daemon:dispatch:eligibility:test:fix:superseded:
+:PROPERTIES:
+:ID:               TASK-RF3J1.3
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-bundled-review-report.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1 TASK-RF3J1.2
+:END:
+
+** Description
+*F-5 (MEDIUM correctness)* — Dispatch endpoint bypasses eligibility for CLI =--model= / =--effort= overrides. AutoSpawn consults =compute_eligibility=; dispatch doesn't. Unit test covers config JSON wiring (=dispatch_driver_config_applies_model_and_effort_overrides=) but not acceptance/rejection of invalid overrides. A typo like =--model gpt-99= reaches the driver.
+
+Choose ONE:
+- (Option A) Call =compute_eligibility= with override constraints before acquire (matching AutoSpawn semantics); test that invalid overrides return 4xx.
+- (Option B) Document overrides as advisory/trusted-manager-input; add a regression test that pins this behavior (asserts override flows through unchanged, with a tracing::warn! if eligibility doesn't match).
+
+Recommend Option A for safety (matches AutoSpawn discipline); Option B if the manager actually relies on dispatch overrides for edge-case experiments. Implementer decides; manager defers.
+
+** Acceptance Criteria
+- [ ] One of the two options implemented + tested per the report's recommendation.
+- [ ] Behavior documented in either =manager.rs= help text (Option B) or daemon endpoint docstring (Option A).
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green. MSRV 1.78. No new deps.
+
+** Notes
+Depends on TASK-RF3J1.2 because both touch api.rs and TASK-RF3J1.2 will likely refactor the validation surface. :FIX_SUBTASK: t — bundled with TASK-RF3J1/TASK-RF3J1.1/060.2 cluster closure.
+
+** Evidence
+Superseded by TASK-RF3J1.6 bundled fix-subtask: 5 findings (including this one) closed in one cursor-agent round, commit =15a6dbd= merged as =94a31ae=. Tests 329 → 336 (+7). See TASK-RF3J1.6 Evidence for full per-finding breakdown.
+

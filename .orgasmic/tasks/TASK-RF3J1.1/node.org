@@ -1,0 +1,65 @@
+#+title: orgasmic task TASK-RF3J1.1
+#+orgasmic_version: 2
+
+* DONE TASK-RF3J1.1 dispatch-CLI on-rail fix-subtask: (acp-stdio, codex) auto-spawn via HAR pattern + --worker CLI flag + working reviewer workers :cli:dispatch:drivers:codex:appserver:worker:bug:fix:
+:PROPERTIES:
+:ID:               TASK-RF3J1.1
+:PRIORITY:         P1
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/lib.rs crates/orgasmic-core/src/workers.rs crates/orgasmic-cli/src/manager.rs shipped/workers/implementer-codex-stdio.org shipped/workers/reviewer-codex-stdio.org shipped/workers/reviewer-cursor.org .orgasmic/project.org
+:WRITE_SCOPE:      crates/orgasmic-drivers/ crates/orgasmic-core/ crates/orgasmic-cli/ shipped/workers/ .orgasmic/project.org
+:READ_SCOPE:       /tmp/orgasmic-codex/task-060-brief.md /tmp/orgasmic-codex/task-060-last.txt /tmp/orgasmic-codex/task-060.1-brief.md ../har/src/drivers/codex_appserver.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-RF3J1
+:END:
+
+** Description
+TASK-RF3J1 shipped the dispatch endpoint + CLI refactor per spec but the only registered codex driver mode in =SUPPORTED= is =acp-ws=, which expects an external Codex appserver to connect to over WebSocket. No such appserver runs in the manager's environment, so post-TASK-RF3J1 codex dispatches immediately get classified as =interrupted= with reason "driver acp-ws/codex could not prove a live runtime handle". User direction: borrow HAR's =CodexAppServerDriver= pattern (=../har/src/drivers/codex_appserver.rs=) — orgasmic should AUTO-SPAWN =codex app-server= as a stdio subprocess via the existing =acp-stdio= mode driver. This is what HAR's driver does today; we extend orgasmic's =acp-stdio= mode to support the codex harness, port the spawn-codex-app-server bits from HAR, and ship working stage-mapped workers + a =--worker= CLI override.
+
+This subtask closes both gaps in one round.
+
+Brief: =/tmp/orgasmic-codex/task-060.1-brief.md=.
+
+** Acceptance Criteria
+- [ ] =SUPPORTED= matrix (=crates/orgasmic-drivers/src/lib.rs::SUPPORTED=) AND =SUPPORTED_WORKER_DRIVER_HARNESSES= (=crates/orgasmic-core/src/workers.rs=) gain =("acp-stdio", "codex")= row in lockstep. Existing drift-guard test catches drift if either is missed.
+- [ ] Codex harness adapter (=crates/orgasmic-drivers/src/adapters/codex.rs=) handles =codex app-server= stdio invocation: ports HAR's =default_codex_command()= = ="codex"= + =default_codex_args()= = =vec!["app-server".to_string()]= from =../har/src/drivers/codex_appserver.rs=. When the adapter is paired with =acp-stdio= mode, it provides the spawn command + args + cwd + env so the existing acp-stdio mode driver can spawn the subprocess and connect to it over stdio.
+- [ ] =acp-stdio= mode driver (=crates/orgasmic-drivers/src/modes/acp_stdio.rs=) consults the harness adapter for spawn config instead of hard-coding the claude invocation (today it likely hard-codes =claude= since that was the only =acp-stdio= harness). Detached subprocess discipline preserved via =setsid= (mirror existing pattern).
+- [ ] =driver_for_mode_harness("acp-stdio", "codex")= returns a valid driver instance (not =None= and not a panic).
+- [ ] =--worker <ID>= flag added to =orgasmic manager dispatch=; overrides project stage map; passes through to the daemon dispatch endpoint's optional =worker_id= field. Flag documented in =--help=.
+- [ ] New =shipped/workers/implementer-codex-stdio.org= (=:KIND: implementer :DRIVER: acp-stdio :HARNESS: codex :PROVIDERS: openai :MODELS: gpt-5.5 :DEFAULT_PROVIDER: openai :DEFAULT_MODEL: gpt-5.5 :DEFAULT_EFFORT: high=).
+- [ ] New =shipped/workers/reviewer-codex-stdio.org= (=:KIND: reviewer :DRIVER: acp-stdio :HARNESS: codex= + same provider/model/effort coverage, with reviewer persona from =shipped/workers/reviewer.org=).
+- [ ] New =shipped/workers/reviewer-cursor.org= (=:KIND: reviewer :DRIVER: subprocess-stream-json :HARNESS: cursor-agent= for the cursor-agent reviewer path).
+- [ ] Update =.orgasmic/project.org= stage map: =:STAGE_WORKER_IMPLEMENT:= → =implementer-codex-stdio= (was =implementer-claude-acp= which suffers a similar liveness issue); =:STAGE_WORKER_REVIEW:= → =reviewer-codex-stdio= (was =reviewer= which is acp-ws-only).
+- [ ] Tests: mode-driver test exercises (acp-stdio, codex) spawn + ACP handshake (gated on =which codex= mirroring cursor-agent gate). CLI test exercises =--worker= passthrough to daemon request. Daemon dispatch endpoint integration test using =(acp-stdio, codex)= worker emits =run.created= naming the new driver/harness. Existing SUPPORTED drift-guard test passes with the new row.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green.
+- [ ] Implementer commits the work themselves.
+- [ ] =cargo test --workspace + cargo clippy --workspace --all-targets -- -D warnings + cargo fmt --check + git diff --check= all green.
+- [ ] Implementer commits the work themselves.
+
+** Notes
+Out of scope: refactoring =acp-ws= mode; UI changes; manager.org persona updates. The =acp-stdio= mode IS in scope but only minimally — just enough to let it consult the harness adapter for spawn config instead of hard-coding claude. Reviewer pass after merge will be bundled with TASK-RF3J1's deferred reviewer pass via the now-working dispatch CLI (acp-stdio + codex OR cursor-agent). =:FIX_SUBTASK: t= for one-round semantics (no reviewer-of-reviewer on this fix; the bundled review covers both).
+
+** Evidence
+- [2026-05-24 Sun 23:25] Cursor-agent (composer-2.5-fast, ~14m wall, real cursor-agent subprocess driver via subprocess-stream-json mode — proving the new dispatch on-rail works for harnesses other than claude) committed =2c109e9= ("TASK-RF3J1.1: (acp-stdio, codex) via HAR auto-spawn pattern + --worker CLI flag + working reviewer workers"). Merged no-ff as =3462607=.
+- 16 files +642/-45 within (mostly) WRITE_SCOPE:
+  - =crates/orgasmic-drivers/src/modes/acp_stdio.rs= +206 (=AcpStdioComposeAdapter= wraps inner adapter; gates real subprocess spawn behind =harness == "codex" && command_available()=)
+  - =crates/orgasmic-drivers/src/trait.rs= +35 (=StdioSpawn { command, args, cwd, env }= type + =HarnessEventAdapter::stdio_spawn()= + =stdio_initial_payload()= hooks, both default None)
+  - =crates/orgasmic-drivers/src/adapters/codex.rs= +15 (=stdio_spawn()= returns =StdioSpawn { command: "codex", args: vec!["app-server"], cwd: $HOME, env: empty }=)
+  - =crates/orgasmic-drivers/src/adapters/claude.rs= +40 (=stdio_spawn()= mirrors current claude invocation for Simulated-equivalence)
+  - =crates/orgasmic-drivers/src/lib.rs= +4 (=("acp-stdio", "codex")= row in =SUPPORTED= matrix)
+  - =crates/orgasmic-cli/src/manager.rs= +22, =daemon_client.rs= +70, =tests/dispatch.rs= +45 (=--worker <ID>= CLI flag passthrough)
+  - =crates/orgasmic-core/src/workers.rs= +1 (corresponding row in =SUPPORTED_WORKER_DRIVER_HARNESSES=, drift-guard test passes)
+  - =crates/orgasmic-daemon/tests/dispatch_endpoint.rs= +66 (=#[ignore]= e2e gated on =which codex=)
+  - =crates/orgasmic-drivers/tests/driver_modes.rs= +62 (stdio_spawn adapter coverage + acp-stdio-codex resolution)
+  - 3 new =shipped/workers/*.org=: =implementer-codex-stdio= (35), =reviewer-codex-stdio= (39), =reviewer-cursor= (39)
+  - =.orgasmic/project.org= +4 (stage map: =:STAGE_WORKER_IMPLEMENT: implementer-codex-stdio=, =:STAGE_WORKER_REVIEW: reviewer-codex-stdio=)
+- *One out-of-WRITE_SCOPE touch* (acceptable mechanical fix): =crates/orgasmic-core/tests/fixtures.rs= +4 (worker-count fixture 11→15 because of the 3 new worker files + reviewer.org from manager housekeeping). Flagged for the reviewer pass.
+- *Codex stdio-spawn gating bug surfaced live during the dispatch.* First few cargo test iterations hung because the existing =legacy_drivers_and_explicit_pairs_emit_equivalent_start_events= test calls =driver_for("claude-acp").acquire(...)= which (with the new acp-stdio wrapping) would have spawned real =claude --bare= if not gated. Cursor-agent recovered after manager-side kills of the hung claude subprocesses converted hangs into broken-pipe failures, then added the =harness == "codex"= gate so only codex triggers the real-subprocess upgrade. The final commit's gate prevents that regression. Worth a reviewer eye on whether the gate is the right shape (vs gating on adapter capability).
+- =implementer.done= =tx-20260524-org-0236= via =dispatch-close --merge-sha 3462607=. **DOGFOOD #38+#39 PASS** (BACKLOG→IMPLEMENT on dispatch via the new on-rail endpoint; IMPLEMENT→DONE via =:FIX_SUBTASK: t= shortcut). Worktree auto-cleaned.
+- Verification on merged main: =cargo test --workspace= 309 → 315 (+6, 2 ignored — the (acp-stdio, codex) and existing cursor-agent gated e2e); =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; =git diff --check= clean. MSRV 1.78. No new deps.
+- Daemon rebuilt + restarted (PID 82036 → 61394, boot =6b15f151=) per TASK-FWBYB staleness warning. =orgasmic doctor= now clean.
+
+** Reviewer pass
+Bundled with TASK-RF3J1's deferred reviewer pass. Dispatched via the now-working acp-stdio+codex path under TASK-RF3J1 heading.
+

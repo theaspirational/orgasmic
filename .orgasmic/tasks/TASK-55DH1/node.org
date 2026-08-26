@@ -1,0 +1,90 @@
+#+title: orgasmic task TASK-55DH1
+#+orgasmic_version: 2
+
+* DONE TASK-55DH1 Slim the org node property schema: drop derived/duplicated keys, promote relationships to edges :schema:architecture:design:adr:
+:PROPERTIES:
+:ID:               TASK-55DH1
+:PRIORITY:         P2
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      .orgasmic/decisions.org
+:READ_SCOPE:       .orgasmic/ crates/orgasmic-core/src/schema.rs crates/orgasmic-core/src/org.rs crates/orgasmic-daemon/src/index.rs
+:TEST_CMD:         true
+:END:
+
+** Description
+Operator directive 2026-06-12: the property drawers carry redundant keys and
+duplications that should be edges. Design task — deliverable is an ADR with a
+per-key verdict (keep / derive / edge / drop) and a sized migration plan;
+implementation is a follow-up filing.
+
+Census across tasks/sprint+backlog, decisions, architecture, glossary
+(2026-06-12, 396 drawers):
+
+- STATE ×3: =:STATE:= (221) duplicates the heading keyword (written in
+  lockstep, manager.rs ~1332-1333), and dec_QQYXM's file-per-state adds file
+  membership as the canonical third copy. At most one redundant display copy
+  should survive — which one, and lint-or-atomic for agreement.
+- Derivable: =:LAST_UPDATED:= (221) duplicates git; =:KIND:= (251) is largely
+  inferable from ID grammar + file (inferNodeKind precedent); =:DECIDED_AT:=
+  (127) vs git when not semantically distinct.
+- Empty placeholders shipped on every heading: =:BLOCKED_BY:=/=:PARENT_TASK:=/
+  =:FIX_SUBTASK:= mostly blank; =:PARENT_TASK:= (167) duplicates the
+  =<parent>.k= subtask ID grammar.
+- Dispatch params on all ~220 task headings even when default:
+  =:WORKER:=/=:WRITE_SCOPE:=/=:READ_SCOPE:=/=:TEST_CMD:= — candidates for
+  project-config defaults with per-task override only.
+- Edge-shaped properties: =:DEPENDS_ON:= (263), =:BLOCKED_BY:= (211 — inverse
+  of DEPENDS_ON? decide one direction), =:RELATES_TO:= (40),
+  =:GLOSSARY_REFS:= (70), =:IMPLEMENTS:=/=:PRODUCES:= (166, arch),
+  =:MOTIVATED_BY:= (17), =:TRACKED_BY:= prose refs — one edge vocabulary,
+  one canonical direction each, stored once.
+
+Constraints: org files stay greppable/human-readable (dec_X72P5 readability
+principle); the daemon index is the natural home for derived inverses; any
+migration lands one-commit like id-migration (dec_X72P5b greenfield rule).
+
+Amendment [2026-06-12]: include the task-identity redundancy question in the
+schema verdict. The ADR/follow-up must explicitly decide whether task identity
+is canonical in the heading token (=* BACKLOG TASK-XXXXX ...=), the =:ID:=
+property, or both with an equality lint. Current implementation requires
+=:ID: TASK-*= plus a lifecycle keyword for task indexing; if both survive, the
+migration must define mismatch behavior and tests for =TaskHeading::from_heading=,
+materialized-index task-shape detection, and the phantom-heading lint.
+
+** Acceptance Criteria
+- [ ] ADR in decisions.org: per-class property whitelist, edge vocabulary
+  with canonical directions, per-key keep/derive/edge/drop verdict covering
+  every key in the census.
+- [ ] The three redundancy classes resolved explicitly: state×3, derivable
+  timestamps/kind, empty placeholders + dispatch-param defaults.
+- [ ] Migration plan sized (files touched, script-or-hand, verify mode) and
+  follow-up implementation task(s) drafted.
+- [ ] Parser/schema impact listed (schema.rs property allowlists, index
+  edges, UI consumers).
+
+** Evidence
+- One claude-sonnet-4-6 round via rmux (run-20260612T123600); worker
+  commit =c585a85=, merge =a3b5285=, close tx-0224. dec_HJENQ: per-key
+  keep/derive/edge/drop verdicts across all four node classes, unified
+  edge vocabulary (canonical directions, inverses always index-derived),
+  7-step migration plan (ONE =property-migration= tagged commit), schema
+  impact list. Live-corpus fixtures 28/28 in the worktree.
+- Manager integration: follow-up drafts filed as real minted tasks —
+  TASK-PD8W5 (execute migration, P2, DEPENDS_ON TASK-2C3WZ), TASK-VJXXC
+  (edge index, P3), TASK-Q68WE (dispatch-param config defaults, P3);
+  the ADR draft headings keep their placeholder names as prose (no lint
+  impact, parse-errors stable at 56).
+- Worker hiccup, recovered: the ADR was first written to the MAIN
+  repo's decisions.org, then copied to the worktree and committed, but
+  the stray main-repo edit was never reverted — manager verified
+  byte-identical and reverted before merge. Brief discipline note: the
+  parent-repo warning must ride EVERY brief, prose tasks included.
+- ZSD0B live rmux probe PASSED: run released on completion (no 600s
+  stall reap), rmux session gone, last.txt carries the worker summary.
+- Amendment follow-through [2026-06-12, post-close]: the task-identity
+  amendment landed in the closing commit (ffa5e6c) AFTER the worker round,
+  so dec_HJENQ shipped without the required identity verdict and no
+  follow-up carried it. Resolved post-close: identity verdict appended to
+  dec_HJENQ Decision (=:ID:= canonical, heading token display copy,
+  read-time equality lint); implementation filed as TASK-KY80Q.
+

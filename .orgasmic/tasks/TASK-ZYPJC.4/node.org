@@ -1,0 +1,42 @@
+#+title: orgasmic task TASK-ZYPJC.4
+#+orgasmic_version: 2
+
+* DONE TASK-ZYPJC.4 List/filter/loading/a11y cleanup :ui:a11y:lists:
+:PROPERTIES:
+:ID:               TASK-ZYPJC.4
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A1FGY arch_M8JQT
+:PRODUCES:         ui/src/components/node-views/NodeListView.tsx ui/src/components/DecisionsView.tsx ui/src/components/ArchitectureView.tsx ui/src/components/GlossaryView.tsx ui/src/components/AdrView.tsx ui/src/components/SnapshotsView.tsx ui/src/components/ActivityView.tsx
+:WRITE_SCOPE:      ui/src/components/node-views/NodeListView.tsx ui/src/components/{DecisionsView,ArchitectureView,GlossaryView,AdrView,SnapshotsView,ActivityView}.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-047-review-report.md
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-ZYPJC
+:MERGE_SHA:        6862918
+:CODEX_COMMIT:     8c26232
+:END:
+
+** Description
+Addresses reviewer findings F-9 (medium design), F-10 (low a11y), F-12 (high a11y — nested interactive controls invalid HTML), F-14 (medium bug — no distinct loading state), F-15 (low design — Decisions sort + pill rendering). One coupled pass over =NodeListView= + per-page Views.
+
+** Acceptance Criteria
+- [ ] *F-12 fix (high).* =NodeListView= row primitive supports non-nested row actions: split the row into a clickable row body (no =<button>= wrap) + an absolutely-positioned trailing action zone (kebab / chips) that uses =stopPropagation= AND is wired with =onPointerDown=stopPropagation= so the row's click handler doesn't fire. Row body is a =<button>= or =<div role="button" tabIndex={0}>= but the action zone is outside the button element. Validate via DOM inspection: no =<button>= inside =<button>=.
+- [ ] *F-9 fix.* Add the missing filter/search bars:
+  - =GlossaryView=: free-text search over canonical name + definition. URL-backed (=?q=...=).
+  - =AdrView=: status multi-select (proposed / accepted / superseded / deprecated) + free-text search over title. URL-backed.
+  - =ArchitectureView=: free-text search over title + interface line. URL-backed.
+  - All three reuse the =DecisionsView= filter-bar layout.
+- [ ] *F-10 fix.* Filter chips on every page (Decisions, Architecture, Activity) carry =aria-controls= pointing at the id of the region they filter (list container, feed container, or graph canvas).
+- [ ] *F-14 fix.* Distinct loading state: while =useResource= is pending, render a Skeleton block (shadcn primitive — count ~6 rows) inside =NodeListView= instead of falling through to the empty-state message. Empty-state message renders only when =loading === false && items.length === 0=. Same logic for SnapshotsView and ActivityView.
+- [ ] *F-15 fix.* =DecisionsView=:
+  - Rows sorted by numeric portion of =dec_NNN= ascending (use =parseInt(id.slice(4)) || 0=).
+  - Decision list uses topic/glossary chips only; obsolete chosen-label/status chips are not rendered.
+  - Status pill rendered only when status is not =decided= (=question / proposed / superseded= surface; =decided= is the default and visually quiet).
+- [ ] =cd ui && npm run build= passes.
+- [ ] =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 18:26] Shipped in bundled fix-implementer commit =8c26232= (merged =6862918=). =NodeListView.tsx= +45/-13: rows split into =<div role="button" tabIndex={0}>= body + external =renderActionZone= prop holding action-zone elements (with =onPointerDown=stopPropagation= + =onClick=stopPropagation= guards); stable list-region id (=nodeKind=-list-region) for filter aria-controls; Skeleton placeholder rows render while loading instead of falling through to the empty-state message. =AdrView=, =GlossaryView=, =ArchitectureView= each gain URL-backed filter/search bars (status multi-select + free-text); filter chips on every page now carry =aria-controls= pointing at the list/feed/graph region id. =DecisionsView= rows sort ascending by numeric portion of =dec_NNN=; chosen-LABEL chip renders only when =chosen_label= present; status pill renders only when status !== "decided"; ADR badge hides below =sm=. =SnapshotsView= + =ActivityView= gained Skeleton loading + label-hidden-below-sm.
+- Verification: =cd ui && npm run build= clean. Per-page chunks slightly grew (DecisionsView 4.42 → 5.29 kB, ArchitectureView 3.96 → 5.16 kB, GlossaryView 1.45 → 1.75 kB, AdrView 3.19 → 4.18 kB, SnapshotsView 6.06 → 6.50 kB, ActivityView 6.72 → 7.59 kB) from filter bar + Skeleton + URL-backed state — all well below 10 kB each. Nested-button inspection: no =<button>= inside =<button>= anywhere; DropdownMenu trigger renders via =renderActionZone= outside the row body =<div role="button">=.
+- Reviewer F-9 (medium design), F-10 (low a11y), F-12 (high a11y — nested interactive HTML), F-14 (medium bug — loading indistinguishable from empty), F-15 (low design) closed.
+

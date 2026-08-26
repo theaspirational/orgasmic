@@ -1,0 +1,17 @@
+#+title: orgasmic decision dec_MX9RM
+#+orgasmic_version: 2
+
+* dec_MX9RM How much instruction should each agent surface carry?    :prompts:skills:conventions:
+:PROPERTIES:
+:ID:            dec_MX9RM
+:GLOSSARY_REFS: term_GBTJS term_Z5XDF
+:DECIDED_AT:    [2026-06-11 Thu]
+:SOURCE:        operator session 2026-06-11 (instruction-surface audit)
+:END:
+** Context
+An audit of every route an agent enters an orgasmic project (entry.org router, /orgasmic recall|resume, compiled prompt-studio bundles, manager conventions, dispatch briefs) found systematic over-instruction: the recall bootstrap mandated nine steps including full sprint.org/architecture.org/tx reads and pre-reading the manager persona plus four conventions every session; worker bundles carried the same rule in up to three places (spec chain, prompt part, security dup); manager-dispatch told briefs to be "~150-300 lines" while the compiler already injects the task heading; the compiler made Examples a required section against its own prompt_quality_policy.
+** Decision
+Every instruction surface follows minimal-needed-instructions: each rule has exactly one canonical home, surfaces load by trigger rather than ritual, and narrative that does not change agent behavior is deleted. Concretely: (a) recall/resume use a two-tier bootstrap — core is goal.org + handoff.org + project.org skim + three commands (git log/status, worktree list, dispatch-status), everything else (sprint headings by ID, tx forensics, gotchas, conventions) is trigger-gated; (b) security_policy folded into base_worker Security; dynamic_workflow_policy scoped to prompt_composer only (its content is prompt-author guidance); premise-false rule lives once in base_worker; adversarial-review bullet lives in reviewer only; (c) Examples is an optional spec section in the compiler; (d) dispatch briefs carry only the delta the bundle does not inject (anchors, invariants, gates, commit message) — never restate the task heading or conventions.
+** Consequences
+Compiled worker bundles shrink 25-40% (implementer 1809 -> 1297 approx tokens) with zero rules lost; recall goes from ~10 file reads (incl. an 8.9k-line sprint.org) to three reads + three commands. Partially supersedes the dec_HR8D8-era note that dynamic_workflow_policy/verification_policy/security_policy "stay shared by every worker spec". New rules must name their single canonical home before being added to any surface; duplicating a rule into a second surface is a regression.
+

@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_N5SJT
+#+orgasmic_version: 2
+
+* term_N5SJT Daemon writer
+:PROPERTIES:
+:ID:                 term_N5SJT
+:CANONICAL:          daemon writer
+:AVOID:              multi writer, direct graph edit
+:RELATES_TO:         term_YC32J term_P94BF term_H5YHC
+:DEFINITION:         The local process role that serializes writes for audit, session, graph, snapshot, and generated decision artifacts.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

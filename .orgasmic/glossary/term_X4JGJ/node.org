@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_X4JGJ
+#+orgasmic_version: 2
+
+* term_X4JGJ Manager agent
+:PROPERTIES:
+:ID:                 term_X4JGJ
+:CANONICAL:          manager agent
+:AVOID:              always-on daemon brain, approval queue
+:RELATES_TO:         term_FM60Y term_3YTBK term_465BG
+:DEFINITION:         A fresh event-triggered coordination agent that reads orgasmic state and acts through the orgasmic CLI.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+

@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_C3A8T
+#+orgasmic_version: 2
+
+* term_C3A8T Semantic hash
+:PROPERTIES:
+:ID:                 term_C3A8T
+:CANONICAL:          semantic hash
+:AVOID:              prose checksum, file hash, code hash
+:RELATES_TO:         term_J5X55 term_P94BF term_H5YHC term_ERXMF
+:DEFINITION:         A stable digest of the meaning-bearing fields of a graph node used to detect changes that should propagate staleness downstream.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+

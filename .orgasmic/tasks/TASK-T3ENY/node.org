@@ -1,0 +1,42 @@
+#+title: orgasmic task TASK-T3ENY
+#+orgasmic_version: 2
+
+* DONE TASK-T3ENY Audit and fix tx TIME field composition: local-date/UTC-clock skew in daemon /tx and dispatch-close :daemon:tx:cli:dispatch:telemetry:
+:PROPERTIES:
+:ID:               TASK-T3ENY
+:PRIORITY:         P4
+:WORKER:           implementer-codex-acp
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/manager.rs
+:READ_SCOPE:       crates/orgasmic-daemon/src/ crates/orgasmic-cli/src/manager.rs .orgasmic/tx/2026-06.org
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Observed on tx-20260610-orgasmic-0106 (reviewer.done TASK-K5RG2, manually
+appended [2026-06-11]): the =TX_ID= uses the UTC date (=20260610=) while
+=TIME= was recorded as =[2026-06-11 Thu 21:10:00]= (local midnight-crossing
+date). Mismatch: UTC clock value with local date, or vice versa. The same
+skew may apply to daemon-generated /tx records and to dispatch-close tx
+bodies built in =crates/orgasmic-cli/src/manager.rs=.
+
+Audit scope:
+1. Where does the daemon build the =:TIME:= value when handling =POST /tx=?
+   (Likely =Utc::now()= or =Local::now()= — verify it's consistent with TX_ID.)
+2. Where does the CLI dispatch-close build timestamp strings for the tx body
+   it sends? (=close_aborted_request= / =close_done_request= helpers in
+   =manager.rs=.)
+3. =TX_ID= convention is =tx-YYYYMMDD-<project>-NNNN= — confirm the date
+   component matches the =:TIME:= date. If not, fix whichever is wrong to be
+   consistently UTC.
+
+** Acceptance Criteria
+- [ ] All daemon-generated and CLI-generated tx records have =:TIME:= date
+  matching =TX_ID= date component (both UTC, or both local with a note).
+- [ ] No tx records written during a midnight-crossing window get mismatched
+  dates. Preferably both use UTC.
+- [ ] Unit or integration test covering tx timestamp generation around midnight.
+- [ ] Gates: cargo test --workspace, clippy -D warnings, fmt --check, MSRV 1.78.
+
+** Evidence
+codex gpt-5.5 medium, parallel batch-1, worker commit =4ff78c3=, merged, close tx-0471. AUDIT FINDING: the daemon /tx path was ALREADY UTC-consistent — =now= is =Utc::now()= in both post_tx and prepare_api_tx, so TX_ID and :TIME: always shared the same UTC instant. The reported skew (tx-20260610-orgasmic-0106) was a MANUALLY-appended record (hand-written with a local date), not daemon output. Fix HARDENS the already-correct path: extracted named UTC helpers (tx_time_string_utc / tx_preserve_id_timestamp_utc / tx_project_date_utc / tx_file_month_utc) routed through both daemon /tx paths so the UTC intent is explicit and greppable; confirmed CLI dispatch-close (manager.rs) composes neither value (posts /tx, daemon builds them). Regression test tx_timestamp_helpers_use_utc_date_at_local_midnight_boundary pins fixed instants incl. 2026-06-10T21:10:00Z. Gates: workspace green, clippy -D warnings clean, fmt clean. NOTE: a literal MSRV-1.78 build is blocked by a pre-existing transitive dep (idna_adapter v1.2.2 needs edition2024) — workspace-wide, not from this patch; filed as a follow-up.
+

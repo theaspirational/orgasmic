@@ -1,0 +1,119 @@
+#+title: orgasmic task TASK-VB9DQ
+#+orgasmic_version: 2
+
+* DONE TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
+:PROPERTIES:
+:ID: TASK-VB9DQ
+:PRIORITY: P1
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
+
+Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
+- run with `--no-session-persistence`: 0 new native transcripts
+- identical run without it: 1 new native transcript
+
+Confirmed by inspection:
+- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
+- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
+
+Contrast the TUI path, which already does this correctly. A real rmux run recorded:
+- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
+- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
+- `session_id: a9fe25ff-...`
+
+It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
+
+Three consequences, all currently live:
+
+1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
+
+2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
+
+3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
+
+Work:
+1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
+2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
+3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
+4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
+5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
+
+Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
+
+Acceptance:
+- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
+- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
+- `resume_native_fork` is offered for a recoverable acp-stdio claude run
+- the retention tradeoff is a recorded decision, not an implicit one
+** Notes
+Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+- `--no-session-persistence` removed from the claude stdio argv. Verified beforehand that it was the sole cause: an otherwise identical run wrote one new file under `~/.claude/projects` without it and zero with it. Also verified that `--bare` does not suppress persistence, so both credential modes keep evidence.
+- `--session-id` is now pinned to the run's `runtime_id`, matching `modes/tmux.rs`. Verified that `-p` mode honours it and that the vendor transcript lands at exactly `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, the path `claude_session_path` computes. Correlation is minted, not discovered (dec_Y5MPK item 3).
+- `HarnessEventAdapter::native_runtime` added, defaulting to `None`. The claude adapter populates it while composing the request; `AcpStdioComposeAdapter` delegates it; `modes/acp_stdio.rs` reads it immediately after composing and carries it onto the `DriverSession` in place of the previous hardcoded `native_runtime: None`.
+- `claude_session_path` promoted to `pub(crate)` in `modes/tmux.rs` rather than duplicating the cwd-encoding rule in a second place.
+
+`resume_argv` is recorded as `[claude, --resume, <session-id>, --fork-session]`. Note it deliberately omits `--dangerously-skip-permissions`, which the TUI path includes: the stdio path never passed that flag at launch, and a resume argv should reproduce the original run's permission posture rather than widen it.
+
+Regression `every_mode_persists_a_locatable_native_session` asserts no `--no-session-persistence`, a pinned session id, and NativeRuntime whose `session_id` and `resume_argv` both target it.
+
+Still open from this task's work list: item 5, whether codex, cursor-agent and hermes need the same treatment. Codex is known to persist natively without orgasmic asking — a run that died on a provider 503 still wrote `~/.codex/sessions/2026/07/25/rollout-...jsonl` — so the question there is session-id correlation, not persistence.
+
+Gates as recorded on TASK-Z8WEJ. Not verified end to end: the running daemon is the installed 0.0.14 build, so proving this against a live dispatch needs a daemon rebuild and restart.
+BLOCKER RESTATED [2026-07-26]. Stays in_review; the closing line above is stale
+in the opposite direction from how it reads.
+
+"Not verified end to end: the running daemon is the installed 0.0.14 build"
+suggests the work is done and merely unproven. TASK-SGRTX (b43fc70, f5c6913)
+showed it was INERT in production: the claude adapter returned Simulated before
+building argv, so the pinned --session-id and the NativeRuntime event this task
+adds never reached a real process. After SGRTX it does work — so the honest
+status is "verified only after a fix that landed later, on a runtime the
+operator is not yet running".
+
+The verification this needs is a live claude acp-stdio dispatch on a daemon
+carrying todays main, proving the three acceptance criteria against a real run:
+a native transcript the existing finder resolves, a NativeRuntime lifecycle
+event carrying the minted session id, and resume_native_fork actually offered
+for that run by resolve_recovery_actions. The operators daemon is
+0.0.15-dev.1, which predates SGRTX; the publish is gated behind
+TASK-8W30B -> TASK-6FNAY.
+
+Work item 5 also remains open: whether codex, cursor-agent and hermes need the
+same treatment. The body already notes codex persists natively without being
+asked (a run that died on a 503 still wrote ~/.codex/sessions/...jsonl), so for
+codex the open question is session-id correlation rather than persistence.
+
+Lands together with TASK-Z8WEJ — same adapter, same live dispatch proves both.
+LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
+ITEM 5 CLOSED — CROSS-HARNESS MATRIX RECORDED [2026-07-28] by TASK-H0TYV (VB9DQ fix round). Inspected at HEAD 5a8ebc6; every claim below was re-verified against the tree rather than inherited from the review.
+
+| harness      | native persistence          | session-id owner        | pre-launch pin | NativeRuntime today | finder confidence |
+|--------------+-----------------------------+-------------------------+----------------+---------------------+-------------------|
+| claude       | on; never suppressed        | orgasmic (runtime_id)   | yes, verified  | emitted             | high              |
+| codex        | on; vendor-driven           | codex (thread.id)       | no slot        | none (trait default)| high / medium     |
+| cursor-agent | on; vendor-driven           | cursor (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
+| hermes       | on; vendor-driven           | hermes (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
+
+Two properties hold across all four and were checked by grep over the whole tree, not by reading one adapter:
+
+- No harness passes a persistence-suppression flag. The only occurrences of the `--no-session-persistence` family anywhere in the tree are a comment at `crates/orgasmic-drivers/src/adapters/claude.rs:216` explaining its removal and the regression assertion that it stays removed. One flag needs a second look and is filed as TASK-ZY259: codex sends `persistExtendedHistory: false` on every `thread/start` (`adapters/codex.rs:883`), uncommented and untested. Codex still writes rollouts with it set, so it is not the blanket kill switch claude's flag was, but nothing records what it does suppress.
+- `HarnessEventAdapter::native_runtime` is overridden in exactly two places: `adapters/claude.rs:168` and the delegating `modes/acp_stdio.rs:111`. Codex, cursor_acp and hermes therefore take the trait default `None` at `crates/orgasmic-drivers/src/trait.rs:248`.
+
+Per harness:
+
+claude — orgasmic mints the id before launch. `let session_id = ctx.identity.runtime_id.clone()` at `adapters/claude.rs:374`, passed as `--session-id`, recorded in `NativeRuntimeMeta` with `session_path`, `launch_argv` and `resume_argv`. Proven live on run run-20260727T131952 (`df92384b-fd23-423c-ab2c-131beb03db82`), transcript filename equals runtime_id. Finder resolves the deterministic `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` at high confidence. 652 JSONL under `~/.claude/projects` (measured 2026-07-28).
+
+codex — `thread.id` is read from the `thread/start` response in `on_ws_thread_started` (`adapters/codex.rs:198-206`) and surfaced only in `Ready.capabilities` (`:225`). `thread_start_params` (`:864-885`) has no id field, so there is nothing to pin. 1457 rollout JSONL under `~/.codex/sessions`. Follow-up TASK-F9VEZ.
+
+cursor-agent — `sessionId` is read from the `session/new` result (`adapters/cursor_acp.rs:288-292`), surfaced only in `Ready.capabilities` (`:320`). ACP defines `session/new` as the agent minting the id, so this is protocol, not implementation choice. 909 JSONL under `~/.cursor`. Follow-up TASK-B6D8W.
+
+hermes — `sessionId` is read from the `session/new` result (`adapters/hermes.rs:287-292`, method at `:327`), same ACP constraint. 82 JSONL under `~/.hermes/sessions`. Follow-up TASK-2B215.
+
+CONCLUSION: this is not claude-specific, and it is also not the same defect. Claude had persistence actively suppressed; the other three persist fine on their own. What all three lack is a recorded native identity, which is what recovery (`resume_native_fork`) and retro read, and what dec_Y5MPK item 6 attribution is defined on. None of them can satisfy dec_Y5MPK item 3 as written — "orgasmic pins the native session id before launch ... every transport must" — because their protocols have no slot for a client-supplied id. That contract question is recorded against TASK-SGRTX and is deliberately not answered here. The `doctor` reporting dec_Y5MPK items 5 and 6 name is filed as TASK-E3K1B.
+
+Item 5 asked for a check, not for the fixes. The check is done and recorded; the work it found is filed.
+

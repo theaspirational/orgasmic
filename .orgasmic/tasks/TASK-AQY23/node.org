@@ -1,0 +1,40 @@
+#+title: orgasmic task TASK-AQY23
+#+orgasmic_version: 2
+
+* DONE TASK-AQY23 Block daemon start on modified historical tx files :daemon:audit:
+:PROPERTIES:
+:ID:               TASK-AQY23
+:PRIORITY:         P2
+:WORKER:   implementer-codex
+:IMPLEMENTS:       arch_BVH7M
+:PRODUCES:         crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/tests/integration.rs
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/tests/integration.rs
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org docs/adr/*.org crates/orgasmic-daemon/src/** crates/orgasmic-core/src/** archive/2026-05-22_arch-conformance/audit.md
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:DEPENDS_ON:       TASK-RHDQE TASK-XB874
+:END:
+
+** Description
+TASK-XB874 audit identified that arch_BVH7M's "modified historical tx files block daemon start" constraint is not enforced. Today, =crates/orgasmic-daemon/src/index.rs::rebuild= scans historical tx files and collects parse errors into the per-file =parse_errors= map, but =crates/orgasmic-daemon/src/lib.rs::Daemon::run= continues booting normally even when historical-tx parse errors exist.
+
+The intent of the constraint: working files (=sprint.org=, =backlog.org=, etc.) tolerate parse failures by keeping the last-good index — but historical tx files (=.orgasmic/tx/YYYY-MM.org= and =$ORGASMIC_HOME/state/tx/YYYY-MM.org=) are append-only audit logs that should never change retroactively. If one fails to parse, that's evidence of corruption or unauthorized retroactive edits, and the daemon refuses to start until the operator either reverts the edit or explicitly reseals.
+
+** Acceptance Criteria
+- [X] During =Index::rebuild=, classify per-file parse errors as either =working-file= (existing tolerant behavior) or =historical-tx= (new strict behavior).
+- [X] When any historical-tx parse error is found during rebuild, =Daemon::run= refuses to bind / serve requests and returns a structured error naming the offending file and the line, with a hint about reverting / sealing.
+- [X] Existing working-file last-good fallback behavior is preserved (=parse_failure_keeps_last_good= still passes).
+- [X] New test in =crates/orgasmic-daemon/tests/integration.rs= covers: (a) a corrupted historical tx file blocks daemon start with a specific error, (b) a corrupted working file does NOT block start (last-good fallback).
+- [X] =cargo test --workspace= green, =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean.
+- [X] MSRV 1.78 preserved.
+
+** Evidence
+- [2026-05-22 Fri 11:05] Classified parse errors in =Index::rebuild= as =working-file= (default, last-good fallback) or =historical-tx= (files under =$ORGASMIC_HOME/state/tx/= or project =.orgasmic/tx/=). Parser line numbers preserved with a first-heading fallback for tx-validation errors.
+- [2026-05-22 Fri 11:05] Added startup gate in =Daemon::run= that checks the rebuilt snapshot before writer/watcher/listener startup; on a historical-tx parse error, returns =HistoricalTxStartupError { path, line, message }= with display text including revert/git/reseal guidance.
+- [2026-05-22 Fri 11:05] New integration tests in =crates/orgasmic-daemon/tests/integration.rs=: =corrupted_historical_tx_blocks_daemon_start= and =corrupted_working_file_does_not_block_start=.
+- [2026-05-22 Fri 11:05] Verification: workspace tests green (35 daemon tests, up from 28), =cargo clippy --workspace --all-targets -- -D warnings= clean, =cargo fmt --check= clean, =git diff --check= clean.
+- [2026-05-22 Fri 11:05] Surprise: =*TX= (no space after the asterisk) lines are treated as prelude rather than failed-heading parses. Worth noting for the architector when assessing other parse-error edge cases.
+- [2026-05-22 Fri 11:05] Branch =task-029-historical-tx-startup-gate= (commit =873113b3=) merged to =main=.
+
+** Worklog
+- [2026-05-22 Fri 11:05] Dispatched in parallel with TASK-F6D3T and TASK-E8BTA from an isolated git worktree; write scope disjoint from =api.rs= so the three ran independently.
+

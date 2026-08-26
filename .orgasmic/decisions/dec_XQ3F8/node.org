@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_XQ3F8
+#+orgasmic_version: 2
+
+* dec_XQ3F8 How conservative should design-graph automation defaults be?    :design-graph:
+:PROPERTIES:
+:ID:            dec_XQ3F8
+:GLOSSARY_REFS: term_P94BF term_H5YHC term_J5X55 term_HQJWT
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Open questions for v0.0.1 implementation
+:PARENT:        dec_X6Q0S
+:END:
+** Context
+The remaining design-graph open questions affect architecture shape even though the feature ships after v0.0.1. Minimal defaults have fewer moving parts but weaker safety for high-stakes global decisions and interrupted sessions; highly automated defaults are more autonomous but make too many implicit changes before users trust the graph.
+** Decision
+Keep graph automation conservative: global grilling defaults to socratic, project grilling defaults to batch, decisions remain single-choice, the glossarist runs explicitly by CLI or manager tick, advisory marker hits are batched into one user question, and graph sessions can resume after daemon restart.
+** Consequences
+Graph automation stays conservative until architecture, planning, and reconciliation behavior has real project mileage. The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records.
+

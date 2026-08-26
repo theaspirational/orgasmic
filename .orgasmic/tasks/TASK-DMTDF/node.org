@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-DMTDF
+#+orgasmic_version: 2
+
+* DONE TASK-DMTDF extend DispatchKind with Architector variant in manager CLI :cli:dispatch:architector:gap:
+:PROPERTIES:
+:ID:               TASK-DMTDF
+:PRIORITY:         P2
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_PCSQE
+:PRODUCES:         crates/orgasmic-cli/src/manager.rs
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs
+:READ_SCOPE:       crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs shipped/agent-templates/architector.org shipped/prompts/architector/drafting.org shipped/manager/persona.org
+:TEST_CMD:         cargo test -p orgasmic-cli
+:CLOSED_AT:        [2026-05-28 Thu 12:42]
+:MERGE_SHAS:       f72efd2
+:END:
+
+** Description
+The CLI dispatcher (=crates/orgasmic-cli/src/manager.rs=) hard-codes =DispatchKind= to =Implementer | Reviewer=. TASK-EZ0ST shipped the architector persona, agent template, prompt template, and convention bundle — but the dispatch wiring was never extended. As a result =orgasmic manager dispatch --kind architector ...= fails clap validation, and TASK-ENXWA (first real architector run) cannot be dispatched cleanly.
+
+Add an =Architector= variant to =DispatchKind= and thread it through every branching site so an architector dispatch behaves correctly end-to-end (worktree path, branch name, lifecycle stage transitions, dispatch_started tx KIND field, close tx type, dispatchable-stage gate).
+
+** Acceptance Criteria
+- [ ] =DispatchKind= enum gains =Architector= variant with =as_str() -> "architector"=.
+- [ ] =default_worktree(task, Architector)= returns =/tmp/orgasmic-worktrees/<slug>-arch= (or similar non-colliding path; must differ from both implementer and reviewer defaults).
+- [ ] =default_branch(task, Architector)= returns =<slug>-arch=.
+- [ ] =lifecycle_stage_for_kind(Architector)= maps to a sensible architector stage. Two acceptable conventions: (a) re-use =LifecycleStage::Implement= since architector authors content same as implementer just on different files, OR (b) introduce a new =LifecycleStage= variant if the existing state-machine vocabulary supports it. Implementer's choice — justify in the PR.
+- [ ] Close-tx-type mapping in =close_tx_type_for_kind=: =Architector= -> =architector.done=.
+- [ ] =dispatchable_stage(Architector, stage)= mirrors implementer (BACKLOG or current architector-stage). Document the gate inline.
+- [ ] Sprint state transitions: dispatch flips BACKLOG -> architector-stage (whatever choice was made above); close-done flips -> DONE.
+- [ ] Existing dispatch CLI tests pass + at least one new test covers the architector path (worktree path, branch, kind round-trip).
+- [ ] =cargo test -p orgasmic-cli= green; =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; MSRV 1.78.
+- [ ] No changes to daemon supervisor or codex worker code — architector dispatch must work via the existing =--worker architector= path with the agent template loaded by =shipped/agent-templates/architector.org= (already shipped via TASK-EZ0ST).
+
+** Notes
+- *Tiny surface*: ~7 match-arm sites in =crates/orgasmic-cli/src/manager.rs= (enum, as_str, lifecycle stage map at ~L1118, close-tx-type map at ~L803, sprint-state transition map at ~L1135 + ~L1140, dispatchable-stage gate at ~L1290, default_worktree at ~L1374, default_branch at ~L1384). Plus tests.
+- *Unblocks TASK-ENXWA* (first architector run) and any future architector tasks.
+- *Daemon already supports the architector path* via =req.worker_id= → agent template loader (=crates/orgasmic-daemon/src/content.rs=). The CLI gap is the only blocker.
+- *Out of scope*: griller/planner DispatchKind variants (file separately if needed); architector persona changes; architecture.org content changes.
+
+** Evidence
+- *Implementer pass merged as =f72efd2= (codex =72e89b9=, ~44 min wall, codex-stdio gpt-5.5 high dispatch).* 1 file +137/-13 LOC. =DispatchKind::Architector= variant added with =as_str()="architector"=; threaded through 10 sites in =crates/orgasmic-cli/src/manager.rs=: enum, as_str, =done_tx_type= → =architector.done=, =lifecycle_stage_for_kind= → =LifecycleStage::Implement= (re-used per implementer's justified choice; no new state-machine variant), sprint state transition map (open: BACKLOG → IMPLEMENT; close-done: → DONE), =dispatchable_stage(Architector, _)= accepts =Backlog | Implement=, =allowed_stage_text(Architector)= = ="BACKLOG or IMPLEMENT"=, =default_worktree(_, Architector)= = =<slug>-arch= suffix, =default_branch(_, Architector)= = =<slug>-arch=, generalized worktree-collision check (iterates over all =\[Implementer, Reviewer, Architector\]= and rejects any cross-kind default path reuse). 2 new tests covering kind round-trip + default-distinctness asserts. **Surprise (non-blocking)**: codex's own sandbox denied local-socket test binds; codex retried with escalated permissions internally (orgasmic's sandbox + diff unaffected).
+- *Reviewer pass verdict =has-issues-no-blocks-ship=* via =/tmp/orgasmic-codex/task-096-reviewer-report.md=: 0H/0M/1L. F-1 LOW: collision-rejection is implemented correctly + smoke-test passed, but committed tests don't drive =cmd_dispatch= with =--kind architector --worktree <implementer-default>= to assert the bail path. Test-coverage gap, not a functional defect. Reviewer hand-verified the smoke test: =orgasmic manager dispatch --kind architector --dry-run= shows worktree =/tmp/orgasmic-worktrees/task-086-arch= + branch =task-086-arch= as expected. Filed TASK-DMTDF.1 (BACKLOG, P3, fix-subtask) for the regression test.
+- *Gates on merged main =f72efd2=:* cargo test -p orgasmic-cli ✓ (3 passed); cargo test --workspace ✓ (reviewer re-verified); cargo clippy --workspace --all-targets -- -D warnings ✓; cargo fmt --check ✓; git diff --check ✓.
+- *Unblocks*: TASK-ENXWA (first architector run authoring real =.orgasmic/architecture.org=) via =orgasmic manager dispatch --task TASK-ENXWA --kind architector --worker architector=. Worktree =/tmp/orgasmic-worktrees/task-086-arch=; branch =task-086-arch=.
+

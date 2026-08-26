@@ -1,0 +1,44 @@
+#+title: orgasmic task TASK-M1MZ4
+#+orgasmic_version: 2
+
+* DONE TASK-M1MZ4 Roll up conformance findings and promote v0.0.1 classifications :architecture:conformance:rollup:
+:PROPERTIES:
+:ID:               TASK-M1MZ4
+:PRIORITY:         P1
+:WORKER:   architector
+:IMPLEMENTS:       arch_WZFAX arch_QFQTD arch_BVH7M arch_A53QX arch_R3EPE arch_C87Z9 arch_MK2Q2 arch_MPAQT arch_PCSQE arch_Z3Z3V arch_QXS5W
+:PRODUCES:         .orgasmic/architecture.org .orgasmic/sprint.org
+:WRITE_SCOPE:      .orgasmic/architecture.org .orgasmic/sprint.org
+:READ_SCOPE:       .orgasmic/architecture.org .orgasmic/decisions.org .orgasmic/glossary.org .orgasmic/sprint.org .orgasmic/backlog.org archive/2026-05-22_arch-conformance/audit.md docs/adr/*.org crates/** ui/** shipped/**
+:TEST_CMD:         cargo test -p orgasmic-core --test fixtures
+:DEPENDS_ON:       TASK-XB874 TASK-CHZTR TASK-KJJRF TASK-AAW76 TASK-F6D3T TASK-E8BTA TASK-AQY23
+:END:
+
+** Description
+Once the conformance audit (TASK-XB874) and all gap-closure tasks (TASK-CHZTR..TASK-E8BTA) land, walk =.orgasmic/architecture.org= one more time and:
+
+1. Promote =:V0_0_1: partial= to =shipped= on arch_A53QX, arch_R3EPE, arch_PCSQE (and remove the =:V0_0_1_GAPS:= property and =** v0.0.1 status= body section as their gap-closure tasks close).
+2. Add =:V0_0_1: target= nodes to =* TARGET ARCHITECTURE= for any post-v0.0.1 design intent surfaced by the audit (MCP server, WRITE_SCOPE sandbox, telemetry, LAN UX hardening, etc.) — only when the audit identifies them as cohesive whole-node additions, not as inline bullets under an existing partial.
+3. File backlog entries for any minor gaps that don't warrant a target arch node.
+4. Regenerate ADRs (=docs/adr/*=) for any decisions whose body content changed during gap closure.
+5. Update =CLAUDE.md= Pitfalls if any of the gap-closure tasks surfaced a new MSRV / parser / platform gotcha worth durably recording.
+
+** Acceptance Criteria
+- [X] =arch_A53QX=, =arch_R3EPE=, =arch_PCSQE= carry =:V0_0_1: shipped= with no =:V0_0_1_GAPS:= and no =** v0.0.1 status= body section.
+- [X] Audit-proposed reclassifications resolved: =arch_C87Z9=, =arch_MPAQT=, =arch_Z3Z3V=, =arch_QXS5W= flipped from =shipped= to =partial= with =:V0_0_1_GAPS:= naming concrete gap-closure tasks and =** v0.0.1 status= body sections enumerating shipped surface vs unimplemented constraints. =arch_BVH7M= kept =shipped= (TASK-AQY23 closed its historical-tx half; the snapshot/ADR writer-serialization half is logged as a minor backlog item, not architectural reclassification).
+- [X] Backlog gap-closure tasks filed: TASK-BX0K0..TASK-XBT65 covering all four reclassified partials.
+- [X] No ADRs changed because no source decision body content changed during gap closure.
+- [X] =cargo test -p orgasmic-core --test fixtures= passes (architecture.org still parses).
+
+** Evidence
+- [2026-05-22 Fri 11:25] Promoted =arch_A53QX= (TASK-C7C8P + TASK-CHZTR + TASK-KJJRF + TASK-AAW76), =arch_R3EPE= (TASK-D6Y0Y + TASK-F6D3T), =arch_PCSQE= (TASK-D6Y0Y + TASK-ZA4EW + TASK-BHMDH + TASK-E8BTA) from partial to shipped. Removed their =:V0_0_1_GAPS:= properties and =** v0.0.1 status= body sections.
+- [2026-05-22 Fri 11:25] Reclassified =arch_C87Z9= → partial with TASK-BX0K0 (CLI parity) and TASK-NX19C (contradictions + ADR promote/demote); =arch_MPAQT= → partial with TASK-WASWJ (atomic revision), TASK-ZFMTD (cross-scope finalize gates), TASK-ZPNQA (auto-snapshot), TASK-T6KNE (advisory marker indexing), TASK-YRK91 (typed graph events); =arch_Z3Z3V= → partial with TASK-DNF8Y (full identity-tuple ownership guard), TASK-XC6RJ (writer flush + driver attach proof); =arch_QXS5W= → partial with TASK-ENVZM (skill manifest values), TASK-CD207 (missing-skill hard dry-run), TASK-XBT65 (convention Notes exclusion).
+- [2026-05-22 Fri 11:25] No promotion of audit-surfaced inline gaps to whole-node =* TARGET ARCHITECTURE= entries — every audit finding maps to a partial-node gap with a concrete closure task.
+- [2026-05-22 Fri 13:55] *Second pass:* with Rounds 1–4 gap-closure (TASK-BX0K0..TASK-XBT65) all merged on =main=, promoted =arch_C87Z9= (now +TASK-BX0K0 TASK-NX19C), =arch_MPAQT= (now +TASK-WASWJ TASK-ZFMTD TASK-ZPNQA TASK-T6KNE TASK-YRK91), =arch_Z3Z3V= (now +TASK-DNF8Y TASK-XC6RJ), =arch_QXS5W= (now +TASK-ENVZM TASK-CD207 TASK-XBT65) from =:V0_0_1: partial= to =:V0_0_1: shipped=. Removed each node's =:V0_0_1_GAPS:= property and =** v0.0.1 status= body subsection; appended the closing task ids to each =:V0_0_1_EVIDENCE:=. Bumped file header =#+status: v0_0_1-split= → =v0_0_1-shipped= and =#+v0_0_1_rollup_at: [2026-05-22 Fri 13:55]=. Updated =* IMPLEMENTED v0.0.1= and =* TARGET ARCHITECTURE= intros to reflect zero remaining partials.
+- [2026-05-22 Fri 13:55] Verification: =cargo test --workspace= 170/170 still pass after the architecture.org edit (the fixtures test reads architecture.org and would have failed on a parse regression).
+- [2026-05-22 Fri 13:55] All eleven =arch_NNN= nodes are now =:V0_0_1: shipped=. v0.0.1 architecture is target-architecture-implemented; polish phases (UX/DX, UI) can begin.
+
+** Worklog
+- [2026-05-22 Fri 11:25] Read =archive/2026-05-22_arch-conformance/audit.md= in full and applied the per-node verdicts: shipped (arch_WZFAX/002/003/007), promote-to-shipped (arch_A53QX/005/009), reclassify-to-partial (arch_C87Z9/008/010/011). Filed gap-closure tasks TASK-BX0K0..TASK-XBT65 against the reclassified partials.
+- [2026-05-22 Fri 13:55] Ran the second rollup pass after Rounds 1–4 (TASK-BX0K0..041) landed and merged. The pass was deterministic given the now-empty partial set: flip four =:V0_0_1:= properties, extend their evidence lists, drop their gap properties and status sections. No backlog tasks deferred; no ADRs needed regeneration (no source-decision body content changed during gap closure). manager.action tx tx-20260522-org-0060 records the rollup.
+

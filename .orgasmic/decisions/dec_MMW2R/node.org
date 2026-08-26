@@ -1,0 +1,18 @@
+#+title: orgasmic decision dec_MMW2R
+#+orgasmic_version: 2
+
+* dec_MMW2R Should v0.0.1 add manager permission tiers and approval queues?    :manager:
+:PROPERTIES:
+:ID:            dec_MMW2R
+:GLOSSARY_REFS: term_X4JGJ term_YC32J
+:DECIDED_AT:    [2026-05-21 Thu 19:06]
+:SOURCE:        archive/21_05_26_init/spec.org::*Oversight (12e)
+:PARENT:        dec_DK7AZ
+:END:
+** Context
+The project must decide whether v0.0.1 includes approval queues, permission tiers, or tool whitelists for the manager. An approval queue makes changes safer but greatly enlarges the v0.0.1 surface; a tool whitelist duplicates host-agent permission systems.
+** Decision
+No orgasmic permission tiers in v0.0.1. Oversight comes from prompt discipline, =manager.action= tx entries, and visible UI notifications; the manager uses host tools and the orgasmic CLI directly.
+** Consequences
+Safety is explicit auditability and review, not a partial sandbox duplicated inside orgasmic.
+

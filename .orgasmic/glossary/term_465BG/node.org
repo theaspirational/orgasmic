@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_465BG
+#+orgasmic_version: 2
+
+* term_465BG Question system
+:PROPERTIES:
+:AVOID: chat, prompt
+:CANONICAL: question system
+:DEFINITION: The blocking question/answer channel between agents and the operator: an agent asks through the daemon, the run blocks until a human answers via CLI or UI. Questions and answers persist as tx records.
+:ID: term_465BG
+:RELATES_TO: term_X4JGJ term_3YTBK
+:END:
+

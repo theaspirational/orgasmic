@@ -1,0 +1,64 @@
+#+title: orgasmic task TASK-GRCWC
+#+orgasmic_version: 2
+
+* DONE TASK-GRCWC neither walk_worktree fail-open has a fixture, and worktree-prune is a destructive verb on the operator binary
+:PROPERTIES:
+:ID: TASK-GRCWC
+:PRIORITY: P1
+:END:
+
+** Description
+Opened so the =TASK-RMA18= chain could close. *This residual was recorded on the
+round-seven close =tx-20260808-orgasmic-5480= and accepted knowingly by the
+operator* — it is not new, and it is not a review finding. It is the one thing
+that chain never closed.
+
+=orgasmic manager worktree-prune= is *DESTRUCTIVE* and has been on the operator
+binary since =ed0ebbc= (2026-08-08); it is still there in =2cf6ea7=.
+
+*** The two fail-opens
+=crates/orgasmic-cli/src/manager.rs=, =walk_worktree=:
+
+: :3833  if depth > anchored_dir::MAX_DEPTH { return; }
+: :3836  let Ok(names) = anchored_dir::entry_names(dir) else { return; };
+: :3855  Err(_) => continue,
+
+All three *fail OPEN* — the walk gives up quietly and the tree looks smaller and
+safer than it is. What makes that acceptable is that =remove_contents=
+(=:3179-3195=) propagates the SAME limits instead of swallowing them:
+
+: :3180  if depth > MAX_DEPTH { bail!(..) }
+: :3183  for name in entry_names(dir)?
+: :3184  match open_child_dir(dir, &name)?
+
+*** The problem
+*That symmetry has now been derived from source THREE times and executed ZERO
+times.* Round five's reviewer, round six's reviewer, and the manager on
+2026-08-08 — who checked the likeliest crack, the depth bases, and confirmed they
+match, because the =child= passed to =remove_contents(&child, 1, ..)= at =:3243=
+is the worktree root itself, so both enter it at depth 1.
+
+Three readings of the same code are not a test. *No fixture exercises either
+fail-open.*
+
+*** Second, unchanged and NOT data loss
+=RemovalFailure= carries =touched= and =remove_contents= is readdir-ordered, so a
+fail-open shape yields a *reported PARTIAL removal*, not an untouched worktree.
+*The help does not say so.*
+
+** Acceptance
+1. *The cheap fixture first: =chmod 000=.* A directory the walk cannot list,
+   inside a worktree the verb is asked to prune. Prove the refusal, and prove
+   =remove_contents= would have refused too rather than partially removing.
+2. Then the depth one: a tree deeper than =MAX_DEPTH=. It is the expensive
+   fixture and it is why it has never been written; write it anyway or state the
+   bound it is being traded for.
+3. *Decide and state what a partial removal means to the operator*, and make the
+   help true about it. Today it is silent.
+4. *This should land before any further destructive change to this verb.* That
+   sentence has been in the handoff for two days; make it an acceptance instead.
+
+** Why P1
+The verb deletes directories on the operator's machine, it is installed, and the
+only argument for its safety is one nobody has run.
+

@@ -1,0 +1,84 @@
+#+title: orgasmic task TASK-VEZYR
+#+orgasmic_version: 2
+
+* DONE TASK-VEZYR Project-selector restructure: sidebar dropdown + footer Add/Manage + 4-primary nav + 4-spoiler + header LED/bell/theme/gear out-of-nav :ui:ia:routing:shell:
+:PROPERTIES:
+:ID:               TASK-VEZYR
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:       dec_CGVRW dec_HYD58 dec_H9P38
+:PRODUCES:         ui/src/components/AppShell.tsx ui/src/app/router.tsx ui/src/components/BoardView.tsx
+:WRITE_SCOPE:      ui/src/components/AppShell.tsx ui/src/app/router.tsx ui/src/components/BoardView.tsx ui/src/components/ProjectSelector.tsx ui/src/components/ProjectsManageDialog.tsx ui/src/components/ProjectAddDialog.tsx ui/src/components/Primitives.tsx ui/src/hooks/useActiveProject.ts ui/src/lib/api.ts ui/src/lib/types.ts ui/src/styles.css
+:READ_SCOPE:       /tmp/orgasmic-codex/task-049-brief.md .orgasmic/decisions.org .orgasmic/sprint.org CLAUDE.md shipped/manager/persona.org
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-DK0Y2 TASK-ZYPJC
+:END:
+
+** Description
+Information-architecture restructure of the app shell per dec_CGVRW + dec_HYD58 + dec_H9P38. The current AppShell (ui/src/components/AppShell.tsx, ~500 lines) has Decisions/Architecture/Tasks/Glossary as primary nav with a sub-section "More" disclosure carrying Project, Runs, Org, ADR, Snapshots, Activity, Graph, Status, Settings (9 items). The Board page is a separate /board route surfaced via the index redirect when no last-project is stored. The user direction is to demote Board to a project-switcher affordance in the sidebar drawer, narrow primary nav to exactly 4 items + 4 spoiler items, and move Status + Settings entirely out of the sidebar into top-header icons (LED click → Status; gear → Settings). Manager popover (ManagerPopover) is already shipped per TASK-EBWZ9 and stays as-is; this task does not touch it.
+
+*Three coupled surfaces:*
+
+*(A) Project selector in the sidebar (dec_CGVRW).* The sidebar's first item becomes a project switcher dropdown. Selecting a project navigates to /projects/$projectId/decisions (the new default landing page) and persists to localStorage.orgasmic.active_project + localStorage.orgasmic.lastProject. The dropdown shows the currently active project (project_id + branch chip) with a small caret that opens a popover listing every registered project. A search/filter input appears once the project count exceeds ~6. The sidebar footer carries two actions: "+ Add project" (small dialog: validates a path; auto-fills project_id / repo_url / branch from .orgasmic/project.org and git config) and "Manage projects" (large modal whose contents are the existing BoardView Card grid — preserve the BoardView component as-is and mount it inside a shadcn Dialog with sm:max-w-none + h-[85vh]; Card click closes the modal AND switches the active project). Single-project users never see the Manage modal because the dropdown collapses to just the active project + the two footer actions. Empty state (no projects): dropdown disabled; footer shows "+ Add your first project" prominently.
+
+*(B) Primary nav narrowed + spoiler (dec_HYD58).* PRIMARY = [Decisions, Architecture, Tasks, Glossary]. SPOILER ("More") = [ADR, Graph, Snapshots, Activity]. Removed from sidebar entirely: Project (overview was redundant with header; if kept route, link goes via the project-id chip click), Runs (low-value standalone page; live runs surface inside Activity per dec_CGVRW-era IA), Org (Org editor demoted; access via shipped/manager surface if needed — keep the route reachable by URL but not nav), Status (header LED is the entry point), Settings (header gear is the entry point). PROJECT_PAGE union type narrows accordingly: keep route definitions for project/runs/org/status/settings (so URL access still works), drop them from PRIMARY + MORE arrays in AppShell. The spoiler starts EXPANDED on desktop (matches current behavior); collapsed on mobile.
+
+*(C) Top header (dec_H9P38).* Right side of the header sticks with the current LED + bell + theme + gear pattern (which already partially exists). Make the LED a real click target navigating to /projects/$projectId/status (replaces "WS live" badge entirely; that's already done). Make the gear click target navigate to /projects/$projectId/settings (already done). Mobile (<md): theme + gear collapse into the existing ⋯ MobileOverflow dropdown (already done; expand it to also expose Status in the overflow list since the LED stays visible). The current shell already implements most of (C); this task verifies the wiring stays correct after PRIMARY/MORE re-shuffle and adds a Status entry to the mobile overflow.
+
+*(D) Index redirect (cleanup).* /board route is preserved (URL still works) but no longer the default. The root redirect should always go to /projects/$projectId/decisions; if no last-project is stored, open the "+ Add project" dialog as a startup state on /projects/none/decisions or a synthetic /welcome route (codex picks the cleanest; lean toward keeping /board as the no-project fallback route renamed to render the Manage modal full-screen).
+
+The four BoardView Card click handler stays callable from the Manage modal (onSelectProject prop wired to "switch + close").
+
+** Acceptance Criteria
+- [ ] *(A) Project selector*: sidebar's first menu item is a project dropdown that shows the active project; opening the dropdown lists all projects fetched from /projects; clicking a project switches active (navigate + localStorage write) and closes the dropdown. Footer shows "+ Add project" and "Manage projects" buttons. Manage modal mounts BoardView inside a shadcn Dialog with h-[85vh] + sm:max-w-none; Card click in the modal switches active project AND closes the modal. Single-project state: dropdown shows just the active project; Manage button still works (renders the single card).
+- [ ] *(A) Add-project dialog*: form with a path input; on submit POST /projects (or the existing add-project endpoint — check ui/src/lib/api.ts for what's already wired and either reuse it or surface the missing piece in a clear FIXME comment, do NOT add new daemon routes in this dispatch). On success: dropdown refreshes via the existing useRefreshBus pattern, the new project becomes active, modal closes.
+- [ ] *(B) Sidebar nav*: PRIMARY group has exactly 4 items in this order — Decisions, Architecture, Tasks, Glossary. MORE group has exactly 4 items — ADR, Graph, Snapshots, Activity. No other nav items in the sidebar. URLs for the removed pages (/project, /runs, /org, /status, /settings) still resolve via their existing routes.
+- [ ] *(C) Header*: LED click navigates to /projects/$projectId/status. Gear click navigates to /projects/$projectId/settings. Bell + theme behavior unchanged. On <md viewports the ⋯ MobileOverflow dropdown contains: Theme submenu (Light/Dark/System), Status link, Settings link.
+- [ ] *(D) Index redirect*: root path / redirects to /projects/$projectId/decisions when a last-project is in localStorage. If no last-project: redirect to /board (preserved fallback) where the Manage modal opens automatically to drive first-project setup.
+- [ ] *Routing integrity*: removing PRIMARY/MORE entries does not break any deep-link URL. Bookmarks like /projects/foo/runs or /projects/foo/org still render those views correctly.
+- [ ] *Active project persistence*: switching project via dropdown writes to BOTH localStorage.orgasmic.active_project and localStorage.orgasmic.lastProject (preserve dual-key compat with router.tsx::readLastProject). Reload preserves selection.
+- [ ] *Responsive matrix*: desktop ≥md — full sidebar with PRIMARY + MORE expanded by default; <md — sidebar collapses to icon mode per shadcn Sidebar collapsible='icon'; MobileOverflow dropdown shown.
+- [ ] *Theme/colors*: dropdown + dialog inherit shadcn tokens; no hand-rolled colors. Dark + light themes both render correctly (verify visually).
+- [ ] *Verification gate*: =cd ui && npm run build= clean (tsc --noEmit + vite build), no JS exceptions in dev or build, no chunk-size budget regression beyond +20 kB on the main =index= chunk (current baseline 359.25 kB).
+- [ ] *Workspace gate*: =cargo test --workspace= + =cargo clippy --workspace --all-targets -- -D warnings= + =cargo fmt --check= + =git diff --check= all clean (no daemon changes expected; if any TypeScript-side type drift forces a tiny daemon-side adjustment, document it explicitly).
+- [ ] *No new dependencies*. shadcn primitives already present (Dialog, DropdownMenu, Popover, Button, Separator); use them. If a Command palette is wanted for the project dropdown, install via the project's shadcn skill (copy-paste primitive, not a new package); otherwise a plain DropdownMenu + filter input suffices.
+
+** Notes
+*Why bundle three surfaces*: they share the same write file (=ui/src/components/AppShell.tsx=) and (B) is dependent on (A) being present (you can't drop nav items without giving users a way to reach all projects). Single coupled commit; matches TASK-EBWZ9 / TASK-DK0Y2 pattern.
+
+*Out of scope (do not touch in this dispatch)*:
+- Manager popover redesign — already shipped TASK-EBWZ9; ManagerPopover stays as-is.
+- New daemon /projects endpoints (Add project may need a daemon route; if missing, leave a TODO + clear stub in the dialog, file a tiny follow-up sprint task in the implementer's last-message; do NOT block this dispatch on a daemon change).
+- Per-page IA inside any primary page (Decisions/Architecture/Tasks/Glossary internal layout unchanged; just the shell around them moves).
+- TanStack Router migration (already done in prior sessions).
+- Manager prompt / persona / dispatch CLI work.
+- Mobile-specific re-flow of internal page contents.
+
+*Reference patterns*:
+- multica-ai/multica's project selector in =packages/views/projects/= (read-only inspiration; do not bundle their code).
+- shadcn DropdownMenu + Popover + Command primitives.
+- Current shell's MobileOverflow + ThemeToggle patterns at =AppShell.tsx:455-499=.
+
+*Close pattern*: single =implementer.done= tx via =orgasmic manager dispatch-close --task TASK-VEZYR --status done --merge-sha <SHA> --codex-commit <SHA> --codex-session <ID> --tokens <N> --wall <DUR> --branch-delete=. Auto-transition: BACKLOG → IMPLEMENT on dispatch; IMPLEMENT → REVIEW on close (TASK-VEZYR lacks =:FIX_SUBTASK: t=, so it's a polish task that needs a reviewer pass per persona rule 2). Reviewer dispatch follows merge.
+
+** Evidence
+- [2026-05-24 Sun 11:47] Shipped =f600278= on =task-049-impl=; merged no-ff as =32df96e= on main. Codex gpt-5.5 xhigh, 13m13s wall, 312,933 tokens, session =019e591f-40e7-7501-b091-39e253033637=. =implementer.done= =tx-20260524-org-0170= via =orgasmic manager dispatch-close= (**DOGFOOD #11+#12 PASS** — BACKLOG → IMPLEMENT on dispatch, IMPLEMENT → REVIEW on close; TASK-VEZYR lacks =:FIX_SUBTASK: t= so polish-subtask path fired correctly).
+- 7 files changed, +524 / -47.
+- *(A) Project selector* — new =ui/src/components/ProjectSelector.tsx= (+139) renders shadcn dropdown trigger as sidebar header with active project id + branch chip + caret. New =ui/src/hooks/useActiveProject.ts= (+60) handles dual-localStorage write + navigate.
+- *(A) Add/Manage dialogs* — new =ui/src/components/ProjectAddDialog.tsx= (+125) with =FIXME(TASK-VEZYR-followup)= stub (no daemon endpoint added per brief). New =ui/src/components/ProjectsManageDialog.tsx= (+53) mounts existing =BoardView= unchanged inside shadcn Dialog at =h-[85vh]=.
+- *(B) Nav narrowed* — =ui/src/components/AppShell.tsx= (+97 / -47) PRIMARY=[Decisions, Architecture, Tasks, Glossary] (4), MORE=[ADR, Graph, Snapshots, Activity] (4). Routes for removed pages (project / runs / org / status / settings) preserved in =router.tsx=.
+- *(C) Header* — LED + gear wiring preserved from TASK-EBWZ9; MobileOverflow gains Status entry alongside Settings.
+- *(D) /board fallback* — new =ui/src/components/BoardRouteView.tsx= (+82): empty state shows welcome card + "+ Add" CTA; populated state renders existing BoardView picker. =indexRoute.beforeLoad= logic unchanged.
+- Preserved unchanged: =BoardView=, =ManagerPopover=, =NotificationBell=.
+- Verification (worktree + re-run on merged main):
+  - =cd ui && npm run build= clean (tsc --noEmit + vite v6.4.2). Main =index= chunk 359.25 → 360.83 kB (+1.58 kB, well under +20 kB budget).
+  - =cargo test --workspace= clean: 205 tests.
+  - =cargo clippy --workspace --all-targets -- -D warnings= clean.
+  - =cargo fmt --check= clean.
+  - =git diff --check= clean.
+- No new deps in =package.json= or =Cargo.toml=. No new shadcn primitives installed (Dialog, DropdownMenu, Button, Separator all already present).
+
+** Reviewer pass
+- [2026-05-24 Sun 12:53] Codex reviewer (gpt-5.5 xhigh, 3m4s wall, 115,642 tokens, session =019e5964-716d-73d0-a75a-76faa09bc198=) read =git diff 4914155..32df96e -- ui/=, implementer brief, dec_CGVRW/026/027, sprint Evidence. Produced =/tmp/orgasmic-codex/task-049-review-report.md=. Verdict: =has-issues, no blocks-ship=. **2 low findings** (0 critical / 0 high / 0 medium / 2 low / 0 nit): F-1 (a11y) =ProjectSelector= trigger sets =aria-label="Active project"= which overrides the visible active project text for assistive tech — should include the value; F-2 (design) MORE disclosure button at =AppShell.tsx:272-281= renders text "More" without icon-mode adaptation, sitting in the 3rem icon column when sidebar collapses. =reviewer.done= =tx-20260524-org-0172= via =orgasmic manager dispatch-close --property VERDICT=... --property RECOMMENDED_SUBTASKS=TASK-VEZYR.1= — **DOGFOOD #13 PASS** (TASK-VEZYR correctly stayed at REVIEW because RECOMMENDED_SUBTASKS non-empty). Defer-as-is: add-project FIXME stub accepted; BoardView reused unchanged; /board fallback correct; package/ui primitive diffs empty; core contract checks pass by inspection (dual-localStorage write, PRIMARY/MORE 4+4 exact, removed nav routes preserved, LED/gear/mobile wiring, TASK-EBWZ9/TASK-ZYPJC/TASK-DK0Y2 surfaces untouched).
+- Cleanest reviewer pass since TASK-FB8CK.5 (zero medium/high/critical findings on a +524-LOC IA restructure).
+

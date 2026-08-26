@@ -1,0 +1,18 @@
+#+title: orgasmic task TASK-TP593
+#+orgasmic_version: 2
+
+* BACKLOG TASK-TP593 Node kernel in orgasmic-core plus the writer ops that go with it    :e01mc:node_kernel:
+:PROPERTIES:
+:ID: TASK-TP593
+:IMPLEMENTS: dec_E01MC
+:PRIORITY: P1
+:DEPENDS_ON: 
+:END:
+
+** Description
+AP971.1/.6: land crates/orgasmic-core/src/node_kernel.rs from the ap971-prototype branch (41a1faf): node_dir, create_node_dir (mkdir = collision check), parse_node, parse_journal/append_entry, edit_comment_body, tombstone_comment, consume_open_comments. Add the daemon writer ops over it: append journal entry, OCC-guarded in-place comment edit stamping :EDITED_AT:, tombstone; journal.org joins the ledger-rewrite denylist; the writer refuses column-0 '* ' in journal prose; size lint past ~500KB. shipped/schema/journal.org v1 documents the grammar (AP971.1 items 1–12).
+** Acceptance
+- [ ] kernel unit tests + the real_data parse test pass
+- [ ] writer ops exist with OCC and denylist enforcement, covered by tests
+- [ ] schema doc shipped
+

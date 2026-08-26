@@ -1,0 +1,146 @@
+#+title: orgasmic task TASK-RMA18.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-RMA18.1.1 worktree-prune's submodule refusal is fail-open against git's index and is skipped entirely on the RepoGone branch
+:PROPERTIES:
+:ID: TASK-RMA18.1.1
+:PRIORITY: P0
+:IMPLEMENTS: TASK-RMA18.1
+:FIX_SUBTASK: TASK-RMA18.1.1.1
+:END:
+
+** READ THIS FIRST — STATUS
+FIX ROUND for TASK-RMA18.1, opened by a =REJECT= with =BLOCK SHIP= from the
+third independent review of this delete path (=tx-20260808-orgasmic-5320=,
+codex/gpt-5.6-sol at high effort, the same reviewer that issued the round-1 and
+round-2 BLOCK SHIPs on TASK-M47E5).
+
+=orgasmic manager worktree-prune= IS UN-GATED IN SOURCE AND DELETES DIRECTORIES
+GIT ITSELF REFUSES TO REMOVE. The only thing keeping it off an operator's
+machine is that the runtime has not been reinstalled. *DO NOT REINSTALL THE
+RUNTIME UNTIL THIS TASK IS DONE AND REVIEWED.*
+
+Both HIGH findings were REPRODUCED ON THE PRODUCTION PRUNE PATH, not argued
+from source: each one printed =RECLAIMED= and recursively deleted a sentinel
+file out of a directory the stated contract says must be kept, in a scratch
+checkout of =d10b0cf=, with git's own refusal proven first in the same fixture.
+
+** Description
+TASK-RMA18.1 rebuilt =worktree_submodule_refusal= to reproduce git's
+=validate_no_submodules= after the round-2 review found that git refuses ANY
+worktree containing an initialized submodule before it considers cleanliness.
+The rebuild reads the working-tree =.gitmodules= and the worktree admin
+=modules/= directory. *Git reads the INDEX* — every mode-160000 gitlink — and
+skips only the ones whose checkout is unpopulated.
+
+That divergence was DISCLOSED by the implementer as a theoretical gap. The
+review demonstrated it is reachable, and separately found that the refusal is
+not even consulted on one of the two destructive branches.
+
+** Findings to close
+*** F1 (HIGH, BLOCK SHIP) — index-only populated gitlinks bypass the refusal and are deleted
+=crates/orgasmic-cli/src/manager.rs:3930-4049,4154-4163=
+
+Commit a gitlink with =git update-index --add --cacheinfo 160000=, populate its
+working path with an ordinary standalone clone, and never create =.gitmodules=.
+Neither implemented branch fires: there is no =.gitmodules= entry and no admin
+=modules/= directory.
+
+REVIEWER-MEASURED, git 2.52.0, before touching orgasmic: =.gitmodules= absent,
+worktree admin =modules= absent, index entry mode =160000=, nested =.git=
+present, =git status= AND =git status --ignore-submodules=none= both empty —
+and =git worktree remove= exits 128 with =working trees containing submodules
+cannot be moved or removed=.
+
+Then on the production path in a scratch checkout of =d10b0cf=:
+#+begin_example
+RECLAIMED PATH=.../task-submodule BYTES=29486 SIZE=28.8KiB
+PRUNE_SUMMARY RECLAIMED=1 ...
+#+end_example
+failing at =the untracked file inside the submodule must SURVIVE the prune=.
+
+The existing regression at =crates/orgasmic-cli/tests/dispatch.rs:8655-8784=
+only builds a NORMAL =.gitmodules=-registered submodule, for which the admin
+=modules/= branch also fires — so the injection proof disables both implemented
+branches without ever challenging their COMPLETENESS against the index.
+
+*** F2 (HIGH, BLOCK SHIP) — RepoGone deletes before the categorical submodule check
+=crates/orgasmic-cli/src/manager.rs:4254-4288=; operator claim at =:369-378=
+
+=reclaim_managed_worktree= handles =WorktreeDisposition::RepoGone= by rechecking
+that disposition and returning directly through =root.remove_child= at :4278.
+The categorical submodule refusal sits BELOW that return, at :4287. It is
+therefore before salvage only on the =Unclaimed= branch — *it is not before
+every destructive branch.*
+
+Reachable with the ORDINARY submodule shape, no exotic index required. The
+reviewer took the accepted passing fixture, let its assertion prove git refused
+the initialized submodule, then moved the linked worktree admin directory away.
+The populated submodule and its sentinel remained; prune classified the
+worktree RepoGone and deleted them.
+
+The operator-facing help says the verb refuses initialized submodules and names
+NO RepoGone exception, so the text is false as well as the behaviour unsafe.
+
+*** F3 (MEDIUM) — F2's residual statement is materially narrower than the code
+=crates/orgasmic-cli/src/manager.rs:4196-4208,4291-4353=; subprocess groups at
+=:2469-2532,4111-4165=
+
+The new doc comment says =assert_path_names= is re-taken immediately before EACH
+git subprocess, narrowing the residual to a subprocess's own pathname
+resolution. The code does not do that:
+- one assert precedes =worktree_has_uncommitted_changes=; =worktree_head_oid=
+  then runs with no new assert;
+- one assert precedes =salvage_worktree_onto=, which runs =add=, =write-tree=,
+  =commit-tree=, =diff-tree=, =checkout=, another status and the salvage-ref
+  commands with no identity assertion between them;
+- one assert precedes =git_would_remove_worktree=, which runs =git worktree
+  list= FIRST and only afterwards resolves the pathname for =git status=.
+
+So for the deletion-critical clean decision an actor need not fit between an
+assert and its immediately following =execve=: it can wait out the whole
+worktree-list subprocess, bind a clean decoy for the status call, and bind the
+original back before the final assertion. The deletion stays identity-anchored,
+but the inode removed can be the dirty unsalvaged one. Either assert directly
+before every path-resolving subprocess, or rewrite the statement to describe the
+real windows. *A doc comment that overstates a mitigation is the defect class
+this project has paid for four times.*
+
+*** F4 (LOW) — the proving test names a nonexistent gate option
+=crates/orgasmic-cli/src/manager.rs:9245-9251=; parser at =scripts/run-tests.sh:158-198=
+
+The comment says =scripts/run-tests.sh --release-gates= runs the cfg-off proof.
+There is no such option — unknown arguments are forwarded to cargo, so a
+maintainer following the comment gets a cargo argument error. The cfg-off leg
+runs automatically for workspace and =orgasmic-cli= scopes; name a real
+invocation.
+
+** Acceptance
+1. F1 and F2 closed at the SOURCE OF TRUTH: candidate submodule paths derived
+   from the ANCHORED WORKTREE INDEX rather than =.gitmodules=, failing CLOSED
+   when the index cannot be read or parsed, with each gitlink path checked
+   handle-relatively for a populated checkout. The admin =modules/= check stays
+   as git's conservative first branch.
+2. The categorical refusal runs above the RepoGone early return, so it precedes
+   EVERY destructive branch and not just =Unclaimed=.
+3. Two new sentinel regressions, each proving git's own refusal first where
+   applicable, each proving the sentinel SURVIVES, each requiring a reasoned
+   =KEPT= line: (a) index-only gitlink + standalone populated checkout + no
+   admin =modules/=; (b) RepoGone + an ordinary populated submodule.
+4. F3 closed by making the code match the comment or the comment match the code
+   — state which, and why.
+5. F4: a real invocation in the comment.
+6. Operator-facing help stays true of the shipped behaviour, and =cli_parity=
+   still pins it.
+7. =orgasmic verify TASK-RMA18= and =orgasmic verify TASK-RMA18.1= still PASS.
+
+** Not this task
+The reviewer did NOT re-run the full workspace/CLI/daemon suites, =fmt=,
+workspace =clippy=, or either shipped verify proof, and said so. Those remain
+manager claims. It also did not test non-Unix behaviour (the implementation is
+Unix-gated) and did not write a runtime malicious-=.gitmodules= traversal test —
+C2 was cleared at source level only: the walk rejects =..=, resolves every
+component with =openat(O_NOFOLLOW|O_DIRECTORY)=, and never follows a symlink.
+The reviewer's conclusion is that the block-ship issue is FAIL-OPEN COMPLETENESS
+relative to the index, not an anchored-walk escape.
+

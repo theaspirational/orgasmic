@@ -1,0 +1,10 @@
+#+title: orgasmic task TASK-RRETJ
+#+orgasmic_version: 2
+
+* BACKLOG TASK-RRETJ StallableRmuxEndpoint pins RMUX_TMPDIR only: SDK half isolated, driver-spawned rmux CLI half reaches the live server inside a worker pane ($RMUX outranks RMUX_TMPDIR)
+:PROPERTIES:
+:ID: TASK-RRETJ
+:PRIORITY: P3
+:SOURCE: TASK-SZJ2B
+:END:
+

@@ -1,0 +1,157 @@
+#+title: orgasmic task TASK-QCG6J
+#+orgasmic_version: 2
+
+* BACKLOG TASK-QCG6J the reattach fence regression asserts which refusal fired, so it goes red on a safe outcome under load
+:PROPERTIES:
+:ID: TASK-QCG6J
+:PRIORITY: P2
+:TAGS: daemon,tests,flake
+:END:
+
+Found by the manager's independent gate on TASK-AK6EM, 2026-07-28. **The fence
+itself is correct** — this is about what its test asserts.
+
+=== Observed
+
+In a full `cargo test -p orgasmic-daemon --lib` under concurrent load:
+
+```
+---- api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds ----
+panicked at crates/orgasmic-daemon/src/api.rs:19229:
+the refusal must name the cleanup reservation:
+  recovery action reattach_tmux is not valid for run run-fence-d825d586...
+```
+
+The reattach **was refused**. It was refused by an earlier validity check rather
+than by the cleanup fence, because under load the test's tmux session was not
+live by the time the recovery action was evaluated. The test asserts *which*
+refusal fired, so it goes red on a safe outcome.
+
+Its sibling `boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds`
+passed in the same run and its log shows the fence doing exactly its job:
+
+```
+boot reattach: skipped (mux session not live / not reattachable)
+  run_id=run-fence-cc02bfb7... task_id=TASK-BOOT-FENCE
+  error=dispatch cleanup in progress for task=TASK-BOOT-FENCE kind=Worker
+```
+
+So the P0 fix is sound and merged. This task is the test's precision.
+
+=== Why it is worth fixing rather than tolerating
+
+A P0 destructive-path fence whose regression goes red for a reason unrelated to
+the fence trains the next reader to wave it through — which is precisely how a
+real fence regression would get discounted. It also lands on the standing
+known-flake list, which this project is actively trying to shrink (TASK-5HBST,
+TASK-STWVB).
+
+Note the same full run showed two more load-induced failures on the same axis —
+`post_artifact_regenerate_hot_path_reuses_live_run_id` ("harness busy", 409) and
+`poll_direct_child_pid_prefers_worker_server_over_generic_sibling` ("fake
+cursor-agent did not start children"). AK6EM added three new tmux-shaped tests,
+and the `LiveSessionGuard` flock serializes live sections across every test
+binary, so the tmux contention window widened. That is context for TASK-STWVB,
+not a separate defect.
+
+=== Ask
+
+1. Make the assertion robust to *which* refusal fires: the property under test
+   is "a reattach into a guarded worktree does not become live". Assert that,
+   and assert the reservation-named refusal only when the run is actually still
+   reattachable — or make the fixture's tmux session reliably live for the
+   duration, if that can be done without a sleep.
+2. Do not weaken it into "some error happened". The test must still fail if the
+   fence is removed; verify that by injection (`worktree: None` in the reattach
+   admission was AK6EM's own injection and turned four tests red).
+3. Say whether the sibling boot-rehydration and pending-plan fence tests have
+   the same exposure and fix them together if so.
+
+=== Acceptance
+
+- 10 consecutive full `cargo test -p orgasmic-daemon --lib` runs with no failure
+  from any of the three fence tests. Report the count.
+- Removing the fence still turns them red, shown by injection with output.
+- State plainly whether the fixture still depends on a live tmux session and, if
+  so, what now guarantees it.
+
+=== Non-goals
+
+- Do not change the fence, the admission module, the close-guard persistence, or
+  dec_NFZY2. All are merged and manager-verified.
+
+RMUX TWIN [2026-07-29, manager salvage gate for TASK-MRJRK]: `api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds` (api.rs:19622) — the rmux arm TASK-JGHNC added of this task's registered tmux test — failed with the same mode (reattach refused by an earlier validity check rather than the cleanup fence), green in isolation. When this task fixes the assertion, fix both arms (they share one body post-JGHNC); the registry entry for the tmux arm should either cover the twin or gain a sibling row owned here, per the DJ1WV only-the-owner-writes rule.
+
+** Description
+Found by the manager's independent gate on TASK-AK6EM, 2026-07-28. **The fence
+itself is correct** — this is about what its test asserts.
+
+=== Observed
+
+In a full `cargo test -p orgasmic-daemon --lib` under concurrent load:
+
+```
+---- api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds ----
+panicked at crates/orgasmic-daemon/src/api.rs:19229:
+the refusal must name the cleanup reservation:
+  recovery action reattach_tmux is not valid for run run-fence-d825d586...
+```
+
+The reattach **was refused**. It was refused by an earlier validity check rather
+than by the cleanup fence, because under load the test's tmux session was not
+live by the time the recovery action was evaluated. The test asserts *which*
+refusal fired, so it goes red on a safe outcome.
+
+Its sibling `boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds`
+passed in the same run and its log shows the fence doing exactly its job:
+
+```
+boot reattach: skipped (mux session not live / not reattachable)
+  run_id=run-fence-cc02bfb7... task_id=TASK-BOOT-FENCE
+  error=dispatch cleanup in progress for task=TASK-BOOT-FENCE kind=Worker
+```
+
+So the P0 fix is sound and merged. This task is the test's precision.
+
+=== Why it is worth fixing rather than tolerating
+
+A P0 destructive-path fence whose regression goes red for a reason unrelated to
+the fence trains the next reader to wave it through — which is precisely how a
+real fence regression would get discounted. It also lands on the standing
+known-flake list, which this project is actively trying to shrink (TASK-5HBST,
+TASK-STWVB).
+
+Note the same full run showed two more load-induced failures on the same axis —
+`post_artifact_regenerate_hot_path_reuses_live_run_id` ("harness busy", 409) and
+`poll_direct_child_pid_prefers_worker_server_over_generic_sibling` ("fake
+cursor-agent did not start children"). AK6EM added three new tmux-shaped tests,
+and the `LiveSessionGuard` flock serializes live sections across every test
+binary, so the tmux contention window widened. That is context for TASK-STWVB,
+not a separate defect.
+
+=== Ask
+
+1. Make the assertion robust to *which* refusal fires: the property under test
+   is "a reattach into a guarded worktree does not become live". Assert that,
+   and assert the reservation-named refusal only when the run is actually still
+   reattachable — or make the fixture's tmux session reliably live for the
+   duration, if that can be done without a sleep.
+2. Do not weaken it into "some error happened". The test must still fail if the
+   fence is removed; verify that by injection (`worktree: None` in the reattach
+   admission was AK6EM's own injection and turned four tests red).
+3. Say whether the sibling boot-rehydration and pending-plan fence tests have
+   the same exposure and fix them together if so.
+
+=== Acceptance
+
+- 10 consecutive full `cargo test -p orgasmic-daemon --lib` runs with no failure
+  from any of the three fence tests. Report the count.
+- Removing the fence still turns them red, shown by injection with output.
+- State plainly whether the fixture still depends on a live tmux session and, if
+  so, what now guarantees it.
+
+=== Non-goals
+
+- Do not change the fence, the admission module, the close-guard persistence, or
+  dec_NFZY2. All are merged and manager-verified.
+

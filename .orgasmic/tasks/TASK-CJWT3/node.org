@@ -1,0 +1,83 @@
+#+title: orgasmic task TASK-CJWT3
+#+orgasmic_version: 2
+
+* DONE TASK-CJWT3 Run Dock: tabbed manager/worker live transcript surface with Running Agents menu and task badges :ui-manager:run-dock:ui:tmux:tasks:recovery:
+:PROPERTIES:
+:ID:               TASK-CJWT3
+:PRIORITY:         P1
+:WORKER:           implementer-claude-tmux
+:IMPLEMENTS:       arch_MK2Q2 dec_DTJPD dec_HY3E0 dec_JZDKT
+:PRODUCES:         .orgasmic/decisions.org ui/src/components/manager/** ui/src/components/notifications/** ui/src/components/TaskDialog.tsx ui/src/components/TasksPage.tsx ui/src/components/BoardRouteView.tsx ui/src/components/RunsView.tsx ui/src/lib/api.ts ui/src/lib/types.ts ui/src/styles.css
+:WRITE_SCOPE:      .orgasmic/decisions.org ui/src/components/** ui/src/hooks/** ui/src/lib/** ui/src/app/** ui/src/styles.css ui/package.json ui/package-lock.json
+:READ_SCOPE:       archive/2026-06-04-run-recovery-run-dock-grill.md .orgasmic/decisions.org .orgasmic/architecture.org ui/src/components/manager/** ui/src/components/notifications/** ui/src/components/TaskDialog.tsx ui/src/components/TasksPage.tsx ui/src/lib/**
+:TEST_CMD:         npm --prefix ui run build
+:DEPENDS_ON:       TASK-T6AV7
+:END:
+
+** Description
+Replace the manager-only bottom popover with a general Run Dock. Manager remains a special tab, but worker runs can be opened explicitly from recovery actions, a =Running Agents= menu, task badges, and run history. The same live transcript/terminal/composer surface must serve manager and worker runs.
+
+Before implementation, add one ADR-style decision to =.orgasmic/decisions.org= for the Run Dock UX/model. Use =archive/2026-06-04-run-recovery-run-dock-grill.md= as the accepted-answer source.
+
+** Acceptance Criteria
+- [X] Add a concise Run Dock decision to =.orgasmic/decisions.org= tagged =:ui-manager:run-dock:=.
+- [X] Replace =ManagerPopover= outright with =RunDock=; do not keep a compatibility wrapper.
+- [X] Run Dock owns peek/workbench/focus sizing, tab selection, persisted open-tab state, and one-tab-per-run dedupe.
+- [X] Manager is one special Run Dock tab; worker runs open as peer tabs using the same tmux/chat/composer renderers.
+- [X] Add a =Running Agents= menu grouped into =Running=, =Recoverable=, and =Recent=.
+- [X] =Running Agents > Recoverable= uses the same backend =recovery_actions= resolver data as the notification bell.
+- [ ] Selecting a running agent attaches and opens a peek window with the live transcript.
+- [X] Minimizing a peek window turns it into a Run Dock tab; closing a tab detaches the UI only and does not stop/release the underlying run.
+- [X] Open Run Dock tabs persist in localStorage by run ID and are validated against backend state on load.
+- [X] =Recent= defaults to current project; global toggle/search is deferred.
+- [X] Task list/kanban rows and the task modal show running/recoverable agent badges, visually separated.
+- [X] A task agent badge opens immediately when exactly one relevant run exists and opens a small grouped menu when multiple relevant runs exist.
+- [X] Recovery results from =/runs/:id/recover= open the right surface: manager recovery selects the Manager tab; worker recovery opens a worker run tab/peek.
+- [X] Staged prompt drafts returned by recovery are shown in the shared composer and require explicit user send.
+- [X] Shared composer uses provider-neutral copy such as =Send to agent=, not =Send a message to Claude=.
+- [X] All composer sends go through the shared recording path established by TASK-T6AV7.
+- [X] Run Dock tab labels prioritize readable role/task/provider/transport labels such as =Manager · Claude tmux= or =TASK-NN3HB · Codex=; raw run IDs are secondary detail or tooltip.
+- [ ] Browser verification covers desktop and mobile: Running Agents menu, attach/minimize/close, task badges, recovered worker open, manager recovery open, tab restoration after reload, no text overlap, and tmux pane rendering.
+- [X] Verification passes: =npm --prefix ui run build=, focused component/unit tests if present, Playwright/browser smoke for the Run Dock flows, =cargo test -p orgasmic-daemon= if backend response shapes are touched, =cargo fmt --check=, =git diff --check=.
+
+** Notes
+- Do not auto-open tabs for every active worker. Only explicit user action and recovery actions open worker tabs.
+- Stop/release remains a separate explicit action, not tab close.
+- Provider-choice recovery menu is deferred.
+- Keep cards to genuine repeated items only; the dock itself is an app shell surface, not a card inside a card.
+
+** Evidence
+- *Live browser smoke*: [2026-06-05 Fri 13:10] manager-side via claude-in-chrome
+  against the rebuilt daemon (today's commits live) + Vite dev :5180.
+  VERIFIED on desktop (1496px): Run Dock workbench renders the REATTACHED
+  June-3 manager run's live tmux pane (Claude TUI, live status-bar clock);
+  tab label =Manager · Claude tmux= with run id as secondary detail;
+  =Running Agents= menu shows all three groups (Running: =Manager · Claude
+  tmux=; Recoverable: both interrupted codex runs with =Start Recovery Run=
+  — same resolver data as the bell; Recent: terminal_noop history, current
+  project); notification bell renders concrete =Start Recovery Run= labels
+  (no generic Continue) and the reattached run correctly cleared from "Needs
+  you"; dock tab persisted across route change AND full reload (localStorage
+  + backend validation); composer is provider-neutral (=Send to agent=).
+  VERIFIED on mobile (390px): dock + tmux pane re-wrap cleanly, no text
+  overlap, composer intact. Zero console errors. NOT VERIFIED (no live
+  worker run existed): task badges, recovered-worker open, worker peer tabs;
+  minimize-to-tab inconclusive (workbench persisted; see peek-coercion
+  criterion). Remaining browser items + the unmet literal-peek criterion
+  carried as TASK-CJWT3.1.
+- Closed: [2026-06-05 Fri]
+- Gates (verified at land, not trusted from prior agents):
+  - =npm --prefix ui run build= — PASS (tsc --noEmit + vite build, 2507 modules, built clean).
+  - =cargo fmt --check= — PASS (exit 0).
+  - =git diff --check= — PASS (no whitespace errors).
+  - =cargo test -p orgasmic-daemon= — RUN because the fixer touched backend files (supervisor.rs send_input + ws.rs send_keys now emit composer_send lifecycle events). PASS.
+- Reviewer verdict: has-issues — 0 high, 2 medium, 3 low.
+  - Both medium findings were fixed by the fixer before land:
+    - M1 (composer sends bypassed the TASK-T6AV7 recording path; =record_composer_send= had zero callers) — fixed by wiring =record_composer_send= into both =send_input= (chat path) and the WS =send_keys= handler (tmux/manager path). Both transports now land the same durable =composer_send= lifecycle event.
+    - M2 (recoverable task-badge substring over-match: =session_path.includes(taskId)= matched TASK-E11X1 -> TASK-CJWT3.jsonl) — fixed with a token-boundary matcher (=sessionPathMatchesTask=) that still matches real =dispatch-<task>-...= / =auto-spawn-<task>-...= worker session filenames.
+  - 3 low findings acknowledged, not blocking (NUL byte in ManagerWorkbench driverKey literal; restored non-live worker tab renders MissingRunPanel; worker "peek" coerced to workbench).
+- Deferred / honestly unmet:
+  - "Selecting a running agent attaches and opens a peek window" — left unchecked. =openRun= coerces a requested peek to workbench for worker runs (reviewer low #5); a tab is created (minimize->tab model holds) but the literal peek-size open is not honored.
+  - "Browser verification (desktop + mobile, Playwright/browser smoke)" — left unchecked. No browser/Playwright smoke was executed in the land pipeline; only the static gates (build/fmt/diff/cargo test) were run.
+- Commit SHA: merge commit recorded post-commit (see commit subject "TASK-CJWT3: Run Dock ...").
+

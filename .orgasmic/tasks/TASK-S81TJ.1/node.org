@@ -1,0 +1,62 @@
+#+title: orgasmic task TASK-S81TJ.1
+#+orgasmic_version: 2
+
+* DONE TASK-S81TJ.1 driver-as-mode fix-subtask: registry support matrix + ACP-WS real-wire parity + Hermes native event fallback + deeper tests :drivers:architecture:bug:test:fix:
+:PROPERTIES:
+:ID:               TASK-S81TJ.1
+:PRIORITY:         P2
+:WORKER:   implementer-claude
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/lib.rs crates/orgasmic-drivers/src/modes/acp_ws.rs crates/orgasmic-drivers/src/adapters/hermes.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/trait.rs crates/orgasmic-drivers/tests/driver_modes.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/
+:READ_SCOPE:       /tmp/orgasmic-codex/task-057-review-report.md /tmp/orgasmic-codex/task-057-brief.md /tmp/orgasmic-codex/task-057.1-brief.md
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-S81TJ
+:END:
+
+** Description
+Four mediums + one low from TASK-S81TJ reviewer bundled as one fix-implementer round per one-round-of-fixes discipline. Report at =/tmp/orgasmic-codex/task-057-review-report.md=.
+
+*F-1 (MEDIUM bug)* — =driver_for_mode_harness= at =lib.rs:56= composes every (mode, harness) pair as long as both ids exist; unsupported pairs return =Some(broken)= and fail later at acquire-time. Fix: explicit =SUPPORTED= matrix in =lib.rs= + test for both supported + unsupported.
+
+*F-2 (MEDIUM bug)* — =acp_ws.rs:313= request_response lost terminal short-circuit during =turn/start= wait. Server emitting =turn/completed= before =turn/start= response produces =RunComplete= + fatal =turn/start closed before response= pair. Fix: add =adapter.terminal_emitted()= state-tracking method; return =Ok(Value::Null)= sentinel from request_response when terminal fires during wait.
+
+*F-3 (MEDIUM bug)* — =acp_ws.rs:88= synchronously connects WS during =acquire()=; hermes connection failures now return =acquire() Err= instead of post-Ready =DriverEvent::DriverError= per old =hermes.rs=. Fix: per-adapter =ws_connect_errors_emit_to_stream()= policy method; hermes returns true → spawn task that connects + emits failure to event stream; codex returns false → preserves Err-from-acquire.
+
+*F-4 (MEDIUM bug)* — =adapters/hermes.rs:125= parses every frame through =hermes_event_from_value=; old =hermes.rs= first tried =serde_json::from_value::<DriverEvent>= and only fell back to hermes-specific parsing on Err. Fix: native DriverEvent deserialize fallback BEFORE hermes parsing.
+
+*F-5 (LOW test)* — =tests/driver_modes.rs:77= only proves 3 modes route happy-path mock frame. Missing: TmuxDriver, adapter fixtures, unsupported-pair assertions, legacy-vs-new equivalence. Fix: expanded test surface.
+
+Brief: =/tmp/orgasmic-codex/task-057.1-brief.md=.
+
+** Acceptance Criteria
+- [ ] *F-1*: =SUPPORTED= const matrix in =lib.rs=; =driver_for_mode_harness= returns None for non-SUPPORTED pairs; registry matrix test iterates MODES × HARNESSES and classifies each.
+- [ ] *F-2*: =HarnessEventAdapter::terminal_emitted()= method added; CodexAdapter tracks state; =acp_ws.rs:request_response= returns sentinel when terminal fires mid-wait; mock-WS test asserts one RunComplete + no fatal error.
+- [ ] *F-3*: =ws_connect_errors_emit_to_stream()= policy method; hermes returns true + connects-in-spawned-task; codex returns false + preserves =Err= from acquire(). Tests for both.
+- [ ] *F-4*: hermes adapter tries native =DriverEvent= deserialize before =hermes_event_from_value=; fixture test for the native-event compat path.
+- [ ] *F-5*: TmuxDriver test + per-adapter fixture tests + unsupported-pair assertions + legacy-vs-new equivalence test (driver_for_legacy_id == driver_for_mode_harness for all 5 legacy ids).
+- [ ] All 265 tests still pass + new tests per F-1/F-2/F-3/F-4/F-5 (estimate +8-15). clippy/fmt/diff clean. MSRV 1.78. No new deps.
+- [ ] Implementer commits the work themselves.
+
+** Notes
+*Fix-subtask of TASK-S81TJ* — =:FIX_SUBTASK: t=. On close, auto-transitions IMPLEMENT → DONE; manager hand-flips TASK-S81TJ REVIEW → DONE for cluster closure. These mediums must close before TASK-G6EV7 builds on this foundation — real-wire parity for codex-appserver and hermes is the precondition for the worker schema work to safely reference these drivers.
+
+** Evidence
+- [2026-05-24 Sun 20:03] Codex (gpt-5.5 xhigh, ~9m wall — fast turnaround) committed =04b9f4b= ("fix driver mode parity regressions"). Merged no-ff as =12159ba=.
+- 5 files +428/-38 within =WRITE_SCOPE=:
+  - =lib.rs= +43 (=SUPPORTED= const matrix + None for non-supported pairs)
+  - =modes/acp_ws.rs= +80 (terminal short-circuit during =turn/start= request_response + per-adapter =ws_connect_errors_emit_to_stream()= policy for hermes)
+  - =adapters/hermes.rs= +24 (native =serde_json::from_value::<DriverEvent>= fallback before hermes parsing)
+  - =trait.rs= +6 (=terminal_emitted()= method added to =HarnessEventAdapter=)
+  - =tests/driver_modes.rs= +313 (massive expansion: 3 → 11 tests covering registry matrix, tmux inert, codex/hermes WS parity, hermes native fixture, adapter fixtures, legacy-vs-explicit equivalence)
+- *F-1 fix*: explicit =SUPPORTED= const matrix in =lib.rs=; =driver_for_mode_harness("acp-ws", "cursor-agent")= now returns =None= cleanly. Registry matrix test asserts both supported + unsupported behavior.
+- *F-2 fix*: =CodexAdapter= tracks terminal state via the new =terminal_emitted()= method; =acp_ws.rs::request_response= short-circuits and returns sentinel when terminal fires mid-wait. No more =RunComplete= + fatal =turn/start closed before response= pair on a server that emits terminal early.
+- *F-3 fix*: per-adapter =ws_connect_errors_emit_to_stream()= policy method; hermes returns =true= and =acp_ws.rs::acquire= spawns connection task that emits =DriverError= to event stream on failure (post =Lifecycle::Acquire=); codex returns =false= and preserves =Err= from =acquire()=.
+- *F-4 fix*: hermes adapter first tries =serde_json::from_value::<DriverEvent>(raw.clone())= and only falls back to =hermes_event_from_value= on Err. Fixture test covers the native-event compat path.
+- *F-5 fix*: =driver_modes.rs= grew 3 → 11 tests. New coverage: =TmuxDriver= inert mode, per-adapter fixture tests using captured JSON, registry matrix test iterating =MODES × HARNESSES= and classifying each, legacy-vs-explicit equivalence test asserting =driver_for(legacy_id)= and =driver_for_mode_harness(mode, harness)= produce equivalent driver instances for all 5 legacy ids.
+- =implementer.done= =tx-20260524-org-0209= via =dispatch-close=. **DOGFOOD #35+#36 PASS** (BACKLOG→IMPLEMENT on dispatch; IMPLEMENT→DONE via =:FIX_SUBTASK: t= shortcut).
+- Verification: =cargo test --workspace= 265 → 273 (+8); =cargo clippy --workspace --all-targets -- -D warnings= clean; =cargo fmt --check= clean; =git diff --check= clean. MSRV 1.78. No new deps.
+
+** Reviewer pass
+**SKIPPED per =:FIX_SUBTASK: t= one-round-of-fixes discipline.** TASK-S81TJ had its reviewer pass (5 findings, all addressed by this fix-subtask). Manager verified in-scope diff + green gates.
+

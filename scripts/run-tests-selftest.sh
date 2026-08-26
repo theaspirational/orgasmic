@@ -200,15 +200,11 @@ OTHER_PANIC='resume_native_fork recover: 500'
 # classifier and not the task board.
 open_owner() {
     local tasks="$REPO/.orgasmic/tasks" f id
-    for f in "$tasks"/*.org; do
+    for f in "$tasks"/*/node.org; do
         [ -f "$f" ] || continue
-        case "${f##*/}" in
-            done.org | cancelled.org) continue ;;
-        esac
+        grep -Eq '^\*+[ \t]+(DONE|CANCELLED)[ \t]+' "$f" && continue
         while read -r id; do
             [ -n "$id" ] || continue
-            grep -Eq "^[ \t]*:ID:[ \t]+${id}[ \t]*$" \
-                "$tasks/done.org" "$tasks/cancelled.org" 2>/dev/null && continue
             printf '%s\n' "$id"
             return 0
         done <<EOF

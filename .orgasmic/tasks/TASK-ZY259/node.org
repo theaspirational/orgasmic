@@ -1,0 +1,27 @@
+#+title: orgasmic task TASK-ZY259
+#+orgasmic_version: 2
+
+* BACKLOG TASK-ZY259 codex thread/start sends persistExtendedHistory:false — decide whether that is a dec_Y5MPK item 4 violation    :drivers:codex:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-ZY259
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-H0TYV TASK-F9VEZ
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round). Small, bounded, and worth doing before TASK-F9VEZ.
+
+dec_Y5MPK item 4: "Orgasmic never suppresses vendor persistence. A transport that disables the harness's own session recording is a defect, not a configuration choice." TASK-VB9DQ removed claude's `--no-session-persistence` on exactly that ground.
+
+`thread_start_params` sends `persistExtendedHistory: false` to codex app-server on every run (`crates/orgasmic-drivers/src/adapters/codex.rs:883`). It is the only occurrence in the tree, it carries no comment, and no test asserts anything about it. It is set to `false` — the suppressing value — and nothing records why.
+
+What is known: codex still writes rollout JSONL with this flag set. A codex run that died on a provider 503 wrote `~/.codex/sessions/2026/07/25/rollout-....jsonl` (TASK-VB9DQ evidence), and 1457 rollout files exist under `~/.codex/sessions` on the operator machine (measured 2026-07-28). So it is not the blanket kill switch `--no-session-persistence` was.
+
+What is not known: what "extended history" actually is, and whether anything retro or resume would need is missing from those rollouts because of it.
+
+Work:
+1. Determine what codex app-server does with `persistExtendedHistory` — read the shipped app-server, do not infer from the name.
+2. If it removes content a retro run or a resume would want, remove the flag and say so under dec_Y5MPK item 4, exactly as claude's flag was removed.
+3. If it is genuinely orthogonal to session persistence, leave it and add the one-line comment that its absence is why this task had to be filed.
+
+Either way the outcome is a recorded answer. The defect being fixed here is that a persistence-shaped flag sits in the launch path with no stated reason.
+

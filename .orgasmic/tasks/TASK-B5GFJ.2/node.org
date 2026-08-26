@@ -1,0 +1,34 @@
+#+title: orgasmic task TASK-B5GFJ.2
+#+orgasmic_version: 2
+
+* DONE TASK-B5GFJ.2 fix-subtask: tmux/claude early exit before EOT classified as failure not success :drivers:tmux:claude:fix:correctness:high:
+:PROPERTIES:
+:ID:               TASK-B5GFJ.2
+:PRIORITY:         P1
+:WORKER:           implementer-codex-stdio
+:IMPLEMENTS:       arch_A53QX
+:PRODUCES:         crates/orgasmic-drivers/src/modes/tmux.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/**
+:READ_SCOPE:       crates/orgasmic-drivers/src/**
+:TEST_CMD:         cargo test --workspace
+:END:
+
+** Description
+Reviewer F-2 (HIGH): If tmux session disappears before EOT marker observed, driver emits =RunComplete= (success) instead of =DriverError { fatal: true }= or =RunFail=. A failed claude TUI launch (auth, model, startup, worktree problems) gets recorded as completed → false-positive dogfood evidence → task auto-flips DONE despite no work.
+
+Files / line refs:
+- =crates/orgasmic-drivers/src/modes/tmux.rs:614-620= (current missing-session handling emits RunComplete)
+- =crates/orgasmic-daemon/src/supervisor.rs:1246-1249= (release outcome classification)
+
+Fix: distinguish "EOT marker observed" (legitimate success) from "session vanished" (failure). Missing-session-before-EOT → emit =DriverError { fatal: true, message: format!("tmux session {} ended before EOT marker", session) }= OR =RunFail= (whichever matches the acp-stdio failure pattern). Supervisor classification path (=ReleaseOutcome::Failed=) must apply.
+
+** Acceptance Criteria
+- [ ] tmux session-disappears-before-EOT path emits =DriverError= or =RunFail=, not =RunComplete=.
+- [ ] Supervisor classifies the run as failed, not completed.
+- [ ] Test added: spawn a TUI command that exits immediately (e.g., =bash -c "echo started; exit 0"=) → driver should emit failure, not success.
+- [ ] No regression to legitimate EOT-driven success path (TASK-B5GFJ.1 covers).
+- [ ] Cargo test green; clippy clean.
+
+** Evidence
+(populated at task close)
+

@@ -1,0 +1,13 @@
+#+title: orgasmic glossary term term_Z5XDF
+#+orgasmic_version: 2
+
+* term_Z5XDF Convention bundle
+:PROPERTIES:
+:ID:                 term_Z5XDF
+:CANONICAL:          convention bundle
+:AVOID:              template engine input, include directive, pragma file
+:RELATES_TO:         term_WQMJJ term_HQJWT term_K06Z5 term_VQ3F1
+:DEFINITION:         An agent-facing behavioral rule document, addressable from prompts as a named slot in the conventions namespace and resolved user-first via the loader rule.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+

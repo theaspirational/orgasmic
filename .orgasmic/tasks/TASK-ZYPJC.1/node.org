@@ -1,0 +1,40 @@
+#+title: orgasmic task TASK-ZYPJC.1
+#+orgasmic_version: 2
+
+* DONE TASK-ZYPJC.1 Router-backed drawer/search state :ui:routing:tanstack:a11y:
+:PROPERTIES:
+:ID:               TASK-ZYPJC.1
+:PRIORITY:         P1
+:WORKER:   implementer-claude
+:IMPLEMENTS:       arch_A1FGY arch_M8JQT
+:PRODUCES:         ui/src/app/router.tsx ui/src/components/node-views/NodeModal.tsx ui/src/lib/searchState.ts ui/src/components/DecisionsView.tsx ui/src/components/ArchitectureView.tsx ui/src/components/ActivityView.tsx ui/src/components/manager/ManagerPopover.tsx
+:WRITE_SCOPE:      ui/src/app/router.tsx ui/src/components/node-views/NodeModal.tsx ui/src/lib/searchState.ts ui/src/components/{DecisionsView,ArchitectureView,ActivityView}.tsx ui/src/components/manager/ManagerPopover.tsx
+:READ_SCOPE:       /tmp/orgasmic-codex/task-047-review-report.md .orgasmic/decisions.org .orgasmic/sprint.org
+:TEST_CMD:         cd ui && npm run build
+:DEPENDS_ON:       TASK-ZYPJC
+:MERGE_SHA:        6862918
+:CODEX_COMMIT:     8c26232
+:END:
+
+** Description
+Addresses reviewer findings F-1 (high), F-2 (medium), F-3 (medium), and F-8 (high) from =/tmp/orgasmic-codex/task-047-review-report.md=. The TanStack Router migration shipped the path-based routes but the per-page filter state, the modal drawer-stack, and the manager-size query param did not adopt TanStack's =useSearch= / =navigate= contract — instead they kept legacy =useQueryState= writes, =window.history.pushState= calls, or component-local =useState=. This breaks the dec_JSX48 "path + query hybrid, browser-back follows previous filter" contract and prevents deep-linking from reflecting the actual session state.
+
+** Acceptance Criteria
+- [ ] *F-1 fix.* =NodeModal= drawer-stack management goes through TanStack Router's =useSearch= + =navigate({ search })= instead of =window.location.search= + =window.history.pushState= / =replaceState=. Chip-click inside a modal body pushes a new id onto =?drawer_stack=...= via =navigate=; clicking Back / closing modal pops via =navigate=; browser back/forward respects the stack (TanStack tracks history per its router instance).
+- [ ] *F-2 fix.* Esc on a stacked modal pops *one frame* via the same router seam — only deletes the whole stack when the stack is already empty (closing the bottom frame returns to the underlying route). Match the dec_JSX48 user-note browser-back contract: "close modal → previous page → previous filter".
+- [ ] *F-3 fix.* =NodeModal= header renders a breadcrumb of opened nodes (e.g., =dec_GRDFB > arch_R3EPE > arch_R3EPE details=). Clicking any crumb pops the stack down to that depth. Single Back icon remains for the one-step pop. The breadcrumb hides on viewports below =sm= (mobile sheet has limited header space) and falls back to "Back" + count.
+- [ ] *F-8 fix.* Migrate the search-state holdouts to TanStack:
+  - =DecisionsView= filter bar (topic filter, free-text query) reads from =useSearch()= and writes via =navigate({ search })=. Drop the =useQueryState= calls. Same shape for =ArchitectureView= (free-text per TASK-ZYPJC.4) and =ActivityView= (Type / Actor / Date / Task filters; date-range needs a JSON-safe shape).
+  - =ManagerPopover= consumes =?manager=peek|workbench|focus= from =useSearch=. The =sessionStorage= persistence stays as a fallback for "last size when no query param", but the URL is authoritative on initial render. Writing the URL on size change is OK — debounce if needed to avoid history spam during drag.
+  - Update the route's =validateSearch= schema so type-safe accessors exist.
+- [ ] *Manager popover regression check.* Cmd+\` toggle and Esc collapse must still work; drag handles must not race the URL writes (debounce or write only on settle).
+- [ ] *No new deps.* TanStack Router is already installed; no =@tanstack/react-router-zod= or similar add-on. Use TanStack's built-in =validateSearch= (function form).
+- [ ] =cd ui && npm run build= passes (tsc --noEmit + vite build).
+- [ ] =git diff --check= clean.
+
+** Evidence
+- [2026-05-23 Sat 18:26] Bundled fix-implementer codex (gpt-5.5 xhigh, ~22 min wall, 299,251 tokens shared with sibling subtasks) committed as =8c26232=; merged no-ff as =6862918=.
+- Files changed within this subtask: =router.tsx= +152 (validateSearch schemas + drawer_stack list serialization), =NodeModal.tsx= +269/-117 (TanStack search drives drawer_stack push/pop; one-frame pop on Esc + radix close; breadcrumb header + mobile back-count; open-gated detail loading + glossary chrome labels + ADR Promote/Demote modal-header actions + seed-data reuse from list responses), =DecisionsView.tsx= partial (status/adr/q migrated to useSearch), =ArchitectureView.tsx= partial (status/q migrated), =ActivityView.tsx= +99/-18 (Type/Actor/Date/Task filters on useSearch + custom date URL fields), =ManagerPopover.tsx= +22/-2 (=?manager=peek|workbench|focus= consumed via TanStack useSearch with sessionStorage fallback for last-size), new =ui/src/lib/searchState.ts= +22 (shared drawer_stack/search reducer helpers).
+- Verification: =cd ui && npm run build= clean (tsc + vite); main =index= chunk 359.25 kB; vendor-codemirror 390.51 kB largest. No new deps; legacy =useQueryState= retained only in TasksPage for =?layout=list|kanban=.
+- Reviewer F-1 (high bug), F-2 (medium bug), F-3 (medium design), F-8 (high bug) closed.
+

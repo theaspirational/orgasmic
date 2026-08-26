@@ -1,0 +1,46 @@
+#+title: orgasmic task TASK-K5RG2
+#+orgasmic_version: 2
+
+* DONE TASK-K5RG2 Align CLI dispatch-close verdict vocabulary with reviewer reports (ship/has-issues vs clean) :cli:dispatch:lifecycle:polish:
+:PROPERTIES:
+:ID:               TASK-K5RG2
+:PRIORITY:         P3
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs
+:READ_SCOPE:       crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs shipped/prompt-studio/prompt-specs/reviewer.org
+:TEST_CMD:         cargo test -p orgasmic-cli
+:END:
+
+** Description
+Found during TASK-VXB0T.2 close: =dispatch-close= with =VERDICT=ship= routed the
+task IN_REVIEW -> IN_PROGRESS because =reviewer_done_stage= in
+=crates/orgasmic-cli/src/manager.rs= (~line 1226) only recognizes
+=VERDICT=clean= for the DONE path, while reviewer reports use the vocabulary
+=ship= / =has-issues=. The heading had to be corrected manually. Accept the
+reviewer vocabulary as first-class: =ship= and =clean= (legacy) both mean
+clean-close; anything else keeps IN_PROGRESS routing.
+
+** Acceptance Criteria
+- [ ] =reviewer_done_stage= treats =VERDICT=ship= identically to
+  =VERDICT=clean= (DONE when =RECOMMENDED_SUBTASKS= is empty).
+- [ ] Unknown/absent verdicts keep the current conservative IN_PROGRESS route.
+- [ ] Regression tests in =crates/orgasmic-cli/tests/dispatch.rs= cover
+  reviewer close with =ship= (-> DONE) and =has-issues= (-> IN_PROGRESS).
+- [ ] Gates: cargo test -p orgasmic-cli, clippy -D warnings, fmt --check, MSRV 1.78.
+
+** Evidence
+- Worker: implementer-claude-rmux run-20260610T183549 (dispatch tx-0084). Worker
+  commit =4a6a020=, merged --no-ff as =1ba44b8= on main.
+- Change: =reviewer_done_stage= in manager.rs accepts =ship= as clean-close alias;
+  =has-issues= / unknown / absent keep conservative IN_PROGRESS route. Two new
+  tests in tests/dispatch.rs cover ship→DONE and has-issues→IN_PROGRESS. Count
+  bump 16→18 in orgasmic-core/tests/fixtures.rs + =implementer-claude-rmux=
+  added to selector-determinism list in orgasmic-daemon/tests/integration.rs.
+- Reviewer: reviewer-claude-rmux run-20260610T210144 (model claude-haiku-4-5).
+  Verdict: =ship=, zero findings. Routing matrix verified; test honesty confirmed;
+  scope discipline confirmed (no off-limits files). Pre-existing TS build failure
+  noted as unrelated (owned by TASK-CJXKM).
+- dispatch-close routing verified LIVE [2026-06-11]: =VERDICT=ship= →
+  IN_REVIEW → DONE auto-flip fired (reviewer.done tx-0106). First production
+  exercise of the ship-verdict path.
+

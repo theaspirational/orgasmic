@@ -1,0 +1,81 @@
+#+title: orgasmic task TASK-YN5FJ.1.1
+#+orgasmic_version: 2
+
+* DONE TASK-YN5FJ.1.1 fix-round: the refusal's remedy template omits the executable, and the acceptance test hand-builds the argv instead of deriving it from the message :cli:manager:
+:PROPERTIES:
+:ID: TASK-YN5FJ.1.1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-cli/**
+:FIX_SUBTASK: t
+:END:
+
+** Description
+Reviewer REJECT on TASK-YN5FJ.1 (merged =bb2fb24=), from =reviewer-codex-tmux=
+(codex / gpt-5.6-sol / high), tx =tx-20260805-orgasmic-4438=. BLOCK SHIP, one
+finding, both halves verified by the manager against the code rather than taken
+on the reviewer word.
+
+This is the SAME defect class the parent task existed to fix, one level down: a
+remedy that cannot be followed as printed.
+
+*Half one — the template is not executable.* =crates/orgasmic-cli/src/manager.rs:955=
+prints the remedy as =`manager dispatch-close --task <task> --started-tx
+<reviewer-tx> --status done --verdict <...>`=. There is no =orgasmic= in it.
+Pasting that into a shell does not invoke this CLI.
+
+*Half two — the test cannot catch that, and says otherwise.* =crates/orgasmic-cli/tests/dispatch.rs:1721=
+carries the comment "Follow the printed remedy VERBATIM" and then builds a
+separate argv array at =:1758=, with =run_orgasmic= supplying the binary
+independently (=:425-432=, =:484-494=). So the loop test passes while the printed
+message is uncopyable, and nothing detects future drift between the message and
+the hand-built command. A comment claiming verbatim adherence over code that does
+not is worse than no claim.
+
+The parent acceptance criterion — "following the refusal stated remedy actually
+clears the refusal" — is therefore NOT met, which is why this is a fix round and
+not a polish note.
+
+** Fix
+1. Print a complete executable template beginning with =orgasmic manager
+   dispatch-close=, with the task id(s) already substituted (the refusal knows
+   them). =<reviewer-tx>= must stay a placeholder — the reviewer has not been
+   dispatched yet at refusal time — so document precisely which tokens are
+   placeholders and keep that set as small as the information allows.
+2. Rewrite the acceptance test to EXTRACT the backticked command from the actual
+   refusal string, substitute only the documented placeholders, tokenize, and
+   execute the derived argv. Delete the hand-built close. Keep the existing
+   semantic assertions so the extracted remedy must both persist =VERDICT= and
+   clear the original refusal.
+3. Do not weaken the claim to match the code — the test should earn the word
+   verbatim, not drop it.
+
+** Ordering
+Same ordering constraint the parent carried: land BEFORE any runtime reinstall.
+
+** Acceptance
+- The refusal prints a command a human can paste, executable name included.
+- The acceptance test derives the command it runs FROM the refusal text; a
+  deliberate edit to the message that breaks the command fails the test.
+- Existing coverage stays green, including the =--property VERDICT== compat
+  tests and both existing injection proofs, which must still replay.
+** Evidence
+Landed =14b9660= (merge) / =f6c8bf7= (worker HEAD, two commits) on main, base =e527e7e=.
+
+Implementer: =implementer-claude-tmux= — driver tmux, harness claude, model claude-opus-5, effort high. Run =run-20260805T132340-bd6880abc7ca43b2bebe90e2c7fa4492=, started_tx =tx-20260805-orgasmic-4443=.
+
+THE REFUSAL NOW PRINTS A PASTEABLE COMMAND. It builds the remedy from what it holds — one =--task <id>= per task in the dispatch, executable included — and then names its own placeholder set in prose: =<reviewer-tx>= (which does not exist at refusal time) and the verdict choice. Everything else is a real value.
+
+THE TEST NOW EARNS THE WORD "VERBATIM". =backticked_command= extracts the command from the refusal string that run produced; =derive_remedy_argv= substitutes exactly the two documented placeholders and ASSERTS every remaining token is free of =<= / =>=, so a message that leaves a placeholder for something it knew fails the MESSAGE rather than being patched up by the test; =run_derived_argv= execs =argv[0]= BY NAME through the test PATH, with the binary symlinked in under its own name. The helper no longer supplies the executable, which is precisely what hid the defect.
+
+Integration gates, re-run by the manager on the MERGED tree:
+- =scripts/run-tests.sh -p orgasmic-cli= — GREEN, 0 failures, 1 ignored, "environ: complete — no tool requirement was waived".
+- =cargo clippy --workspace --all-targets -- -D warnings= — exit 0.
+- =cargo fmt --all --check= — exit 0.
+- =orgasmic verify TASK-YN5FJ.1= — PASS. =orgasmic verify TASK-YN5FJ.1-remedy= — PASS.
+
+THE RE-CUT ARTIFACT WAS CHECKED BEYOND ITS GREEN REPLAY, because a green replay cannot vouch for a re-cut. =verify/TASK-YN5FJ.1/injection.patch= had to be re-cut (it was a whole-file revert of the region this task edits). The manager verified independently: =git apply --check= clean against HEAD; applying it yields a =manager.rs= BYTE-IDENTICAL to =bb2fb24^1= (the true pre-fix state); and the red log carries exactly ONE panic — =dispatch.rs:1807=, the pinned label "refusal must name the verdict requirement and the --verdict remedy" — whose body quotes the pinned pre-fix text verbatim, with =0 passed; 1 failed=. So the pinned message is the FIRST failing assertion, not a downstream one. =expect-red= needed no edit. The =-remedy= patch still applied unchanged and was verified rather than assumed.
+
+THREE PROBES WERE RUN, NOT DESCRIBED (reverted after each): removing =orgasmic = from the printed remedy goes red on "printed remedy must begin with the executable an operator would type"; restoring =--task <task>= as a placeholder goes red on "undocumented placeholder"; and the quoted production message was captured from a real CLI run rather than read off the format string.
+
+ONE BEHAVIOURAL DELTA, DECLARED: the derived close no longer passes =--reviewed-diff=, because the message does not print it and the test may not add tokens. =reviewer_verdict_exists= reads =CLOSED_TX= and =VERDICT= only, so the gate is unaffected, and =--reviewed-diff= stays covered by the other reviewer-close tests.
+

@@ -1,0 +1,20 @@
+#+title: orgasmic task TASK-4T80X
+#+orgasmic_version: 2
+
+* DONE TASK-4T80X Write-time validation of reference-valued properties :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-4T80X
+:PRIORITY: high
+:END:
+
+** Description
+Battle-test F4: =glossary create --relates-to "Semantic Routing Model, Expanded Routing Graph"= (prose, not ids) was accepted at write time, then poisoned the whole index — one dangling-ref parse error per whitespace-separated word, surfaced only as an opaque global counter, root-causable only by grepping daemon logs. Reference-valued properties are validated exclusively at index time (=lint_dangling_graph_edges=, crates/orgasmic-daemon/src/index.rs:1060; =collect_dangling_reference_tokens=, orgasmic-core/src/identity_lint.rs:184); =render_graph_heading= (api.rs:7850) and =node prop set= write property values verbatim.
+
+Fix: validate ref-valued properties (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON, IMPLEMENTS, PARENT — the dec_HJENQ vocabulary) at write time in graph create handlers and =node prop set=: every token must resolve against the index snapshot. Reject with an error naming the property, the offending token, and the expected format (space-separated node ids); =--force= escape hatch for intentional forward references. Document the value format in the =--relates-to= / =--property= help text. Write-time rejection costs one retry; index-time poisoning cost a debugging session.
+
+** Acceptance Criteria
+- [ ] Create/prop-set with an unresolvable ref token → 400 naming property + token + expected format; nothing written.
+- [ ] =--force= writes anyway (dangling lint still catches it later).
+- [ ] Help documents the space-separated-ids format.
+- [ ] Regression test reproducing the battle-test prose case end to end.
+

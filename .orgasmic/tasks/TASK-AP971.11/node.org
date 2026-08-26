@@ -1,0 +1,19 @@
+#+title: orgasmic task TASK-AP971.11
+#+orgasmic_version: 2
+
+* DONE TASK-AP971.11 Dispatch-open discovery: dedicated ledger or index :wf_grilling:
+:PROPERTIES:
+:ID: TASK-AP971.11
+:END:
+
+** Question
+'Which dispatches are open?' is answered by reading and parsing the entire tx/ directory from disk — on every dispatch/wait poll (api.rs:3635, inside an epoch-retry loop) and independently in the CLI (manager.rs scan_dispatches). Three safety gates (merge blocking, torn-close repair, worktree prune) hang off this fold. Decide the replacement: a dispatch-only ledger that stays in tx/ (compactable), a daemon-maintained incremental projection, or an interim immutable-month parse cache. Must land BEFORE the journal split (inventory risk #2) or the gates degrade to false-green. Input: .orgasmic/research/tx-dependency-inventory.md sections on writer one-ledger invariant and the dispatch fold.
+** Resolution
+Grilled with owner 2026-08-22; five decisions. Facts: the fold is not slow (dispatch-status folds 102k tx lines end-to-end in 0.1s); the risk is structural — per-node journals give a project-wide question no entry point. AP971.1 item 3 already keeps the dispatch lifecycle project-level, so this ticket only fixes WHICH file and WHO folds it.
+1. Placement: the authoritative dispatch lifecycle stays in the monthly project tx/ ledger (tx/YYYY-MM.org). No dedicated dispatch file, no parse cache. After the .5 split tx/ is mostly dispatch anyway (this month ~760 of 2,217 entries are dispatch lifecycle; the ~1,200 node-scoped entries leave); a dedicated file's only gain — compaction — is blocked because consumers need closed history (torn-close repair, latest-close-per-task, cleanup failures).
+2. Fold: ONE shared dispatch fold in orgasmic-core, called by both the CLI (manager.rs scan_dispatches, 8 call sites) and the daemon (api.rs dispatch_generation_ledgers). Today they diverge (daemon ignores *.done/aborted), a false-green risk of its own. The daemon-maintained incremental projection (writer-coherent in-memory ledger, API, CLI querying the daemon) is deferred to AP971.7 incremental refresh, which owns it; it lands on top of the shared fold.
+3. Guard: one test pins the dispatch type set — manager.dispatch_started, run.created, implementer/reviewer/architector.reported, implementer/reviewer/architector.done, manager.dispatch_aborted, manager.dispatch_orphaned — to tx_destination → project tx, plus the list in shipped/schema/tx.org. This is the contract .5 must keep.
+4. dispatch.linked is DERIVED, never written: a task's dispatch history is the project fold filtered by :TASK:. No multi-ledger atomic append (inventory risk #1 untouched by dispatch start); a journal view may render a pointer row, not store one.
+5. No compaction or rotation in v1 (same stance as AP971.1 item 9): size lint later, machinery only when reality vetoes.
+Consequence for .5: the tx split must keep the item-3 type set in tx/; everything else may move.
+

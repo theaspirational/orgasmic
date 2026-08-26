@@ -1,0 +1,12 @@
+#+title: orgasmic glossary term term_NYE02
+#+orgasmic_version: 2
+
+* term_NYE02 source checkout
+:PROPERTIES:
+:AVOID: installed runtime, runtime home, regular install
+:CANONICAL: source checkout
+:DEFINITION: An editable git clone of the orgasmic repository used for contribution and unreleased-branch testing. Its presence on a machine does not make it the regular-user install; source mode is selected explicitly by scripts/install.sh --from-source <checkout>.
+:ID: term_NYE02
+:RELATES_TO: dec_YKFZX
+:END:
+
