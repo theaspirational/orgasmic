@@ -8319,10 +8319,8 @@ fn dispatch_lifecycle_transitions(
 /// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
 /// attempted.
 ///
-/// orgasmic:task_EP3H1 — close now commits the terminal tx, rewrite, and
-/// `task.state_transitioned` under one writer lock. The tx still carries its
-/// own intent so [`reconcile_torn_closes`] can repair ledgers produced before
-/// that atomic path, as well as surviving client-side response loss.
+/// The tx keeps this intent for the derived transition view and so the
+/// legacy-only [`reconcile_torn_closes`] can repair pre-atomic closes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CloseTransition {
     task: String,
@@ -8595,13 +8593,15 @@ async fn post_task_state(
         .await
 }
 
-/// Finish any `dispatch-close` whose lifecycle leg never landed.
+/// Finish a legacy `dispatch-close` whose lifecycle leg never landed.
 ///
 /// orgasmic:task_EP3H1 — a close appends its tx and then transitions the task
 /// in a second daemon request. Under load the second one times out
 /// client-side (measured at load average ~190 on 2026-07-29) and the operator
 /// is left with a closed dispatch and a task stranded at its pre-close stage.
-/// The close tx records the transition it intended, so the repair is decidable
+/// New closes append that tx and rewrite node.org in one `transaction_multi`,
+/// so only pre-AP971 closes can reach this repair. The close tx records the
+/// transition it intended, so the repair is decidable
 /// from the ledger alone: a close is torn when it is the last lifecycle event
 /// for its task AND the task is still sitting at the recorded `LIFECYCLE_FROM`.
 /// Any later `task.state_transitioned` — including one an operator made on

@@ -30,13 +30,14 @@ use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     collection_node_file_paths, fold_dispatches, goal_file_path, goal_file_rel, handoff_file_path,
-    lifecycle_stage_file_name, parse_tx_file, project_sessions_dir, read_session_file,
-    resolve_loader, scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading,
-    HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
-    ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
-    SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    parse_tx_file, project_sessions_dir, read_session_file, resolve_loader, scan_session_lifecycle,
+    DriverEvent, Heading, HeadingLineEdit, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter,
+    ProjectFile, ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope,
+    SessionEventKind, SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE_REL,
     REFERENCE_PROPERTY_KEYS,
 };
+#[cfg(test)]
+use orgasmic_core::{task_file_path, task_file_rel};
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
     find_native_transcript, lookup_from_envelopes, DriverConfig, DriverContext, RunKind,
@@ -2395,17 +2396,14 @@ async fn post_task_subtask(
         &req.title,
         req.description.as_deref(),
     );
-    // New subtasks are born BACKLOG, and file membership is canonical state
-    // (dec_QQYXM) — they land in backlog.org regardless of where the parent
-    // currently lives; the file and the heading keyword may never disagree.
-    let target_path = task_create_target_path(&project.root);
-    let target_rel = task_file_rel(task_create_target_file_name());
-    let source = if target_path.exists() {
-        read_artifact(&target_path, "task file")?
-    } else {
-        empty_task_file_header(task_create_target_file_name())
-    };
-    let new_contents = append_heading_to_task_file(&source, &heading);
+    let target_path = task_create_target_path(&project.root, &subtask_id);
+    let target_rel = target_path
+        .strip_prefix(&project.root)
+        .unwrap_or(&target_path)
+        .to_string_lossy()
+        .to_string();
+    let new_contents =
+        orgasmic_core::node_kernel::node_org_header("task", &subtask_id) + heading.trim_start();
 
     let prepared = prepare_api_tx(
         &state,
@@ -2721,8 +2719,6 @@ pub struct TxAppendResponse {
 struct DispatchCloseCommitRequest {
     close_tx: TxAppendRequest,
     state: String,
-    reason: String,
-    request_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -8301,6 +8297,77 @@ struct TxDestination {
     tx_id_policy: TxIdPolicy,
 }
 
+fn event_routes_to_journal(ty: &str) -> bool {
+    if ty.ends_with(".deleted") {
+        return false;
+    }
+    matches!(
+        ty,
+        "comment"
+            | "worker.comment"
+            | "task.created"
+            | "task.state_transitioned"
+            | "task.property_updated"
+            | "task.edited"
+            | "graph.decision.created"
+            | "graph.decision.edited"
+            | "graph.decision.reparent"
+            | "graph.glossary.created"
+            | "graph.glossary.edited"
+            | "graph.architecture.created"
+            | "graph.architecture.edited"
+            | "graph.gotcha.created"
+            | "graph.gotcha.edited"
+            | "graph.convention.created"
+            | "graph.convention.edited"
+            | "reviewer.finding"
+            | "review.verdict"
+    ) || ty.starts_with("artifact.")
+}
+
+fn node_journal_path(project_root: &FsPath, req: &TxAppendRequest) -> Option<PathBuf> {
+    if !event_routes_to_journal(&req.r#type) {
+        return None;
+    }
+    let mut ids = BTreeSet::new();
+    if let Some(task) = req.task.as_deref() {
+        ids.extend(task.split_whitespace().map(str::to_string));
+    }
+    for key in ["NODE_ID", "ARTIFACT_ID"] {
+        ids.extend(
+            req.extra
+                .iter()
+                .filter(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value.clone()),
+        );
+    }
+    let id = (ids.len() == 1).then(|| ids.into_iter().next()).flatten()?;
+    let dotorg = project_root.join(".orgasmic");
+    if let Some(target) = req.target.as_deref().map(PathBuf::from) {
+        let target = if target.is_absolute() {
+            target
+        } else {
+            project_root.join(target)
+        };
+        if target.file_name().and_then(|name| name.to_str()) == Some("node.org")
+            && target
+                .parent()
+                .and_then(FsPath::file_name)
+                .and_then(|name| name.to_str())
+                == Some(id.as_str())
+            && target.starts_with(&dotorg)
+        {
+            return Some(target.with_file_name("journal.org"));
+        }
+    }
+    std::fs::read_dir(dotorg)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|collection| collection.path().join(&id))
+        .find(|node| node.join("node.org").is_file() || node.join("artifact.org").is_file())
+        .map(|node| node.join("journal.org"))
+}
+
 fn tx_destination(
     state: &ApiState,
     req: &TxAppendRequest,
@@ -8337,11 +8404,13 @@ fn tx_destination(
                 );
                 return Err(ApiError::bad_request("project could not be resolved"));
             }
-            let tx_path = entry
-                .path
-                .join(".orgasmic")
-                .join("tx")
-                .join(format!("{}.org", tx_file_month_utc(now)));
+            let tx_path = node_journal_path(&entry.path, req).unwrap_or_else(|| {
+                entry
+                    .path
+                    .join(".orgasmic")
+                    .join("tx")
+                    .join(format!("{}.org", tx_file_month_utc(now)))
+            });
             return Ok(TxDestination {
                 tx_path,
                 project_id: Some(entry.id.clone()),
@@ -15831,6 +15900,11 @@ async fn post_org_node_delete(
         action: "deleted",
     })
     .await?;
+    let node_dir = path
+        .parent()
+        .ok_or_else(|| ApiError::internal("node path has no parent directory"))?;
+    std::fs::remove_dir_all(node_dir)
+        .map_err(|error| ApiError::internal(format!("remove node directory: {error}")))?;
     let mut changed = BTreeMap::new();
     changed.insert("deleted".to_string(), "true".to_string());
     let compact = CompactMutationResponse {
@@ -16689,13 +16763,8 @@ fn filter_default_dispatch_properties(
 
 // ---- task create + property update (TASK-NP5H6) ----------------------------
 
-/// Target file for new top-level tasks (dec_QQYXM: always backlog.org).
-fn task_create_target_file_name() -> &'static str {
-    DEFAULT_TASK_FILE
-}
-
-fn task_create_target_path(project_root: &FsPath) -> PathBuf {
-    task_file_path(project_root, task_create_target_file_name())
+fn task_create_target_path(project_root: &FsPath, task_id: &str) -> PathBuf {
+    orgasmic_core::node_kernel::node_dir(project_root, "tasks", task_id).join("node.org")
 }
 
 #[derive(Debug, Deserialize)]
@@ -16895,7 +16964,7 @@ async fn post_task_create(
     }
     let task_id = resolve_task_create_id(&state, &req)?;
     let stage = task_create_lifecycle_stage(&state)?;
-    let path = task_create_target_path(&project.root);
+    let path = task_create_target_path(&project.root, &task_id);
     let project_defaults = project_prompt_defaults(project);
     let properties = filter_default_dispatch_properties(
         &req.properties,
@@ -16910,10 +16979,15 @@ async fn post_task_create(
         &properties,
         req.body.as_deref(),
     );
-    let transform_heading = heading.clone();
-    let transform_path = path.to_string_lossy().to_string();
-    let empty_header = empty_task_file_header(task_create_target_file_name());
-    let target = task_file_rel(task_create_target_file_name());
+    let source =
+        orgasmic_core::node_kernel::node_org_header("task", &task_id) + heading.trim_start();
+    OrgFile::parse(source.clone(), path.to_string_lossy())
+        .map_err(|error| org_parse_bad_request(&path, "task file", error))?;
+    let target = path
+        .strip_prefix(&project.root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .to_string();
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
@@ -16934,21 +17008,11 @@ async fn post_task_create(
     .await?;
     let cached = state
         .writer
-        .transaction_mutate_file_mutation(
-            FileMutate {
+        .transaction_mutation(
+            vec![FileRewrite {
                 path: path.clone(),
-                transform: Box::new(move |source| {
-                    let source = if source.is_empty() {
-                        empty_header
-                    } else {
-                        source.to_string()
-                    };
-                    let updated = append_heading_to_task_file(&source, &transform_heading);
-                    OrgFile::parse(updated.clone(), transform_path)
-                        .map_err(|error| anyhow::anyhow!("task file parse failed: {error}"))?;
-                    Ok(updated.into_bytes())
-                }),
-            },
+                new_contents: source.into_bytes(),
+            }],
             prepared.tx,
             mutation,
             task_id.clone(),
@@ -17543,68 +17607,10 @@ async fn write_task_lifecycle_and_record(
     Ok(tx_id)
 }
 
-fn empty_task_file_header(file_name: &str) -> String {
-    format!(
-        "#+title: orgasmic {}\n#+orgasmic_version: 1\n",
-        file_name.trim_end_matches(".org")
-    )
-}
-
-fn append_heading_to_task_file(existing: &str, heading: &str) -> String {
-    let mut out = existing.to_string();
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    if !out.ends_with("\n\n") {
-        out.push('\n');
-    }
-    out.push_str(heading.trim_start_matches('\n'));
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
-}
-
-fn rewrite_heading_subtree_for_stage(
-    subtree: &str,
-    task_id: &str,
-    stage: LifecycleStage,
-) -> Result<String, ApiError> {
-    let file = OrgFile::parse(subtree, "heading.org")
-        .map_err(|e| ApiError::bad_request(format!("task subtree parse failed: {e}")))?;
-    let heading = file
-        .find_by_id(task_id)
-        .ok_or_else(|| ApiError::not_found(format!("task {task_id} in subtree")))?;
-    let mut rw = OrgRewriter::new(&file, "heading.org");
-    rw.set_title_line(task_id, &task_lifecycle_title_line(heading, stage))
-        .map_err(|e| org_rewriter_error("set task lifecycle title", task_id, e))?;
-    Ok(rw.finish())
-}
-
-fn prepare_cross_file_lifecycle_move(
-    source_text: &str,
-    source_display: &str,
-    task_id: &str,
-    stage: LifecycleStage,
-) -> Result<(String, String), ApiError> {
-    let file = OrgFile::parse(source_text, source_display)
-        .map_err(|e| org_parse_bad_request(&PathBuf::from(source_display), "task file", e))?;
-    let heading = file
-        .find_by_id(task_id)
-        .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
-    let subtree = file.slice(heading.span.clone());
-    let moved = rewrite_heading_subtree_for_stage(subtree, task_id, stage)?;
-    let mut rw = OrgRewriter::new(&file, source_display);
-    rw.remove_heading(task_id)
-        .map_err(|e| org_rewriter_error("remove task heading", task_id, e))?;
-    Ok((rw.finish(), moved))
-}
-
 // orgasmic:task_P9T4N
-/// Commit a dispatch terminal tx together with the lifecycle rewrite and its
-/// `task.state_transitioned` tx. This is deliberately a dispatch-only surface:
-/// ordinary task updates keep their existing API, while close no longer has a
-/// client-visible boundary between its two ledger legs.
+/// Commit one dispatch terminal tx together with the node lifecycle rewrite.
+/// The close tx already carries `LIFECYCLE_FROM`/`LIFECYCLE_TO`; the derived
+/// transition must not become a second ledger append.
 async fn post_task_dispatch_close_commit(
     State(state): State<ApiState>,
     Path((project_id, task_id)): Path<(String, String)>,
@@ -17669,73 +17675,29 @@ async fn post_task_dispatch_close_commit(
             current_state.as_str()
         )));
     }
-    let project_root = project.root.clone();
-    let from_path = if current_state == from_state {
-        task.source_file.clone()
-    } else {
-        task_file_path(&project_root, lifecycle_stage_file_name(from_state))
-    };
-    let to_file_name = lifecycle_stage_file_name(to_state);
-    let to_path = task_file_path(&project_root, to_file_name);
-
+    let node_path = task.source_file.clone();
     let rewrites = if from_state == to_state {
         Vec::new()
     } else if current_state == to_state {
-        // A prior attempt may have appended both txs and installed these
-        // rewrites before its fsync acknowledgement failed. Rebuild the same
-        // final rewrite set from disk so the writer can validate semantic
-        // identity and re-sync its retained descriptor without appending the
-        // pair again.
-        let paths = if from_path == to_path {
-            vec![from_path]
-        } else {
-            vec![from_path, to_path]
-        };
-        paths
-            .into_iter()
-            .map(|path| {
-                read_artifact(&path, "task file").map(|source| FileRewrite {
-                    path,
-                    new_contents: source.into_bytes(),
-                })
-            })
-            .collect::<Result<Vec<_>, ApiError>>()?
+        vec![FileRewrite {
+            path: node_path.clone(),
+            new_contents: read_artifact(&node_path, "task file")?.into_bytes(),
+        }]
     } else {
-        let source_display = from_path.to_string_lossy().to_string();
-        let source = read_artifact(&from_path, "task file")?;
-        let pairs = if from_path == to_path {
-            let file = OrgFile::parse(source.clone(), &source_display)
-                .map_err(|e| org_parse_bad_request(&from_path, "task file", e))?;
-            let mut rw = OrgRewriter::new(&file, &source_display);
-            let heading = file
-                .find_by_id(&task_id)
-                .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
-            rw.set_title_line(&task_id, &task_lifecycle_title_line(heading, to_state))
-                .map_err(|e| org_rewriter_error("set task lifecycle title", &task_id, e))?;
-            vec![(from_path, rw.finish())]
-        } else {
-            let (source_updated, moved_heading) =
-                prepare_cross_file_lifecycle_move(&source, &source_display, &task_id, to_state)?;
-            let dest_existing = if to_path.exists() {
-                read_artifact(&to_path, "task file")?
-            } else {
-                empty_task_file_header(to_file_name)
-            };
-            vec![
-                (from_path, source_updated),
-                (
-                    to_path,
-                    append_heading_to_task_file(&dest_existing, &moved_heading),
-                ),
-            ]
-        };
-        pairs
-            .into_iter()
-            .map(|(path, source)| FileRewrite {
-                path,
-                new_contents: source.into_bytes(),
-            })
-            .collect()
+        let source_display = node_path.to_string_lossy().to_string();
+        let source = read_artifact(&node_path, "task file")?;
+        let file = OrgFile::parse(source, &source_display)
+            .map_err(|e| org_parse_bad_request(&node_path, "task file", e))?;
+        let mut rw = OrgRewriter::new(&file, &source_display);
+        let heading = file
+            .find_by_id(&task_id)
+            .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
+        rw.set_title_line(&task_id, &task_lifecycle_title_line(heading, to_state))
+            .map_err(|e| org_rewriter_error("set task lifecycle title", &task_id, e))?;
+        vec![FileRewrite {
+            path: node_path,
+            new_contents: rw.finish().into_bytes(),
+        }]
     };
     for rewrite in &rewrites {
         let source = String::from_utf8(rewrite.new_contents.clone()).map_err(|error| {
@@ -17751,51 +17713,21 @@ async fn post_task_dispatch_close_commit(
     let (close_tx, close_project_tx, _close_destination, close_time) =
         prepare_tx_append_request(&state, req.close_tx).await?;
     let close_path = close_tx.tx_path.clone();
-    let lifecycle = if from_state == to_state {
-        None
-    } else {
-        Some(
-            prepare_api_tx(
-                &state,
-                ApiTxRequest {
-                    ty: "task.state_transitioned".to_string(),
-                    actor: None,
-                    project: Some(project_id.clone()),
-                    task: Some(task_id.clone()),
-                    target: Some(task_file_rel(to_file_name)),
-                    reason: req.reason,
-                    request_id: Some(req.request_id),
-                    extra: vec![
-                        ("FROM_STATE".to_string(), from_state.as_str().to_string()),
-                        ("TO_STATE".to_string(), to_state.as_str().to_string()),
-                    ],
-                },
-            )
-            .await?,
-        )
-    };
-    let mut txs = vec![close_tx];
-    if let Some(prepared) = lifecycle.as_ref() {
-        txs.push(prepared.tx.clone());
-    }
     let results = state
         .writer
-        .transaction_multi(rewrites, txs)
+        .transaction_multi(rewrites, vec![close_tx])
         .await
         .map_err(dispatch_close_writer_error)?;
     let close_result = results.first().ok_or_else(|| {
         ApiError::internal("dispatch close writer returned no terminal transaction")
     })?;
-    let transition_tx_id = results
-        .get(1)
-        .map(|result| result.tx_id.clone())
-        .unwrap_or_default();
-    let refresh_tx_id = if transition_tx_id.is_empty() {
-        close_result.tx_id.as_str()
-    } else {
-        transition_tx_id.as_str()
-    };
-    refresh_after_project_mutation(&state, &project_id, close_project_tx, refresh_tx_id).await?;
+    refresh_after_project_mutation(
+        &state,
+        &project_id,
+        close_project_tx,
+        close_result.tx_id.as_str(),
+    )
+    .await?;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
@@ -17809,7 +17741,7 @@ async fn post_task_dispatch_close_commit(
             tx_path: close_path,
             time: close_time,
         },
-        transition_tx_id,
+        transition_tx_id: String::new(),
     }))
 }
 
@@ -17917,31 +17849,17 @@ async fn update_task_state(
         )));
     }
     let from_path = task.source_file.clone();
-    let to_file_name = lifecycle_stage_file_name(to_state);
-    let to_path = task_file_path(&project.root, to_file_name);
     let source_display = from_path.to_string_lossy().to_string();
     let source = read_artifact(&from_path, "task file")?;
-    let rewrites = if from_path == to_path {
-        let file = OrgFile::parse(source.clone(), &source_display)
-            .map_err(|e| org_parse_bad_request(&from_path, "task file", e))?;
-        let mut rw = OrgRewriter::new(&file, &source_display);
-        let heading = file
-            .find_by_id(task_id)
-            .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
-        rw.set_title_line(task_id, &task_lifecycle_title_line(heading, to_state))
-            .map_err(|e| org_rewriter_error("set task lifecycle title", task_id, e))?;
-        vec![(from_path, rw.finish())]
-    } else {
-        let (source_updated, moved_heading) =
-            prepare_cross_file_lifecycle_move(&source, &source_display, task_id, to_state)?;
-        let dest_existing = if to_path.exists() {
-            read_artifact(&to_path, "task file")?
-        } else {
-            empty_task_file_header(to_file_name)
-        };
-        let dest_updated = append_heading_to_task_file(&dest_existing, &moved_heading);
-        vec![(from_path, source_updated), (to_path, dest_updated)]
-    };
+    let file = OrgFile::parse(source, &source_display)
+        .map_err(|e| org_parse_bad_request(&from_path, "task file", e))?;
+    let mut rw = OrgRewriter::new(&file, &source_display);
+    let heading = file
+        .find_by_id(task_id)
+        .ok_or_else(|| ApiError::not_found(format!("task {task_id}")))?;
+    rw.set_title_line(task_id, &task_lifecycle_title_line(heading, to_state))
+        .map_err(|e| org_rewriter_error("set task lifecycle title", task_id, e))?;
+    let rewrites = vec![(from_path.clone(), rw.finish())];
     let reason = req
         .reason
         .filter(|value| !value.trim().is_empty())
@@ -17951,7 +17869,11 @@ async fn update_task_state(
         project_id,
         task_id,
         rewrites,
-        target_rel: task_file_rel(to_file_name),
+        target_rel: from_path
+            .strip_prefix(&project.root)
+            .unwrap_or(&from_path)
+            .to_string_lossy()
+            .to_string(),
         from_state,
         to_state,
         reason,
@@ -18379,12 +18301,7 @@ async fn post_artifact_submit(
         let now = Utc::now();
         let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
         let project_date = now.format("%Y%m%d").to_string();
-        let month_str = now.format("%Y-%m").to_string();
-        let tx_path = entry
-            .path
-            .join(".orgasmic")
-            .join("tx")
-            .join(format!("{month_str}.org"));
+        let tx_path = art_dir.join("journal.org");
 
         // artifact.created tx. Uses a request_id stable across retries for
         // the same (project, artifact) pair so a client retry (or a retry
@@ -18512,12 +18429,7 @@ async fn post_artifact_submit(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let new_org = update_artifact_org(&current_org, new_version, new_state)
         .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
@@ -18791,11 +18703,7 @@ async fn post_artifact_add_comment(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = project_root
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
@@ -18915,11 +18823,7 @@ async fn post_artifact_comment_resolve(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = project_root
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let resolved_by = identity.member_name().unwrap_or(&state.actor).to_string();
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
@@ -19356,12 +19260,7 @@ async fn launch_artifact_generation(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
         "artifact.launch_address",
@@ -19464,12 +19363,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
@@ -19572,12 +19466,7 @@ async fn close_out_artifact_regenerate_round(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let mut regen_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
@@ -19734,12 +19623,7 @@ async fn post_artifact_generate(
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
+    let tx_path = art_dir.join("journal.org");
 
     let mut created_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
@@ -21427,18 +21311,26 @@ pub(crate) mod tests {
                 tx_path: None,
             },
             state: LifecycleStage::InReview.as_str().to_string(),
-            reason: "transition TASK-PRE to in_review".to_string(),
-            request_id: "dispatch-close-state-task-pre-started".to_string(),
         }
     }
 
     #[tokio::test]
-    async fn dispatch_close_home_ledger_refreshes_project_for_read_after_write() {
+    async fn ap971_dispatch_close_is_one_tx_append_plus_one_node_rewrite() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
+        std::fs::remove_file(task_file_path(&project_root, "backlog.org")).unwrap();
+        let task_dir = project_root.join(".orgasmic/tasks/TASK-PRE");
+        write(
+            task_dir.join("node.org"),
+            "#+title: task TASK-PRE\n#+orgasmic_version: 2\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID: TASK-PRE\n:END:\n",
+        );
+        write(
+            task_dir.join("journal.org"),
+            &orgasmic_core::node_kernel::journal_header("TASK-PRE"),
+        );
         let state = direct_stage_test_state(home.clone()).await;
         assert!(!state.tx_commit_to_project);
 
@@ -21461,9 +21353,9 @@ pub(crate) mod tests {
         assert_eq!(task.lifecycle_stage, LifecycleStage::InReview);
         let home_ledger = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
         assert!(home_ledger.contains(&response.close_tx.tx_id));
-        assert!(home_ledger.contains(&response.transition_tx_id));
+        assert!(response.transition_tx_id.is_empty());
         assert!(home_ledger.contains("implementer.done"));
-        assert!(home_ledger.contains("task.state_transitioned"));
+        assert!(!home_ledger.contains("task.state_transitioned"));
         assert!(
             !project_root.join(".orgasmic/tx").exists(),
             "home-ledger routing must not create a project ledger"
@@ -21494,7 +21386,7 @@ pub(crate) mod tests {
                 .iter()
                 .filter(|entry| entry.ty == "task.state_transitioned")
                 .count(),
-            1
+            0
         );
     }
 
@@ -22930,7 +22822,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn every_dispatch_type_routes_to_project_tx() {
+    async fn ap971_every_known_event_type_has_a_pinned_ledger_route() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -22944,37 +22836,122 @@ pub(crate) mod tests {
             branch: "main".into(),
             status: "active".into(),
         };
-        for ty in [
-            "manager.dispatch_started",
-            "run.created",
-            "implementer.reported",
-            "reviewer.reported",
-            "architector.reported",
-            "implementer.done",
-            "reviewer.done",
-            "architector.done",
-            "manager.dispatch_aborted",
-            "manager.dispatch_orphaned",
-        ] {
+        let node_dir = project_root.join(".orgasmic/tasks/TASK-TEST");
+        write(
+            node_dir.join("node.org"),
+            "#+title: task\n#+orgasmic_version: 2\n\n* BACKLOG Test\n:PROPERTIES:\n:ID: TASK-TEST\n:END:\n",
+        );
+        write(
+            node_dir.join("journal.org"),
+            &orgasmic_core::node_kernel::journal_header("TASK-TEST"),
+        );
+        let routes = [
+            ("comment", true),
+            ("worker.comment", true),
+            ("task.created", true),
+            ("task.edited", true),
+            ("task.property_updated", true),
+            ("task.state_transitioned", true),
+            ("graph.architecture.created", true),
+            ("graph.architecture.edited", true),
+            ("graph.decision.created", true),
+            ("graph.decision.edited", true),
+            ("graph.decision.reparent", true),
+            ("graph.glossary.created", true),
+            ("graph.glossary.edited", true),
+            ("graph.gotcha.created", true),
+            ("graph.gotcha.edited", true),
+            ("graph.convention.created", true),
+            ("graph.convention.edited", true),
+            ("reviewer.finding", true),
+            ("review.verdict", true),
+            ("artifact.created", true),
+            ("artifact.submitted", true),
+            ("artifact.comment.added", true),
+            ("artifact.comment.resolved", true),
+            ("artifact.regenerated", true),
+            ("artifact.generation.failed", true),
+            ("artifact.launch_address", true),
+            ("manager.dispatch_started", false),
+            ("run.created", false),
+            ("implementer.reported", false),
+            ("reviewer.reported", false),
+            ("architector.reported", false),
+            ("implementer.done", false),
+            ("reviewer.done", false),
+            ("architector.done", false),
+            ("fixer.done", false),
+            ("implementer.commit_pending", false),
+            ("manager.dispatch_aborted", false),
+            ("manager.dispatch_orphaned", false),
+            ("manager.action", false),
+            ("manager.board_reconciled", false),
+            ("manager.correction", false),
+            ("manager.decision", false),
+            ("manager.evidence", false),
+            ("manager.handoff_updated", false),
+            ("manager.note", false),
+            ("manager.review_close", false),
+            ("manager.set_goal", false),
+            ("manager.clear_goal", false),
+            ("manager.supersede_goal", false),
+            ("manager.tier", false),
+            ("manager.verify", false),
+            ("goal.set", false),
+            ("goal.clear", false),
+            ("goal.supersede", false),
+            ("graph.handoff.edited", false),
+            ("graph.project.edited", false),
+            ("graph.decision.deleted", false),
+            ("task.deleted", false),
+            ("artifact.deleted", false),
+            ("project.edited", false),
+            ("release.published", false),
+            ("daemon.restart_requested", false),
+            ("benchmark.concurrent_control", false),
+            ("question.raised", false),
+            ("question.answered", false),
+            ("note", false),
+            ("review", false),
+            ("verification", false),
+            ("correction", false),
+            ("unrecorded", false),
+        ];
+        for (ty, journal) in routes {
+            let creating_task = ty == "task.created";
             let req = TxAppendRequest {
                 request_id: None,
                 r#type: ty.into(),
                 actor: None,
                 machine: None,
                 project: Some("proj".into()),
-                task: Some("TASK-TEST".into()),
-                target: None,
+                task: Some(if creating_task {
+                    "TASK-NEW".into()
+                } else {
+                    "TASK-TEST".into()
+                }),
+                target: creating_task.then(|| ".orgasmic/tasks/TASK-NEW/node.org".into()),
                 reason: None,
                 extra: Vec::new(),
                 tx_path: None,
             };
             let destination = tx_destination(&state, &req, Some(&project), &Utc::now()).unwrap();
-            assert!(destination.project_tx, "{ty} escaped project tx");
+            assert!(destination.project_tx, "{ty} escaped the project sequence");
             assert!(
-                destination
-                    .tx_path
-                    .starts_with(project_root.join(".orgasmic/tx")),
-                "{ty} routed to {}",
+                if journal {
+                    destination.tx_path
+                        == if creating_task {
+                            project_root.join(".orgasmic/tasks/TASK-NEW/journal.org")
+                        } else {
+                            node_dir.join("journal.org")
+                        }
+                } else {
+                    destination
+                        .tx_path
+                        .starts_with(project_root.join(".orgasmic/tx"))
+                },
+                "{ty} expected {} but routed to {}",
+                if journal { "journal" } else { "tx/" },
                 destination.tx_path.display()
             );
         }
@@ -31486,7 +31463,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn task_create_lands_in_backlog_and_mints_id() {
+    async fn ap971_task_create_mints_a_node_with_journal_entry_one() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -31525,11 +31502,17 @@ pub(crate) mod tests {
         assert!(task_id.starts_with("TASK-"));
         assert!(!body["tx_id"].as_str().unwrap().is_empty());
 
-        let on_disk = std::fs::read_to_string(&backlog_path).unwrap();
+        let task_dir = project_root.join(".orgasmic/tasks").join(task_id);
+        let on_disk = std::fs::read_to_string(task_dir.join("node.org")).unwrap();
         assert!(on_disk.contains(task_id));
         assert!(on_disk.contains("Filed through daemon"));
         assert!(on_disk.contains(":PRIORITY: P3"));
         assert!(on_disk.contains("** Description\nCreated by test.\n"));
+        let journal = std::fs::read_to_string(task_dir.join("journal.org")).unwrap();
+        let entries = orgasmic_core::node_kernel::parse_journal(&journal, "journal.org").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].entry_id, body["tx_id"].as_str().unwrap());
+        assert_eq!(entries[0].ty, "task.created");
 
         let legacy = client
             .post(format!("{base}/api/projects/orgasmic/tasks"))
